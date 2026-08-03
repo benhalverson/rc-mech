@@ -11,7 +11,7 @@ This is an example project made to be used as a quick start into building OpenAP
 2. Generate bindings with `pnpm cf-typegen`.
 3. Apply the local D1 migration with `pnpm db:migrate:local`.
 4. Start the API and Angular in two terminals:
-   - API: `pnpm worker:dev` (Wrangler at `http://localhost:8787`).
+   - API: `pnpm worker:dev` (Wrangler local environment at `http://localhost:8787`).
    - Angular: `pnpm client:dev` (or `pnpm --dir client start`) at `http://localhost:4200`.
 
 ## Project structure
@@ -26,7 +26,7 @@ Use `pnpm client:build` for a production build, `pnpm worker:dev` for Wrangler l
 
 Worker routing owns `/api/docs`, `/api/openapi.json`, `/api/auth/*`, and `/api/v1/*`. Unknown API paths return JSON `404` responses. Non-API paths fall through to `env.ASSETS.fetch()`, with the Worker applying Angular's HTML fallback only to non-API browser navigations.
 
-The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). It is intentionally a no-op in local development when the binding is unavailable, and is not connected to magic-link delivery yet; issue #3 owns delivery, owner allowlisting, expiry, and sessions. Do not commit sender or owner addresses.
+The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). It is intentionally a no-op in local development when the binding is unavailable, while deployed magic-link requests fail closed unless `EMAIL_FROM` and the binding are configured. Do not commit sender or owner addresses.
 
 For local database work, use `pnpm db:migrate:local`. To inspect or reset local D1, use Wrangler's local commands, for example `pnpm exec wrangler d1 migrations list DB --local`. This issue intentionally keeps the existing `rc-mech-photos` R2 bucket binding and placeholder D1 ID; it does not provision remote resources. Issue #11 should create the production resources and replace the placeholder with commands such as:
 
@@ -35,4 +35,4 @@ pnpm exec wrangler d1 create rc-mech
 pnpm exec wrangler r2 bucket create rc-mech-photos
 ```
 
-Set `BETTER_AUTH_SECRET` as a Worker secret for deployed environments; local development uses the documented development fallback.
+Set `APP_URL`, `BETTER_AUTH_SECRET`, `OWNER_EMAIL`, and `EMAIL_FROM` in the production Worker environment; `APP_URL` is deliberately not given a localhost production default because it controls magic-link redirects, trusted origins, cookies, and passkey RP identity. Local development uses Wrangler's `local` environment and intentionally sends no email. Do not commit sender or owner addresses.

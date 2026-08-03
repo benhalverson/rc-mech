@@ -7,16 +7,33 @@ import { db } from "./db";
 import { car, component, driveSession, maintenancePlan, serviceRecord } from "./schema";
 import { carInput, componentInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
 import { and, desc, eq, isNull } from "drizzle-orm";
+import { configuredOrigin, hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.use("/api/*", cors({ origin: (origin) => origin ?? "", credentials: true }));
+app.use("/api/*", async (c, next) => cors({ origin: (origin) => isAllowedOrigin(origin, c.env.APP_URL) ? configuredOrigin(c.env.APP_URL)! : "", credentials: true })(c, next));
 
 app.get("/api/openapi.json", (c) => c.json(openApi));
 app.get("/api/docs", Scalar({ url: "/api/openapi.json", pageTitle: "RC Mech API" }));
 app.get("/docs", (c) => c.redirect("/api/docs"));
 
-app.on(["GET", "POST"], "/api/auth/*", async (c) => createAuth(c.env).handler(c.req.raw));
+app.on(["GET", "POST"], "/api/auth/*", async (c) => {
+	if (c.req.path === "/api/auth/sign-in/magic-link" && c.req.method === "POST") {
+		const body = await c.req.raw.clone().json().catch(() => null) as { email?: unknown } | null;
+		if (!isLocalDevelopment(c.env) && (!hasMagicLinkConfiguration(c.env) || !hasEmailDelivery(c.env))) {
+			return c.json({ error: "Magic-link delivery is unavailable" }, 503);
+		}
+		if (typeof body?.email === "string" && !isConfiguredOwner(normalizeEmail(body.email), c.env)) {
+			return c.json({ status: true });
+		}
+		if (typeof body?.email === "string") {
+			const headers = new Headers(c.req.raw.headers);
+			headers.set("content-type", "application/json");
+			return createAuth(c.env).handler(new Request(c.req.raw, { body: JSON.stringify({ ...body, email: normalizeEmail(body.email) }), headers }));
+		}
+	}
+	return createAuth(c.env).handler(c.req.raw);
+});
 
 app.use("/api/v1/*", async (c, next) => {
 	if (c.req.path === "/api/v1/health") return next();
