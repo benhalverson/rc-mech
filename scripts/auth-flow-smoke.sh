@@ -189,8 +189,37 @@ jq -e --arg old "$component_id" --arg current "$replacement_id" \
 current_motor_count="$(curl -fsS -b "$cookie_file" "$base/api/v1/cars/${car_id}/components" | jq '[.components[] | select(.slot == "motor" and .removedAt == null)] | length')"
 [[ "$current_motor_count" == "1" ]]
 
+plan_create_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/maintenance-plans" \
+  -H 'Content-Type: application/json' --data "{\"carId\":\"${car_id}\",\"componentId\":\"${replacement_id}\",\"name\":\"Motor service\",\"intervalUnit\":\"weeks\",\"intervalValue\":2,\"intervalSessions\":3,\"baselineAt\":\"2026-08-01T00:00:00.000Z\",\"baselineSessionCount\":0}")"
+[[ "$plan_create_status" == "201" ]]
+plan_id="$(jq -r '.maintenancePlan.id' "$response_file")"
+[[ -n "$plan_id" && "$plan_id" != "null" ]]
+jq -e '.maintenancePlan.intervalUnit == "weeks" and .maintenancePlan.intervalValue == 2 and .maintenancePlan.status == "active"' "$response_file" >/dev/null
+plans_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/maintenance-plans")"
+[[ "$plans_status" == "200" ]]
+jq -e --arg id "$plan_id" '.maintenancePlans[] | select(.id == $id)' "$response_file" >/dev/null
+cockpit_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/maintenance-cockpit")"
+[[ "$cockpit_status" == "200" ]]
+jq -e --arg id "$plan_id" '([.upcoming[], .due[], .overdue[]] | map(select(.id == $id)) | length) == 1' "$response_file" >/dev/null
+plan_pause_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/maintenance-plans/${plan_id}/pause")"
+[[ "$plan_pause_status" == "200" ]]
+jq -e '.maintenancePlan.status == "paused" and .maintenancePlan.pauseReason == "manual"' "$response_file" >/dev/null
+plan_resume_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/maintenance-plans/${plan_id}/resume")"
+[[ "$plan_resume_status" == "200" ]]
+completion_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/maintenance-plans/${plan_id}/complete" \
+  -H 'Content-Type: application/json' --data '{"performedAt":"2026-08-03T12:00:00.000Z","description":"Smoke service"}')"
+[[ "$completion_status" == "201" ]]
+record_id="$(jq -r '.serviceRecord.id' "$response_file")"
+jq -e '.maintenancePlan.baselineAt == "2026-08-03T12:00:00.000Z" and .maintenancePlan.baselineSessionCount == 0' "$response_file" >/dev/null
+completion_delete_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X DELETE "$base/api/v1/service-records/${record_id}")"
+[[ "$completion_delete_status" == "200" ]]
+jq -e '.serviceRecord.deletedAt != null' "$response_file" >/dev/null
+
 archive_again_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/archive")"
 [[ "$archive_again_status" == "200" ]]
+archived_plans_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/maintenance-plans")"
+[[ "$archived_plans_status" == "200" ]]
+jq -e --arg id "$plan_id" '.maintenancePlans[] | select(.id == $id and .status == "paused" and .pauseReason == "car")' "$response_file" >/dev/null
 archived_drive_history_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/drives?history=true")"
 [[ "$archived_drive_history_status" == "200" ]]
 jq -e --arg id "$drive_id" '[.driveSessions[] | select(.id == $id)] | length == 1' "$response_file" >/dev/null
