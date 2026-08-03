@@ -4,8 +4,8 @@ import { Scalar } from "@scalar/hono-api-reference";
 import { z } from "zod";
 import { createAuth } from "./auth";
 import { db } from "./db";
-import { car, component, driveSession, maintenancePlan, owner, serviceRecord } from "./schema";
-import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, driveSessionUpdateInput, maintenanceCompletionInput, maintenancePlanInput, maintenancePlanUpdateInput, serviceRecordInput, serviceRecordUpdateInput, timezoneInput } from "./types";
+import { car, component, driveSession, maintenancePlan, owner, photo, serviceRecord } from "./schema";
+import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, driveSessionUpdateInput, maintenanceCompletionInput, maintenancePlanInput, maintenancePlanUpdateInput, photoUpdateInput, serviceRecordInput, serviceRecordUpdateInput, timezoneInput } from "./types";
 import { carListMode, canArchive, canRestore, canWrite, ownsCar } from "./car-policy";
 import { and, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
 import { STANDARD_COMPONENT_SLOTS, canEditComponent, componentSlotType, normalizeComponentSlot } from "./component-policy";
@@ -13,6 +13,7 @@ import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfigu
 import { canDeleteDriveSession, canEditDriveSession, isIanaTimezone, presentDateTime } from "./drive-session-policy";
 import { calculateMaintenanceDue, canTransitionMaintenance, type MaintenanceIntervalUnit, type MaintenanceStatus } from "./maintenance-policy";
 import { canDeleteServiceRecord, canEditServiceRecord, shouldRestoreBaseline } from "./service-policy";
+import { PHOTO_MAX_BYTES, normalizePhotoOrder, photoObjectKey, validatePhotoMetadata } from "./photo-policy";
 
 const app = new Hono<AppEnv>();
 
@@ -110,6 +111,34 @@ const carPlan = async (c: AppContext, planId: string) => {
 const ownedComponent = async (c: AppContext, carId: string, componentId: string) =>
 	db(c.env).select().from(component).where(and(eq(component.id, componentId), eq(component.carId, carId))).get();
 
+const ownedPhoto = async (c: AppContext, photoId: string) => {
+	const value = await db(c.env).select().from(photo).where(eq(photo.id, photoId)).get();
+	return value && await ownedCar(c, value.carId) ? value : undefined;
+};
+
+const publicPhoto = (value: typeof photo.$inferSelect) => ({
+	id: value.id,
+	carId: value.carId,
+	fileName: value.fileName,
+	contentType: value.contentType,
+	byteSize: value.byteSize,
+	sortOrder: value.sortOrder,
+	isPrimary: value.isPrimary,
+	createdAt: value.createdAt,
+	url: `/api/v1/photos/${value.id}`,
+});
+
+const parsePhotoForm = async (c: AppContext) => {
+	const body = await c.req.parseBody();
+	const file = body.file;
+	if (!(file instanceof File)) return { error: "A photo file is required" as const };
+	const fileName = file.name.trim();
+	const contentType = file.type.toLowerCase();
+	const error = validatePhotoMetadata({ contentType, fileName, byteSize: file.size });
+	if (error) return { error };
+	return { file, fileName, contentType, sortOrder: body.sortOrder, primary: body.primary };
+};
+
 const parseComponentSlot = (slot: string, requested?: "standard" | "custom") => {
 	const slotType = componentSlotType(slot, requested);
 	return slotType === "invalid" ? undefined : { slot: slotType === "standard" ? normalizeComponentSlot(slot) : slot.trim(), slotType };
@@ -195,6 +224,139 @@ app.post("/api/v1/cars/:carId/restore", async (c) => {
 	const restored = await ownedCar(c, existing.id);
 	return c.json({ car: publicCar(restored!) });
 });
+
+app.get("/api/v1/cars/:carId/photos", async (c) => {
+	const { carId } = c.req.param();
+	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
+	const photos = await db(c.env).select().from(photo).where(eq(photo.carId, carId));
+	return c.json({ photos: normalizePhotoOrder(photos).map(publicPhoto) });
+});
+
+app.post("/api/v1/cars/:carId/photos", async (c) => {
+	const { carId } = c.req.param();
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before adding photos" }, 409);
+	const parsed = await parsePhotoForm(c);
+	if ("error" in parsed) return c.json({ error: parsed.error, maxBytes: PHOTO_MAX_BYTES }, 400);
+	const database = db(c.env);
+	const existing = await database.select().from(photo).where(eq(photo.carId, carId));
+	const id = crypto.randomUUID();
+	const objectKey = photoObjectKey(carId, id);
+	const requestedPrimary = parsed.primary === "true" || parsed.primary === "1";
+	const sortOrderValue = typeof parsed.sortOrder === "string" ? Number(parsed.sortOrder) : existing.length;
+	const sortOrder = Number.isInteger(sortOrderValue) && sortOrderValue >= 0 && sortOrderValue <= 10000 ? sortOrderValue : undefined;
+	if (sortOrder === undefined) return c.json({ error: "sortOrder must be a non-negative integer" }, 400);
+	const isPrimary = requestedPrimary || existing.length === 0;
+	await c.env.PHOTOS.put(objectKey, parsed.file.stream(), { httpMetadata: { contentType: parsed.contentType } });
+	try {
+		if (isPrimary) await database.update(photo).set({ isPrimary: false }).where(eq(photo.carId, carId));
+		await database.insert(photo).values({ id, carId, objectKey, contentType: parsed.contentType, fileName: parsed.fileName, byteSize: parsed.file.size, sortOrder, isPrimary, createdAt: new Date().toISOString() });
+	} catch (error) {
+		await c.env.PHOTOS.delete(objectKey);
+		throw error;
+	}
+	const created = await database.select().from(photo).where(eq(photo.id, id)).get();
+	return c.json({ photo: publicPhoto(created!) }, 201);
+});
+
+app.patch("/api/v1/photos/:photoId", async (c) => {
+	const existing = await ownedPhoto(c, c.req.param("photoId"));
+	if (!existing) return c.json({ error: "Photo not found" }, 404);
+	const parentCar = await ownedCar(c, existing.carId);
+	if (!parentCar) return c.json({ error: "Photo not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before editing photos" }, 409);
+	const parsed = photoUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: "Invalid photo update", details: parsed.error.flatten() }, 400);
+	const database = db(c.env);
+	const updates = parsed.data.sortOrder === undefined ? {} : { sortOrder: parsed.data.sortOrder };
+	if (parsed.data.isPrimary === true) {
+		await database.batch([
+			database.update(photo).set({ isPrimary: false }).where(eq(photo.carId, existing.carId)),
+			database.update(photo).set({ ...updates, isPrimary: true }).where(eq(photo.id, existing.id)),
+		]);
+	} else if (parsed.data.isPrimary === false && existing.isPrimary) {
+		const others = normalizePhotoOrder((await database.select().from(photo).where(eq(photo.carId, existing.carId))).filter((value) => value.id !== existing.id));
+		const replacement = others[0];
+		await database.batch([
+			database.update(photo).set({ ...updates, isPrimary: false }).where(eq(photo.id, existing.id)),
+			...(replacement ? [database.update(photo).set({ isPrimary: true }).where(eq(photo.id, replacement.id))] : []),
+		]);
+	} else {
+		await database.update(photo).set(updates).where(eq(photo.id, existing.id));
+	}
+	const updated = await database.select().from(photo).where(eq(photo.id, existing.id)).get();
+	return c.json({ photo: publicPhoto(updated!) });
+});
+
+app.post("/api/v1/photos/:photoId/replace", async (c) => {
+	const existing = await ownedPhoto(c, c.req.param("photoId"));
+	if (!existing) return c.json({ error: "Photo not found" }, 404);
+	const parentCar = await ownedCar(c, existing.carId);
+	if (!parentCar) return c.json({ error: "Photo not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before replacing photos" }, 409);
+	const parsed = await parsePhotoForm(c);
+	if ("error" in parsed) return c.json({ error: parsed.error, maxBytes: PHOTO_MAX_BYTES }, 400);
+	await c.env.PHOTOS.put(existing.objectKey, parsed.file.stream(), { httpMetadata: { contentType: parsed.contentType } });
+	const updated = await db(c.env).update(photo).set({ contentType: parsed.contentType, fileName: parsed.fileName, byteSize: parsed.file.size }).where(eq(photo.id, existing.id)).returning().get();
+	return c.json({ photo: publicPhoto(updated!) });
+});
+
+app.put("/api/v1/photos/:photoId", async (c) => {
+	const existing = await ownedPhoto(c, c.req.param("photoId"));
+	if (!existing) return c.json({ error: "Photo not found" }, 404);
+	const parentCar = await ownedCar(c, existing.carId);
+	if (!parentCar) return c.json({ error: "Photo not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before replacing photos" }, 409);
+	const parsed = await parsePhotoForm(c);
+	if ("error" in parsed) return c.json({ error: parsed.error, maxBytes: PHOTO_MAX_BYTES }, 400);
+	await c.env.PHOTOS.put(existing.objectKey, parsed.file.stream(), { httpMetadata: { contentType: parsed.contentType } });
+	const updated = await db(c.env).update(photo).set({ contentType: parsed.contentType, fileName: parsed.fileName, byteSize: parsed.file.size }).where(eq(photo.id, existing.id)).returning().get();
+	return c.json({ photo: publicPhoto(updated!) });
+});
+
+app.delete("/api/v1/photos/:photoId", async (c) => {
+	const existing = await ownedPhoto(c, c.req.param("photoId"));
+	if (!existing) return c.json({ error: "Photo not found" }, 404);
+	const parentCar = await ownedCar(c, existing.carId);
+	if (!parentCar) return c.json({ error: "Photo not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before deleting photos" }, 409);
+	const database = db(c.env);
+	const others = normalizePhotoOrder((await database.select().from(photo).where(eq(photo.carId, existing.carId))).filter((value) => value.id !== existing.id));
+	const replacement = existing.isPrimary ? others[0] : undefined;
+	await database.batch([
+		database.delete(photo).where(eq(photo.id, existing.id)),
+		...(replacement ? [database.update(photo).set({ isPrimary: true }).where(eq(photo.id, replacement.id))] : []),
+	]);
+	await c.env.PHOTOS.delete(existing.objectKey);
+	return c.json({ deleted: true, primaryPhotoId: replacement?.id ?? null });
+});
+
+app.get("/api/v1/photos/:photoId", async (c) => {
+	const metadata = await ownedPhoto(c, c.req.param("photoId"));
+	if (!metadata) return c.json({ error: "Photo not found" }, 404);
+	const object = await c.env.PHOTOS.get(metadata.objectKey);
+	if (!object) return c.json({ error: "Photo not found" }, 404);
+	return new Response(object.body, { headers: {
+		"Content-Type": metadata.contentType,
+		"Content-Length": String(metadata.byteSize),
+		"Cache-Control": "private, max-age=300",
+		"Content-Disposition": `inline; filename="${metadata.fileName.replace(/["\\\r\n]/g, "_")}"`,
+		"X-Content-Type-Options": "nosniff",
+	} });
+});
+
+// Keep the car-scoped shape used by the car API alongside the photo-id routes.
+const delegateCarPhotoRoute = async (c: AppContext, suffix = "") => {
+	const metadata = await ownedPhoto(c, c.req.param("photoId"));
+	if (!metadata || metadata.carId !== c.req.param("carId")) return c.json({ error: "Photo not found" }, 404);
+	const target = new URL(`/api/v1/photos/${metadata.id}${suffix}`, c.req.url);
+	return app.fetch(new Request(target, c.req.raw), c.env, c.executionCtx);
+};
+
+app.patch("/api/v1/cars/:carId/photos/:photoId", (c) => delegateCarPhotoRoute(c));
+app.post("/api/v1/cars/:carId/photos/:photoId/replace", (c) => delegateCarPhotoRoute(c, "/replace"));
+app.delete("/api/v1/cars/:carId/photos/:photoId", (c) => delegateCarPhotoRoute(c));
 
 app.post("/api/v1/cars/:carId/components", async (c) => {
 	const parsed = componentInput.safeParse(await c.req.json());
@@ -625,12 +787,6 @@ app.post("/api/v1/service-records/:recordId/restore", async (c) => {
 	return c.json({ serviceRecord: await database.select().from(serviceRecord).where(eq(serviceRecord.id, record.id)).get(), maintenancePlan: plan ? await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, plan.id)).get() : undefined });
 });
 
-app.get("/api/v1/photos/:key{.+}", async (c) => {
-	const object = await c.env.PHOTOS?.get(c.req.param("key"));
-	if (!object) return c.json({ error: "Photo not found" }, 404);
-	return new Response(object.body, { headers: { "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg", "Cache-Control": "private, max-age=300" } });
-});
-
 app.all("/api", (c) => c.json({ error: "Not found" }, 404));
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 app.all("*", async (c) => {
@@ -706,6 +862,16 @@ const openApi = {
 		},
 		"/api/v1/cars/{carId}/archive": { post: { summary: "Archive an owned car; it leaves the active list", responses: { 200: { description: "Car archived" }, 404: { description: "Car not found" }, 409: { description: "Already archived" } } } },
 		"/api/v1/cars/{carId}/restore": { post: { summary: "Restore an owned archived car to the active list", responses: { 200: { description: "Car restored" }, 404: { description: "Car not found" }, 409: { description: "Already active" } } } },
+		"/api/v1/cars/{carId}/photos": {
+			get: { summary: "List the authenticated owner's private car photos in explicit order", responses: { 200: { description: "Private car photo metadata" }, 404: { description: "Car not found" } } },
+			post: { summary: "Upload a private car photo", requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["file"], properties: { file: { type: "string", format: "binary" }, sortOrder: { type: "integer", minimum: 0 }, primary: { type: "boolean" } } } } } }, responses: { 201: { description: "Photo uploaded" }, 400: { description: "Unsupported, empty, or oversized photo" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } },
+		},
+		"/api/v1/photos/{photoId}": {
+			get: { summary: "Stream an owned private photo", responses: { 200: { description: "Private photo bytes" }, 404: { description: "Photo not found" } } },
+			patch: { summary: "Reorder or designate an owned photo as primary", requestBody: { required: true, content: { "application/json": { schema: { type: "object", minProperties: 1, properties: { sortOrder: { type: "integer", minimum: 0 }, isPrimary: { type: "boolean" } } } } } }, responses: { 200: { description: "Photo metadata updated" }, 400: { description: "Invalid photo update" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
+			put: { summary: "Replace an owned photo's bytes and metadata", requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["file"], properties: { file: { type: "string", format: "binary" } } } } } }, responses: { 200: { description: "Photo replaced" }, 400: { description: "Unsupported, empty, or oversized photo" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
+			delete: { summary: "Delete an owned photo", responses: { 200: { description: "Photo deleted" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
+		},
 		"/api/v1/component-slots": { get: { summary: "List standard component slots", responses: { 200: { description: "Standard slots; custom slots may also be supplied" } } } },
 		"/api/v1/cars/{carId}/components": {
 			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }],

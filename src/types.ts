@@ -103,3 +103,8 @@ export const maintenanceCompletionInput = z.object({
 	cost: z.number().finite().nonnegative().max(1000000000).optional(),
 	currency: z.string().regex(/^[A-Za-z]{3}$/).transform((value) => value.toUpperCase()).optional(),
 }).refine((value) => (value.cost === undefined) === (value.currency === undefined), "Cost and currency must be supplied together");
+
+export const photoUpdateInput = z.object({
+	sortOrder: z.number().int().nonnegative().max(10000).optional(),
+	isPrimary: z.boolean().optional(),
+}).refine((value) => Object.keys(value).length > 0, "At least one photo field is required");
