@@ -513,16 +513,24 @@ app.patch("/api/v1/maintenance-plans/:planId", async (c) => {
 	return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
 });
 
-app.post("/api/v1/maintenance-plans/:planId/:action", async (c) => {
+const transitionMaintenancePlan = async (c: AppContext) => {
 	const existing = await carPlan(c, c.req.param("planId"));
 	if (!existing) return c.json({ error: "Maintenance plan not found" }, 404);
-	const action = c.req.param("action");
+	const action = c.req.path.split("/").pop() ?? "";
 	if (action !== "pause" && action !== "resume" && action !== "archive") return c.json({ error: "Unknown maintenance plan action" }, 404);
 	if (!canTransitionMaintenance(existing.status as MaintenanceStatus, action === "pause" ? "paused" : action === "resume" ? "active" : "archived")) return c.json({ error: "Invalid maintenance plan state" }, 409);
 	const nextStatus = action === "pause" ? "paused" : action === "resume" ? "active" : "archived";
-	await db(c.env).update(maintenancePlan).set({ status: nextStatus, pauseReason: action === "pause" ? "manual" : null, pausedAt: action === "pause" ? new Date().toISOString() : null }).where(eq(maintenancePlan.id, existing.id));
-	return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
-});
+	try {
+		await db(c.env).update(maintenancePlan).set({ status: nextStatus, pauseReason: action === "pause" ? "manual" : null, pausedAt: action === "pause" ? new Date().toISOString() : null }).where(eq(maintenancePlan.id, existing.id));
+		return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
+	} catch (error) {
+		console.error("maintenance plan transition failed", error);
+		return c.json({ error: "Maintenance plan transition failed" }, 500);
+	}
+};
+app.post("/api/v1/maintenance-plans/:planId/pause", transitionMaintenancePlan);
+app.post("/api/v1/maintenance-plans/:planId/resume", transitionMaintenancePlan);
+app.post("/api/v1/maintenance-plans/:planId/archive", transitionMaintenancePlan);
 
 app.post("/api/v1/maintenance-plans/:planId/complete", async (c) => {
 	const existing = await carPlan(c, c.req.param("planId"));
