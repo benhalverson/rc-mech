@@ -25,6 +25,8 @@ if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 	: "${RC_MECH_OWNER_CAR_ID:?RC_MECH_OWNER_CAR_ID is required for release acceptance}"
 	: "${RC_MECH_OWNER_PHOTO_ID:?RC_MECH_OWNER_PHOTO_ID is required for release acceptance}"
 	: "${RC_MECH_OTHER_OWNER_COOKIE:?RC_MECH_OTHER_OWNER_COOKIE is required for release acceptance}"
+	: "${RC_MECH_R2_PUBLIC_ACCESS_VALIDATED:?Set RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1 after verifying r2.dev and custom-domain access are disabled}"
+	test "$RC_MECH_R2_PUBLIC_ACCESS_VALIDATED" = 1
 	if ! pnpm exec wrangler secret list --env production --json | jq -e 'map(.name) | (["APP_URL", "BETTER_AUTH_SECRET", "OWNER_EMAIL", "EMAIL_FROM"] - .) == []' >/dev/null; then
 		echo 'production secrets are incomplete; configure APP_URL, BETTER_AUTH_SECRET, OWNER_EMAIL, and EMAIL_FROM' >&2
 		exit 1
@@ -37,8 +39,16 @@ if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 		echo "$migration_output" >&2
 		exit 1
 	}
-	if grep -qi 'pending' <<<"$migration_output"; then
-		echo 'production D1 has pending migrations' >&2
+	if ! grep -q 'No migrations to apply' <<<"$migration_output"; then
+		echo 'production D1 migration status is not clean; apply all migrations before release' >&2
+		exit 1
+	fi
+	custom_domains="$(pnpm exec wrangler r2 bucket domain list rc-mech-photos 2>&1)" || {
+		echo "$custom_domains" >&2
+		exit 1
+	}
+	if ! grep -qi 'no custom domains' <<<"$custom_domains"; then
+		echo 'production R2 bucket has a custom domain; remove public exposure before release' >&2
 		exit 1
 	fi
 fi
@@ -54,9 +64,7 @@ if [[ -n "${RC_MECH_DEPLOYED_URL:-}" ]]; then
 	test "$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/v1/photos/not-authenticated")" = 401
 	test "$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/not-a-route")" = 404
 	if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
-		host="${base#https://}"
-		host="${host#http://}"
-		host="${host%%/*}"
+		host="$(node -e 'console.log(new URL(process.argv[1]).hostname)' "$base")"
 		rp_status="$(curl -sS -o "$response_file" -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/auth/passkey/generate-register-options?name=release-check")"
 		test "$rp_status" = 200
 		test "$(jq -r '.rp.id' "$response_file")" = "$host"

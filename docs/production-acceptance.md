@@ -56,7 +56,9 @@ acceptance after provisioning, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1`; that mode
 fails closed unless the real D1 ID and all four production secret names exist,
 and it requires `RC_MECH_DEPLOYED_URL`, `RC_MECH_OWNER_COOKIE`,
 `RC_MECH_OWNER_CAR_ID`, `RC_MECH_OWNER_PHOTO_ID`, and
-`RC_MECH_OTHER_OWNER_COOKIE`. It checks remote migration status, the R2 bucket,
+`RC_MECH_OTHER_OWNER_COOKIE`, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after
+an operator verifies that both `r2.dev` and custom-domain access are disabled.
+It checks remote migration status, the R2 bucket,
 the deployed passkey RP host, authenticated owner reads, and cross-owner
 record/photo isolation. Email delivery still requires the operator to send and
 redeem a real magic link; the release script deliberately does not send mail.
