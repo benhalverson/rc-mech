@@ -178,7 +178,7 @@ export class MaintenanceCockpit {
     if (!form.carId || !form.description.trim() || !form.performedAt) { this.serviceError.set('Choose a car, date, and a short description.'); return; }
     if (cost !== null && (!Number.isFinite(cost) || cost < 0)) { this.serviceError.set('Cost must be zero or greater.'); return; }
     if (this.serviceAction()) return;
-    const payload = { performedAt: this.toIso(form.performedAt), description: form.description.trim(), notes: (form.notes ?? '').trim(), componentId: form.componentId || undefined, ...(cost === null ? {} : { cost, currency: form.currency.trim().toUpperCase() || 'USD' }) };
+    const payload = { performedAt: this.toIso(form.performedAt), description: form.description.trim(), ...(form.notes?.trim() ? { notes: form.notes.trim() } : {}), componentId: form.componentId || undefined, ...(cost === null ? {} : { cost, currency: form.currency.trim().toUpperCase() || 'USD' }) };
     const recordId = this.serviceEditingId(); const planId = this.servicePlanId();
     this.serviceAction.set(recordId ? 'edit' : planId ? 'complete' : 'create'); this.serviceError.set('');
     const request = recordId ? this.http.patch<{ serviceRecord: ServiceRecord }>(`/api/v1/service-records/${recordId}`, payload, { withCredentials: true }) : planId ? this.http.post<{ serviceRecord: ServiceRecord; maintenancePlan: MaintenancePlan }>(`/api/v1/maintenance-plans/${planId}/complete`, payload, { withCredentials: true }) : this.http.post<{ serviceRecord: ServiceRecord }>(`/api/v1/cars/${form.carId}/service-records`, payload, { withCredentials: true });

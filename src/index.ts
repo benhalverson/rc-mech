@@ -660,6 +660,16 @@ const componentProperties = {
 	installedAt: { type: "string", format: "date-time" },
 	removedAt: { type: "string", format: "date-time", nullable: true },
 };
+
+const serviceRecordSchema = {
+	type: "object",
+	required: ["performedAt"],
+	anyOf: [{ required: ["description"] }, { required: ["notes"] }],
+	properties: {
+		performedAt: { type: "string", format: "date-time" }, description: { type: "string" }, notes: { type: "string" },
+		componentId: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" },
+	},
+};
 const openApi = {
 	openapi: "3.1.0",
 	info: { title: "RC Mech API", version: "0.1.0" },
@@ -722,3 +732,7 @@ const openApi = {
 		"/api/v1/maintenance-plans/{planId}/complete": { post: { summary: "Complete exactly one plan, create one service record, and reset its baseline transactionally", requestBody: { content: { "application/json": { schema: { type: "object", properties: { performedAt: { type: "string", format: "date-time" }, description: { type: "string" }, notes: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" } } } } } }, responses: { 201: { description: "Service completion and updated plan" }, 400: { description: "Invalid completion or cost data" }, 409: { description: "Plan or car is not writable" } } } },
 	},
 };
+
+const serviceRecordPaths = (openApi.paths as Record<string, any>);
+serviceRecordPaths["/api/v1/cars/{carId}/service-records"].post.requestBody = { required: true, content: { "application/json": { schema: serviceRecordSchema } } };
+serviceRecordPaths["/api/v1/service-records/{recordId}"].patch.requestBody = { required: true, content: { "application/json": { schema: { ...serviceRecordSchema, required: [], anyOf: [{ required: ["description"] }, { required: ["notes"] }, { required: ["performedAt"] }, { required: ["cost", "currency"] }] } } } };
