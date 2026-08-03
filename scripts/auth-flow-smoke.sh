@@ -79,6 +79,10 @@ archived_detail_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{h
 [[ "$archived_detail_status" == "200" ]]
 jq -e '.car.archivedAt != null' "$response_file" >/dev/null
 
+archived_write_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/drives" \
+  -H 'Content-Type: application/json' --data '{"startedAt":"2026-08-03T00:00:00.000Z"}')"
+[[ "$archived_write_status" == "409" ]]
+
 restore_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/restore")"
 [[ "$restore_status" == "200" ]]
 jq -e '.car.archivedAt == null' "$response_file" >/dev/null

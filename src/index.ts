@@ -6,7 +6,7 @@ import { createAuth } from "./auth";
 import { db } from "./db";
 import { car, component, driveSession, maintenancePlan, serviceRecord } from "./schema";
 import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
-import { carListMode, canArchive, canRestore, ownsCar } from "./car-policy";
+import { carListMode, canArchive, canRestore, canWrite, ownsCar } from "./car-policy";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
 
@@ -132,7 +132,9 @@ app.post("/api/v1/cars/:carId/components", async (c) => {
 	const parsed = componentInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const { carId } = c.req.param();
-	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
 	const id = crypto.randomUUID();
 	const now = new Date().toISOString();
 	const value = parsed.data;
@@ -153,7 +155,9 @@ app.post("/api/v1/cars/:carId/components", async (c) => {
 app.post("/api/v1/cars/:carId/drives", async (c) => {
 	const parsed = driveSessionInput.safeParse({ ...(await c.req.json()), carId: c.req.param("carId") });
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-	if (!await ownedCar(c, parsed.data.carId)) return c.json({ error: "Car not found" }, 404);
+	const parentCar = await ownedCar(c, parsed.data.carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
 	const id = crypto.randomUUID();
 	const value = parsed.data;
 	const database = db(c.env);
@@ -171,7 +175,9 @@ app.post("/api/v1/cars/:carId/drives", async (c) => {
 app.post("/api/v1/cars/:carId/service-records", async (c) => {
 	const parsed = serviceRecordInput.safeParse({ ...(await c.req.json()), carId: c.req.param("carId") });
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-	if (!await ownedCar(c, parsed.data.carId)) return c.json({ error: "Car not found" }, 404);
+	const parentCar = await ownedCar(c, parsed.data.carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
 	const id = crypto.randomUUID();
 	const value = parsed.data;
 	const baselineAt = value.baselineAt ?? value.performedAt;
@@ -190,7 +196,9 @@ app.post("/api/v1/cars/:carId/service-records", async (c) => {
 app.post("/api/v1/maintenance-plans", async (c) => {
 	const parsed = maintenancePlanInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-	if (!await ownedCar(c, parsed.data.carId)) return c.json({ error: "Car not found" }, 404);
+	const parentCar = await ownedCar(c, parsed.data.carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
 	const id = crypto.randomUUID();
 	const now = new Date().toISOString();
 	const value = parsed.data;

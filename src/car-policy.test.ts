@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { carListMode, canArchive, canRestore, ownsCar } from "./car-policy.ts";
+import { carListMode, canArchive, canRestore, canWrite, ownsCar } from "./car-policy.ts";
 
 test("car ownership is scoped to the authenticated owner and fails closed", () => {
 	assert.equal(ownsCar("owner-a", "owner-a"), true);
@@ -21,4 +21,6 @@ test("archive and restore are inverse lifecycle transitions", () => {
 	assert.equal(canArchive({ archivedAt: "2026-08-03T00:00:00.000Z" }), false);
 	assert.equal(canRestore({ archivedAt: "2026-08-03T00:00:00.000Z" }), true);
 	assert.equal(canRestore({ archivedAt: null }), false);
+	assert.equal(canWrite({ archivedAt: null }), true);
+	assert.equal(canWrite({ archivedAt: "2026-08-03T00:00:00.000Z" }), false);
 });

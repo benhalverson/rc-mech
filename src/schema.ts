@@ -3,7 +3,7 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 const id = (name: string) => text(name).primaryKey();
 export const car = sqliteTable("car", {
 	id: id("id"),
-	ownerId: text("owner_id").notNull(),
+	ownerId: text("owner_id"),
 	name: text("name").notNull(),
 	make: text("make"),
 	model: text("model"),

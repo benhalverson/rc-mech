@@ -13,3 +13,4 @@ export const carListMode = (archived: string | undefined): "active" | "archived"
 
 export const canArchive = (value: CarLifecycle): boolean => value.archivedAt === null;
 export const canRestore = (value: CarLifecycle): boolean => value.archivedAt !== null;
+export const canWrite = (value: CarLifecycle): boolean => value.archivedAt === null;
