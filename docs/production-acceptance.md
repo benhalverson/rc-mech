@@ -51,6 +51,15 @@ pnpm deploy
 `public/.gitignore` keeps generated Angular bundles untracked while retaining
 the directory marker. A successful build should not dirty tracked files.
 
+`pnpm test:production` is the safe clean-checkout dry-run. For release
+acceptance after provisioning, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1`; that mode
+fails closed unless the real D1 ID and all four production secret names exist,
+and it requires `RC_MECH_DEPLOYED_URL`, `RC_MECH_OWNER_COOKIE`,
+`RC_MECH_OWNER_CAR_ID`, `RC_MECH_OWNER_PHOTO_ID`, and
+`RC_MECH_OTHER_OWNER_COOKIE`. It then checks authenticated owner access and
+cross-owner photo/list isolation. Do not put those cookie values in source,
+logs, or pull requests.
+
 ## Local browser integration
 
 Run two terminals:

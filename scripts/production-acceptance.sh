@@ -18,6 +18,15 @@ if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 		echo 'production D1 database_id is still the placeholder; replace it before deployment' >&2
 		exit 1
 	fi
+	: "${RC_MECH_DEPLOYED_URL:?RC_MECH_DEPLOYED_URL is required for release acceptance}"
+	: "${RC_MECH_OWNER_COOKIE:?RC_MECH_OWNER_COOKIE is required for release acceptance}"
+	: "${RC_MECH_OWNER_CAR_ID:?RC_MECH_OWNER_CAR_ID is required for release acceptance}"
+	: "${RC_MECH_OWNER_PHOTO_ID:?RC_MECH_OWNER_PHOTO_ID is required for release acceptance}"
+	: "${RC_MECH_OTHER_OWNER_COOKIE:?RC_MECH_OTHER_OWNER_COOKIE is required for release acceptance}"
+	if ! pnpm exec wrangler secret list --env production --json | jq -e 'map(.name) | (["APP_URL", "BETTER_AUTH_SECRET", "OWNER_EMAIL", "EMAIL_FROM"] - .) == []' >/dev/null; then
+		echo 'production secrets are incomplete; configure APP_URL, BETTER_AUTH_SECRET, OWNER_EMAIL, and EMAIL_FROM' >&2
+		exit 1
+	fi
 fi
 
 pnpm exec wrangler deploy --dry-run --env production
@@ -30,6 +39,12 @@ if [[ -n "${RC_MECH_DEPLOYED_URL:-}" ]]; then
 	test "$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/v1/cars")" = 401
 	test "$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/v1/photos/not-authenticated")" = 401
 	test "$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/not-a-route")" = 404
+	if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
+		test "$(curl -sS -o /dev/null -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID/photos")" = 200
+		test "$(curl -sS -o /dev/null -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/photos/$RC_MECH_OWNER_PHOTO_ID")" = 200
+		test "$(curl -sS -o /dev/null -H "Cookie: $RC_MECH_OTHER_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID/photos")" = 404
+		test "$(curl -sS -o /dev/null -H "Cookie: $RC_MECH_OTHER_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/photos/$RC_MECH_OWNER_PHOTO_ID")" = 404
+	fi
 	printf 'deployed public/private-boundary smoke passed for %s\n' "$base"
 else
 	printf 'deploy dry run passed; set RC_MECH_DEPLOYED_URL for deployed smoke\n'
