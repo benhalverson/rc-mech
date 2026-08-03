@@ -4,7 +4,9 @@ import { Scalar } from "@scalar/hono-api-reference";
 import { z } from "zod";
 import { createAuth } from "./auth";
 import { db } from "./db";
+import { car, component, driveSession, maintenancePlan, serviceRecord } from "./schema";
 import { carInput, componentInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -27,9 +29,8 @@ app.get("/api/v1/health", (c) => c.json({ ok: true, service: "rc-mech" }));
 
 app.get("/api/v1/cars", async (c) => {
 	const database = db(c.env);
-	if (!database) return c.json({ cars: [] });
-	const cars = await database.prepare("SELECT * FROM car WHERE archived_at IS NULL ORDER BY created_at DESC").all();
-	return c.json({ cars: cars.results });
+	const cars = await database.select().from(car).where(isNull(car.archivedAt)).orderBy(desc(car.createdAt));
+	return c.json({ cars });
 });
 
 app.post("/api/v1/cars", async (c) => {
@@ -39,8 +40,15 @@ app.post("/api/v1/cars", async (c) => {
 	const now = new Date().toISOString();
 	const value = parsed.data;
 	const database = db(c.env);
-	if (!database) return c.json({ car: { id, ...value, createdAt: now } }, 201);
-	await database.prepare("INSERT INTO car (id, name, manufacturer, model, scale, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, value.name, value.manufacturer ?? null, value.model ?? null, value.scale ?? null, value.notes ?? null, now).run();
+	await database.insert(car).values({
+		id,
+		name: value.name,
+		manufacturer: value.manufacturer ?? null,
+		model: value.model ?? null,
+		scale: value.scale ?? null,
+		notes: value.notes ?? null,
+		createdAt: now,
+	});
 	return c.json({ car: { id, ...value, createdAt: now } }, 201);
 });
 
@@ -52,10 +60,16 @@ app.post("/api/v1/cars/:carId/components", async (c) => {
 	const now = new Date().toISOString();
 	const value = parsed.data;
 	const database = db(c.env);
-	if (database) {
-		await database.prepare("UPDATE component SET removed_at = ? WHERE car_id = ? AND slot = ? AND removed_at IS NULL").bind(now, carId, value.slot).run();
-		await database.prepare("INSERT INTO component (id, car_id, slot, name, serial_number, notes, installed_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, carId, value.slot, value.name, value.serialNumber ?? null, value.notes ?? null, now).run();
-	}
+	await database.update(component).set({ removedAt: now }).where(and(eq(component.carId, carId), eq(component.slot, value.slot), isNull(component.removedAt)));
+	await database.insert(component).values({
+		id,
+		carId,
+		slot: value.slot,
+		name: value.name,
+		serialNumber: value.serialNumber ?? null,
+		notes: value.notes ?? null,
+		installedAt: now,
+	});
 	return c.json({ component: { id, carId, ...value, installedAt: now } }, 201);
 });
 
@@ -63,18 +77,35 @@ app.post("/api/v1/cars/:carId/drives", async (c) => {
 	const parsed = driveSessionInput.safeParse({ ...(await c.req.json()), carId: c.req.param("carId") });
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const id = crypto.randomUUID();
+	const value = parsed.data;
 	const database = db(c.env);
-	if (database) await database.prepare("INSERT INTO drive_session (id, car_id, started_at, duration_minutes, conditions, notes) VALUES (?, ?, ?, ?, ?, ?)").bind(id, parsed.data.carId, parsed.data.startedAt, parsed.data.durationMinutes ?? null, parsed.data.conditions ?? null, parsed.data.notes ?? null).run();
-	return c.json({ driveSession: { id, ...parsed.data } }, 201);
+	await database.insert(driveSession).values({
+		id,
+		carId: value.carId,
+		startedAt: value.startedAt,
+		durationMinutes: value.durationMinutes ?? null,
+		conditions: value.conditions ?? null,
+		notes: value.notes ?? null,
+	});
+	return c.json({ driveSession: { id, ...value } }, 201);
 });
 
 app.post("/api/v1/cars/:carId/service-records", async (c) => {
 	const parsed = serviceRecordInput.safeParse({ ...(await c.req.json()), carId: c.req.param("carId") });
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const id = crypto.randomUUID();
+	const value = parsed.data;
+	const baselineAt = value.baselineAt ?? value.performedAt;
 	const database = db(c.env);
-	if (database) await database.prepare("INSERT INTO service_record (id, car_id, component_id, performed_at, description, baseline_at) VALUES (?, ?, ?, ?, ?, ?)").bind(id, parsed.data.carId, parsed.data.componentId ?? null, parsed.data.performedAt, parsed.data.description, parsed.data.baselineAt ?? parsed.data.performedAt).run();
-	return c.json({ serviceRecord: { id, ...parsed.data } }, 201);
+	await database.insert(serviceRecord).values({
+		id,
+		carId: value.carId,
+		componentId: value.componentId ?? null,
+		performedAt: value.performedAt,
+		description: value.description,
+		baselineAt,
+	});
+	return c.json({ serviceRecord: { id, ...value, baselineAt } }, 201);
 });
 
 app.post("/api/v1/maintenance-plans", async (c) => {
@@ -82,9 +113,19 @@ app.post("/api/v1/maintenance-plans", async (c) => {
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const id = crypto.randomUUID();
 	const now = new Date().toISOString();
+	const value = parsed.data;
 	const database = db(c.env);
-	if (database) await database.prepare("INSERT INTO maintenance_plan (id, car_id, component_id, name, interval_days, interval_sessions, baseline_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')").bind(id, parsed.data.carId, parsed.data.componentId, parsed.data.name, parsed.data.intervalDays ?? null, parsed.data.intervalSessions ?? null, now).run();
-	return c.json({ maintenancePlan: { id, ...parsed.data, baselineAt: now, status: "active" } }, 201);
+	await database.insert(maintenancePlan).values({
+		id,
+		carId: value.carId,
+		componentId: value.componentId,
+		name: value.name,
+		intervalDays: value.intervalDays ?? null,
+		intervalSessions: value.intervalSessions ?? null,
+		baselineAt: now,
+		status: "active",
+	});
+	return c.json({ maintenancePlan: { id, ...value, baselineAt: now, status: "active" } }, 201);
 });
 
 app.get("/api/v1/photos/:key{.+}", async (c) => {
@@ -93,6 +134,8 @@ app.get("/api/v1/photos/:key{.+}", async (c) => {
 	return new Response(object.body, { headers: { "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg", "Cache-Control": "private, max-age=300" } });
 });
 
+app.all("/api", (c) => c.json({ error: "Not found" }, 404));
+app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 export default app;
 
