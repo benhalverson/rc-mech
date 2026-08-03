@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PHOTO_MAX_BYTES, isSupportedPhotoType, normalizePhotoOrder, photoObjectKey, validatePhotoMetadata } from "./photo-policy.ts";
+import { PHOTO_MAX_BYTES, isCompletePhotoOrder, isSupportedPhotoType, normalizePhotoOrder, photoObjectKey, primaryAfterDelete, validatePhotoMetadata } from "./photo-policy.ts";
 
 test("photo validation accepts supported images and rejects unsafe metadata", () => {
 	assert.equal(isSupportedPhotoType("image/jpeg"), true);
@@ -19,4 +19,9 @@ test("photo keys are scoped and ordering is deterministic", () => {
 		{ id: "c", sortOrder: 0, createdAt: "2026-01-02T00:00:00.000Z" },
 	]);
 	assert.deepEqual(ordered.map((photo) => photo.id), ["c", "a", "b"]);
+	assert.equal(isCompletePhotoOrder(ordered, ["c", "a", "b"]), true);
+	assert.equal(isCompletePhotoOrder(ordered, ["c", "a"]), false);
+	assert.equal(isCompletePhotoOrder(ordered, ["c", "a", "a"]), false);
+	assert.equal(primaryAfterDelete(ordered, "c"), "a");
+	assert.equal(primaryAfterDelete(ordered, "a"), "c");
 });
