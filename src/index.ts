@@ -263,9 +263,9 @@ const openApi = {
 		},
 		"/api/v1/cars/{carId}/archive": { post: { summary: "Archive an owned car; it leaves the active list", responses: { 200: { description: "Car archived" }, 404: { description: "Car not found" }, 409: { description: "Already archived" } } } },
 		"/api/v1/cars/{carId}/restore": { post: { summary: "Restore an owned archived car to the active list", responses: { 200: { description: "Car restored" }, 404: { description: "Car not found" }, 409: { description: "Already active" } } } },
-		"/api/v1/cars/{carId}/components": { post: { summary: "Install or replace a component on an owned car" } },
-		"/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session for an owned car" } },
-		"/api/v1/cars/{carId}/service-records": { post: { summary: "Record service for an owned car" } },
-		"/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan for an owned car" } },
+		"/api/v1/cars/{carId}/components": { post: { summary: "Install or replace a component on an owned car", responses: { 201: { description: "Component installed" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
+		"/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session for an owned car", responses: { 201: { description: "Drive recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
+		"/api/v1/cars/{carId}/service-records": { post: { summary: "Record service for an owned car", responses: { 201: { description: "Service recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
+		"/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan for an owned car", responses: { 201: { description: "Maintenance plan created" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
 	},
 };
