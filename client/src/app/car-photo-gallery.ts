@@ -155,7 +155,7 @@ export class CarPhotoGallery {
     const previous = this.photos();
     const optimistic = photos.map((photo, position) => ({ ...photo, sortOrder: position }));
     this.photos.set(optimistic);
-    firstValueFrom(this.http.post<PhotosResponse>(`/api/v1/cars/${this.carId()}/photos/reorder`, {
+    firstValueFrom(this.http.patch<PhotosResponse>(`/api/v1/cars/${this.carId()}/photos/reorder`, {
       photoIds: photos.map((photo) => photo.id),
     }, { withCredentials: true })).then(({ photos: saved }) => {
       this.photos.set(saved?.length ? this.ordered(saved) : optimistic);

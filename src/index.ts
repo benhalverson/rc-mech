@@ -266,7 +266,7 @@ app.post("/api/v1/cars/:carId/photos", async (c) => {
 	const sortOrderValue = typeof parsed.sortOrder === "string" ? Number(parsed.sortOrder) : existing.length;
 	const sortOrder = Number.isInteger(sortOrderValue) && sortOrderValue >= 0 && sortOrderValue <= 10000 ? sortOrderValue : undefined;
 	if (sortOrder === undefined) return c.json({ error: "sortOrder must be a non-negative integer" }, 400);
-	const isPrimary = requestedPrimary || existing.length === 0;
+	const isPrimary = requestedPrimary || !existing.some((value) => value.isPrimary);
 	await c.env.PHOTOS.put(objectKey, parsed.file.stream(), { httpMetadata: { contentType: parsed.contentType } });
 	try {
 		const insert = database.insert(photo).values({ id, carId, objectKey, contentType: parsed.contentType, fileName: parsed.fileName, byteSize: parsed.file.size, sortOrder, isPrimary, createdAt: new Date().toISOString() });

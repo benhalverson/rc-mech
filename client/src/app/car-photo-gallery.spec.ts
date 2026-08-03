@@ -72,7 +72,7 @@ describe('CarPhotoGallery', () => {
     app.photos.set([first, second]);
     app.move(second, -1);
     const request = http.expectOne('/api/v1/cars/car-1/photos/reorder');
-    expect(request.request.method).toBe('POST');
+    expect(request.request.method).toBe('PATCH');
     expect(request.request.withCredentials).toBe(true);
     expect(request.request.body).toEqual({ photoIds: ['photo-2', 'photo-1'] });
     request.flush({ photos: [{ ...second, sortOrder: 0 }, { ...first, sortOrder: 1 }] });
