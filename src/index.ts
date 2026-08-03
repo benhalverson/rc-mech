@@ -7,11 +7,11 @@ import { db } from "./db";
 import { car, component, driveSession, maintenancePlan, serviceRecord } from "./schema";
 import { carInput, componentInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { configuredOrigin, hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
+import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.use("/api/*", async (c, next) => cors({ origin: (origin) => isAllowedOrigin(origin, c.env.APP_URL) ? configuredOrigin(c.env.APP_URL)! : "", credentials: true })(c, next));
+app.use("/api/*", async (c, next) => cors({ origin: (origin) => isAllowedOrigin(origin, c.env) ? origin! : "", credentials: true })(c, next));
 
 app.get("/api/openapi.json", (c) => c.json(openApi));
 app.get("/api/docs", Scalar({ url: "/api/openapi.json", pageTitle: "RC Mech API" }));
