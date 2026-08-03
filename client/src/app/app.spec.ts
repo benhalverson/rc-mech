@@ -37,12 +37,12 @@ describe('App', () => {
     });
     http.expectOne('/api/v1/cars').flush({ cars: [] });
     http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
-    http.expectOne('/api/v1/settings/timezone').flush({ timezone: 'America/Los_Angeles' });
+    http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'America/Los_Angeles' });
     fixture.detectChanges();
   };
 
   const flushDriveSessions = (sessions: unknown[] = []) => {
-    http.expectOne((request) => request.url === '/api/v1/cars/car-1/drives' && request.params.get('includeDeleted') === 'true')
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/drives' && request.params.get('history') === 'true')
       .flush({ driveSessions: sessions });
   };
 
@@ -137,7 +137,7 @@ describe('App', () => {
     await fixture.whenStable();
     http.expectOne('/api/v1/cars').flush({ cars: [] });
     http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
-    http.expectOne('/api/v1/settings/timezone').flush({ timezone: 'America/Los_Angeles' });
+    http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'America/Los_Angeles' });
     await fixture.whenStable();
   });
 
@@ -284,7 +284,7 @@ describe('App', () => {
     (fixture.componentInstance as any).timezoneForm.set('America/New_York');
     fixture.detectChanges();
     (fixture.nativeElement.querySelector('.timezone-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
-    const request = http.expectOne('/api/v1/settings/timezone');
+    const request = http.expectOne('/api/v1/preferences/timezone');
     expect(request.request.method).toBe('PATCH');
     expect(request.request.body).toEqual({ timezone: 'America/New_York' });
     request.flush({ timezone: 'America/New_York' });
@@ -369,7 +369,7 @@ describe('App', () => {
     expect(fixture.nativeElement.textContent).toContain('Opening the garage ledger');
     http.expectOne('/api/v1/cars').flush({ error: 'temporary failure' }, { status: 503, statusText: 'Unavailable' });
     http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
-    http.expectOne('/api/v1/settings/timezone').flush({ timezone: 'America/Los_Angeles' });
+    http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'America/Los_Angeles' });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.error-state')?.textContent).toContain('garage could not be loaded');
 

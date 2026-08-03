@@ -755,7 +755,7 @@ export class App {
     this.sessionState.set('loading');
     this.sessionError.set('');
     this.http.get<DriveSessionsResponse>(`/api/v1/cars/${carId}/drives`, {
-      withCredentials: true, params: { includeDeleted: 'true' },
+      withCredentials: true, params: { history: 'true' },
     }).subscribe({
       next: (response) => {
         this.driveSessions.set(response.driveSessions ?? response.sessions ?? []);
@@ -773,7 +773,7 @@ export class App {
 
   private loadTimezone(): void {
     this.timezoneState.set('loading');
-    this.http.get<TimezoneResponse>('/api/v1/settings/timezone', { withCredentials: true }).subscribe({
+    this.http.get<TimezoneResponse>('/api/v1/preferences/timezone', { withCredentials: true }).subscribe({
       next: (response) => {
         const value = response.timezone && this.isValidTimezone(response.timezone) ? response.timezone : defaultTimezone();
         this.timezone.set(value);
@@ -797,7 +797,7 @@ export class App {
     }
     this.timezoneState.set('saving');
     this.timezoneError.set('');
-    this.http.patch<TimezoneResponse>('/api/v1/settings/timezone', { timezone: value }, { withCredentials: true }).subscribe({
+    this.http.patch<TimezoneResponse>('/api/v1/preferences/timezone', { timezone: value }, { withCredentials: true }).subscribe({
       next: (response) => {
         const saved = response.timezone ?? value;
         this.timezone.set(saved);
