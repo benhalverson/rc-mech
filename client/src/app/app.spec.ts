@@ -37,7 +37,13 @@ describe('App', () => {
     });
     http.expectOne('/api/v1/cars').flush({ cars: [] });
     http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
+    http.expectOne('/api/v1/settings/timezone').flush({ timezone: 'America/Los_Angeles' });
     fixture.detectChanges();
+  };
+
+  const flushDriveSessions = (sessions: unknown[] = []) => {
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/drives' && request.params.get('includeDeleted') === 'true')
+      .flush({ driveSessions: sessions });
   };
 
   const workshopCar = {
@@ -131,6 +137,7 @@ describe('App', () => {
     await fixture.whenStable();
     http.expectOne('/api/v1/cars').flush({ cars: [] });
     http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
+    http.expectOne('/api/v1/settings/timezone').flush({ timezone: 'America/Los_Angeles' });
     await fixture.whenStable();
   });
 
@@ -186,6 +193,7 @@ describe('App', () => {
     (fixture.componentInstance as any).openCar(workshopCar);
     const request = http.expectOne((req) => req.url === '/api/v1/cars/car-1/components' && req.params.get('history') === 'true');
     request.flush({ components: [currentMotor, previousMotor], history: true });
+    flushDriveSessions();
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('Competition motor');
@@ -200,6 +208,7 @@ describe('App', () => {
     (fixture.componentInstance as any).cars.set([workshopCar]);
     (fixture.componentInstance as any).openCar(workshopCar);
     http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [], history: true });
+    flushDriveSessions();
     fixture.detectChanges();
 
     (fixture.componentInstance as any).openAddComponent();
@@ -220,12 +229,91 @@ describe('App', () => {
     expect(fixture.nativeElement.textContent).toContain('front-sway-bar');
   });
 
+  it('records, edits, archives, and counts drive sessions in the run log', () => {
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).cars.set([workshopCar]);
+    (fixture.componentInstance as any).openCar(workshopCar);
+    http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [], history: true });
+    flushDriveSessions();
+    fixture.detectChanges();
+
+    (fixture.nativeElement.querySelector('.session-log .section-heading .button') as HTMLButtonElement).click();
+    (fixture.componentInstance as any).sessionForm.set({
+      startedAt: '2026-08-03T10:30', durationMinutes: '45', conditions: 'Dry clay', notes: 'Rear grip felt good',
+    });
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.session-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+
+    const create = http.expectOne('/api/v1/cars/car-1/drives');
+    expect(create.request.method).toBe('POST');
+    expect(create.request.body).toEqual({
+      startedAt: '2026-08-03T17:30:00.000Z', durationMinutes: 45, conditions: 'Dry clay', notes: 'Rear grip felt good',
+    });
+    const saved = { id: 'drive-1', carId: 'car-1', startedAt: '2026-08-03T17:30:00.000Z', durationMinutes: 45, conditions: 'Dry clay', notes: 'Rear grip felt good', deletedAt: null };
+    create.flush({ driveSession: saved });
+    flushDriveSessions([saved]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('1 recorded session');
+    expect(fixture.nativeElement.textContent).toContain('Dry clay');
+    expect(fixture.nativeElement.textContent).toContain('Aug 3, 2026');
+
+    (fixture.nativeElement.querySelector('.session-row .text-button') as HTMLButtonElement).click();
+    (fixture.componentInstance as any).sessionForm.update((form: Record<string, string>) => ({ ...form, notes: 'Updated setup' }));
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.session-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+    const edit = http.expectOne('/api/v1/cars/car-1/drives/drive-1');
+    expect(edit.request.method).toBe('PATCH');
+    expect(edit.request.body.notes).toBe('Updated setup');
+    edit.flush({ driveSession: { ...saved, notes: 'Updated setup' } });
+    flushDriveSessions([{ ...saved, notes: 'Updated setup' }]);
+    fixture.detectChanges();
+
+    (fixture.nativeElement.querySelector('.session-row .danger') as HTMLButtonElement).click();
+    const remove = http.expectOne('/api/v1/cars/car-1/drives/drive-1');
+    expect(remove.request.method).toBe('DELETE');
+    remove.flush({ driveSession: { ...saved, deletedAt: '2026-08-03T18:00:00.000Z' } });
+    flushDriveSessions([{ ...saved, notes: 'Updated setup', deletedAt: '2026-08-03T18:00:00.000Z' }]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Archived from active history');
+  });
+
+  it('saves an IANA timezone and uses it for session display', () => {
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).timezoneForm.set('America/New_York');
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.timezone-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+    const request = http.expectOne('/api/v1/settings/timezone');
+    expect(request.request.method).toBe('PATCH');
+    expect(request.request.body).toEqual({ timezone: 'America/New_York' });
+    request.flush({ timezone: 'America/New_York' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('America/New_York');
+  });
+
+  it('keeps archived session history visible but blocks new sessions', () => {
+    createFixture();
+    showSignedIn();
+    const archivedCar = { ...workshopCar, archivedAt: '2026-08-03T00:00:00.000Z' };
+    (fixture.componentInstance as any).cars.set([archivedCar]);
+    (fixture.componentInstance as any).openCar(archivedCar);
+    http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [], history: true });
+    const archived = { id: 'drive-1', carId: 'car-1', startedAt: '2026-08-02T17:00:00.000Z', notes: 'Race day', deletedAt: null };
+    flushDriveSessions([archived]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Race day');
+    expect(fixture.nativeElement.textContent).toContain('new sessions cannot be recorded');
+    expect(fixture.nativeElement.querySelector('.session-log .section-heading .button')).toBeNull();
+  });
+
   it('edits current details and replaces through separate lifecycle endpoints', () => {
     createFixture();
     showSignedIn();
     (fixture.componentInstance as any).cars.set([workshopCar]);
     (fixture.componentInstance as any).openCar(workshopCar);
     http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [currentMotor, previousMotor], history: true });
+    flushDriveSessions();
 
     (fixture.componentInstance as any).openEditComponent(currentMotor);
     (fixture.componentInstance as any).componentForm.update((form: Record<string, string>) => ({ ...form, model: 'M3 Pro' }));
@@ -256,6 +344,7 @@ describe('App', () => {
     (fixture.componentInstance as any).cars.set([archivedCar]);
     (fixture.componentInstance as any).openCar(archivedCar);
     http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [currentMotor], history: true });
+    flushDriveSessions();
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('read-only while the car is archived');
@@ -280,6 +369,7 @@ describe('App', () => {
     expect(fixture.nativeElement.textContent).toContain('Opening the garage ledger');
     http.expectOne('/api/v1/cars').flush({ error: 'temporary failure' }, { status: 503, statusText: 'Unavailable' });
     http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
+    http.expectOne('/api/v1/settings/timezone').flush({ timezone: 'America/Los_Angeles' });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.error-state')?.textContent).toContain('garage could not be loaded');
 
@@ -383,6 +473,7 @@ describe('App', () => {
     const historyRequest = http.expectOne((request) =>
       request.url === '/api/v1/cars/car-1/components' && request.params.get('history') === 'true');
     historyRequest.flush({ components: [current, previous] });
+    flushDriveSessions();
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('.component-current')?.textContent).toContain('Tekin');

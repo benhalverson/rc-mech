@@ -177,6 +177,50 @@
               </div>
             }
           </section>
+
+          <section class="session-log" aria-labelledby="session-log-title">
+            <div class="section-heading">
+              <div>
+                <div class="eyebrow">Drive history</div>
+                <h4 id="session-log-title">The run log</h4>
+              </div>
+              <div class="session-summary"><strong>{{ sessionCount() }}</strong> recorded {{ sessionCount() === 1 ? 'session' : 'sessions' }}</div>
+              @if (!car.archivedAt && !sessionEditing()) { <button class="button quiet" type="button" (click)="openAddSession()">Record a drive</button> }
+            </div>
+            <p class="section-intro">Keep the date, conditions, and notes that make future usage-based maintenance useful.</p>
+            @if (car.archivedAt) { <p class="archive-note">This car is archived. Its drive history remains available, but new sessions cannot be recorded.</p> }
+            @if (sessionEditing()) {
+              <form class="session-form" (ngSubmit)="saveSession()" aria-labelledby="session-form-title">
+                <div class="eyebrow">{{ sessionMode() === 'edit' ? 'Edit drive session' : 'New drive session' }}</div>
+                <h5 id="session-form-title">{{ sessionMode() === 'edit' ? 'Tune the run record.' : 'Mark another day on the track.' }}</h5>
+                @if (sessionFormError()) { <p class="message" role="alert">{{ sessionFormError() }}</p> }
+                <div class="form-grid">
+                  <label>Started <input name="session-started-at" type="datetime-local" required [ngModel]="sessionForm().startedAt" (ngModelChange)="updateSessionField('startedAt', $event)" /></label>
+                  <label>Duration (minutes) <input name="session-duration" type="number" min="1" max="1440" step="1" placeholder="Optional" [ngModel]="sessionForm().durationMinutes" (ngModelChange)="updateSessionField('durationMinutes', $event)" /></label>
+                  <label class="wide">Conditions <input name="session-conditions" maxlength="1000" placeholder="Dry clay, cool evening…" [ngModel]="sessionForm().conditions" (ngModelChange)="updateSessionField('conditions', $event)" /></label>
+                  <label class="wide">Notes <textarea name="session-notes" maxlength="4000" rows="4" placeholder="What should the next run know?" [ngModel]="sessionForm().notes" (ngModelChange)="updateSessionField('notes', $event)"></textarea></label>
+                </div>
+                <p class="hint">Saved in <strong>{{ timezone() }}</strong>. The same timezone will be used on every device.</p>
+                <div class="form-actions"><button class="button" type="submit" [disabled]="sessionAction() !== null">{{ sessionAction() === 'add' ? 'Recording…' : sessionAction() === 'edit' ? 'Saving…' : 'Save session' }}</button><button class="button quiet" type="button" (click)="cancelSessionEdit()" [disabled]="sessionAction() !== null">Cancel</button></div>
+              </form>
+            } @else if (sessionState() === 'loading') {
+              <div class="state-card session-state" aria-live="polite"><span class="state-mark">•••</span><p>Opening the run log…</p></div>
+            } @else if (sessionState() === 'error') {
+              <div class="state-card error-state session-state" role="alert"><span class="state-mark">!</span><p>{{ sessionError() }}</p><button class="text-button" type="button" (click)="retryDriveSessions()">Try again</button></div>
+            } @else if (!driveSessions().length) {
+              <div class="state-card empty-state session-state"><span class="state-mark">＋</span><h5>No drive sessions recorded</h5><p>Start the run log when this car leaves the bench.</p>@if (!car.archivedAt) { <button class="button" type="button" (click)="openAddSession()">Record the first drive</button> }</div>
+            } @else {
+              <div class="session-list" aria-label="Drive session history">
+                @for (session of driveSessions(); track session.id) {
+                  <article class="session-row" [class.session-deleted]="session.deletedAt">
+                    <div class="session-date"><time [attr.datetime]="session.startedAt">{{ session.startedAt | date:'EEE, MMM d, y':timezone() }}</time><span>{{ session.startedAt | date:'h:mm a':timezone() }} · {{ timezone() }}</span></div>
+                    <div class="session-detail"><strong>{{ session.conditions || 'Conditions not recorded' }}</strong>@if (session.durationMinutes) { <span>{{ session.durationMinutes }} min</span> }@if (session.notes) { <p>{{ session.notes }}</p> }@if (session.deletedAt) { <span class="deleted-label">Archived from active history</span> }</div>
+                    @if (!session.deletedAt && !car.archivedAt) { <div class="row-actions"><button class="text-button" type="button" (click)="openEditSession(session)">Edit</button><button class="text-button danger" type="button" (click)="deleteSession(session)" [disabled]="sessionAction() !== null">{{ sessionAction() === 'delete:' + session.id ? 'Archiving…' : 'Archive' }}</button></div> }
+                  </article>
+                }
+              </div>
+            }
+          </section>
         </article>
       } @else {
         <div class="state-card empty-state"><h3>Choose a car or add one.</h3><p>The garage detail view keeps the record and its lifecycle in one place.</p><button class="button" type="button" (click)="openCreateCar()">Add a car</button></div>
@@ -184,7 +228,25 @@
     </section>
 
     <section class="security-panel" aria-labelledby="passkeys-title">
-      <div class="section-heading">
+      <div class="section-heading" aria-labelledby="timezone-title">
+        <div>
+          <div class="eyebrow">Display settings</div>
+          <h2 id="timezone-title">Garage timezone</h2>
+        </div>
+        <span class="security-note">Used for every run date</span>
+      </div>
+      <p class="section-intro">Choose the IANA timezone where you keep this garage. Dates stay consistent when you open RC Mech on another device.</p>
+      <form class="timezone-form" (ngSubmit)="saveTimezone()">
+        <label for="garage-timezone">IANA timezone</label>
+        <div class="inline-form">
+          <input id="garage-timezone" name="garage-timezone" type="text" required maxlength="80" placeholder="America/Los_Angeles" [ngModel]="timezoneForm()" (ngModelChange)="updateTimezone($event)" [disabled]="timezoneState() === 'saving'" />
+          <button class="button" type="submit" [disabled]="timezoneState() === 'loading' || timezoneState() === 'saving'">{{ timezoneState() === 'saving' ? 'Saving…' : 'Save timezone' }}</button>
+        </div>
+      </form>
+      @if (timezoneError()) { <p class="hint" role="alert">{{ timezoneError() }}</p> }
+      @if (timezoneState() === 'ready') { <p class="hint" role="status">Currently displaying dates in <strong>{{ timezone() }}</strong>.</p> }
+
+      <div class="section-heading passkey-heading">
         <div>
           <div class="eyebrow">Owner access</div>
           <h2 id="passkeys-title">Passkeys</h2>
