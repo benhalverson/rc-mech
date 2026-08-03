@@ -151,11 +151,16 @@ export class CarPhotoGallery {
   private persistOrder(photos: CarPhoto[]): void {
     this.action.set('reorder');
     this.error.set('');
-    const requests = photos.map((photo, position) => this.http.patch<PhotoResponse>(this.photoEndpoint(photo), { sortOrder: position }, { withCredentials: true }));
     // Keep the new order visible immediately, then roll back if any owner-scoped update fails.
     const previous = this.photos();
-    this.photos.set(photos.map((photo, position) => ({ ...photo, sortOrder: position })));
-    Promise.all(requests.map((request) => firstValueFrom(request))).then(() => this.action.set(null)).catch((error: { status?: number }) => {
+    const optimistic = photos.map((photo, position) => ({ ...photo, sortOrder: position }));
+    this.photos.set(optimistic);
+    firstValueFrom(this.http.post<PhotosResponse>(`/api/v1/cars/${this.carId()}/photos/reorder`, {
+      photoIds: photos.map((photo) => photo.id),
+    }, { withCredentials: true })).then(({ photos: saved }) => {
+      this.photos.set(saved?.length ? this.ordered(saved) : optimistic);
+      this.action.set(null);
+    }).catch((error: { status?: number }) => {
       this.photos.set(previous);
       this.fail(error, 'The photo order could not be saved.');
     });

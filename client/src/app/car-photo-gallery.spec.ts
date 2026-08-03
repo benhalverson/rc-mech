@@ -65,16 +65,17 @@ describe('CarPhotoGallery', () => {
     expect(fixture.nativeElement.textContent).toContain('session has expired');
   });
 
-  it('reorders photos through authenticated per-photo updates', async () => {
+  it('reorders the complete gallery through one authenticated atomic request', async () => {
     const app = fixture.componentInstance as any;
     const first = { id: 'photo-1', carId: 'car-1', objectKey: 'one.webp', contentType: 'image/webp', createdAt: '2026-08-03T00:00:00Z', sortOrder: 0 };
     const second = { id: 'photo-2', carId: 'car-1', objectKey: 'two.webp', contentType: 'image/webp', createdAt: '2026-08-03T00:00:00Z', sortOrder: 1 };
     app.photos.set([first, second]);
     app.move(second, -1);
-    const requests = http.match((request) => request.method === 'PATCH');
-    expect(requests).toHaveLength(2);
-    expect(requests.map((request) => request.request.body)).toEqual([{ sortOrder: 0 }, { sortOrder: 1 }]);
-    requests.forEach((request) => request.flush({ photo: request.request.url.includes('photo-2') ? { ...second, sortOrder: 0 } : { ...first, sortOrder: 1 } }));
+    const request = http.expectOne('/api/v1/cars/car-1/photos/reorder');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.withCredentials).toBe(true);
+    expect(request.request.body).toEqual({ photoIds: ['photo-2', 'photo-1'] });
+    request.flush({ photos: [{ ...second, sortOrder: 0 }, { ...first, sortOrder: 1 }] });
     await Promise.resolve();
     expect(app.photos()[0].id).toBe('photo-2');
   });
