@@ -8,7 +8,7 @@ import { car, component, driveSession, maintenancePlan, serviceRecord } from "./
 import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
 import { carListMode, canArchive, canRestore, canWrite, ownsCar } from "./car-policy";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
-import { STANDARD_COMPONENT_SLOTS, componentSlotType, normalizeComponentSlot } from "./component-policy";
+import { STANDARD_COMPONENT_SLOTS, canEditComponent, componentSlotType, normalizeComponentSlot } from "./component-policy";
 import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
 
 const app = new Hono<AppEnv>();
@@ -200,6 +200,7 @@ app.patch("/api/v1/cars/:carId/components/:componentId", async (c) => {
 	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
 	const existing = await ownedComponent(c, carId, componentId);
 	if (!existing) return c.json({ error: "Component not found" }, 404);
+	if (!canEditComponent(existing.removedAt)) return c.json({ error: "Historical component installations are immutable" }, 409);
 	await db(c.env).update(component).set({
 		name: parsed.data.name,
 		manufacturer: parsed.data.manufacturer,

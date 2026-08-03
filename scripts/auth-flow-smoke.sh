@@ -137,6 +137,11 @@ replacement_id="$(jq -r '.component.id' "$response_file")"
 [[ "$replacement_id" != "$component_id" ]]
 jq -e '.previous.removedAt != null and .component.slot == "motor" and .component.removedAt == null' "$response_file" >/dev/null
 
+historical_update_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X PATCH \
+  "$base/api/v1/cars/${car_id}/components/${component_id}" -H 'Content-Type: application/json' \
+  --data '{"notes":"history must not change"}')"
+[[ "$historical_update_status" == "409" ]]
+
 component_history_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' \
   "$base/api/v1/cars/${car_id}/components?history=true")"
 [[ "$component_history_status" == "200" ]]

@@ -135,14 +135,14 @@
               <form class="component-form" (ngSubmit)="saveComponent()" aria-labelledby="component-form-title">
                 <div class="eyebrow">{{ componentMode() === 'replace' ? 'Replacement installation' : componentMode() === 'edit' ? 'Edit installation' : 'New installation' }}</div>
                 <h5 id="component-form-title">{{ componentMode() === 'replace' ? 'Fit the replacement.' : componentMode() === 'edit' ? 'Update the build record.' : 'Add a component.' }}</h5>
-                <p class="hint">Use a standard slot or type a custom slot name. Saving an existing slot records a new installation and keeps the previous one in history.</p>
+                @if (componentMode() === 'edit') { <p class="hint">Update the installation details without changing its slot.</p> } @else { <p class="hint">Use a standard slot or type a custom slot name. Saving an existing slot records a new installation and keeps the previous one in history.</p> }
                 @if (componentFormError()) { <p class="message" role="alert">{{ componentFormError() }}</p> }
                 <div class="form-grid">
-                  <label>Slot type <select name="component-slot-type" [ngModel]="componentForm().slotType" (ngModelChange)="updateComponentField('slotType', $event)"><option value="standard">Standard slot</option><option value="custom">Custom slot</option></select></label>
+                  <label>Slot type <select name="component-slot-type" [disabled]="componentMode() === 'edit'" [ngModel]="componentForm().slotType" (ngModelChange)="updateComponentField('slotType', $event)"><option value="standard">Standard slot</option><option value="custom">Custom slot</option></select></label>
                   @if (componentForm().slotType === 'standard') {
-                    <label>Standard slot <select name="component-slot" required [ngModel]="componentForm().slot" (ngModelChange)="updateComponentField('slot', $event)">@for (slot of standardComponentSlots; track slot) { <option [value]="slot">{{ slot }}</option> }</select></label>
+                    <label>Standard slot <select name="component-slot" required [disabled]="componentMode() === 'edit'" [ngModel]="componentForm().slot" (ngModelChange)="updateComponentField('slot', $event)">@for (slot of standardComponentSlots; track slot) { <option [value]="slot">{{ slot }}</option> }</select></label>
                   } @else {
-                    <label>Custom slot <input name="component-slot" required maxlength="80" placeholder="Front sway bar…" [ngModel]="componentForm().slot" (ngModelChange)="updateComponentField('slot', $event)" /></label>
+                    <label>Custom slot <input name="component-slot" required maxlength="80" placeholder="Front sway bar…" [disabled]="componentMode() === 'edit'" [ngModel]="componentForm().slot" (ngModelChange)="updateComponentField('slot', $event)" /></label>
                   }
                   <label>Component identity <input name="component-name" required maxlength="160" placeholder="Power system" [ngModel]="componentForm().name" (ngModelChange)="updateComponentField('name', $event)" /></label>
                   <label>Manufacturer <input name="component-manufacturer" maxlength="120" placeholder="Hobbywing" [ngModel]="componentForm().manufacturer" (ngModelChange)="updateComponentField('manufacturer', $event)" /></label>
