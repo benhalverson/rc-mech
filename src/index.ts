@@ -607,7 +607,7 @@ app.delete("/api/v1/service-records/:recordId", async (c) => {
 		database.update(serviceRecord).set({ deletedAt }).where(and(eq(serviceRecord.id, record.id), isNull(serviceRecord.deletedAt))),
 		...(shouldRestoreBaseline(record, plan) && plan ? [database.update(maintenancePlan).set({ baselineAt: record.previousBaselineAt!, baselineSessionCount: record.previousBaselineSessionCount ?? 0 }).where(and(eq(maintenancePlan.id, plan.id), eq(maintenancePlan.baselineAt, record.baselineAt)))] : []),
 	]);
-	return c.json({ serviceRecord: { ...record, deletedAt } });
+	return c.json({ serviceRecord: { ...record, deletedAt }, maintenancePlan: plan ? await db(c.env).select().from(maintenancePlan).where(eq(maintenancePlan.id, plan.id)).get() : undefined });
 });
 
 app.post("/api/v1/service-records/:recordId/restore", async (c) => {
@@ -620,9 +620,9 @@ app.post("/api/v1/service-records/:recordId/restore", async (c) => {
 	const plan = record.planId ? await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
 	await database.batch([
 		database.update(serviceRecord).set({ deletedAt: null }).where(and(eq(serviceRecord.id, record.id), isNotNull(serviceRecord.deletedAt))),
-		...(plan && record.baselineAt ? [database.update(maintenancePlan).set({ baselineAt: record.baselineAt, baselineSessionCount: record.baselineSessionCount ?? 0 }).where(eq(maintenancePlan.id, plan.id))] : []),
+		...(plan && record.previousBaselineAt && plan.baselineAt === record.previousBaselineAt ? [database.update(maintenancePlan).set({ baselineAt: record.baselineAt, baselineSessionCount: record.baselineSessionCount ?? 0 }).where(and(eq(maintenancePlan.id, plan.id), eq(maintenancePlan.baselineAt, record.previousBaselineAt)))] : []),
 	]);
-	return c.json({ serviceRecord: await database.select().from(serviceRecord).where(eq(serviceRecord.id, record.id)).get() });
+	return c.json({ serviceRecord: await database.select().from(serviceRecord).where(eq(serviceRecord.id, record.id)).get(), maintenancePlan: plan ? await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, plan.id)).get() : undefined });
 });
 
 app.get("/api/v1/photos/:key{.+}", async (c) => {

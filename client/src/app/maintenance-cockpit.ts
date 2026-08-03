@@ -28,7 +28,7 @@ export type MaintenancePlan = {
 };
 
 export type MaintenanceActivity = { id: string; planId?: string; action: string; occurredAt: string; note?: string | null };
-export type ServiceRecord = { id: string; carId: string; componentId?: string | null; planId?: string | null; performedAt: string; description: string; cost?: number | null; currency?: string | null; deletedAt?: string | null };
+export type ServiceRecord = { id: string; carId: string; componentId?: string | null; planId?: string | null; performedAt: string; description: string; notes?: string | null; cost?: number | null; currency?: string | null; deletedAt?: string | null };
 export type PlanState = 'upcoming' | 'due' | 'overdue' | 'paused' | 'archived';
 
 export type MaintenanceForm = {
@@ -42,7 +42,7 @@ export type MaintenanceForm = {
   baselineRuns: string;
 };
 
-export type ServiceForm = { carId: string; componentId: string; performedAt: string; description: string; cost: string; currency: string };
+export type ServiceForm = { carId: string; componentId: string; performedAt: string; description: string; notes: string; cost: string; currency: string };
 
 type PlansResponse = { maintenancePlans?: MaintenancePlan[]; plans?: MaintenancePlan[]; activity?: MaintenanceActivity[] };
 type ComponentsResponse = { components: MaintenanceComponent[] };
@@ -50,7 +50,7 @@ type PlanResponse = { maintenancePlan: MaintenancePlan };
 type ServiceRecordsResponse = { serviceRecords?: ServiceRecord[] };
 
 const emptyForm = (): MaintenanceForm => ({ carId: '', componentId: '', name: '', calendarValue: '', calendarUnit: 'weeks', runInterval: '', baselineAt: '', baselineRuns: '0' });
-const emptyServiceForm = (): ServiceForm => ({ carId: '', componentId: '', performedAt: '', description: '', cost: '', currency: 'USD' });
+const emptyServiceForm = (): ServiceForm => ({ carId: '', componentId: '', performedAt: '', description: '', notes: '', cost: '', currency: 'USD' });
 
 export const calendarDays = (value: number, unit: MaintenanceForm['calendarUnit']): number => unit === 'weeks' ? value * 7 : unit === 'months' ? value * 30 : value;
 
@@ -159,7 +159,7 @@ export class MaintenanceCockpit {
 
   protected openServiceEdit(record: ServiceRecord): void {
     if (this.isRecordReadOnly(record)) return;
-    this.serviceForm.set({ carId: record.carId, componentId: record.componentId ?? '', performedAt: this.localDateTime(new Date(record.performedAt)), description: record.description, cost: record.cost == null ? '' : String(record.cost), currency: record.currency ?? 'USD' });
+    this.serviceForm.set({ carId: record.carId, componentId: record.componentId ?? '', performedAt: this.localDateTime(new Date(record.performedAt)), description: record.description, notes: record.notes ?? '', cost: record.cost == null ? '' : String(record.cost), currency: record.currency ?? 'USD' });
     this.serviceEditingId.set(record.id); this.servicePlanId.set(record.planId ?? null); this.serviceError.set(''); this.loadComponents(record.carId); this.serviceEditing.set(true);
   }
 
@@ -178,7 +178,7 @@ export class MaintenanceCockpit {
     if (!form.carId || !form.description.trim() || !form.performedAt) { this.serviceError.set('Choose a car, date, and a short description.'); return; }
     if (cost !== null && (!Number.isFinite(cost) || cost < 0)) { this.serviceError.set('Cost must be zero or greater.'); return; }
     if (this.serviceAction()) return;
-    const payload = { performedAt: this.toIso(form.performedAt), description: form.description.trim(), componentId: form.componentId || undefined, cost, currency: form.currency.trim().toUpperCase() || 'USD' };
+    const payload = { performedAt: this.toIso(form.performedAt), description: form.description.trim(), notes: (form.notes ?? '').trim(), componentId: form.componentId || undefined, ...(cost === null ? {} : { cost, currency: form.currency.trim().toUpperCase() || 'USD' }) };
     const recordId = this.serviceEditingId(); const planId = this.servicePlanId();
     this.serviceAction.set(recordId ? 'edit' : planId ? 'complete' : 'create'); this.serviceError.set('');
     const request = recordId ? this.http.patch<{ serviceRecord: ServiceRecord }>(`/api/v1/service-records/${recordId}`, payload, { withCredentials: true }) : planId ? this.http.post<{ serviceRecord: ServiceRecord; maintenancePlan: MaintenancePlan }>(`/api/v1/maintenance-plans/${planId}/complete`, payload, { withCredentials: true }) : this.http.post<{ serviceRecord: ServiceRecord }>(`/api/v1/cars/${form.carId}/service-records`, payload, { withCredentials: true });
@@ -211,12 +211,12 @@ export class MaintenanceCockpit {
   protected deleteService(record: ServiceRecord): void {
     if (this.isRecordReadOnly(record) || this.serviceAction()) return;
     this.serviceAction.set(`delete:${record.id}`);
-    this.http.delete(`/api/v1/service-records/${record.id}`, { withCredentials: true }).subscribe({ next: (response: any) => { const deleted = response.serviceRecord as ServiceRecord; this.serviceRecords.update((records) => records.map((item) => item.id === record.id ? deleted : item)); this.serviceAction.set(null); }, error: () => { this.serviceAction.set(null); this.serviceError.set('That service record could not be archived.'); } });
+    this.http.delete(`/api/v1/service-records/${record.id}`, { withCredentials: true }).subscribe({ next: (response: any) => { const deleted = response.serviceRecord as ServiceRecord; this.serviceRecords.update((records) => records.map((item) => item.id === record.id ? deleted : item)); if (response.maintenancePlan) this.plans.update((plans) => plans.map((item) => item.id === response.maintenancePlan.id ? response.maintenancePlan : item)); this.serviceAction.set(null); }, error: () => { this.serviceAction.set(null); this.serviceError.set('That service record could not be archived.'); } });
   }
 
   protected restoreService(record: ServiceRecord): void {
     this.serviceAction.set(`restore:${record.id}`);
-    this.http.post<{ serviceRecord: ServiceRecord }>(`/api/v1/service-records/${record.id}/restore`, {}, { withCredentials: true }).subscribe({ next: ({ serviceRecord: restored }) => { this.serviceRecords.update((records) => records.map((item) => item.id === record.id ? restored : item)); this.serviceAction.set(null); }, error: () => { this.serviceAction.set(null); this.serviceError.set('That service record could not be restored.'); } });
+    this.http.post<{ serviceRecord: ServiceRecord; maintenancePlan?: MaintenancePlan }>(`/api/v1/service-records/${record.id}/restore`, {}, { withCredentials: true }).subscribe({ next: ({ serviceRecord: restored, maintenancePlan }) => { this.serviceRecords.update((records) => records.map((item) => item.id === record.id ? restored : item)); if (maintenancePlan) this.plans.update((plans) => plans.map((item) => item.id === maintenancePlan.id ? maintenancePlan : item)); this.serviceAction.set(null); }, error: () => { this.serviceAction.set(null); this.serviceError.set('That service record could not be restored.'); } });
   }
 
   protected undoActivity(item: MaintenanceActivity): void {
