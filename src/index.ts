@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { Scalar } from "@scalar/hono-api-reference";
 import { z } from "zod";
 import { createAuth } from "./auth";
 import { db } from "./db";
@@ -10,7 +11,8 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", cors({ origin: (origin) => origin ?? "", credentials: true }));
 
 app.get("/api/openapi.json", (c) => c.json(openApi));
-app.get("/api/docs", (c) => c.html(docsHtml));
+app.get("/api/docs", Scalar({ url: "/api/openapi.json", pageTitle: "RC Mech API" }));
+app.get("/docs", (c) => c.redirect("/api/docs"));
 
 app.on(["GET", "POST"], "/api/auth/*", async (c) => createAuth(c.env).handler(c.req.raw));
 
@@ -95,4 +97,3 @@ app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 export default app;
 
 const openApi = { openapi: "3.1.0", info: { title: "RC Mech API", version: "0.1.0" }, paths: { "/api/v1/cars": { get: { summary: "List active cars" }, post: { summary: "Add a car" } }, "/api/v1/cars/{carId}/components": { post: { summary: "Install or replace a component" } }, "/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session" } }, "/api/v1/cars/{carId}/service-records": { post: { summary: "Record service" } }, "/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan" } } } };
-const docsHtml = `<!doctype html><html><head><title>RC Mech API</title></head><body><h1>RC Mech API</h1><p>Authenticated garage, component, drive-session, maintenance, service, and private-photo endpoints.</p><p><a href="/api/openapi.json">OpenAPI JSON</a></p></body></html>`;
