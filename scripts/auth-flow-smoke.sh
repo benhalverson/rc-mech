@@ -10,18 +10,27 @@ response_file="$(mktemp)"
 headers_file="$(mktemp)"
 
 cleanup() {
-  if [[ -n "${worker_pid:-}" ]]; then kill "$worker_pid" 2>/dev/null || true; fi
+  if [[ -n "${worker_pid:-}" ]]; then
+    kill -TERM -- "-$worker_pid" 2>/dev/null || true
+    wait "$worker_pid" 2>/dev/null || true
+  fi
   rm -f "$log_file" "$cookie_file" "$response_file" "$headers_file"
 }
 trap cleanup EXIT
 
-pnpm exec wrangler dev --env local --port "$port" --var "APP_URL:${base}" --var "OWNER_EMAIL:owner@example.com" --var "MAGIC_LINK_TEST_TOKEN:${token}" >"$log_file" 2>&1 &
+if curl -fsS "$base/api/v1/health" >/dev/null 2>&1; then
+  echo "port ${port} is already in use" >&2
+  exit 1
+fi
+
+setsid pnpm exec wrangler dev --env local --port "$port" --var "APP_URL:${base}" --var "OWNER_EMAIL:owner@example.com" --var "MAGIC_LINK_TEST_TOKEN:${token}" >"$log_file" 2>&1 &
 worker_pid=$!
 
 for _ in {1..40}; do
-  if curl -fsS "$base/api/v1/health" >/dev/null 2>&1; then break; fi
+  if grep -q "Ready on http://localhost:${port}" "$log_file" && curl -fsS "$base/api/v1/health" >/dev/null 2>&1; then break; fi
   sleep 0.25
 done
+grep -q "Ready on http://localhost:${port}" "$log_file"
 curl -fsS "$base/api/v1/health" >/dev/null
 
 request_status="$(curl -sS -o "$response_file" -w '%{http_code}' "$base/api/auth/sign-in/magic-link" \
