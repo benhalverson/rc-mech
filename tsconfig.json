@@ -25,6 +25,6 @@
 			"@types/service-worker-mock"
 		]
 	},
-	"exclude": ["node_modules", "dist", "tests"],
+	"exclude": ["node_modules", "dist", "tests", "client"],
 	"include": ["src", "worker-configuration.d.ts"]
 }

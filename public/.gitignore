@@ -1,0 +1,4 @@
+# Angular writes the deployable Worker assets here during build.
+*
+!.gitignore
+!.gitkeep

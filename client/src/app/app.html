@@ -1,0 +1,31 @@
+<main>
+  <header>
+    <div>
+      <div class="eyebrow">RC Mech / Field notebook</div>
+      <h1>Garage control<br />for the next run.</h1>
+      <p class="stamp">OWNER ACCESS · PASSKEY FIRST · PRIVATE BY DEFAULT</p>
+    </div>
+    <a class="button" href="/api/docs">API notes ↗</a>
+  </header>
+
+  <section class="grid" aria-label="Garage summary">
+    <article class="card">
+      <div class="number">{{ activeCars() }}</div>
+      <div class="label">Active cars</div>
+    </article>
+    <article class="card">
+      <div class="number">READY</div>
+      <div class="label">Maintenance cockpit</div>
+    </article>
+    <article class="card">
+      <div class="number">7d</div>
+      <div class="label">Session window</div>
+    </article>
+  </section>
+
+  <section class="workbench">
+    <div class="eyebrow">Today’s workbench</div>
+    <h2>Keep the machine honest.</h2>
+    <p>Track installed components, drive sessions, maintenance baselines, and service history without losing the story of a build.</p>
+  </section>
+</main>

@@ -3,13 +3,17 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
+    "deploy": "pnpm client:build && wrangler deploy",
+    "client:build": "pnpm --dir client build",
+    "client:watch": "pnpm --dir client watch",
+    "worker:dev": "wrangler dev",
+    "dev": "concurrently --kill-others-on-fail \"pnpm client:watch\" \"pnpm worker:dev\"",
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "check": "tsc --noEmit && wrangler deploy --dry-run"
+    "check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
+    "check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.6.25",
@@ -25,6 +29,7 @@
     "@cloudflare/workers-types": "^5.20260801.1",
     "@types/node": "22.13.0",
     "@types/service-worker-mock": "^2.0.4",
+    "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
     "typescript": "^7.0.2",
     "wrangler": "^4.118.0"

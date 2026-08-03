@@ -7,10 +7,10 @@ This is an example project made to be used as a quick start into building OpenAP
 
 ## Get started
 
-1. Install dependencies with `pnpm install`.
+1. Install dependencies with `pnpm install --frozen-lockfile`.
 2. Generate bindings with `pnpm cf-typegen`.
 3. Apply the local D1 migration with `pnpm db:migrate:local`.
-4. Start the dashboard and API with `pnpm dev`.
+4. Start Angular watch mode and the Worker together with `pnpm dev`.
 
 ## Project structure
 
@@ -18,4 +18,19 @@ The domain terms are defined in [CONTEXT.md](./CONTEXT.md). Architectural choice
 
 ## Development
 
-Run `pnpm check` before publishing. Set `BETTER_AUTH_SECRET` as a Worker secret for deployed environments; local development uses the documented development fallback.
+The Angular CLI workspace lives in `client/`. Its production build writes directly to `public/`, the directory configured as the Worker static-assets directory. Angular source is excluded from the root Worker TypeScript compilation.
+
+Use `pnpm client:build` for a production build, `pnpm client:watch` while developing the dashboard, `pnpm worker:dev` for Wrangler local development, and `pnpm check:client` for the client build check. The normal `pnpm dev` command runs the Angular watcher and Wrangler together. The browser shell makes same-origin requests to the Worker API.
+
+Worker routing owns `/api/docs`, `/api/openapi.json`, `/api/auth/*`, and `/api/v1/*`. Unknown API paths return JSON `404` responses. Non-API paths fall through to `env.ASSETS.fetch()`, including Angular's normal asset fallback for unknown browser paths.
+
+The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). It is intentionally a no-op in local development when the binding is unavailable, and is not connected to magic-link delivery yet; issue #3 owns delivery, owner allowlisting, expiry, and sessions. Do not commit sender or owner addresses.
+
+For local database work, use `pnpm db:migrate:local`. To inspect or reset local D1, use Wrangler's local commands, for example `pnpm exec wrangler d1 migrations list DB --local`. This issue intentionally keeps the existing `rc-mech-photos` R2 bucket binding and placeholder D1 ID; it does not provision remote resources. Issue #11 should create the production resources and replace the placeholder with commands such as:
+
+```sh
+pnpm exec wrangler d1 create rc-mech
+pnpm exec wrangler r2 bucket create rc-mech-photos
+```
+
+Set `BETTER_AUTH_SECRET` as a Worker secret for deployed environments; local development uses the documented development fallback.
