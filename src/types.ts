@@ -27,11 +27,24 @@ export const carUpdateInput = z.object({
 }).refine((value) => Object.keys(value).length > 0, "At least one car field is required");
 
 export const componentInput = z.object({
-	slot: z.string().min(1).max(80),
+	slot: z.string().trim().min(1).max(80),
+	slotType: z.enum(["standard", "custom"]).optional(),
 	name: z.string().min(1).max(160),
+	manufacturer: z.string().max(120).optional(),
+	model: z.string().max(120).optional(),
 	serialNumber: z.string().max(120).optional(),
 	notes: z.string().max(4000).optional(),
+	installedAt: z.string().datetime().optional(),
 });
+
+export const componentUpdateInput = z.object({
+	name: z.string().min(1).max(160).optional(),
+	manufacturer: z.string().max(120).optional(),
+	model: z.string().max(120).optional(),
+	serialNumber: z.string().max(120).optional(),
+	notes: z.string().max(4000).optional(),
+	installedAt: z.string().datetime().optional(),
+}).refine((value) => Object.keys(value).length > 0, "At least one component field is required");
 
 export const driveSessionInput = z.object({
 	carId: z.string().min(1),

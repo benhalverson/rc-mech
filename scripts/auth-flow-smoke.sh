@@ -11,7 +11,10 @@ headers_file="$(mktemp)"
 
 cleanup() {
   if [[ -n "${worker_pid:-}" ]]; then
+    kill -TERM "$worker_pid" 2>/dev/null || true
     kill -TERM -- "-$worker_pid" 2>/dev/null || true
+    pkill -TERM -f "wrangler dev --env local --port ${port} " 2>/dev/null || true
+    pkill -TERM -f "workerd serve.*socket-addr=entry=.*:${port}" 2>/dev/null || true
     wait "$worker_pid" 2>/dev/null || true
   fi
   rm -f "$log_file" "$cookie_file" "$response_file" "$headers_file"
@@ -91,6 +94,72 @@ active_after_restore_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w
 [[ "$active_after_restore_status" == "200" ]]
 jq -e --arg id "$car_id" '.cars[] | select(.id == $id)' "$response_file" >/dev/null
 
+component_create_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components" \
+  -H 'Content-Type: application/json' \
+  --data '{"slot":"motor","name":"Competition motor","manufacturer":"RC Mech","model":"M-1","serialNumber":"MOTOR-001","notes":"first installation"}')"
+[[ "$component_create_status" == "201" ]]
+component_id="$(jq -r '.component.id' "$response_file")"
+[[ -n "$component_id" && "$component_id" != "null" ]]
+jq -e '.component.slotType == "standard" and .component.manufacturer == "RC Mech" and .component.removedAt == null' "$response_file" >/dev/null
+
+custom_component_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components" \
+  -H 'Content-Type: application/json' \
+  --data '{"slot":"front sway bar","name":"Sway bar","slotType":"custom"}')"
+[[ "$custom_component_status" == "201" ]]
+custom_component_id="$(jq -r '.component.id' "$response_file")"
+jq -e '.component.slotType == "custom"' "$response_file" >/dev/null
+
+custom_reinstall_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components" \
+  -H 'Content-Type: application/json' \
+  --data '{"slot":"front sway bar","name":"Replacement sway bar","slotType":"custom"}')"
+[[ "$custom_reinstall_status" == "201" ]]
+custom_replacement_id="$(jq -r '.component.id' "$response_file")"
+[[ "$custom_replacement_id" != "$custom_component_id" ]]
+
+custom_history_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' \
+  "$base/api/v1/cars/${car_id}/components?history=true")"
+[[ "$custom_history_status" == "200" ]]
+jq -e --arg old "$custom_component_id" --arg current "$custom_replacement_id" \
+  '[.components[] | select(.id == $old or .id == $current)] | length == 2 and (map(select(.id == $old and .removedAt != null)) | length == 1) and (map(select(.id == $current and .removedAt == null)) | length == 1)' \
+  "$response_file" >/dev/null
+
+component_update_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -b "$cookie_file" -X PATCH \
+  "$base/api/v1/cars/${car_id}/components/${component_id}" -H 'Content-Type: application/json' \
+  --data '{"notes":"updated installation"}')"
+[[ "$component_update_status" == "200" ]]
+grep -q 'updated installation' "$response_file"
+
+component_replace_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST \
+  "$base/api/v1/cars/${car_id}/components/${component_id}/replace" -H 'Content-Type: application/json' \
+  --data '{"slot":"motor","name":"Replacement motor","manufacturer":"RC Mech","model":"M-2","serialNumber":"MOTOR-002"}')"
+[[ "$component_replace_status" == "201" ]]
+replacement_id="$(jq -r '.component.id' "$response_file")"
+[[ "$replacement_id" != "$component_id" ]]
+jq -e '.previous.removedAt != null and .component.slot == "motor" and .component.removedAt == null' "$response_file" >/dev/null
+
+component_history_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' \
+  "$base/api/v1/cars/${car_id}/components?history=true")"
+[[ "$component_history_status" == "200" ]]
+jq -e --arg old "$component_id" --arg current "$replacement_id" \
+  '[.components[] | select(.id == $old or .id == $current)] | length == 2 and (map(select(.id == $old and .removedAt != null)) | length == 1) and (map(select(.id == $current and .removedAt == null)) | length == 1)' \
+  "$response_file" >/dev/null
+
+current_motor_count="$(curl -fsS -b "$cookie_file" "$base/api/v1/cars/${car_id}/components" | jq '[.components[] | select(.slot == "motor" and .removedAt == null)] | length')"
+[[ "$current_motor_count" == "1" ]]
+
+archive_again_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/archive")"
+[[ "$archive_again_status" == "200" ]]
+archived_component_write_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST \
+  "$base/api/v1/cars/${car_id}/components" -H 'Content-Type: application/json' --data '{"slot":"battery","name":"Battery"}')"
+[[ "$archived_component_write_status" == "409" ]]
+archived_component_update_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH \
+  "$base/api/v1/cars/${car_id}/components/${replacement_id}" -H 'Content-Type: application/json' --data '{"name":"No edit"}')"
+[[ "$archived_component_update_status" == "409" ]]
+archived_component_replace_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST \
+  "$base/api/v1/cars/${car_id}/components/${replacement_id}/replace" -H 'Content-Type: application/json' --data '{"slot":"motor","name":"No replacement"}')"
+[[ "$archived_component_replace_status" == "409" ]]
+curl -fsS -b "$cookie_file" -X POST "$base/api/v1/cars/${car_id}/restore" >/dev/null
+
 other_owner_id="smoke-owner-${BASHPID}"
 other_session_id="smoke-session-${BASHPID}"
 other_session_token="smoke-owner-session-${BASHPID}-0123456789abcdef"
@@ -104,6 +173,16 @@ other_list_status="$(curl -sS -o "$response_file" -H "Cookie: ${other_cookie}" -
 ! jq -e --arg id "$car_id" '.cars[] | select(.id == $id)' "$response_file" >/dev/null
 other_detail_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}")"
 [[ "$other_detail_status" == "404" ]]
+other_component_list_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components")"
+[[ "$other_component_list_status" == "404" ]]
+other_component_detail_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components/${replacement_id}")"
+[[ "$other_component_detail_status" == "404" ]]
+other_component_update_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' -X PATCH \
+  "$base/api/v1/cars/${car_id}/components/${replacement_id}" -H 'Content-Type: application/json' --data '{"name":"should not change"}')"
+[[ "$other_component_update_status" == "404" ]]
+other_component_replace_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' -X POST \
+  "$base/api/v1/cars/${car_id}/components/${replacement_id}/replace" -H 'Content-Type: application/json' --data '{"slot":"motor","name":"should not replace"}')"
+[[ "$other_component_replace_status" == "404" ]]
 other_update_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' -X PATCH "$base/api/v1/cars/${car_id}" \
   -H 'Content-Type: application/json' --data '{"name":"should not change"}')"
 [[ "$other_update_status" == "404" ]]
