@@ -5,11 +5,12 @@ import { z } from "zod";
 import { createAuth } from "./auth";
 import { db } from "./db";
 import { car, component, driveSession, maintenancePlan, serviceRecord } from "./schema";
-import { carInput, componentInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
+import { carListMode, canArchive, canRestore, ownsCar } from "./car-policy";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppEnv>();
 
 app.use("/api/*", async (c, next) => cors({ origin: (origin) => isAllowedOrigin(origin, c.env) ? origin! : "", credentials: true })(c, next));
 
@@ -39,15 +40,35 @@ app.use("/api/v1/*", async (c, next) => {
 	if (c.req.path === "/api/v1/health") return next();
 	const session = await createAuth(c.env).api.getSession({ headers: c.req.raw.headers });
 	if (!session) return c.json({ error: "Authentication required" }, 401);
+	c.set("userId", session.user.id);
 	return next();
 });
 
 app.get("/api/v1/health", (c) => c.json({ ok: true, service: "rc-mech" }));
 
+const ownedCar = async (c: AppContext, carId: string) => {
+	const value = await db(c.env).select().from(car).where(and(eq(car.id, carId), eq(car.ownerId, c.get("userId")))).get();
+	return value && ownsCar(value.ownerId, c.get("userId")) ? value : undefined;
+};
+
+const publicCar = (value: typeof car.$inferSelect) => {
+	const { ownerId: _ownerId, ...result } = value;
+	return result;
+};
+
 app.get("/api/v1/cars", async (c) => {
 	const database = db(c.env);
-	const cars = await database.select().from(car).where(isNull(car.archivedAt)).orderBy(desc(car.createdAt));
-	return c.json({ cars });
+	const archived = c.req.query("archived");
+	const listMode = carListMode(archived);
+	if (listMode === "invalid") return c.json({ error: "archived must be true or all" }, 400);
+	const ownerFilter = eq(car.ownerId, c.get("userId"));
+	const where = listMode === "archived"
+		? and(ownerFilter, isNotNull(car.archivedAt))
+		: listMode === "all"
+			? ownerFilter
+			: and(ownerFilter, isNull(car.archivedAt));
+	const cars = await database.select().from(car).where(where).orderBy(desc(car.createdAt));
+	return c.json({ cars: cars.map(publicCar), archived: archived === "true" || archived === "all" });
 });
 
 app.post("/api/v1/cars", async (c) => {
@@ -59,20 +80,59 @@ app.post("/api/v1/cars", async (c) => {
 	const database = db(c.env);
 	await database.insert(car).values({
 		id,
+		ownerId: c.get("userId"),
 		name: value.name,
-		manufacturer: value.manufacturer ?? null,
+		make: value.make ?? null,
 		model: value.model ?? null,
 		scale: value.scale ?? null,
+		vehicleType: value.vehicleType ?? null,
+		powerType: value.powerType ?? null,
 		notes: value.notes ?? null,
 		createdAt: now,
 	});
-	return c.json({ car: { id, ...value, createdAt: now } }, 201);
+	const created = await ownedCar(c, id);
+	return c.json({ car: publicCar(created!) }, 201);
+});
+
+app.get("/api/v1/cars/:carId", async (c) => {
+	const value = await ownedCar(c, c.req.param("carId"));
+	if (!value) return c.json({ error: "Car not found" }, 404);
+	return c.json({ car: publicCar(value) });
+});
+
+app.patch("/api/v1/cars/:carId", async (c) => {
+	const parsed = carUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const existing = await ownedCar(c, c.req.param("carId"));
+	if (!existing) return c.json({ error: "Car not found" }, 404);
+	await db(c.env).update(car).set(parsed.data).where(and(eq(car.id, existing.id), eq(car.ownerId, c.get("userId"))));
+	const updated = await ownedCar(c, existing.id);
+	return c.json({ car: publicCar(updated!) });
+});
+
+app.post("/api/v1/cars/:carId/archive", async (c) => {
+	const existing = await ownedCar(c, c.req.param("carId"));
+	if (!existing) return c.json({ error: "Car not found" }, 404);
+	if (!canArchive(existing)) return c.json({ error: "Car is already archived" }, 409);
+	await db(c.env).update(car).set({ archivedAt: new Date().toISOString() }).where(and(eq(car.id, existing.id), eq(car.ownerId, c.get("userId"))));
+	const archived = await ownedCar(c, existing.id);
+	return c.json({ car: publicCar(archived!) });
+});
+
+app.post("/api/v1/cars/:carId/restore", async (c) => {
+	const existing = await ownedCar(c, c.req.param("carId"));
+	if (!existing) return c.json({ error: "Car not found" }, 404);
+	if (!canRestore(existing)) return c.json({ error: "Car is already active" }, 409);
+	await db(c.env).update(car).set({ archivedAt: null }).where(and(eq(car.id, existing.id), eq(car.ownerId, c.get("userId"))));
+	const restored = await ownedCar(c, existing.id);
+	return c.json({ car: publicCar(restored!) });
 });
 
 app.post("/api/v1/cars/:carId/components", async (c) => {
 	const parsed = componentInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const { carId } = c.req.param();
+	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
 	const id = crypto.randomUUID();
 	const now = new Date().toISOString();
 	const value = parsed.data;
@@ -93,6 +153,7 @@ app.post("/api/v1/cars/:carId/components", async (c) => {
 app.post("/api/v1/cars/:carId/drives", async (c) => {
 	const parsed = driveSessionInput.safeParse({ ...(await c.req.json()), carId: c.req.param("carId") });
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	if (!await ownedCar(c, parsed.data.carId)) return c.json({ error: "Car not found" }, 404);
 	const id = crypto.randomUUID();
 	const value = parsed.data;
 	const database = db(c.env);
@@ -110,6 +171,7 @@ app.post("/api/v1/cars/:carId/drives", async (c) => {
 app.post("/api/v1/cars/:carId/service-records", async (c) => {
 	const parsed = serviceRecordInput.safeParse({ ...(await c.req.json()), carId: c.req.param("carId") });
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	if (!await ownedCar(c, parsed.data.carId)) return c.json({ error: "Car not found" }, 404);
 	const id = crypto.randomUUID();
 	const value = parsed.data;
 	const baselineAt = value.baselineAt ?? value.performedAt;
@@ -128,6 +190,7 @@ app.post("/api/v1/cars/:carId/service-records", async (c) => {
 app.post("/api/v1/maintenance-plans", async (c) => {
 	const parsed = maintenancePlanInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	if (!await ownedCar(c, parsed.data.carId)) return c.json({ error: "Car not found" }, 404);
 	const id = crypto.randomUUID();
 	const now = new Date().toISOString();
 	const value = parsed.data;
@@ -160,4 +223,41 @@ app.all("*", async (c) => {
 });
 export default app;
 
-const openApi = { openapi: "3.1.0", info: { title: "RC Mech API", version: "0.1.0" }, paths: { "/api/v1/cars": { get: { summary: "List active cars" }, post: { summary: "Add a car" } }, "/api/v1/cars/{carId}/components": { post: { summary: "Install or replace a component" } }, "/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session" } }, "/api/v1/cars/{carId}/service-records": { post: { summary: "Record service" } }, "/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan" } } } };
+const carProperties = {
+	name: { type: "string", maxLength: 120 },
+	make: { type: "string", maxLength: 120 },
+	model: { type: "string", maxLength: 120 },
+	scale: { type: "string", maxLength: 20 },
+	vehicleType: { type: "string", maxLength: 80 },
+	powerType: { type: "string", maxLength: 80 },
+	notes: { type: "string", maxLength: 4000 },
+};
+const openApi = {
+	openapi: "3.1.0",
+	info: { title: "RC Mech API", version: "0.1.0" },
+	paths: {
+		"/api/v1/cars": {
+			get: {
+				summary: "List the authenticated owner's cars",
+				parameters: [{ name: "archived", in: "query", required: false, schema: { type: "string", enum: ["true", "all"] }, description: "Omit for active cars; true lists archived cars; all lists both." }],
+				responses: { 200: { description: "Cars visible to the authenticated owner" }, 401: { description: "Authentication required" } },
+			},
+			post: {
+				summary: "Create an active car for the authenticated owner",
+				requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["name"], properties: carProperties } } } },
+				responses: { 201: { description: "Car created" }, 400: { description: "Invalid car" } },
+			},
+		},
+		"/api/v1/cars/{carId}": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }],
+			get: { summary: "Inspect an owned car, including archived cars", responses: { 200: { description: "Owned car" }, 404: { description: "Car not found" } } },
+			patch: { summary: "Edit an owned car", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: carProperties } } } }, responses: { 200: { description: "Car updated" }, 400: { description: "Invalid car" }, 404: { description: "Car not found" } } },
+		},
+		"/api/v1/cars/{carId}/archive": { post: { summary: "Archive an owned car; it leaves the active list", responses: { 200: { description: "Car archived" }, 404: { description: "Car not found" }, 409: { description: "Already archived" } } } },
+		"/api/v1/cars/{carId}/restore": { post: { summary: "Restore an owned archived car to the active list", responses: { 200: { description: "Car restored" }, 404: { description: "Car not found" }, 409: { description: "Already active" } } } },
+		"/api/v1/cars/{carId}/components": { post: { summary: "Install or replace a component on an owned car" } },
+		"/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session for an owned car" } },
+		"/api/v1/cars/{carId}/service-records": { post: { summary: "Record service for an owned car" } },
+		"/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan for an owned car" } },
+	},
+};

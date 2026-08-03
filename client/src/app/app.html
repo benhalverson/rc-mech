@@ -47,17 +47,82 @@
       </div>
     </header>
 
-    <section class="grid" aria-label="Garage summary">
-      <article class="card"><div class="number">{{ activeCars() }}</div><div class="label">Active cars</div></article>
-      <article class="card"><div class="number">READY</div><div class="label">Maintenance cockpit</div></article>
-      <article class="card"><div class="number">7d</div><div class="label">Session window</div></article>
-    </section>
-
     @if (message()) { <p class="message" role="alert">{{ message() }}</p> }
-    <section class="workbench">
-      <div class="eyebrow">Today’s workbench</div>
-      <h2>Keep the machine honest.</h2>
-      <p>Track installed components, drive sessions, maintenance baselines, and service history without losing the story of a build.</p>
+    <section class="garage-panel" aria-labelledby="garage-title">
+      <div class="section-heading garage-heading">
+        <div>
+          <div class="eyebrow">Today’s workbench</div>
+          <h2 id="garage-title">The garage</h2>
+          <p class="section-intro">Keep the cars you actually drive close at hand. Their build sheets, sessions, and service history will follow.</p>
+        </div>
+        @if (carView() === 'list') {
+          <button class="button" type="button" (click)="openCreateCar()">Add a car</button>
+        } @else {
+          <button class="button quiet" type="button" (click)="backToGarage()">← Garage</button>
+        }
+      </div>
+
+      @if (carView() === 'list') {
+        <div class="garage-toolbar">
+          <div class="garage-count"><strong>{{ activeCars() }}</strong> active {{ activeCars() === '1' ? 'car' : 'cars' }}</div>
+          <button class="text-button" type="button" (click)="toggleArchived()">
+            {{ showArchived() ? 'Show active cars' : 'Inspect archived cars' }}
+          </button>
+        </div>
+
+        @if (carState() === 'loading') {
+          <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Opening the garage ledger…</p></div>
+        } @else if (carState() === 'error') {
+          <div class="state-card error-state" role="alert"><span class="state-mark">!</span><p>{{ carError() }}</p><button class="text-button" type="button" (click)="retryCars()">Try again</button></div>
+        } @else if (!visibleCars().length) {
+          <div class="state-card empty-state"><span class="state-mark">＋</span><h3>{{ showArchived() ? 'No archived cars' : 'The garage is waiting' }}</h3><p>{{ showArchived() ? 'Archived cars will stay here with their history when one leaves active rotation.' : 'Add the first car to start a build sheet and keep its story in one place.' }}</p>@if (!showArchived()) { <button class="button" type="button" (click)="openCreateCar()">Add the first car</button> }</div>
+        } @else {
+          <div class="car-list" aria-label="Cars">
+            @for (car of visibleCars(); track car.id) {
+              <button class="car-row" type="button" (click)="openCar(car)">
+                <span class="car-index">{{ $index + 1 }}</span>
+                <span class="car-identity"><strong>{{ car.name }}</strong><span>{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</span></span>
+                <span class="car-spec">{{ car.scale || '—' }}<br /><small>{{ car.vehicleType || 'RC vehicle' }}</small></span>
+                <span class="car-status" [class.archived-status]="car.archivedAt">{{ car.archivedAt ? 'Archived' : 'Active' }} <span aria-hidden="true">→</span></span>
+              </button>
+            }
+          </div>
+        }
+      } @else if (carEditing()) {
+        <form class="car-form" (ngSubmit)="saveCar()" aria-labelledby="car-form-title">
+          <div class="eyebrow">{{ selectedCar() ? 'Edit car' : 'New car' }}</div>
+          <h3 id="car-form-title">{{ selectedCar() ? 'Tune the record.' : 'Put a car on the bench.' }}</h3>
+          <p class="section-intro">Use the names you use in the workshop. Empty optional fields stay empty.</p>
+          @if (carFormError()) { <p class="message" role="alert">{{ carFormError() }}</p> }
+          <div class="form-grid">
+            <label class="wide">Name <input name="car-name" required maxlength="120" [ngModel]="carForm().name" (ngModelChange)="updateCarField('name', $event)" /></label>
+            <label>Make <input name="car-make" maxlength="120" [ngModel]="carForm().make" (ngModelChange)="updateCarField('make', $event)" /></label>
+            <label>Model <input name="car-model" maxlength="120" [ngModel]="carForm().model" (ngModelChange)="updateCarField('model', $event)" /></label>
+            <label>Scale <input name="car-scale" maxlength="20" placeholder="1/10" [ngModel]="carForm().scale" (ngModelChange)="updateCarField('scale', $event)" /></label>
+            <label>Vehicle type <input name="vehicle-type" maxlength="80" placeholder="Buggy, truck…" [ngModel]="carForm().vehicleType" (ngModelChange)="updateCarField('vehicleType', $event)" /></label>
+            <label>Power type <input name="power-type" maxlength="80" placeholder="Electric, nitro…" [ngModel]="carForm().powerType" (ngModelChange)="updateCarField('powerType', $event)" /></label>
+            <label class="wide">Notes <textarea name="car-notes" maxlength="4000" rows="5" placeholder="What should the next version of you know?" [ngModel]="carForm().notes" (ngModelChange)="updateCarField('notes', $event)"></textarea></label>
+          </div>
+          <div class="form-actions"><button class="button" type="submit" [disabled]="carAction() !== null">{{ carAction() === 'create' ? 'Adding…' : carAction() === 'save' ? 'Saving…' : 'Save car' }}</button><button class="button quiet" type="button" (click)="cancelCarEdit()" [disabled]="carAction() !== null">Cancel</button></div>
+        </form>
+      } @else if (selectedCar(); as car) {
+        <article class="car-detail" aria-labelledby="car-detail-title">
+          <div class="detail-topline"><div class="eyebrow">{{ car.archivedAt ? 'Archived record' : 'Active car' }}</div><span class="status-pill" [class.archived-pill]="car.archivedAt">{{ car.archivedAt ? 'Out of rotation' : 'Ready to work on' }}</span></div>
+          <h3 id="car-detail-title">{{ car.name }}</h3>
+          <p class="detail-subtitle">{{ car.make || car.manufacturer || 'Make not recorded' }} <span>·</span> {{ car.model || 'Model not recorded' }}</p>
+          <div class="detail-grid">
+            <div><span>Scale</span><strong>{{ car.scale || 'Not recorded' }}</strong></div>
+            <div><span>Vehicle type</span><strong>{{ car.vehicleType || 'Not recorded' }}</strong></div>
+            <div><span>Power type</span><strong>{{ car.powerType || 'Not recorded' }}</strong></div>
+            <div><span>Added</span><strong>{{ car.createdAt ? (car.createdAt | date:'mediumDate') : 'Not recorded' }}</strong></div>
+          </div>
+          <div class="notes-block"><span>Workshop notes</span><p>{{ car.notes || 'No notes yet. Add the context that will help on the next bench session.' }}</p></div>
+          @if (car.archivedAt) { <p class="archive-note">Archived {{ car.archivedAt | date:'mediumDate' }}. History remains available, but new work should wait until this car is restored.</p> }
+          <div class="form-actions"><button class="button" type="button" (click)="editCar()">Edit details</button>@if (car.archivedAt) { <button class="button quiet" type="button" (click)="restoreCar()" [disabled]="carAction() !== null">{{ carAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button> } @else { <button class="button danger-button" type="button" (click)="archiveCar()" [disabled]="carAction() !== null">{{ carAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button> }</div>
+        </article>
+      } @else {
+        <div class="state-card empty-state"><h3>Choose a car or add one.</h3><p>The garage detail view keeps the record and its lifecycle in one place.</p><button class="button" type="button" (click)="openCreateCar()">Add a car</button></div>
+      }
     </section>
 
     <section class="security-panel" aria-labelledby="passkeys-title">

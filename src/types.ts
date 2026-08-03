@@ -1,15 +1,30 @@
 import type { Context } from "hono";
 import { z } from "zod";
 
-export type AppContext = Context<{ Bindings: Env }>;
+export type AppVariables = { userId: string };
+export type AppEnv = { Bindings: Env; Variables: AppVariables };
+export type AppContext = Context<AppEnv>;
 
-export const carInput = z.object({
+const carFields = {
 	name: z.string().min(1).max(120),
-	manufacturer: z.string().max(120).optional(),
+	make: z.string().max(120).optional(),
 	model: z.string().max(120).optional(),
 	scale: z.string().max(20).optional(),
+	vehicleType: z.string().max(80).optional(),
+	powerType: z.string().max(80).optional(),
 	notes: z.string().max(4000).optional(),
-});
+};
+
+export const carInput = z.object(carFields);
+export const carUpdateInput = z.object({
+	name: carFields.name.optional(),
+	make: carFields.make,
+	model: carFields.model,
+	scale: carFields.scale,
+	vehicleType: carFields.vehicleType,
+	powerType: carFields.powerType,
+	notes: carFields.notes,
+}).refine((value) => Object.keys(value).length > 0, "At least one car field is required");
 
 export const componentInput = z.object({
 	slot: z.string().min(1).max(80),
