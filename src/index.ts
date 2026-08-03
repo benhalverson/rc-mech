@@ -566,7 +566,8 @@ app.post("/api/v1/maintenance-plans/:planId/complete", async (c) => {
 app.get("/api/v1/cars/:carId/service-records", async (c) => {
 	const carId = c.req.param("carId");
 	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
-	const records = await db(c.env).select().from(serviceRecord).where(and(eq(serviceRecord.carId, carId), isNull(serviceRecord.deletedAt))).orderBy(desc(serviceRecord.performedAt));
+	const history = c.req.query("history") === "true";
+	const records = await db(c.env).select().from(serviceRecord).where(history ? eq(serviceRecord.carId, carId) : and(eq(serviceRecord.carId, carId), isNull(serviceRecord.deletedAt))).orderBy(desc(serviceRecord.performedAt));
 	return c.json({ serviceRecords: records });
 });
 
@@ -607,6 +608,21 @@ app.delete("/api/v1/service-records/:recordId", async (c) => {
 		...(shouldRestoreBaseline(record, plan) && plan ? [database.update(maintenancePlan).set({ baselineAt: record.previousBaselineAt!, baselineSessionCount: record.previousBaselineSessionCount ?? 0 }).where(and(eq(maintenancePlan.id, plan.id), eq(maintenancePlan.baselineAt, record.baselineAt)))] : []),
 	]);
 	return c.json({ serviceRecord: { ...record, deletedAt } });
+});
+
+app.post("/api/v1/service-records/:recordId/restore", async (c) => {
+	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
+	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
+	const parentCar = await ownedCar(c, record.carId);
+	if (!canWrite(parentCar!)) return c.json({ error: "Car is archived; restore it before restoring service history" }, 409);
+	if (record.deletedAt === null) return c.json({ error: "Service record is already active" }, 409);
+	const database = db(c.env);
+	const plan = record.planId ? await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
+	await database.batch([
+		database.update(serviceRecord).set({ deletedAt: null }).where(and(eq(serviceRecord.id, record.id), isNotNull(serviceRecord.deletedAt))),
+		...(plan && record.baselineAt ? [database.update(maintenancePlan).set({ baselineAt: record.baselineAt, baselineSessionCount: record.baselineSessionCount ?? 0 }).where(eq(maintenancePlan.id, plan.id))] : []),
+	]);
+	return c.json({ serviceRecord: await database.select().from(serviceRecord).where(eq(serviceRecord.id, record.id)).get() });
 });
 
 app.get("/api/v1/photos/:key{.+}", async (c) => {
@@ -692,8 +708,9 @@ const openApi = {
 			patch: { summary: "Edit an active drive session", responses: { 200: { description: "Drive session updated" }, 404: { description: "Drive session not found" }, 409: { description: "Deleted session" } } },
 			delete: { summary: "Soft-delete a drive session", responses: { 200: { description: "Drive session deleted" }, 404: { description: "Drive session not found" }, 409: { description: "Already deleted" } } },
 		},
-		"/api/v1/cars/{carId}/service-records": { get: { summary: "List active service records for an owned car", responses: { 200: { description: "Service history" }, 404: { description: "Car not found" } } }, post: { summary: "Record ad hoc service for an active owned car", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["performedAt"], properties: { performedAt: { type: "string", format: "date-time" }, componentId: { type: "string" }, description: { type: "string" }, notes: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" } } } } } }, responses: { 201: { description: "Service recorded" }, 400: { description: "Invalid service record or cost data" }, 404: { description: "Car or component not found" }, 409: { description: "Car is archived" } } } },
+		"/api/v1/cars/{carId}/service-records": { get: { summary: "List service records for an owned car", parameters: [{ name: "history", in: "query", schema: { type: "boolean" } }], responses: { 200: { description: "Service history" }, 404: { description: "Car not found" } } }, post: { summary: "Record ad hoc service for an active owned car", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["performedAt"], properties: { performedAt: { type: "string", format: "date-time" }, componentId: { type: "string" }, description: { type: "string" }, notes: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" } } } } } }, responses: { 201: { description: "Service recorded" }, 400: { description: "Invalid service record or cost data" }, 404: { description: "Car or component not found" }, 409: { description: "Car is archived" } } } },
 		"/api/v1/service-records/{recordId}": { patch: { summary: "Edit an active service record", responses: { 200: { description: "Service record updated" }, 404: { description: "Service record not found" }, 409: { description: "Car is archived or record is deleted" } } }, delete: { summary: "Soft-delete a service record and restore its prior plan baseline when still current", responses: { 200: { description: "Service record deleted" }, 404: { description: "Service record not found" }, 409: { description: "Car is archived or record is already deleted" } } } },
+		"/api/v1/service-records/{recordId}/restore": { post: { summary: "Restore a soft-deleted service record", responses: { 200: { description: "Service record restored" }, 404: { description: "Service record not found" }, 409: { description: "Car is archived or record is already active" } } } },
 		"/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan for an owned car or current component", responses: { 201: { description: "Maintenance plan created" }, 404: { description: "Car not found" }, 409: { description: "Car, component, or lifecycle conflict" } } } },
 		"/api/v1/maintenance-plans/{planId}": { patch: { summary: "Edit a maintenance plan", responses: { 200: { description: "Maintenance plan updated" }, 404: { description: "Plan not found" }, 400: { description: "Invalid plan" } } } },
 		"/api/v1/maintenance-plans/{planId}/pause": { post: { summary: "Pause a maintenance plan", responses: { 200: { description: "Plan paused" }, 409: { description: "Invalid lifecycle transition" } } } },

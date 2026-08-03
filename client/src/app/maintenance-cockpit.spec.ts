@@ -17,7 +17,7 @@ describe('MaintenanceCockpit', () => {
     fixture.componentRef.setInput('cars', [car]);
     fixture.componentRef.setInput('timezone', 'America/Los_Angeles');
     http.expectOne('/api/v1/maintenance-plans').flush({ maintenancePlans: [plan], activity: [] });
-    http.expectOne('/api/v1/cars/car-1/service-records').flush({ serviceRecords: [] });
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/service-records' && request.params.get('history') === 'true').flush({ serviceRecords: [] });
     fixture.detectChanges();
   });
 

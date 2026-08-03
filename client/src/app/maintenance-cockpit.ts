@@ -124,7 +124,7 @@ export class MaintenanceCockpit {
       next: (response) => {
         this.plans.set(response.maintenancePlans ?? response.plans ?? []);
         this.activity.set(response.activity ?? []);
-        const requests = this.garage().map((car) => this.http.get<ServiceRecordsResponse>(`/api/v1/cars/${car.id}/service-records`, { withCredentials: true }));
+        const requests = this.garage().map((car) => this.http.get<ServiceRecordsResponse>(`/api/v1/cars/${car.id}/service-records`, { withCredentials: true, params: { history: 'true' } }));
         if (!requests.length) { this.finishLoad([]); return; }
         forkJoin(requests).subscribe({ next: (responses) => this.finishLoad(responses.flatMap((item) => item.serviceRecords ?? [])), error: () => this.finishLoad([]) });
       },
@@ -181,7 +181,7 @@ export class MaintenanceCockpit {
     const payload = { performedAt: this.toIso(form.performedAt), description: form.description.trim(), componentId: form.componentId || undefined, cost, currency: form.currency.trim().toUpperCase() || 'USD' };
     const recordId = this.serviceEditingId(); const planId = this.servicePlanId();
     this.serviceAction.set(recordId ? 'edit' : planId ? 'complete' : 'create'); this.serviceError.set('');
-    const request = recordId ? this.http.patch<{ serviceRecord: ServiceRecord }>(`/api/v1/cars/${form.carId}/service-records/${recordId}`, payload, { withCredentials: true }) : planId ? this.http.post<{ serviceRecord: ServiceRecord; maintenancePlan: MaintenancePlan }>(`/api/v1/maintenance-plans/${planId}/complete`, payload, { withCredentials: true }) : this.http.post<{ serviceRecord: ServiceRecord }>(`/api/v1/cars/${form.carId}/service-records`, payload, { withCredentials: true });
+    const request = recordId ? this.http.patch<{ serviceRecord: ServiceRecord }>(`/api/v1/service-records/${recordId}`, payload, { withCredentials: true }) : planId ? this.http.post<{ serviceRecord: ServiceRecord; maintenancePlan: MaintenancePlan }>(`/api/v1/maintenance-plans/${planId}/complete`, payload, { withCredentials: true }) : this.http.post<{ serviceRecord: ServiceRecord }>(`/api/v1/cars/${form.carId}/service-records`, payload, { withCredentials: true });
     request.subscribe({ next: (response) => { const record = response.serviceRecord; const updatedPlan = (response as { maintenancePlan?: MaintenancePlan }).maintenancePlan; this.serviceRecords.update((records) => recordId ? records.map((item) => item.id === recordId ? record : item) : [record, ...records]); if (planId && updatedPlan) this.plans.update((plans) => plans.map((item) => item.id === planId ? updatedPlan : item)); this.cancelServiceEdit(); this.serviceAction.set(null); }, error: (error: { status?: number }) => { this.serviceAction.set(null); this.serviceError.set(error.status === 409 ? 'This car is archived. Restore it before recording service.' : error.status === 401 ? 'Your garage session has expired. Sign in again to continue.' : 'The service record could not be saved.'); } });
   }
   protected update(field: keyof MaintenanceForm, value: string): void { this.form.update((current) => ({ ...current, [field]: value })); if (field === 'carId') this.loadComponents(value); }
