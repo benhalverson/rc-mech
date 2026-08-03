@@ -680,7 +680,6 @@ const serviceRecordPatchSchema = {
 };
 const serviceCompletionSchema = {
 	type: "object",
-	anyOf: [{ required: ["description"] }, { required: ["notes"] }],
 	properties: serviceRecordSchema.properties,
 	allOf: serviceRecordSchema.allOf,
 };
