@@ -10,7 +10,9 @@ This is an example project made to be used as a quick start into building OpenAP
 1. Install dependencies with `pnpm install --frozen-lockfile`.
 2. Generate bindings with `pnpm cf-typegen`.
 3. Apply the local D1 migration with `pnpm db:migrate:local`.
-4. Start Angular watch mode and the Worker together with `pnpm dev`.
+4. Start the API and Angular in two terminals:
+   - API: `pnpm worker:dev` (Wrangler at `http://localhost:8787`).
+   - Angular: `pnpm --dir client start` (Angular at `http://localhost:4200`).
 
 ## Project structure
 
@@ -20,7 +22,7 @@ The domain terms are defined in [CONTEXT.md](./CONTEXT.md). Architectural choice
 
 The Angular CLI workspace lives in `client/`. Its production build writes directly to `public/`, the directory configured as the Worker static-assets directory. Angular source is excluded from the root Worker TypeScript compilation.
 
-Use `pnpm client:build` for a production build, `pnpm client:watch` while developing the dashboard, `pnpm worker:dev` for Wrangler local development, and `pnpm check:client` for the client build check. The normal `pnpm dev` command runs the Angular watcher and Wrangler together. The browser shell makes same-origin requests to the Worker API.
+Use `pnpm client:build` for a production build, `pnpm worker:dev` for Wrangler local development, and `pnpm check:client` for the client build check. During local development, Angular's dev server proxies `/api/**` to the Worker at `http://127.0.0.1:8787` using `client/src/proxy.conf.json`, so the browser shell keeps its relative `/api/...` requests and avoids a separate CORS boundary.
 
 Worker routing owns `/api/docs`, `/api/openapi.json`, `/api/auth/*`, and `/api/v1/*`. Unknown API paths return JSON `404` responses. Non-API paths fall through to `env.ASSETS.fetch()`, including Angular's normal asset fallback for unknown browser paths.
 
