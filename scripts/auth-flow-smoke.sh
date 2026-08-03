@@ -104,6 +104,9 @@ jq -e '.timezone == "America/Los_Angeles"' "$response_file" >/dev/null
 invalid_timezone_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/preferences/timezone" \
   -H 'Content-Type: application/json' --data '{"timezone":"not/a-timezone"}')"
 [[ "$invalid_timezone_status" == "400" ]]
+abbreviated_timezone_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/preferences/timezone" \
+  -H 'Content-Type: application/json' --data '{"timezone":"PST"}')"
+[[ "$abbreviated_timezone_status" == "400" ]]
 
 drive_create_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/drives" \
   -H 'Content-Type: application/json' --data '{"startedAt":"2026-08-03T07:30:05.000Z","notes":"morning test session"}')"
@@ -194,6 +197,11 @@ jq -e --arg id "$drive_id" '[.driveSessions[] | select(.id == $id)] | length == 
 archived_drive_create_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/drives" \
   -H 'Content-Type: application/json' --data '{"startedAt":"2026-08-03T08:00:00.000Z"}')"
 [[ "$archived_drive_create_status" == "409" ]]
+archived_drive_update_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/cars/${car_id}/drives/${drive_id}" \
+  -H 'Content-Type: application/json' --data '{"notes":"archived history is read-only"}')"
+[[ "$archived_drive_update_status" == "409" ]]
+archived_drive_delete_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X DELETE "$base/api/v1/cars/${car_id}/drives/${drive_id}")"
+[[ "$archived_drive_delete_status" == "409" ]]
 archived_component_write_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST \
   "$base/api/v1/cars/${car_id}/components" -H 'Content-Type: application/json' --data '{"slot":"battery","name":"Battery"}')"
 [[ "$archived_component_write_status" == "409" ]]

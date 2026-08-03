@@ -1,6 +1,7 @@
 export type DriveSessionLifecycle = { deletedAt: string | null };
 
 export const isIanaTimezone = (timezone: string): boolean => {
+	if (timezone !== "UTC" && !timezone.includes("/")) return false;
 	try {
 		new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
 		return true;

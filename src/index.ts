@@ -315,7 +315,9 @@ app.post("/api/v1/cars/:carId/drives", async (c) => {
 
 app.patch("/api/v1/cars/:carId/drives/:driveId", async (c) => {
 	const { carId, driveId } = c.req.param();
-	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before editing drive history" }, 409);
 	const existing = await db(c.env).select().from(driveSession).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId))).get();
 	if (!existing) return c.json({ error: "Drive session not found" }, 404);
 	if (!canEditDriveSession(existing)) return c.json({ error: "Deleted drive sessions are immutable" }, 409);
@@ -333,7 +335,9 @@ app.patch("/api/v1/cars/:carId/drives/:driveId", async (c) => {
 
 app.delete("/api/v1/cars/:carId/drives/:driveId", async (c) => {
 	const { carId, driveId } = c.req.param();
-	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before deleting drive history" }, 409);
 	const existing = await db(c.env).select().from(driveSession).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId))).get();
 	if (!existing) return c.json({ error: "Drive session not found" }, 404);
 	if (!canDeleteDriveSession(existing)) return c.json({ error: "Drive session is already deleted" }, 409);

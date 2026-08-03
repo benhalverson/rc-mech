@@ -5,6 +5,8 @@ import { canDeleteDriveSession, canEditDriveSession, isIanaTimezone, presentDate
 test("timezone policy accepts IANA zones and rejects arbitrary values", () => {
 	assert.equal(isIanaTimezone("America/Los_Angeles"), true);
 	assert.equal(isIanaTimezone("UTC"), true);
+	assert.equal(isIanaTimezone("PST"), false);
+	assert.equal(isIanaTimezone("GMT"), false);
 	assert.equal(isIanaTimezone("not/a-timezone"), false);
 });
 
