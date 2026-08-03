@@ -670,6 +670,12 @@ const serviceRecordSchema = {
 		componentId: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" },
 	},
 };
+const serviceRecordPatchSchema = {
+	type: "object",
+	minProperties: 1,
+	anyOf: [{ required: ["description"] }, { required: ["notes"] }, { required: ["performedAt"] }, { required: ["cost", "currency"] }],
+	properties: serviceRecordSchema.properties,
+};
 const openApi = {
 	openapi: "3.1.0",
 	info: { title: "RC Mech API", version: "0.1.0" },
@@ -735,4 +741,4 @@ const openApi = {
 
 const serviceRecordPaths = (openApi.paths as Record<string, any>);
 serviceRecordPaths["/api/v1/cars/{carId}/service-records"].post.requestBody = { required: true, content: { "application/json": { schema: serviceRecordSchema } } };
-serviceRecordPaths["/api/v1/service-records/{recordId}"].patch.requestBody = { required: true, content: { "application/json": { schema: { ...serviceRecordSchema, required: [], anyOf: [{ required: ["description"] }, { required: ["notes"] }, { required: ["performedAt"] }, { required: ["cost", "currency"] }] } } } };
+serviceRecordPaths["/api/v1/service-records/{recordId}"].patch.requestBody = { required: true, content: { "application/json": { schema: serviceRecordPatchSchema } } };
