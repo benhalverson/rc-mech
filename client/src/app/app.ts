@@ -3,6 +3,7 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
+import { MaintenanceCockpit } from './maintenance-cockpit';
 
 type Car = {
   id: string;
@@ -232,7 +233,7 @@ const carPayload = (form: CarForm): Record<string, string> => {
 
 @Component({
   selector: 'app-root',
-  imports: [DatePipe, FormsModule],
+  imports: [DatePipe, FormsModule, MaintenanceCockpit],
   templateUrl: './app.html',
   styleUrl: './app.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
