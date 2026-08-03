@@ -1,17 +1,24 @@
-import { Component, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { catchError, map, of } from 'rxjs';
+
+type CarsResponse = { cars: unknown[] };
 
 @Component({
   selector: 'app-root',
   templateUrl: './app.html',
   styleUrl: './app.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
-  protected readonly activeCars = signal('—');
+  private readonly http = inject(HttpClient);
 
-  constructor() {
-    void fetch('/api/v1/cars', { credentials: 'include' })
-      .then((response) => (response.ok ? response.json() : { cars: [] }))
-      .then((data: { cars?: unknown[] }) => this.activeCars.set(String(data.cars?.length ?? 0)))
-      .catch(() => undefined);
-  }
+  protected readonly activeCars = toSignal(
+    this.http.get<CarsResponse>('/api/v1/cars', { withCredentials: true }).pipe(
+      map(({ cars }) => String(cars.length)),
+      catchError(() => of('0')),
+    ),
+    { initialValue: '—' },
+  );
 }
