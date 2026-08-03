@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addCalendarInterval, calculateMaintenanceDue } from "./maintenance-policy.ts";
+import { addCalendarInterval, calculateMaintenanceDue, canTransitionMaintenance } from "./maintenance-policy.ts";
 
 const base = (overrides: Partial<Parameters<typeof calculateMaintenanceDue>[0]> = {}) => ({
 	status: "active" as const, baselineAt: "2026-01-31T12:00:00.000Z", baselineSessionCount: 10,
@@ -44,4 +44,10 @@ test("calendar calculations use the owner timezone", () => {
 test("paused and archived plans do not become due", () => {
 	assert.equal(calculateMaintenanceDue(base({ status: "paused", now: "2027-01-01T00:00:00.000Z" })).dueStatus, "paused");
 	assert.equal(calculateMaintenanceDue(base({ status: "archived", now: "2027-01-01T00:00:00.000Z" })).isDue, false);
+});
+
+test("maintenance lifecycle does not reopen archived plans", () => {
+	assert.equal(canTransitionMaintenance("active", "paused"), true);
+	assert.equal(canTransitionMaintenance("paused", "active"), true);
+	assert.equal(canTransitionMaintenance("archived", "active"), false);
 });

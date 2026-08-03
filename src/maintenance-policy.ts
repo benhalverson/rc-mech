@@ -90,4 +90,5 @@ export const calculateMaintenanceDue = (input: DueCalculationInput): DueCalculat
 };
 
 export const canTransitionMaintenance = (from: MaintenanceStatus, to: MaintenanceStatus): boolean =>
-	(from === "active" || from === "paused" || from === "archived") && (to === "active" || to === "paused" || to === "archived");
+	(from === "active" && (to === "paused" || to === "archived")) ||
+	(from === "paused" && (to === "active" || to === "archived"));

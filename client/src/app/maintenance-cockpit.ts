@@ -19,6 +19,7 @@ export type MaintenancePlan = {
   status: 'active' | 'paused' | 'archived' | string;
   pausedAt?: string | null;
   nextDueAt?: string | null;
+  dateDueAt?: string | null;
   nextDueSessionCount?: number | null;
   completedAt?: string | null;
   updatedAt?: string | null;
@@ -129,11 +130,11 @@ export class MaintenanceCockpit {
     const form = this.form();
     const calendar = form.calendarValue.trim() ? Number(form.calendarValue) : null;
     const runs = form.runInterval.trim() ? Number(form.runInterval) : null;
-    if (!form.carId || !form.componentId || !form.name.trim()) { this.formError.set('Choose an installed component and name the care rule.'); return; }
+    if (!form.carId || !form.name.trim()) { this.formError.set('Choose a car and name the care rule.'); return; }
     if (calendar !== null && (!Number.isInteger(calendar) || calendar < 1) || runs !== null && (!Number.isInteger(runs) || runs < 1)) { this.formError.set('Intervals must be whole numbers greater than zero.'); return; }
     if (calendar === null && runs === null) { this.formError.set('Add a calendar interval, a run threshold, or both.'); return; }
     if (this.action()) return;
-    const payload = { carId: form.carId, componentId: form.componentId, name: form.name.trim(), intervalUnit: calendar === null ? undefined : form.calendarUnit, intervalValue: calendar === null ? undefined : calendar, intervalDays: calendar !== null && form.calendarUnit === 'days' ? calendar : undefined, intervalSessions: runs === null ? undefined : runs, baselineAt: form.baselineAt ? this.toIso(form.baselineAt) : undefined, baselineSessionCount: Number(form.baselineRuns) || 0 };
+    const payload = { carId: form.carId, componentId: form.componentId || undefined, name: form.name.trim(), intervalUnit: calendar === null ? 'none' : form.calendarUnit, intervalValue: calendar === null ? 1 : calendar, intervalDays: calendar === null ? null : form.calendarUnit === 'days' ? calendar : undefined, intervalSessions: runs === null ? undefined : runs, baselineAt: form.baselineAt ? this.toIso(form.baselineAt) : undefined, baselineSessionCount: Number(form.baselineRuns) || 0 };
     const id = this.editingId(); this.action.set(id ? 'edit' : 'create'); this.formError.set('');
     const request = id ? this.http.patch<PlanResponse>(`/api/v1/maintenance-plans/${id}`, payload, { withCredentials: true }) : this.http.post<PlanResponse>('/api/v1/maintenance-plans', payload, { withCredentials: true });
     request.subscribe({ next: ({ maintenancePlan }) => { this.plans.update((plans) => id ? plans.map((plan) => plan.id === id ? maintenancePlan : plan) : [maintenancePlan, ...plans]); this.cancelEdit(); this.action.set(null); }, error: (error: { status?: number }) => { this.action.set(null); this.formError.set(error.status === 401 ? 'Your garage session has expired. Sign in again to continue.' : error.status === 409 ? 'This car is archived. Restore it before changing maintenance.' : 'The maintenance plan could not be saved.'); } });
@@ -146,12 +147,16 @@ export class MaintenanceCockpit {
     request.subscribe({ next: ({ maintenancePlan }) => { this.plans.update((plans) => plans.map((item) => item.id === plan.id ? maintenancePlan : item)); this.action.set(null); }, error: () => { this.action.set(null); this.error.set('That maintenance update could not be saved.'); } });
   }
 
+  protected undoActivity(item: MaintenanceActivity): void {
+    this.http.delete(`/api/v1/service-records/${item.id}`, { withCredentials: true }).subscribe({ next: () => this.load(), error: () => this.error.set('That completion could not be undone.') });
+  }
+
   protected carName(carId: string): string { return this.garage().find((car) => car.id === carId)?.name ?? 'Unknown car'; }
   protected componentName(componentId: string): string { return this.components().find((component) => component.id === componentId)?.name ?? 'Installed component'; }
   protected planState(plan: MaintenancePlan): PlanState { return calculatePlanState(plan); }
   protected isReadOnly(plan: MaintenancePlan): boolean { return Boolean(this.garage().find((car) => car.id === plan.carId)?.archivedAt) || plan.status === 'archived'; }
   protected stateLabel(value: PlanState): string { return value === 'upcoming' ? 'Upcoming' : value[0].toUpperCase() + value.slice(1); }
-  protected dueText(plan: MaintenancePlan): string { const state = this.planState(plan); return state === 'overdue' ? 'Needs attention' : state === 'due' ? 'Due now' : state === 'paused' ? 'Paused' : state === 'archived' ? 'Archived' : plan.nextDueAt ? `Due ${new Date(plan.nextDueAt).toLocaleDateString('en-US', { timeZone: this.timezone, month: 'short', day: 'numeric' })}` : 'Baseline set'; }
+  protected dueText(plan: MaintenancePlan): string { const state = this.planState(plan); const dueAt = plan.dateDueAt ?? plan.nextDueAt; return state === 'overdue' ? 'Needs attention' : state === 'due' ? 'Due now' : state === 'paused' ? 'Paused' : state === 'archived' ? 'Archived' : dueAt ? `Due ${new Date(dueAt).toLocaleDateString('en-US', { timeZone: this.timezone, month: 'short', day: 'numeric' })}` : 'Baseline set'; }
   protected localDateTime(date: Date): string { const parts = new Intl.DateTimeFormat('en-CA', { timeZone: this.timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(date); const get = (type: string) => parts.find((part) => part.type === type)?.value ?? ''; return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`; }
   private toIso(value: string): string {
     const [date, time] = value.split('T');

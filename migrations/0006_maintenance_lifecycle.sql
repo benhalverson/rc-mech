@@ -15,7 +15,7 @@ CREATE TABLE maintenance_plan_new (
 );
 INSERT INTO maintenance_plan_new (id, car_id, component_id, name, interval_days, interval_sessions, interval_unit, interval_value, baseline_at, status, paused_at)
 SELECT id, car_id, component_id, name, interval_days, interval_sessions,
-  CASE WHEN interval_days IS NOT NULL THEN 'days' ELSE 'days' END,
+  CASE WHEN interval_days IS NOT NULL THEN 'days' ELSE 'none' END,
   CASE WHEN interval_days IS NOT NULL THEN interval_days ELSE 1 END,
   baseline_at, status, paused_at
 FROM maintenance_plan;

@@ -508,8 +508,8 @@ app.patch("/api/v1/maintenance-plans/:planId", async (c) => {
 	if (!existing) return c.json({ error: "Maintenance plan not found" }, 404);
 	const parsed = maintenancePlanUpdateInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-	const intervalDays = parsed.data.intervalDays ?? (parsed.data.intervalUnit === "days" ? parsed.data.intervalValue : undefined);
-	await db(c.env).update(maintenancePlan).set({ name: parsed.data.name, intervalDays, intervalUnit: parsed.data.intervalUnit ?? (intervalDays !== undefined ? "days" : existing.intervalUnit), intervalValue: parsed.data.intervalValue ?? intervalDays ?? existing.intervalValue, intervalSessions: parsed.data.intervalSessions }).where(eq(maintenancePlan.id, existing.id));
+	const intervalDays = parsed.data.intervalDays === null ? null : parsed.data.intervalDays ?? (parsed.data.intervalUnit === "days" ? parsed.data.intervalValue : undefined);
+	await db(c.env).update(maintenancePlan).set({ name: parsed.data.name, intervalDays, intervalUnit: parsed.data.intervalUnit ?? (intervalDays !== undefined ? "days" : existing.intervalUnit), intervalValue: parsed.data.intervalValue ?? (parsed.data.intervalUnit === "none" ? 1 : intervalDays ?? existing.intervalValue), intervalSessions: parsed.data.intervalSessions }).where(eq(maintenancePlan.id, existing.id));
 	return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
 });
 
