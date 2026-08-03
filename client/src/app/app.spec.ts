@@ -19,6 +19,7 @@ describe('App', () => {
   afterEach(() => {
     http.match('/api/v1/maintenance-plans').forEach((request) => request.flush({ maintenancePlans: [], activity: [] }));
     http.match((request) => request.url.endsWith('/service-records') && request.method === 'GET').forEach((request) => request.flush({ serviceRecords: [] }));
+    http.match((request) => request.url.endsWith('/photos') && request.method === 'GET').forEach((request) => request.flush({ photos: [] }));
     http.verify();
     window.history.replaceState({}, '', '/');
   });
