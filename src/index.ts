@@ -513,7 +513,7 @@ app.patch("/api/v1/maintenance-plans/:planId", async (c) => {
 	return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
 });
 
-app.post("/api/v1/maintenance-plans/:planId/:action{pause|resume|archive}", async (c) => {
+app.post("/api/v1/maintenance-plans/:planId/:action", async (c) => {
 	const existing = await carPlan(c, c.req.param("planId"));
 	if (!existing) return c.json({ error: "Maintenance plan not found" }, 404);
 	const action = c.req.param("action");

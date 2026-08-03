@@ -205,7 +205,7 @@ plan_pause_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_c
 [[ "$plan_pause_status" == "200" ]]
 jq -e '.maintenancePlan.status == "paused" and .maintenancePlan.pauseReason == "manual"' "$response_file" >/dev/null
 plan_resume_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/maintenance-plans/${plan_id}/resume")"
-[[ "$plan_resume_status" == "200" ]]
+[[ "$plan_resume_status" == "200" ]] || { cat "$response_file" >&2; false; }
 completion_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/maintenance-plans/${plan_id}/complete" \
   -H 'Content-Type: application/json' --data '{"performedAt":"2026-08-03T12:00:00.000Z","description":"Smoke service"}')"
 [[ "$completion_status" == "201" ]]
