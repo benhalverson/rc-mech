@@ -8,6 +8,8 @@ log_file="$(mktemp)"
 cookie_file="$(mktemp)"
 response_file="$(mktemp)"
 headers_file="$(mktemp)"
+photo_file="$(mktemp --suffix=.png)"
+printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d >"$photo_file"
 
 cleanup() {
   if [[ -n "${worker_pid:-}" ]]; then
@@ -17,7 +19,7 @@ cleanup() {
     pkill -TERM -f "workerd serve.*socket-addr=entry=.*:${port}" 2>/dev/null || true
     wait "$worker_pid" 2>/dev/null || true
   fi
-  rm -f "$log_file" "$cookie_file" "$response_file" "$headers_file"
+  rm -f "$log_file" "$cookie_file" "$response_file" "$headers_file" "$photo_file"
 }
 trap cleanup EXIT
 
@@ -258,6 +260,35 @@ archived_component_replace_status="$(curl -sS -o /dev/null -b "$cookie_file" -w 
 [[ "$archived_component_replace_status" == "409" ]]
 curl -fsS -b "$cookie_file" -X POST "$base/api/v1/cars/${car_id}/restore" >/dev/null
 
+unauthenticated_photo_list_status="$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/v1/cars/${car_id}/photos")"
+[[ "$unauthenticated_photo_list_status" == "401" ]]
+photo_upload_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST \
+  "$base/api/v1/cars/${car_id}/photos" -F "file=@${photo_file};type=image/png")"
+[[ "$photo_upload_status" == "201" ]]
+photo_id="$(jq -r '.photo.id' "$response_file")"
+[[ -n "$photo_id" && "$photo_id" != "null" ]]
+jq -e '.photo.isPrimary == true and .photo.sortOrder == 0' "$response_file" >/dev/null
+photo_second_upload_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST \
+  "$base/api/v1/cars/${car_id}/photos" -F "file=@${photo_file};type=image/png")"
+[[ "$photo_second_upload_status" == "201" ]]
+photo_second_id="$(jq -r '.photo.id' "$response_file")"
+photo_reorder_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X PATCH \
+  "$base/api/v1/cars/${car_id}/photos/reorder" -H 'Content-Type: application/json' \
+  --data "{\"photoIds\":[\"${photo_second_id}\",\"${photo_id}\"]}")"
+[[ "$photo_reorder_status" == "200" ]]
+jq -e --arg id "$photo_second_id" '.photos[0].id == $id' "$response_file" >/dev/null
+photo_primary_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X PATCH \
+  "$base/api/v1/cars/${car_id}/photos/${photo_id}" -H 'Content-Type: application/json' \
+  --data '{"isPrimary":true}')"
+[[ "$photo_primary_status" == "200" ]]
+jq -e '.photo.isPrimary == true' "$response_file" >/dev/null
+photo_stream_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' \
+  "$base/api/v1/photos/${photo_id}")"
+[[ "$photo_stream_status" == "200" ]]
+photo_delete_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X DELETE \
+  "$base/api/v1/cars/${car_id}/photos/${photo_second_id}")"
+[[ "$photo_delete_status" == "200" ]]
+
 other_owner_id="smoke-owner-${BASHPID}"
 other_session_id="smoke-session-${BASHPID}"
 other_session_token="smoke-owner-session-${BASHPID}-0123456789abcdef"
@@ -273,6 +304,10 @@ other_detail_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{
 [[ "$other_detail_status" == "404" ]]
 other_component_list_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components")"
 [[ "$other_component_list_status" == "404" ]]
+other_photo_list_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}/photos")"
+[[ "$other_photo_list_status" == "404" ]]
+other_photo_stream_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/photos/${photo_id}")"
+[[ "$other_photo_stream_status" == "404" ]]
 other_component_detail_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components/${replacement_id}")"
 [[ "$other_component_detail_status" == "404" ]]
 other_component_update_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' -X PATCH \
