@@ -66,9 +66,22 @@ export const serviceRecordInput = z.object({
 	carId: z.string().min(1),
 	componentId: z.string().optional(),
 	performedAt: z.string().datetime(),
-	description: z.string().min(1).max(4000),
+	description: z.string().min(1).max(4000).optional(),
+	notes: z.string().min(1).max(4000).optional(),
+	cost: z.number().finite().nonnegative().max(1000000000).optional(),
+	currency: z.string().regex(/^[A-Za-z]{3}$/).transform((value) => value.toUpperCase()).optional(),
 	baselineAt: z.string().datetime().optional(),
-});
+}).refine((value) => value.description !== undefined || value.notes !== undefined, "Description or notes is required")
+	.refine((value) => (value.cost === undefined) === (value.currency === undefined), "Cost and currency must be supplied together");
+
+export const serviceRecordUpdateInput = z.object({
+	performedAt: z.string().datetime().optional(),
+	description: z.string().min(1).max(4000).optional(),
+	notes: z.string().min(1).max(4000).nullable().optional(),
+	cost: z.number().finite().nonnegative().max(1000000000).nullable().optional(),
+	currency: z.string().regex(/^[A-Za-z]{3}$/).transform((value) => value.toUpperCase()).nullable().optional(),
+}).refine((value) => Object.keys(value).length > 0, "At least one service record field is required")
+	.refine((value) => value.cost === undefined || value.cost === null ? value.currency === undefined || value.currency === null : value.currency !== undefined && value.currency !== null, "Cost and currency must be supplied together");
 
 export const maintenancePlanInput = z.object({
 	carId: z.string().min(1),
@@ -83,4 +96,10 @@ export const maintenancePlanInput = z.object({
 }).refine((value) => value.intervalValue !== undefined || value.intervalDays !== undefined || value.intervalSessions !== undefined, "An interval is required");
 
 export const maintenancePlanUpdateInput = z.object({ name: z.string().min(1).max(160).optional(), intervalUnit: z.enum(["none", "days", "weeks", "months"]).optional(), intervalValue: z.number().int().positive().optional(), intervalDays: z.number().int().positive().nullable().optional(), intervalSessions: z.number().int().positive().nullable().optional() }).refine((value) => Object.keys(value).length > 0, "At least one plan field is required");
-export const maintenanceCompletionInput = z.object({ performedAt: z.string().datetime().optional(), description: z.string().min(1).max(4000).optional() });
+export const maintenanceCompletionInput = z.object({
+	performedAt: z.string().datetime().optional(),
+	description: z.string().min(1).max(4000).optional(),
+	notes: z.string().min(1).max(4000).optional(),
+	cost: z.number().finite().nonnegative().max(1000000000).optional(),
+	currency: z.string().regex(/^[A-Za-z]{3}$/).transform((value) => value.toUpperCase()).optional(),
+}).refine((value) => (value.cost === undefined) === (value.currency === undefined), "Cost and currency must be supplied together");

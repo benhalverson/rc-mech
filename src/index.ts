@@ -5,13 +5,14 @@ import { z } from "zod";
 import { createAuth } from "./auth";
 import { db } from "./db";
 import { car, component, driveSession, maintenancePlan, owner, serviceRecord } from "./schema";
-import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, driveSessionUpdateInput, maintenanceCompletionInput, maintenancePlanInput, maintenancePlanUpdateInput, serviceRecordInput, timezoneInput } from "./types";
+import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, driveSessionUpdateInput, maintenanceCompletionInput, maintenancePlanInput, maintenancePlanUpdateInput, serviceRecordInput, serviceRecordUpdateInput, timezoneInput } from "./types";
 import { carListMode, canArchive, canRestore, canWrite, ownsCar } from "./car-policy";
 import { and, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
 import { STANDARD_COMPONENT_SLOTS, canEditComponent, componentSlotType, normalizeComponentSlot } from "./component-policy";
 import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
 import { canDeleteDriveSession, canEditDriveSession, isIanaTimezone, presentDateTime } from "./drive-session-policy";
 import { calculateMaintenanceDue, canTransitionMaintenance, type MaintenanceIntervalUnit, type MaintenanceStatus } from "./maintenance-policy";
+import { canDeleteServiceRecord, canEditServiceRecord, shouldRestoreBaseline } from "./service-policy";
 
 const app = new Hono<AppEnv>();
 
@@ -427,10 +428,18 @@ app.post("/api/v1/cars/:carId/service-records", async (c) => {
 		carId: value.carId,
 		componentId: value.componentId ?? null,
 		performedAt: value.performedAt,
-		description: value.description,
+		description: value.description ?? value.notes!,
+		notes: value.notes ?? value.description ?? null,
+		cost: value.cost ?? null,
+		currency: value.currency ?? null,
 		baselineAt,
+		baselineSessionCount: null,
+		previousBaselineAt: null,
+		previousBaselineSessionCount: null,
+		deletedAt: null,
 	});
-	return c.json({ serviceRecord: { id, ...value, baselineAt } }, 201);
+	const created = await database.select().from(serviceRecord).where(eq(serviceRecord.id, id)).get();
+	return c.json({ serviceRecord: created }, 201);
 });
 
 app.post("/api/v1/maintenance-plans", async (c) => {
@@ -542,15 +551,16 @@ app.post("/api/v1/maintenance-plans/:planId/complete", async (c) => {
 	const parsed = maintenanceCompletionInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const performedAt = parsed.data.performedAt ? new Date(parsed.data.performedAt).toISOString() : new Date().toISOString();
-	const description = parsed.data.description ?? "Completed maintenance plan";
+	const description = parsed.data.description ?? parsed.data.notes ?? "Completed maintenance plan";
 	const baselineSessionCount = await planSessionCount(c, existing.carId);
 	const id = crypto.randomUUID();
 	const database = db(c.env);
 	await database.batch([
-		database.insert(serviceRecord).values({ id, carId: existing.carId, componentId: existing.componentId, planId: existing.id, performedAt, description, baselineAt: performedAt, baselineSessionCount, previousBaselineAt: existing.baselineAt, previousBaselineSessionCount: existing.baselineSessionCount, deletedAt: null }),
+		database.insert(serviceRecord).values({ id, carId: existing.carId, componentId: existing.componentId, planId: existing.id, performedAt, description, notes: parsed.data.notes ?? description, cost: parsed.data.cost ?? null, currency: parsed.data.currency ?? null, baselineAt: performedAt, baselineSessionCount, previousBaselineAt: existing.baselineAt, previousBaselineSessionCount: existing.baselineSessionCount, deletedAt: null }),
 		database.update(maintenancePlan).set({ baselineAt: performedAt, baselineSessionCount }).where(eq(maintenancePlan.id, existing.id)),
 	]);
-	return c.json({ serviceRecord: { id, planId: existing.id, performedAt, description, baselineAt: performedAt, baselineSessionCount }, maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) }, 201);
+	const created = await database.select().from(serviceRecord).where(eq(serviceRecord.id, id)).get();
+	return c.json({ serviceRecord: created, maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) }, 201);
 });
 
 app.get("/api/v1/cars/:carId/service-records", async (c) => {
@@ -560,17 +570,42 @@ app.get("/api/v1/cars/:carId/service-records", async (c) => {
 	return c.json({ serviceRecords: records });
 });
 
+app.patch("/api/v1/service-records/:recordId", async (c) => {
+	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
+	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
+	if (!canWrite((await ownedCar(c, record.carId))!)) return c.json({ error: "Car is archived; restore it before editing service history" }, 409);
+	if (!canEditServiceRecord(record)) return c.json({ error: "Deleted service records are immutable" }, 409);
+	const parsed = serviceRecordUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const nextPerformedAt = parsed.data.performedAt ? new Date(parsed.data.performedAt).toISOString() : record.performedAt;
+	const nextDescription = parsed.data.description ?? record.description;
+	const nextNotes = parsed.data.notes === undefined ? record.notes : parsed.data.notes;
+	const nextCost = parsed.data.cost === undefined ? record.cost : parsed.data.cost;
+	const nextCurrency = parsed.data.currency === undefined ? record.currency : parsed.data.currency;
+	if ((nextCost === null) !== (nextCurrency === null)) return c.json({ error: "Cost and currency must be supplied together" }, 400);
+	const database = db(c.env);
+	const plan = record.planId ? await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
+	const baselineIsCurrent = shouldRestoreBaseline(record, plan);
+	const nextBaselineAt = baselineIsCurrent && parsed.data.performedAt ? nextPerformedAt : record.baselineAt;
+	await database.batch([
+		database.update(serviceRecord).set({ performedAt: nextPerformedAt, description: nextDescription, notes: nextNotes, cost: nextCost, currency: nextCurrency, baselineAt: nextBaselineAt }).where(and(eq(serviceRecord.id, record.id), isNull(serviceRecord.deletedAt))),
+		...(baselineIsCurrent && parsed.data.performedAt && plan ? [database.update(maintenancePlan).set({ baselineAt: nextPerformedAt }).where(and(eq(maintenancePlan.id, plan.id), eq(maintenancePlan.baselineAt, record.baselineAt)))] : []),
+	]);
+	return c.json({ serviceRecord: await database.select().from(serviceRecord).where(eq(serviceRecord.id, record.id)).get() });
+});
+
 app.delete("/api/v1/service-records/:recordId", async (c) => {
 	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
 	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
-	if (record.deletedAt !== null) return c.json({ error: "Service record is already deleted" }, 409);
+	if (!canWrite((await ownedCar(c, record.carId))!)) return c.json({ error: "Car is archived; restore it before deleting service history" }, 409);
+	if (!canDeleteServiceRecord(record)) return c.json({ error: "Service record is already deleted" }, 409);
 	const database = db(c.env);
 	const plan = record.planId ? await db(c.env).select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
 	const deletedAt = new Date().toISOString();
-	await database.update(serviceRecord).set({ deletedAt }).where(and(eq(serviceRecord.id, record.id), isNull(serviceRecord.deletedAt)));
-	if (plan && record.previousBaselineAt && plan.baselineAt === record.baselineAt) {
-		await database.update(maintenancePlan).set({ baselineAt: record.previousBaselineAt, baselineSessionCount: record.previousBaselineSessionCount ?? 0 }).where(eq(maintenancePlan.id, plan.id));
-	}
+	await database.batch([
+		database.update(serviceRecord).set({ deletedAt }).where(and(eq(serviceRecord.id, record.id), isNull(serviceRecord.deletedAt))),
+		...(shouldRestoreBaseline(record, plan) && plan ? [database.update(maintenancePlan).set({ baselineAt: record.previousBaselineAt!, baselineSessionCount: record.previousBaselineSessionCount ?? 0 }).where(and(eq(maintenancePlan.id, plan.id), eq(maintenancePlan.baselineAt, record.baselineAt)))] : []),
+	]);
 	return c.json({ serviceRecord: { ...record, deletedAt } });
 });
 
@@ -657,8 +692,8 @@ const openApi = {
 			patch: { summary: "Edit an active drive session", responses: { 200: { description: "Drive session updated" }, 404: { description: "Drive session not found" }, 409: { description: "Deleted session" } } },
 			delete: { summary: "Soft-delete a drive session", responses: { 200: { description: "Drive session deleted" }, 404: { description: "Drive session not found" }, 409: { description: "Already deleted" } } },
 		},
-		"/api/v1/cars/{carId}/service-records": { get: { summary: "List service records for an owned car", responses: { 200: { description: "Service history" }, 404: { description: "Car not found" } } }, post: { summary: "Record service for an owned car", responses: { 201: { description: "Service recorded" }, 404: { description: "Car or component not found" }, 409: { description: "Car is archived" } } } },
-		"/api/v1/service-records/{recordId}": { delete: { summary: "Undo a service completion and restore its prior baseline", responses: { 200: { description: "Service record deleted" }, 404: { description: "Service record not found" } } } },
+		"/api/v1/cars/{carId}/service-records": { get: { summary: "List active service records for an owned car", responses: { 200: { description: "Service history" }, 404: { description: "Car not found" } } }, post: { summary: "Record ad hoc service for an active owned car", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["performedAt"], properties: { performedAt: { type: "string", format: "date-time" }, componentId: { type: "string" }, description: { type: "string" }, notes: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" } } } } } }, responses: { 201: { description: "Service recorded" }, 400: { description: "Invalid service record or cost data" }, 404: { description: "Car or component not found" }, 409: { description: "Car is archived" } } } },
+		"/api/v1/service-records/{recordId}": { patch: { summary: "Edit an active service record", responses: { 200: { description: "Service record updated" }, 404: { description: "Service record not found" }, 409: { description: "Car is archived or record is deleted" } } }, delete: { summary: "Soft-delete a service record and restore its prior plan baseline when still current", responses: { 200: { description: "Service record deleted" }, 404: { description: "Service record not found" }, 409: { description: "Car is archived or record is already deleted" } } } },
 		"/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan for an owned car or current component", responses: { 201: { description: "Maintenance plan created" }, 404: { description: "Car not found" }, 409: { description: "Car, component, or lifecycle conflict" } } } },
 		"/api/v1/maintenance-plans/{planId}": { patch: { summary: "Edit a maintenance plan", responses: { 200: { description: "Maintenance plan updated" }, 404: { description: "Plan not found" }, 400: { description: "Invalid plan" } } } },
 		"/api/v1/maintenance-plans/{planId}/pause": { post: { summary: "Pause a maintenance plan", responses: { 200: { description: "Plan paused" }, 409: { description: "Invalid lifecycle transition" } } } },
@@ -667,6 +702,6 @@ const openApi = {
 		"/api/v1/cars/{carId}/maintenance-plans": { get: { summary: "List plans with due calculations for an owned car", responses: { 200: { description: "Maintenance plans and due state" }, 404: { description: "Car not found" } } } },
 		"/api/v1/cars/{carId}/maintenance-cockpit": { get: { summary: "Maintenance cockpit grouped by upcoming, due, overdue, and lifecycle state", responses: { 200: { description: "Maintenance cockpit" }, 404: { description: "Car not found" } } } },
 		"/api/v1/maintenance-cockpit": { get: { summary: "Maintenance cockpit for the authenticated owner's garage", responses: { 200: { description: "Maintenance cockpit" } } } },
-		"/api/v1/maintenance-plans/{planId}/complete": { post: { summary: "Complete a plan and reset its baseline", responses: { 201: { description: "Service completion and updated plan" }, 409: { description: "Plan or car is not writable" } } } },
+		"/api/v1/maintenance-plans/{planId}/complete": { post: { summary: "Complete exactly one plan, create one service record, and reset its baseline transactionally", requestBody: { content: { "application/json": { schema: { type: "object", properties: { performedAt: { type: "string", format: "date-time" }, description: { type: "string" }, notes: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" } } } } } }, responses: { 201: { description: "Service completion and updated plan" }, 400: { description: "Invalid completion or cost data" }, 409: { description: "Plan or car is not writable" } } } },
 	},
 };
