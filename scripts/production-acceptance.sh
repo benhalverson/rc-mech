@@ -5,6 +5,8 @@ set -euo pipefail
 # RC_MECH_DEPLOYED_URL to additionally probe a deployed, same-origin Worker.
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
+response_file="$(mktemp)"
+trap 'rm -f "$response_file"' EXIT
 
 test -f wrangler.jsonc
 test -f public/.gitkeep
@@ -27,6 +29,18 @@ if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 		echo 'production secrets are incomplete; configure APP_URL, BETTER_AUTH_SECRET, OWNER_EMAIL, and EMAIL_FROM' >&2
 		exit 1
 	fi
+	if ! pnpm exec wrangler r2 bucket list --json | jq -e 'any(.[]; .name == "rc-mech-photos")' >/dev/null; then
+		echo 'production R2 bucket rc-mech-photos was not found' >&2
+		exit 1
+	fi
+	migration_output="$(pnpm exec wrangler d1 migrations list DB --remote --env production 2>&1)" || {
+		echo "$migration_output" >&2
+		exit 1
+	}
+	if grep -qi 'pending' <<<"$migration_output"; then
+		echo 'production D1 has pending migrations' >&2
+		exit 1
+	fi
 fi
 
 pnpm exec wrangler deploy --dry-run --env production
@@ -40,10 +54,24 @@ if [[ -n "${RC_MECH_DEPLOYED_URL:-}" ]]; then
 	test "$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/v1/photos/not-authenticated")" = 401
 	test "$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/not-a-route")" = 404
 	if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
+		host="${base#https://}"
+		host="${host#http://}"
+		host="${host%%/*}"
+		rp_status="$(curl -sS -o "$response_file" -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/auth/passkey/generate-register-options?name=release-check")"
+		test "$rp_status" = 200
+		test "$(jq -r '.rp.id' "$response_file")" = "$host"
+		test "$(curl -sS -o /dev/null -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID")" = 200
 		test "$(curl -sS -o /dev/null -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID/photos")" = 200
 		test "$(curl -sS -o /dev/null -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/photos/$RC_MECH_OWNER_PHOTO_ID")" = 200
+		for endpoint in components drives maintenance-plans maintenance-cockpit service-records photos; do
+			test "$(curl -sS -o /dev/null -b "$RC_MECH_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID/$endpoint")" = 200
+		done
+		test "$(curl -sS -o /dev/null -H "Cookie: $RC_MECH_OTHER_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID")" = 404
 		test "$(curl -sS -o /dev/null -H "Cookie: $RC_MECH_OTHER_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID/photos")" = 404
 		test "$(curl -sS -o /dev/null -H "Cookie: $RC_MECH_OTHER_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/photos/$RC_MECH_OWNER_PHOTO_ID")" = 404
+		for endpoint in components drives maintenance-plans maintenance-cockpit service-records; do
+			test "$(curl -sS -o /dev/null -H "Cookie: $RC_MECH_OTHER_OWNER_COOKIE" -w '%{http_code}' "$base/api/v1/cars/$RC_MECH_OWNER_CAR_ID/$endpoint")" = 404
+		done
 	fi
 	printf 'deployed public/private-boundary smoke passed for %s\n' "$base"
 else
