@@ -12,7 +12,7 @@ This is an example project made to be used as a quick start into building OpenAP
 3. Apply the local D1 migration with `pnpm db:migrate:local`.
 4. Start the API and Angular in two terminals:
    - API: `pnpm worker:dev` (Wrangler at `http://localhost:8787`).
-   - Angular: `pnpm --dir client start` (Angular at `http://localhost:4200`).
+   - Angular: `pnpm client:dev` (or `pnpm --dir client start`) at `http://localhost:4200`.
 
 ## Project structure
 
@@ -24,7 +24,7 @@ The Angular CLI workspace lives in `client/`. Its production build writes direct
 
 Use `pnpm client:build` for a production build, `pnpm worker:dev` for Wrangler local development, and `pnpm check:client` for the client build check. During local development, Angular's dev server proxies `/api/**` to the Worker at `http://127.0.0.1:8787` using `client/src/proxy.conf.json`, so the browser shell keeps its relative `/api/...` requests and avoids a separate CORS boundary.
 
-Worker routing owns `/api/docs`, `/api/openapi.json`, `/api/auth/*`, and `/api/v1/*`. Unknown API paths return JSON `404` responses. Non-API paths fall through to `env.ASSETS.fetch()`, including Angular's normal asset fallback for unknown browser paths.
+Worker routing owns `/api/docs`, `/api/openapi.json`, `/api/auth/*`, and `/api/v1/*`. Unknown API paths return JSON `404` responses. Non-API paths fall through to `env.ASSETS.fetch()`, with the Worker applying Angular's HTML fallback only to non-API browser navigations.
 
 The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). It is intentionally a no-op in local development when the binding is unavailable, and is not connected to magic-link delivery yet; issue #3 owns delivery, owner allowlisting, expiry, and sessions. Do not commit sender or owner addresses.
 

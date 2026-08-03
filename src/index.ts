@@ -136,7 +136,11 @@ app.get("/api/v1/photos/:key{.+}", async (c) => {
 
 app.all("/api", (c) => c.json({ error: "Not found" }, 404));
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
-app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
+app.all("*", async (c) => {
+	const response = await c.env.ASSETS.fetch(c.req.raw);
+	if (response.status !== 404 || c.req.method !== "GET" || !c.req.header("Accept")?.includes("text/html")) return response;
+	return c.env.ASSETS.fetch(new Request(new URL("/", c.req.url), c.req.raw));
+});
 export default app;
 
 const openApi = { openapi: "3.1.0", info: { title: "RC Mech API", version: "0.1.0" }, paths: { "/api/v1/cars": { get: { summary: "List active cars" }, post: { summary: "Add a car" } }, "/api/v1/cars/{carId}/components": { post: { summary: "Install or replace a component" } }, "/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session" } }, "/api/v1/cars/{carId}/service-records": { post: { summary: "Record service" } }, "/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan" } } } };
