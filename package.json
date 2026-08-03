@@ -11,6 +11,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "test:backend": "node --experimental-strip-types --test src/auth-policy.test.ts",
+    "test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
     "check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
     "check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run --env production"
   },
