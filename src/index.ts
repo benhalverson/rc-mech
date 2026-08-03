@@ -669,12 +669,20 @@ const serviceRecordSchema = {
 		performedAt: { type: "string", format: "date-time" }, description: { type: "string" }, notes: { type: "string" },
 		componentId: { type: "string" }, cost: { type: "number", minimum: 0 }, currency: { type: "string", pattern: "^[A-Za-z]{3}$" },
 	},
+	allOf: [{ oneOf: [{ not: { anyOf: [{ required: ["cost"] }, { required: ["currency"] }] } }, { required: ["cost", "currency"] }] }],
 };
 const serviceRecordPatchSchema = {
 	type: "object",
 	minProperties: 1,
 	anyOf: [{ required: ["description"] }, { required: ["notes"] }, { required: ["performedAt"] }, { required: ["cost", "currency"] }],
 	properties: serviceRecordSchema.properties,
+	allOf: serviceRecordSchema.allOf,
+};
+const serviceCompletionSchema = {
+	type: "object",
+	anyOf: [{ required: ["description"] }, { required: ["notes"] }],
+	properties: serviceRecordSchema.properties,
+	allOf: serviceRecordSchema.allOf,
 };
 const openApi = {
 	openapi: "3.1.0",
@@ -742,3 +750,4 @@ const openApi = {
 const serviceRecordPaths = (openApi.paths as Record<string, any>);
 serviceRecordPaths["/api/v1/cars/{carId}/service-records"].post.requestBody = { required: true, content: { "application/json": { schema: serviceRecordSchema } } };
 serviceRecordPaths["/api/v1/service-records/{recordId}"].patch.requestBody = { required: true, content: { "application/json": { schema: serviceRecordPatchSchema } } };
+serviceRecordPaths["/api/v1/maintenance-plans/{planId}/complete"].post.requestBody = { content: { "application/json": { schema: serviceCompletionSchema } } };
