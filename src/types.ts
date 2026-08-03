@@ -80,8 +80,7 @@ export const maintenancePlanInput = z.object({
 	intervalSessions: z.number().int().positive().optional(),
 	baselineAt: z.string().datetime().optional(),
 	baselineSessionCount: z.number().int().nonnegative().optional(),
-}).refine((value) => value.intervalValue !== undefined || value.intervalDays !== undefined, "An interval is required")
-  .refine((value) => value.intervalSessions !== undefined || value.intervalUnit !== undefined || value.intervalDays !== undefined, "An interval is required");
+}).refine((value) => value.intervalValue !== undefined || value.intervalDays !== undefined || value.intervalSessions !== undefined, "An interval is required");
 
 export const maintenancePlanUpdateInput = z.object({ name: z.string().min(1).max(160).optional(), intervalUnit: z.enum(["days", "weeks", "months"]).optional(), intervalValue: z.number().int().positive().optional(), intervalDays: z.number().int().positive().optional(), intervalSessions: z.number().int().positive().nullable().optional() }).refine((value) => Object.keys(value).length > 0, "At least one plan field is required");
 export const maintenanceCompletionInput = z.object({ performedAt: z.string().datetime().optional(), description: z.string().min(1).max(4000).optional() });

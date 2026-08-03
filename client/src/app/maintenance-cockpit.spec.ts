@@ -41,7 +41,7 @@ describe('MaintenanceCockpit', () => {
     const request = http.expectOne('/api/v1/maintenance-plans');
     expect(request.request.method).toBe('POST');
     expect(request.request.withCredentials).toBe(true);
-    expect(request.request.body).toMatchObject({ carId: 'car-1', componentId: 'component-1', intervalDays: 14, intervalSessions: 5, baselineSessionCount: 3 });
+    expect(request.request.body).toMatchObject({ carId: 'car-1', componentId: 'component-1', intervalUnit: 'weeks', intervalValue: 2, intervalSessions: 5, baselineSessionCount: 3 });
     request.flush({ maintenancePlan: { ...plan, name: 'Clean bearings', intervalDays: 14 } });
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Clean bearings');

@@ -1,5 +1,5 @@
 export type MaintenanceStatus = "active" | "paused" | "archived";
-export type MaintenanceIntervalUnit = "days" | "weeks" | "months";
+export type MaintenanceIntervalUnit = "none" | "days" | "weeks" | "months";
 
 export type DueCalculationInput = {
 	status: MaintenanceStatus;
@@ -44,6 +44,7 @@ const localDateTimeToUtc = (parts: { year: number; month: number; day: number },
 };
 
 export const addCalendarInterval = (baselineAt: string, unit: MaintenanceIntervalUnit, value: number, timezone: string): string => {
+	if (unit === "none") return baselineAt;
 	const start = localParts(baselineAt, timezone);
 	let year = start.year;
 	let month = start.month;
@@ -70,14 +71,14 @@ export const calculateMaintenanceDue = (input: DueCalculationInput): DueCalculat
 			dueReasons: [],
 		};
 	}
-	const dateDueAt = addCalendarInterval(input.baselineAt, input.intervalUnit, input.intervalValue, input.timezone);
-	const calendarDue = new Date(input.now).getTime() >= new Date(dateDueAt).getTime();
+ const dateDueAt = input.intervalUnit === "none" ? null : addCalendarInterval(input.baselineAt, input.intervalUnit, input.intervalValue, input.timezone);
+ const calendarDue = dateDueAt !== null && new Date(input.now).getTime() >= new Date(dateDueAt).getTime();
 	const sessionDueAtCount = input.intervalSessions === null ? null : input.baselineSessionCount + input.intervalSessions;
 	const sessionsDue = sessionDueAtCount !== null && input.currentSessionCount >= sessionDueAtCount;
 	const dueReasons: DueCalculation["dueReasons"] = [];
 	if (calendarDue) dueReasons.push("calendar");
 	if (sessionsDue) dueReasons.push("drive-sessions");
-	const overdue = calendarDue && localDate(localParts(input.now, input.timezone)) > localDate(localParts(dateDueAt, input.timezone));
+ const overdue = dateDueAt !== null && calendarDue && localDate(localParts(input.now, input.timezone)) > localDate(localParts(dateDueAt, input.timezone));
 	return {
 		dueStatus: overdue ? "overdue" : dueReasons.length > 0 ? "due" : "upcoming",
 		isDue: dueReasons.length > 0,

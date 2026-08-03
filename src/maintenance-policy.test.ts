@@ -25,6 +25,11 @@ test("drive-session threshold is due independently", () => {
 	assert.equal(result.isDue, true);
 });
 
+test("run-only plans do not acquire an implicit calendar threshold", () => {
+
+	assert.equal(calculateMaintenanceDue({ status: "active", baselineAt: "2026-08-01T00:00:00.000Z", baselineSessionCount: 0, intervalUnit: "none", intervalValue: 1, intervalSessions: 3, currentSessionCount: 1, now: "2026-08-10T00:00:00.000Z", timezone: "UTC" }).dueStatus, "upcoming");
+});
+
 test("combined plans are due when either threshold is reached", () => {
 	const result = calculateMaintenanceDue(base({ intervalSessions: 3, currentSessionCount: 13, now: "2026-01-02T12:00:00.000Z" }));
 	assert.equal(result.isDue, true);

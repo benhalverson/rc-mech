@@ -79,7 +79,7 @@ const planSessionCount = driveSessionCount;
 const planDue = async (c: AppContext, value: typeof maintenancePlan.$inferSelect, now = new Date().toISOString()) => {
 	const currentSessionCount = await planSessionCount(c, value.carId);
 	const timezone = await ownerTimezone(c);
-	const intervalUnit = (value.intervalUnit || (value.intervalDays ? "days" : "days")) as MaintenanceIntervalUnit;
+	const intervalUnit = (value.intervalUnit || (value.intervalDays ? "days" : "none")) as MaintenanceIntervalUnit;
 	const intervalValue = value.intervalValue || value.intervalDays || 1;
 	return {
 		...value,
@@ -442,9 +442,8 @@ app.post("/api/v1/maintenance-plans", async (c) => {
 	const id = crypto.randomUUID();
 	const now = new Date().toISOString();
 	const value = parsed.data;
-	const intervalUnit = value.intervalUnit ?? (value.intervalDays !== undefined ? "days" : "days");
-	const intervalValue = value.intervalValue ?? value.intervalDays;
-	if (!intervalValue) return c.json({ error: "intervalValue is required" }, 400);
+	const intervalUnit = value.intervalUnit ?? (value.intervalDays !== undefined ? "days" : "none");
+	const intervalValue = value.intervalValue ?? value.intervalDays ?? 1;
 	if (value.componentId) {
 		const target = await ownedComponent(c, value.carId, value.componentId);
 		if (!target || target.removedAt !== null) return c.json({ error: "Maintenance plans require a current component" }, 409);
@@ -510,7 +509,7 @@ app.patch("/api/v1/maintenance-plans/:planId", async (c) => {
 	const parsed = maintenancePlanUpdateInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const intervalDays = parsed.data.intervalDays ?? (parsed.data.intervalUnit === "days" ? parsed.data.intervalValue : undefined);
-	await db(c.env).update(maintenancePlan).set({ name: parsed.data.name, intervalDays, intervalUnit: parsed.data.intervalUnit ?? (intervalDays !== undefined ? "days" : undefined), intervalValue: parsed.data.intervalValue ?? intervalDays, intervalSessions: parsed.data.intervalSessions }).where(eq(maintenancePlan.id, existing.id));
+	await db(c.env).update(maintenancePlan).set({ name: parsed.data.name, intervalDays, intervalUnit: parsed.data.intervalUnit ?? (intervalDays !== undefined ? "days" : existing.intervalUnit), intervalValue: parsed.data.intervalValue ?? intervalDays ?? existing.intervalValue, intervalSessions: parsed.data.intervalSessions }).where(eq(maintenancePlan.id, existing.id));
 	return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
 });
 

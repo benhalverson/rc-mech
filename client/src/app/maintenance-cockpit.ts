@@ -11,6 +11,8 @@ export type MaintenancePlan = {
   componentId: string;
   name: string;
   intervalDays?: number | null;
+  intervalUnit?: 'days' | 'weeks' | 'months' | null;
+  intervalValue?: number | null;
   intervalSessions?: number | null;
   baselineAt?: string | null;
   baselineSessionCount?: number | null;
@@ -20,6 +22,7 @@ export type MaintenancePlan = {
   nextDueSessionCount?: number | null;
   completedAt?: string | null;
   updatedAt?: string | null;
+  dueStatus?: PlanState;
 };
 
 export type MaintenanceActivity = { id: string; planId?: string; action: string; occurredAt: string; note?: string | null };
@@ -45,6 +48,7 @@ const emptyForm = (): MaintenanceForm => ({ carId: '', componentId: '', name: ''
 export const calendarDays = (value: number, unit: MaintenanceForm['calendarUnit']): number => unit === 'weeks' ? value * 7 : unit === 'months' ? value * 30 : value;
 
 export const calculatePlanState = (plan: MaintenancePlan, now = new Date(), sessionCount = 0): PlanState => {
+  if (plan.dueStatus) return plan.dueStatus;
   if (plan.status === 'archived') return 'archived';
   if (plan.status === 'paused') return 'paused';
   const baseline = plan.baselineAt ? new Date(plan.baselineAt).getTime() : Number.POSITIVE_INFINITY;
@@ -113,7 +117,7 @@ export class MaintenanceCockpit {
 
   protected openEdit(plan: MaintenancePlan): void {
     if (this.isReadOnly(plan)) return;
-    this.form.set({ ...emptyForm(), carId: plan.carId, componentId: plan.componentId, name: plan.name, calendarValue: plan.intervalDays ? String(plan.intervalDays) : '', calendarUnit: 'days', runInterval: plan.intervalSessions ? String(plan.intervalSessions) : '', baselineAt: plan.baselineAt ? this.localDateTime(new Date(plan.baselineAt)) : '', baselineRuns: String(plan.baselineSessionCount ?? 0) });
+    this.form.set({ ...emptyForm(), carId: plan.carId, componentId: plan.componentId, name: plan.name, calendarValue: plan.intervalValue ? String(plan.intervalValue) : plan.intervalDays ? String(plan.intervalDays) : '', calendarUnit: plan.intervalUnit ?? 'days', runInterval: plan.intervalSessions ? String(plan.intervalSessions) : '', baselineAt: plan.baselineAt ? this.localDateTime(new Date(plan.baselineAt)) : '', baselineRuns: String(plan.baselineSessionCount ?? 0) });
     this.editingId.set(plan.id); this.formError.set(''); this.loadComponents(plan.carId); this.editing.set(true);
   }
 
@@ -129,7 +133,7 @@ export class MaintenanceCockpit {
     if (calendar !== null && (!Number.isInteger(calendar) || calendar < 1) || runs !== null && (!Number.isInteger(runs) || runs < 1)) { this.formError.set('Intervals must be whole numbers greater than zero.'); return; }
     if (calendar === null && runs === null) { this.formError.set('Add a calendar interval, a run threshold, or both.'); return; }
     if (this.action()) return;
-    const payload = { carId: form.carId, componentId: form.componentId, name: form.name.trim(), intervalDays: calendar === null ? undefined : calendarDays(calendar, form.calendarUnit), intervalSessions: runs === null ? undefined : runs, baselineAt: form.baselineAt ? this.toIso(form.baselineAt) : undefined, baselineSessionCount: Number(form.baselineRuns) || 0 };
+    const payload = { carId: form.carId, componentId: form.componentId, name: form.name.trim(), intervalUnit: calendar === null ? undefined : form.calendarUnit, intervalValue: calendar === null ? undefined : calendar, intervalDays: calendar !== null && form.calendarUnit === 'days' ? calendar : undefined, intervalSessions: runs === null ? undefined : runs, baselineAt: form.baselineAt ? this.toIso(form.baselineAt) : undefined, baselineSessionCount: Number(form.baselineRuns) || 0 };
     const id = this.editingId(); this.action.set(id ? 'edit' : 'create'); this.formError.set('');
     const request = id ? this.http.patch<PlanResponse>(`/api/v1/maintenance-plans/${id}`, payload, { withCredentials: true }) : this.http.post<PlanResponse>('/api/v1/maintenance-plans', payload, { withCredentials: true });
     request.subscribe({ next: ({ maintenancePlan }) => { this.plans.update((plans) => id ? plans.map((plan) => plan.id === id ? maintenancePlan : plan) : [maintenancePlan, ...plans]); this.cancelEdit(); this.action.set(null); }, error: (error: { status?: number }) => { this.action.set(null); this.formError.set(error.status === 401 ? 'Your garage session has expired. Sign in again to continue.' : error.status === 409 ? 'This car is archived. Restore it before changing maintenance.' : 'The maintenance plan could not be saved.'); } });
