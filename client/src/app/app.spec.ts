@@ -17,6 +17,7 @@ describe('App', () => {
   });
 
   afterEach(() => {
+    http.match('/api/v1/maintenance-plans').forEach((request) => request.flush({ maintenancePlans: [], activity: [] }));
     http.verify();
     window.history.replaceState({}, '', '/');
   });
