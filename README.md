@@ -26,6 +26,8 @@ Use `pnpm client:build` for a production build, `pnpm worker:dev` for Wrangler l
 
 Worker routing owns `/api/docs`, `/api/openapi.json`, `/api/auth/*`, and `/api/v1/*`. Unknown API paths return JSON `404` responses. Non-API paths fall through to `env.ASSETS.fetch()`, with the Worker applying Angular's HTML fallback only to non-API browser navigations.
 
+After the first magic-link sign-in, add one or more named passkeys from the dashboard. The browser owns the WebAuthn ceremony, including its standard cross-device or QR handoff where supported. Passkeys can be renamed or revoked; magic-link sign-in remains the recovery path. Verify this manually in a WebAuthn-capable browser: sign in by magic link, add a passkey, sign out, sign in with the passkey, rename and revoke it, confirm it disappears from the list, and confirm a new magic link still signs you in.
+
 The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). It is intentionally a no-op in local development when the binding is unavailable, while deployed magic-link requests fail closed unless `EMAIL_FROM` and the binding are configured. Do not commit sender or owner addresses.
 
 For local database work, use `pnpm db:migrate:local`. To inspect or reset local D1, use Wrangler's local commands, for example `pnpm exec wrangler d1 migrations list DB --local`. This issue intentionally keeps the existing `rc-mech-photos` R2 bucket binding and placeholder D1 ID; it does not provision remote resources. Issue #11 should create the production resources and replace the placeholder with commands such as:

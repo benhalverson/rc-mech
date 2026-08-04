@@ -5,7 +5,7 @@ import { passkey } from "@better-auth/passkey";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
 import { createEmailSender } from "./email";
-import { configuredOrigin, isLocalDevelopment } from "./auth-policy";
+import { configuredOrigin, configuredOrigins, isLocalDevelopment } from "./auth-policy";
 
 type AuthEnv = Env & {
 	APP_URL?: string;
@@ -49,11 +49,18 @@ export const createAuth = (env: AuthEnv) => {
 	database: drizzleAdapter(drizzle(env.DB, { schema }), { provider: "sqlite" }),
 	baseURL: appURL,
 	secret: env.BETTER_AUTH_SECRET ?? "local-development-secret-change-me",
-	trustedOrigins: [configuredOrigin(appURL)!],
+	trustedOrigins: configuredOrigins(appURL, isLocalDevelopment(env)),
 	session: { expiresIn: 60 * 60 * 24 * 7 },
 	user: { modelName: "owner" },
 	plugins: [
-		passkey({ rpID: new URL(appURL).hostname, rpName: "RC Mech" }),
+		passkey({
+			rpID: new URL(appURL).hostname,
+			rpName: "RC Mech",
+			origin: configuredOrigins(appURL, isLocalDevelopment(env)),
+			// Discoverable credentials let the browser offer its standard
+			// cross-device passkey handoff, including QR where supported.
+			authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
+		}),
 		magicLink(magicLinkOptions),
 	],
 	});
