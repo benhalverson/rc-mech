@@ -83,6 +83,9 @@ describe('App', () => {
   });
 
   it('signs in with a browser passkey through Better Auth endpoints', async () => {
+    const previousPublicKeyCredential = Object.getOwnPropertyDescriptor(globalThis, 'PublicKeyCredential');
+    const previousSecureContext = Object.getOwnPropertyDescriptor(window, 'isSecureContext');
+    const previousCredentials = Object.getOwnPropertyDescriptor(navigator, 'credentials');
     Object.defineProperty(globalThis, 'PublicKeyCredential', { configurable: true, value: class PublicKeyCredential {} });
     Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
     Object.defineProperty(navigator, 'credentials', {
@@ -115,6 +118,12 @@ describe('App', () => {
     http.expectOne('/api/v1/cars').flush({ cars: [] });
     http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
     await fixture.whenStable();
+    if (previousPublicKeyCredential) Object.defineProperty(globalThis, 'PublicKeyCredential', previousPublicKeyCredential);
+    else delete (globalThis as any).PublicKeyCredential;
+    if (previousSecureContext) Object.defineProperty(window, 'isSecureContext', previousSecureContext);
+    else delete (window as any).isSecureContext;
+    if (previousCredentials) Object.defineProperty(navigator, 'credentials', previousCredentials);
+    else delete (navigator as any).credentials;
   });
 
   it('lists, renames, and revokes a named passkey', async () => {

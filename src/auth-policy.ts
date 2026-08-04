@@ -22,15 +22,13 @@ export const configuredOrigins = (appUrl: string | undefined, local = false): st
 	const origin = configuredOrigin(appUrl);
 	if (!origin) return [];
 	if (!local) return [origin];
-	return [...new Set([origin, "http://localhost:4200", "http://127.0.0.1:4200"])]
+	const host = new URL(origin).hostname;
+	const devOrigin = host === "127.0.0.1" ? "http://127.0.0.1:4200" : host === "localhost" ? "http://localhost:4200" : undefined;
+	return devOrigin ? [origin, devOrigin] : [origin];
 };
 
 export const isLocalDevelopment = (env: AuthEnvironment): boolean => {
-	if (env.ENVIRONMENT) return env.ENVIRONMENT === "local";
-	const hostname = configuredOrigin(env.APP_URL);
-	if (!hostname) return false;
-	const { hostname: host } = new URL(hostname);
-	return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+	return env.ENVIRONMENT === "local";
 };
 
 export const hasMagicLinkConfiguration = (env: AuthEnvironment): boolean => Boolean(

@@ -25,6 +25,7 @@ test("local configuration permits the deliberate no-op seam even with a simulate
 	let attempted = false;
 	const local = {
 		APP_URL: "http://localhost:8787",
+		ENVIRONMENT: "local",
 		OWNER_EMAIL: "owner@example.com",
 		EMAIL: { send: async () => { attempted = true; } },
 	};
@@ -35,11 +36,13 @@ test("local configuration permits the deliberate no-op seam even with a simulate
 	assert.equal(attempted, false);
 });
 
-test("credentialed CORS accepts the app origin and the local Angular dev server", () => {
+test("credentialed CORS accepts only the Angular dev server matching the WebAuthn RP host", () => {
 	assert.equal(isAllowedOrigin("https://garage.example", "https://garage.example"), true);
 	assert.equal(isAllowedOrigin("https://attacker.example", "https://garage.example"), false);
-	assert.equal(isAllowedOrigin("http://localhost:4200", "http://localhost:8787"), true);
-	assert.equal(isAllowedOrigin("http://127.0.0.1:4200", "http://localhost:8787"), true);
+	assert.equal(isAllowedOrigin("http://localhost:4200", { APP_URL: "http://localhost:8787", ENVIRONMENT: "local" }), true);
+	assert.equal(isAllowedOrigin("http://127.0.0.1:4200", { APP_URL: "http://localhost:8787", ENVIRONMENT: "local" }), false);
+	assert.equal(isAllowedOrigin("http://127.0.0.1:4200", { APP_URL: "http://127.0.0.1:8787", ENVIRONMENT: "local" }), true);
+	assert.equal(isLocalDevelopment({ APP_URL: "http://localhost:8787" }), false);
 	assert.equal(isAllowedOrigin("http://localhost:4200", { APP_URL: "http://localhost:8787", ENVIRONMENT: "production" }), false);
 });
 
