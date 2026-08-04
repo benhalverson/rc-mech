@@ -643,7 +643,7 @@ textarea {
 	.car-tabs {
 		overflow-x: auto;
 	}
-	.car-tabs a {
+	.car-tab {
 		padding-inline: 10px;
 		white-space: nowrap;
 	}
@@ -806,17 +806,4 @@ textarea {
 	padding: 20px;
 	border: 1px solid var(--line);
 	background: var(--color-workbench);
-}
-
-@media (max-width: 700px) {
-	.workspace-label {
-		display: none;
-	}
-	.car-tabs {
-		overflow-x: auto;
-	}
-	.car-tab {
-		padding-inline: 10px;
-		white-space: nowrap;
-	}
 }

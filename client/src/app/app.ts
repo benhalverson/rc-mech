@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { BreakpointObserver } from '@angular/cdk/layout';
-import { NavigationEnd, Router } from '@angular/router';
+import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { filter, firstValueFrom } from 'rxjs';
 import { MaintenanceCockpit } from './maintenance-cockpit';
@@ -379,6 +379,7 @@ const carPayload = (form: CarForm): Record<string, string> => {
 		MaintenanceCockpit,
 		CarPhotoGallery,
 		MatSidenavModule,
+		RouterLink,
 	],
 	templateUrl: './app.html',
 	styleUrl: './app.css',
@@ -494,7 +495,7 @@ export class App {
 		typeof window === 'undefined' ? '/garage' : window.location.pathname,
 	);
 	protected readonly legacyMode = computed(() => {
-		const url = this.router?.url;
+		const url = this.currentUrl();
 		return !url || url === '/';
 	});
 	protected readonly workspace = computed(() => {
@@ -528,7 +529,7 @@ export class App {
 			)
 			.subscribe((event) => {
 				this.currentUrl.set(event.urlAfterRedirects);
-				this.navOpen.set(false);
+				if (this.navMode() === 'over') this.navOpen.set(false);
 				const carId = event.urlAfterRedirects.match(/^\/garage\/([^/]+)/)?.[1];
 				if (carId) {
 					this.selectedCarId.set(carId);

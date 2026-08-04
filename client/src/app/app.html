@@ -38,9 +38,9 @@
     <mat-sidenav #drawer class="workspace-nav bg-graphite" [mode]="navMode()" [opened]="navOpen()" (closedStart)="navOpen.set(false)" aria-label="Workspace navigation">
       <div class="nav-brand"><span class="eyebrow">RC Mech</span><strong>Field notebook</strong></div>
       <nav aria-label="Primary workspace">
-        <a href="/garage" [class.active-nav]="workspace() === 'garage'" aria-label="Garage workspace"><span class="nav-number">01</span>Garage</a>
-        <a href="/maintenance" [class.active-nav]="workspace() === 'maintenance'" aria-label="Maintenance workspace"><span class="nav-number">02</span>Maintenance</a>
-        <a href="/settings" [class.active-nav]="workspace() === 'settings'" aria-label="Settings workspace"><span class="nav-number">03</span>Settings</a>
+        <a routerLink="/garage" [class.active-nav]="workspace() === 'garage'" [attr.aria-current]="workspace() === 'garage' ? 'page' : null" aria-label="Garage workspace"><span class="nav-number">01</span>Garage</a>
+        <a routerLink="/maintenance" [class.active-nav]="workspace() === 'maintenance'" [attr.aria-current]="workspace() === 'maintenance' ? 'page' : null" aria-label="Maintenance workspace"><span class="nav-number">02</span>Maintenance</a>
+        <a routerLink="/settings" [class.active-nav]="workspace() === 'settings'" [attr.aria-current]="workspace() === 'settings' ? 'page' : null" aria-label="Settings workspace"><span class="nav-number">03</span>Settings</a>
       </nav>
       <a class="nav-docs" href="/api/docs">API notes ↗</a>
     </mat-sidenav>
@@ -134,10 +134,10 @@
           <div class="form-actions"><button class="button" type="button" (click)="editCar()">Edit details</button>@if (car.archivedAt) { <button class="button quiet" type="button" (click)="restoreCar()" [disabled]="carAction() !== null">{{ carAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button> } @else { <button class="button danger-button" type="button" (click)="archiveCar()" [disabled]="carAction() !== null">{{ carAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button> }</div>
 
           <nav class="car-tabs" aria-label="Car detail sections">
-            <a class="car-tab" [href]="`/garage/${car.id}/overview`" [class.active-tab]="carSection() === 'overview'">Overview</a>
-            <a class="car-tab" [href]="`/garage/${car.id}/build`" [class.active-tab]="carSection() === 'build'">Build</a>
-            <a class="car-tab" [href]="`/garage/${car.id}/photos`" [class.active-tab]="carSection() === 'photos'">Photos</a>
-            <a class="car-tab" [href]="`/garage/${car.id}/runs`" [class.active-tab]="carSection() === 'runs'">Runs</a>
+            <a class="car-tab" [routerLink]="['/garage', car.id, 'overview']" [class.active-tab]="carSection() === 'overview'" [attr.aria-current]="carSection() === 'overview' ? 'page' : null">Overview</a>
+            <a class="car-tab" [routerLink]="['/garage', car.id, 'build']" [class.active-tab]="carSection() === 'build'" [attr.aria-current]="carSection() === 'build' ? 'page' : null">Build</a>
+            <a class="car-tab" [routerLink]="['/garage', car.id, 'photos']" [class.active-tab]="carSection() === 'photos'" [attr.aria-current]="carSection() === 'photos' ? 'page' : null">Photos</a>
+            <a class="car-tab" [routerLink]="['/garage', car.id, 'runs']" [class.active-tab]="carSection() === 'runs'" [attr.aria-current]="carSection() === 'runs' ? 'page' : null">Runs</a>
           </nav>
 
           @if (carSection() === 'overview' || carSection() === 'all') {
