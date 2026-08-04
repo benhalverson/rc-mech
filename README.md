@@ -49,7 +49,7 @@ Apply migrations to the remote database before the first deploy:
 pnpm exec wrangler d1 migrations apply DB --remote --env production
 ```
 
-Configure the Email Service sender in the Cloudflare dashboard/API, bind it as `EMAIL`, and set these production-only values as Worker secrets/vars. `APP_URL` must be the final HTTPS origin, including the custom domain used by the dashboard; it controls redirects, trusted origins, cookies, and passkey RP identity.
+Configure the Email Service sender in the Cloudflare dashboard/API, bind it as `EMAIL`, and set these production-only values as Worker secrets. `APP_URL` must be the final HTTPS origin, including the custom domain used by the dashboard; it controls redirects, trusted origins, cookies, and passkey RP identity.
 
 ```sh
 pnpm exec wrangler secret put BETTER_AUTH_SECRET --env production
@@ -58,7 +58,7 @@ pnpm exec wrangler secret put EMAIL_FROM --env production
 pnpm exec wrangler secret put APP_URL --env production
 ```
 
-`APP_URL` is shown as a secret command to keep it out of source; it may instead be a reviewed non-secret production var if the deployment policy permits. `OWNER_EMAIL` and `EMAIL_FROM` must be real addresses accepted by the configured Email Service sender. Do not commit any of these values.
+`APP_URL` is required as a production Worker secret because the release acceptance script verifies its secret name. `OWNER_EMAIL` and `EMAIL_FROM` must be real addresses accepted by the configured Email Service sender. Do not commit any of these values.
 
 Attach the Worker to the chosen HTTPS domain through the Cloudflare Workers custom-domain or route configuration, then deploy with `pnpm deploy`. Validate the configuration without changing Cloudflare state with `pnpm test:production`; set `RC_MECH_DEPLOYED_URL=https://your-domain.example pnpm test:production` to also check health, docs, unauthenticated API rejection, private-photo rejection, and JSON API 404 behavior. For a release check, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1` plus the deployed URL, owner session cookie/car/photo IDs, a second-owner session cookie, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after verifying the bucket has no public r2.dev or custom-domain access; this mode fails closed on the placeholder D1 ID or missing production secret names, remote migration/R2 checks, deployed passkey RP host, authenticated owner reads, and cross-owner record/photo isolation. Email delivery and a real passkey ceremony remain operator checks because automation would send real mail or require a browser credential. The full local authenticated lifecycle smoke remains `pnpm test:auth:e2e`; it creates only local D1/R2 test data.
 
