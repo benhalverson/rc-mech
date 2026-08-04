@@ -14,6 +14,7 @@ test("active is the default list and archived records have explicit list modes",
 	assert.equal(carListMode("true"), "archived");
 	assert.equal(carListMode("all"), "all");
 	assert.equal(carListMode("false"), "invalid");
+	assert.equal(carListMode("TRUE"), "invalid");
 });
 
 test("archive and restore are inverse lifecycle transitions", () => {
