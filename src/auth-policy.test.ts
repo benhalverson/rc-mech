@@ -46,10 +46,10 @@ test("credentialed CORS accepts only the Angular dev server matching the WebAuth
 	assert.equal(isAllowedOrigin("http://localhost:4200", { APP_URL: "http://localhost:8787", ENVIRONMENT: "production" }), false);
 });
 
-test("email sender uses the fake message seam and forwards the message", async () => {
+test("email sender forwards the structured message to the binding", async () => {
 	let sent: object | undefined;
-	const sender = createEmailSender({ EMAIL: { send: async (message: unknown) => { sent = message as object; } } } as unknown as Env, (from, to, raw) => ({ from, to, raw } as unknown as EmailMessage));
+	const sender = createEmailSender({ EMAIL: { send: async (message: unknown) => { sent = message as object; } } } as unknown as Env);
 	assert.equal(sender.available, true);
 	await sender.send({ from: "from@example.com", to: "to@example.com", subject: "Subject", text: "Body" });
-	assert.deepEqual(sent, { from: "from@example.com", to: "to@example.com", raw: "From: from@example.com\r\nTo: to@example.com\r\nSubject: Subject\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\nBody" });
+	assert.deepEqual(sent, { from: "from@example.com", to: "to@example.com", subject: "Subject", text: "Body" });
 });
