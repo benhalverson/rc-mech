@@ -429,7 +429,7 @@ app.post("/api/v1/cars/:carId/service-records", async (c) => {
 		componentId: value.componentId ?? null,
 		performedAt: value.performedAt,
 		description: value.description ?? value.notes!,
-		notes: value.notes ?? value.description ?? null,
+		notes: value.notes ?? null,
 		cost: value.cost ?? null,
 		currency: value.currency ?? null,
 		baselineAt,
@@ -556,7 +556,7 @@ app.post("/api/v1/maintenance-plans/:planId/complete", async (c) => {
 	const id = crypto.randomUUID();
 	const database = db(c.env);
 	await database.batch([
-		database.insert(serviceRecord).values({ id, carId: existing.carId, componentId: existing.componentId, planId: existing.id, performedAt, description, notes: parsed.data.notes ?? description, cost: parsed.data.cost ?? null, currency: parsed.data.currency ?? null, baselineAt: performedAt, baselineSessionCount, previousBaselineAt: existing.baselineAt, previousBaselineSessionCount: existing.baselineSessionCount, deletedAt: null }),
+		database.insert(serviceRecord).values({ id, carId: existing.carId, componentId: existing.componentId, planId: existing.id, performedAt, description, notes: parsed.data.notes ?? undefined, cost: parsed.data.cost ?? null, currency: parsed.data.currency ?? null, baselineAt: performedAt, baselineSessionCount, previousBaselineAt: existing.baselineAt, previousBaselineSessionCount: existing.baselineSessionCount, deletedAt: null }),
 		database.update(maintenancePlan).set({ baselineAt: performedAt, baselineSessionCount }).where(eq(maintenancePlan.id, existing.id)),
 	]);
 	const created = await database.select().from(serviceRecord).where(eq(serviceRecord.id, id)).get();
@@ -573,8 +573,9 @@ app.get("/api/v1/cars/:carId/service-records", async (c) => {
 
 app.patch("/api/v1/service-records/:recordId", async (c) => {
 	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
-	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
-	if (!canWrite((await ownedCar(c, record.carId))!)) return c.json({ error: "Car is archived; restore it before editing service history" }, 409);
+	const parentCar = record ? await ownedCar(c, record.carId) : undefined;
+	if (!record || !parentCar) return c.json({ error: "Service record not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before editing service history" }, 409);
 	if (!canEditServiceRecord(record)) return c.json({ error: "Deleted service records are immutable" }, 409);
 	const parsed = serviceRecordUpdateInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -597,8 +598,9 @@ app.patch("/api/v1/service-records/:recordId", async (c) => {
 
 app.delete("/api/v1/service-records/:recordId", async (c) => {
 	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
-	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
-	if (!canWrite((await ownedCar(c, record.carId))!)) return c.json({ error: "Car is archived; restore it before deleting service history" }, 409);
+	const parentCar = record ? await ownedCar(c, record.carId) : undefined;
+	if (!record || !parentCar) return c.json({ error: "Service record not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before deleting service history" }, 409);
 	if (!canDeleteServiceRecord(record)) return c.json({ error: "Service record is already deleted" }, 409);
 	const database = db(c.env);
 	const plan = record.planId ? await db(c.env).select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
@@ -612,9 +614,9 @@ app.delete("/api/v1/service-records/:recordId", async (c) => {
 
 app.post("/api/v1/service-records/:recordId/restore", async (c) => {
 	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
-	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
-	const parentCar = await ownedCar(c, record.carId);
-	if (!canWrite(parentCar!)) return c.json({ error: "Car is archived; restore it before restoring service history" }, 409);
+	const parentCar = record ? await ownedCar(c, record.carId) : undefined;
+	if (!record || !parentCar) return c.json({ error: "Service record not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before restoring service history" }, 409);
 	if (record.deletedAt === null) return c.json({ error: "Service record is already active" }, 409);
 	const database = db(c.env);
 	const plan = record.planId ? await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
@@ -675,7 +677,7 @@ const serviceRecordPatchSchema = {
 	type: "object",
 	minProperties: 1,
 	anyOf: [{ required: ["description"] }, { required: ["notes"] }, { required: ["performedAt"] }, { required: ["cost", "currency"] }],
-	properties: serviceRecordSchema.properties,
+	properties: { ...serviceRecordSchema.properties, notes: { type: "string", nullable: true }, cost: { type: "number", minimum: 0, nullable: true }, currency: { type: "string", pattern: "^[A-Za-z]{3}$", nullable: true } },
 	allOf: serviceRecordSchema.allOf,
 };
 const serviceCompletionSchema = {

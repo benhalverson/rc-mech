@@ -81,7 +81,7 @@ export const serviceRecordUpdateInput = z.object({
 	cost: z.number().finite().nonnegative().max(1000000000).nullable().optional(),
 	currency: z.string().regex(/^[A-Za-z]{3}$/).transform((value) => value.toUpperCase()).nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, "At least one service record field is required")
-	.refine((value) => value.cost === undefined || value.cost === null ? value.currency === undefined || value.currency === null : value.currency !== undefined && value.currency !== null, "Cost and currency must be supplied together");
+	.refine((value) => (value.cost === undefined && value.currency === undefined) || (value.cost === null && value.currency === null) || (value.cost !== null && value.cost !== undefined && value.currency !== null && value.currency !== undefined), "Cost and currency must be supplied together");
 
 export const maintenancePlanInput = z.object({
 	carId: z.string().min(1),

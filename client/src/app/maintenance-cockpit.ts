@@ -116,6 +116,16 @@ export class MaintenanceCockpit {
   protected readonly activeCount = computed(() => this.plans().filter((plan) => plan.status === 'active').length);
   protected readonly visibleServiceRecords = computed(() => this.serviceRecords().filter((record) => this.historyFilter() === 'deleted' ? Boolean(record.deletedAt) : !record.deletedAt));
   protected readonly totalServiceCost = computed(() => this.visibleServiceRecords().reduce((total, record) => total + (record.cost ?? 0), 0));
+  protected readonly serviceTotals = computed(() => {
+    const totals = new Map<string, number>();
+    for (const record of this.visibleServiceRecords()) {
+      if (record.cost !== null && record.cost !== undefined) {
+        const currency = record.currency ?? 'USD';
+        totals.set(currency, (totals.get(currency) ?? 0) + record.cost);
+      }
+    }
+    return [...totals.entries()].map(([currency, total]) => ({ currency, total }));
+  });
 
   protected load(): void {
     if (!this.garage().length) { this.state.set('ready'); this.loaded.set(true); return; }
