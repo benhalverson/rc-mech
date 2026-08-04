@@ -5,7 +5,7 @@ import { firstValueFrom } from 'rxjs';
 export type CarPhoto = {
   id: string;
   carId: string;
-  objectKey: string;
+  objectKey?: string;
   contentType: string;
   createdAt: string;
   sortOrder?: number;
@@ -45,7 +45,7 @@ export class CarPhotoGallery {
   }
 
   protected photoUrl(photo: CarPhoto): string {
-    return photo.url || `/api/v1/photos/${encodeURIComponent(photo.objectKey)}`;
+    return photo.url || `/api/v1/photos/${encodeURIComponent(photo.id)}`;
   }
 
   protected isPrimary(photo: CarPhoto): boolean {
@@ -98,9 +98,9 @@ export class CarPhotoGallery {
     if (this.archived() || this.action() || !window.confirm('Delete this private car photo?')) return;
     this.action.set(`delete:${photo.id}`);
     this.error.set('');
-    this.http.delete(this.photoEndpoint(photo), { withCredentials: true }).subscribe({
-      next: () => {
-        this.photos.update((photos) => photos.filter((item) => item.id !== photo.id));
+    this.http.delete<{ deleted: boolean; primaryPhotoId?: string | null }>(this.photoEndpoint(photo), { withCredentials: true }).subscribe({
+      next: ({ primaryPhotoId }) => {
+        this.photos.update((photos) => photos.filter((item) => item.id !== photo.id).map((item) => ({ ...item, isPrimary: item.id === primaryPhotoId, primary: item.id === primaryPhotoId })));
         this.action.set(null);
       },
       error: (error: { status?: number }) => this.fail(error, 'The photo could not be deleted.'),
@@ -184,7 +184,9 @@ export class CarPhotoGallery {
   }
 
   private ordered(photos: CarPhoto[]): CarPhoto[] {
-    return [...photos].sort((left, right) => this.photoPosition(left, 0) - this.photoPosition(right, 0));
+    return [...photos].sort((left, right) => this.photoPosition(left, 0) - this.photoPosition(right, 0)
+      || left.createdAt.localeCompare(right.createdAt)
+      || left.id.localeCompare(right.id));
   }
 
   private photoEndpoint(photo: CarPhoto): string {

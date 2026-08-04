@@ -28,7 +28,7 @@ describe('CarPhotoGallery', () => {
     app.photos.set([photo]);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Primary photo');
-    expect(fixture.nativeElement.querySelector('img').getAttribute('src')).toContain(encodeURIComponent(photo.objectKey));
+    expect(fixture.nativeElement.querySelector('img').getAttribute('src')).toBe('/api/v1/photos/photo-1');
   });
 
   it('validates format and size before sending an upload', () => {
