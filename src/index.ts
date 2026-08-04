@@ -458,7 +458,7 @@ const openApi = {
 		},
 		"/api/v1/cars/{carId}/components/{componentId}": {
 			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "componentId", in: "path", required: true, schema: { type: "string" } }],
-			get: { summary: "Get an owned component, including replacement history", responses: { 200: { description: "Component detail" }, 404: { description: "Component not found" } } },
+			get: { summary: "Get an owned component installation", responses: { 200: { description: "Component detail" }, 404: { description: "Component not found" } } },
 			patch: { summary: "Edit an owned component", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: componentProperties } } } }, responses: { 200: { description: "Component updated" }, 400: { description: "Invalid component" }, 404: { description: "Component not found" }, 409: { description: "Car is archived" } } },
 		},
 		"/api/v1/cars/{carId}/components/{componentId}/replace": { post: { summary: "Replace the current component and preserve its history", parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "componentId", in: "path", required: true, schema: { type: "string" } }], requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["slot", "name"], properties: componentProperties } } } }, responses: { 201: { description: "Replacement installed" }, 400: { description: "Invalid component or slot" }, 404: { description: "Component not found" }, 409: { description: "Component is not current or car is archived" } } } },
