@@ -15,7 +15,7 @@ describe('MaintenanceCockpit', () => {
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(MaintenanceCockpit);
     fixture.componentRef.setInput('cars', [car]);
-    fixture.componentRef.setInput('timezone', 'America/Los_Angeles');
+    fixture.componentRef.setInput('timezone', undefined as any);
     http.expectOne('/api/v1/maintenance-plans').flush({ maintenancePlans: [plan], activity: [] });
     http.expectOne((request) => request.url === '/api/v1/cars/car-1/service-records' && request.params.get('history') === 'true').flush({ serviceRecords: [] });
     fixture.detectChanges();
@@ -87,6 +87,19 @@ describe('MaintenanceCockpit', () => {
     expect(restore.request.method).toBe('POST');
     restore.flush({ serviceRecord: record });
     expect(app.serviceRecords()[0].deletedAt).toBeUndefined();
+  });
+
+  it('does not show a mixed-currency total in the history header', () => {
+    const app = fixture.componentInstance as any;
+    app.serviceRecords.set([
+      { id: 'record-1', carId: 'car-1', performedAt: '2026-08-02T17:00:00.000Z', description: 'Rebuilt diff', cost: 24.5, currency: 'USD' },
+      { id: 'record-2', carId: 'car-1', performedAt: '2026-08-03T17:00:00.000Z', description: 'Changed shocks', cost: 8, currency: 'CAD' },
+    ]);
+    fixture.detectChanges();
+    const historyTotal = fixture.nativeElement.querySelector('.history-total')?.textContent ?? '';
+    expect(historyTotal).toContain('2 records');
+    expect(historyTotal).not.toContain('logged');
+    expect(historyTotal).not.toContain('32.50');
   });
 
   it('keeps archived-car plans read-only', () => {

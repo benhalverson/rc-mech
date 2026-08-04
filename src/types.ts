@@ -81,7 +81,7 @@ export const serviceRecordUpdateInput = z.object({
 	cost: z.number().finite().nonnegative().max(1000000000).nullable().optional(),
 	currency: z.string().regex(/^[A-Za-z]{3}$/).transform((value) => value.toUpperCase()).nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, "At least one service record field is required")
-	.refine((value) => value.cost === undefined || value.cost === null ? value.currency === undefined || value.currency === null : value.currency !== undefined && value.currency !== null, "Cost and currency must be supplied together");
+	.refine((value) => (value.cost === undefined && value.currency === undefined) || (value.cost === null && value.currency === null) || (value.cost !== null && value.cost !== undefined && value.currency !== null && value.currency !== undefined), "Cost and currency must be supplied together");
 
 export const maintenancePlanInput = z.object({
 	carId: z.string().min(1),
@@ -93,7 +93,8 @@ export const maintenancePlanInput = z.object({
 	intervalSessions: z.number().int().positive().optional(),
 	baselineAt: z.string().datetime().optional(),
 	baselineSessionCount: z.number().int().nonnegative().optional(),
-}).refine((value) => value.intervalValue !== undefined || value.intervalDays !== undefined || value.intervalSessions !== undefined, "An interval is required");
+}).refine((value) => value.intervalValue !== undefined || value.intervalDays !== undefined || value.intervalSessions !== undefined, "An interval is required")
+	.refine((value) => value.intervalValue === undefined || value.intervalUnit !== undefined, "intervalUnit is required when intervalValue is supplied");
 
 export const maintenancePlanUpdateInput = z.object({ name: z.string().min(1).max(160).optional(), intervalUnit: z.enum(["none", "days", "weeks", "months"]).optional(), intervalValue: z.number().int().positive().optional(), intervalDays: z.number().int().positive().nullable().optional(), intervalSessions: z.number().int().positive().nullable().optional() }).refine((value) => Object.keys(value).length > 0, "At least one plan field is required");
 export const maintenanceCompletionInput = z.object({

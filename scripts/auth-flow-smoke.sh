@@ -15,7 +15,7 @@ cleanup() {
   if [[ -n "${worker_pid:-}" ]]; then
     kill -TERM "$worker_pid" 2>/dev/null || true
     kill -TERM -- "-$worker_pid" 2>/dev/null || true
-    pkill -TERM -f "wrangler dev --env local --port ${port} " 2>/dev/null || true
+    pkill -TERM -f "wrangler dev --env local --port ${port}" 2>/dev/null || true
     pkill -TERM -f "workerd serve.*socket-addr=entry=.*:${port}" 2>/dev/null || true
     wait "$worker_pid" 2>/dev/null || true
   fi
