@@ -92,7 +92,7 @@ type SessionMode = 'add' | 'edit';
 
 type DriveSessionForm = {
   startedAt: string;
-  durationMinutes: string;
+  durationMinutes: string | number | null;
   conditions: string;
   notes: string;
 };
@@ -169,13 +169,18 @@ const localDateTimeForTimezone = (iso: string, timezone: string): string => {
   return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
 };
 
+const normalizeDurationMinutes = (value: DriveSessionForm['durationMinutes']): number | null => {
+  if (value === null || (typeof value === 'string' && !value.trim())) return null;
+  return typeof value === 'number' ? value : Number(value.trim());
+};
+
 const driveSessionPayload = (form: DriveSessionForm, timezone: string): Record<string, unknown> => {
   const payload: Record<string, unknown> = {
     startedAt: zonedDateToIso(form.startedAt, timezone),
     conditions: form.conditions.trim(),
     notes: form.notes.trim(),
   };
-  payload['durationMinutes'] = form.durationMinutes.trim() ? Number(form.durationMinutes) : null;
+  payload['durationMinutes'] = normalizeDurationMinutes(form.durationMinutes);
   return payload;
 };
 
@@ -578,7 +583,7 @@ export class App {
     this.sessionFormError.set('');
   }
 
-  protected updateSessionField(field: keyof DriveSessionForm, value: string): void {
+  protected updateSessionField(field: keyof DriveSessionForm, value: string | number | null): void {
     this.sessionForm.update((form) => ({ ...form, [field]: value }));
   }
 
@@ -594,7 +599,7 @@ export class App {
       this.sessionFormError.set('Add when this drive session started.');
       return;
     }
-    const duration = form.durationMinutes.trim() ? Number(form.durationMinutes) : null;
+    const duration = normalizeDurationMinutes(form.durationMinutes);
     if (duration !== null && (!Number.isInteger(duration) || duration < 1 || duration > 1440)) {
       this.sessionFormError.set('Duration must be a whole number of minutes between 1 and 1,440.');
       return;

@@ -252,7 +252,7 @@ describe('App', () => {
 
     (fixture.nativeElement.querySelector('.session-log .section-heading .button') as HTMLButtonElement).click();
     (fixture.componentInstance as any).sessionForm.set({
-      startedAt: '2026-08-03T10:30', durationMinutes: '45', conditions: 'Dry clay', notes: 'Rear grip felt good',
+      startedAt: '2026-08-03T10:30', durationMinutes: 45, conditions: 'Dry clay', notes: 'Rear grip felt good',
     });
     fixture.detectChanges();
     (fixture.nativeElement.querySelector('.session-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
@@ -288,6 +288,49 @@ describe('App', () => {
     flushDriveSessions([{ ...saved, notes: 'Updated setup', deletedAt: '2026-08-03T18:00:00.000Z' }]);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Archived from active history');
+  });
+
+  it('submits a blank drive-session duration as null', () => {
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).cars.set([workshopCar]);
+    (fixture.componentInstance as any).openCar(workshopCar);
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/components').flush({ components: [], history: true });
+    flushDriveSessions();
+    fixture.detectChanges();
+
+    (fixture.componentInstance as any).openAddSession();
+    (fixture.componentInstance as any).sessionForm.set({
+      startedAt: '2026-08-03T10:30', durationMinutes: null, conditions: '', notes: '',
+    });
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.session-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+
+    const request = http.expectOne('/api/v1/cars/car-1/drives');
+    expect(request.request.body.durationMinutes).toBeNull();
+    request.flush({ driveSession: { id: 'drive-1', carId: 'car-1', startedAt: '2026-08-03T17:30:00.000Z', durationMinutes: null } });
+    flushDriveSessions();
+  });
+
+  it('rejects invalid drive-session durations without submitting', () => {
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).cars.set([workshopCar]);
+    (fixture.componentInstance as any).openCar(workshopCar);
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/components').flush({ components: [], history: true });
+    flushDriveSessions();
+    fixture.detectChanges();
+
+    (fixture.componentInstance as any).openAddSession();
+    (fixture.componentInstance as any).sessionForm.set({
+      startedAt: '2026-08-03T10:30', durationMinutes: 1440.5, conditions: '', notes: '',
+    });
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.session-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Duration must be a whole number of minutes between 1 and 1,440.');
+    http.expectNone('/api/v1/cars/car-1/drives');
   });
 
   it('saves an IANA timezone and uses it for session display', () => {
