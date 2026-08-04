@@ -76,7 +76,10 @@ textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-
 .notes-block p { color: var(--muted); line-height: 1.55; max-width: 650px; margin: 10px 0 0; white-space: pre-wrap; }
 .archive-note { color: #df8a72; border-left: 2px solid #df8a72; padding-left: 12px; margin-top: 24px; font-size: .84rem; line-height: 1.5; }
 .danger-button { background: transparent; border: 1px solid #8d5748; color: #df8a72; }
-.build-sheet{border-top:1px solid var(--line);margin-top:38px;padding-top:24px}.component-slot{padding:16px 0;border-bottom:1px solid var(--line)}.component-slot-heading,.component-current{display:flex;justify-content:space-between;gap:18px}.component-current{margin-top:12px;padding:14px;border-left:2px solid var(--accent)}
+.build-sheet { border-top: 1px solid var(--line); margin-top: 38px; padding-top: 24px; }
+.component-slot { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.component-slot-heading, .component-current { display: flex; justify-content: space-between; gap: 18px; }
+.component-current { margin-top: 12px; padding: 14px; border-left: 2px solid var(--accent); }
 .session-log { border-top: 1px solid var(--line); margin-top: 38px; padding-top: 24px; }
 .session-log h4 { margin: 10px 0 0; font: 700 1.45rem Georgia, serif; letter-spacing: -.03em; }
 .session-summary { margin-left: auto; color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .08em; }

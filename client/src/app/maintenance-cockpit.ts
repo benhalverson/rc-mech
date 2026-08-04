@@ -9,10 +9,10 @@ export type MaintenanceComponent = { id: string; carId: string; slot: string; na
 export type MaintenancePlan = {
   id: string;
   carId: string;
-  componentId: string;
+  componentId: string | null;
   name: string;
   intervalDays?: number | null;
-  intervalUnit?: 'days' | 'weeks' | 'months' | null;
+  intervalUnit?: 'none' | 'days' | 'weeks' | 'months' | null;
   intervalValue?: number | null;
   intervalSessions?: number | null;
   baselineAt?: string | null;
@@ -116,6 +116,16 @@ export class MaintenanceCockpit {
   protected readonly activeCount = computed(() => this.plans().filter((plan) => plan.status === 'active').length);
   protected readonly visibleServiceRecords = computed(() => this.serviceRecords().filter((record) => this.historyFilter() === 'deleted' ? Boolean(record.deletedAt) : !record.deletedAt));
   protected readonly totalServiceCost = computed(() => this.visibleServiceRecords().reduce((total, record) => total + (record.cost ?? 0), 0));
+  protected readonly serviceTotals = computed(() => {
+    const totals = new Map<string, number>();
+    for (const record of this.visibleServiceRecords()) {
+      if (record.cost !== null && record.cost !== undefined) {
+        const currency = record.currency ?? 'USD';
+        totals.set(currency, (totals.get(currency) ?? 0) + record.cost);
+      }
+    }
+    return [...totals.entries()].map(([currency, total]) => ({ currency, total }));
+  });
 
   protected load(): void {
     if (!this.garage().length) { this.state.set('ready'); this.loaded.set(true); return; }
@@ -146,7 +156,7 @@ export class MaintenanceCockpit {
 
   protected openEdit(plan: MaintenancePlan): void {
     if (this.isReadOnly(plan)) return;
-    this.form.set({ ...emptyForm(), carId: plan.carId, componentId: plan.componentId, name: plan.name, calendarValue: plan.intervalValue ? String(plan.intervalValue) : plan.intervalDays ? String(plan.intervalDays) : '', calendarUnit: plan.intervalUnit ?? 'days', runInterval: plan.intervalSessions ? String(plan.intervalSessions) : '', baselineAt: plan.baselineAt ? this.localDateTime(new Date(plan.baselineAt)) : '', baselineRuns: String(plan.baselineSessionCount ?? 0) });
+    this.form.set({ ...emptyForm(), carId: plan.carId, componentId: plan.componentId ?? '', name: plan.name, calendarValue: plan.intervalUnit === 'none' ? '' : plan.intervalValue ? String(plan.intervalValue) : plan.intervalDays ? String(plan.intervalDays) : '', calendarUnit: plan.intervalUnit === 'weeks' || plan.intervalUnit === 'months' ? plan.intervalUnit : 'days', runInterval: plan.intervalSessions ? String(plan.intervalSessions) : '', baselineAt: plan.baselineAt ? this.localDateTime(new Date(plan.baselineAt)) : '', baselineRuns: String(plan.baselineSessionCount ?? 0) });
     this.editingId.set(plan.id); this.formError.set(''); this.loadComponents(plan.carId); this.editing.set(true);
   }
 
@@ -165,7 +175,7 @@ export class MaintenanceCockpit {
 
   protected openCompletion(plan: MaintenancePlan): void {
     if (this.isReadOnly(plan)) return;
-    this.serviceForm.set({ ...emptyServiceForm(), carId: plan.carId, componentId: plan.componentId, performedAt: this.localDateTime(new Date()), description: `Completed ${plan.name}` });
+    this.serviceForm.set({ ...emptyServiceForm(), carId: plan.carId, componentId: plan.componentId ?? '', performedAt: this.localDateTime(new Date()), description: `Completed ${plan.name}` });
     this.serviceEditingId.set(null); this.servicePlanId.set(plan.id); this.serviceError.set(''); this.loadComponents(plan.carId); this.serviceEditing.set(true);
   }
 
@@ -224,7 +234,7 @@ export class MaintenanceCockpit {
   }
 
   protected carName(carId: string): string { return this.garage().find((car) => car.id === carId)?.name ?? 'Unknown car'; }
-  protected componentName(componentId: string): string { return this.components().find((component) => component.id === componentId)?.name ?? 'Installed component'; }
+  protected componentName(componentId: string | null | undefined): string { return componentId ? this.components().find((component) => component.id === componentId)?.name ?? 'Installed component' : 'Car-level plan'; }
   protected planState(plan: MaintenancePlan): PlanState { return calculatePlanState(plan); }
   protected isReadOnly(plan: MaintenancePlan): boolean { return Boolean(this.garage().find((car) => car.id === plan.carId)?.archivedAt) || plan.status === 'archived'; }
   protected isRecordReadOnly(record: ServiceRecord): boolean { return Boolean(this.garage().find((car) => car.id === record.carId)?.archivedAt) || Boolean(record.deletedAt); }

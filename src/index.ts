@@ -78,15 +78,13 @@ const driveSessionCount = async (c: AppContext, carId: string) => {
 
 const planSessionCount = driveSessionCount;
 
-const planDue = async (c: AppContext, value: typeof maintenancePlan.$inferSelect, now = new Date().toISOString()) => {
-	const currentSessionCount = await planSessionCount(c, value.carId);
-	const timezone = await ownerTimezone(c);
+const planDue = (value: typeof maintenancePlan.$inferSelect, currentSessionCount: number, timezone: string, now = new Date().toISOString()) => {
 	const intervalUnit = (value.intervalUnit || (value.intervalDays ? "days" : "none")) as MaintenanceIntervalUnit;
 	const intervalValue = value.intervalValue || value.intervalDays || 1;
 	return {
 		...value,
 		intervalUnit,
-		intervalValue,
+		intervalValue: intervalUnit === "none" ? null : intervalValue,
 		currentSessionCount,
 		timezone,
 		...calculateMaintenanceDue({
@@ -101,6 +99,14 @@ const planDue = async (c: AppContext, value: typeof maintenancePlan.$inferSelect
 			timezone,
 		}),
 	};
+};
+
+const sessionCountsForCars = async (c: AppContext, carIds: string[]) => {
+	if (!carIds.length) return new Map<string, number>();
+	const rows = await db(c.env).select({ carId: driveSession.carId }).from(driveSession).where(and(isNull(driveSession.deletedAt), or(...carIds.map((carId) => eq(driveSession.carId, carId)))));
+	const counts = new Map<string, number>();
+	for (const row of rows) counts.set(row.carId, (counts.get(row.carId) ?? 0) + 1);
+	return counts;
 };
 
 const carPlan = async (c: AppContext, planId: string) => {
@@ -612,7 +618,8 @@ app.patch("/api/v1/cars/:carId/drives/:driveId", async (c) => {
 		conditions: parsed.data.conditions,
 		notes: parsed.data.notes,
 	}).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId), isNull(driveSession.deletedAt)));
-	const updated = await db(c.env).select().from(driveSession).where(eq(driveSession.id, driveId)).get();
+	const updated = await db(c.env).select().from(driveSession).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId), isNull(driveSession.deletedAt))).get();
+	if (!updated) return c.json({ error: "Drive session is no longer editable" }, 409);
 	return c.json({ driveSession: publicDriveSession(updated!, await ownerTimezone(c)) });
 });
 
@@ -647,7 +654,7 @@ app.post("/api/v1/cars/:carId/service-records", async (c) => {
 		componentId: value.componentId ?? null,
 		performedAt: value.performedAt,
 		description: value.description ?? value.notes!,
-		notes: value.notes ?? value.description ?? null,
+		notes: value.notes ?? null,
 		cost: value.cost ?? null,
 		currency: value.currency ?? null,
 		baselineAt,
@@ -671,7 +678,8 @@ app.post("/api/v1/maintenance-plans", async (c) => {
 	const value = parsed.data;
 	const intervalUnit = value.intervalUnit ?? (value.intervalDays !== undefined ? "days" : "none");
 	const intervalValue = value.intervalValue ?? value.intervalDays ?? 1;
-	if (value.componentId) {
+	if (value.componentId !== undefined) {
+		if (!value.componentId) return c.json({ error: "componentId must not be empty" }, 400);
 		const target = await ownedComponent(c, value.carId, value.componentId);
 		if (!target || target.removedAt !== null) return c.json({ error: "Maintenance plans require a current component" }, 409);
 	}
@@ -694,12 +702,15 @@ app.post("/api/v1/maintenance-plans", async (c) => {
 		pausedAt: null,
 	});
 	const created = await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, id)).get();
-	return c.json({ maintenancePlan: await planDue(c, created!) }, 201);
+	return c.json({ maintenancePlan: planDue(created!, baselineSessionCount, await ownerTimezone(c)) }, 201);
 });
 
 app.get("/api/v1/maintenance-plans", async (c) => {
 	const plans = await db(c.env).select().from(maintenancePlan).innerJoin(car, eq(maintenancePlan.carId, car.id)).where(eq(car.ownerId, c.get("userId")));
-	const maintenancePlans = await Promise.all(plans.map(({ maintenance_plan: value }) => planDue(c, value)));
+	const timezone = await ownerTimezone(c);
+	const values = plans.map(({ maintenance_plan: value }) => value);
+	const counts = await sessionCountsForCars(c, [...new Set(values.map((value) => value.carId))]);
+	const maintenancePlans = values.map((value) => planDue(value, counts.get(value.carId) ?? 0, timezone));
 	const records = await db(c.env).select().from(serviceRecord).innerJoin(car, eq(serviceRecord.carId, car.id)).where(and(eq(car.ownerId, c.get("userId")), isNull(serviceRecord.deletedAt))).orderBy(desc(serviceRecord.performedAt)).limit(20);
 	const activity = records.map(({ service_record: value }) => ({ id: value.id, planId: value.planId, action: "completed", occurredAt: value.performedAt, note: value.description }));
 	return c.json({ maintenancePlans, activity });
@@ -709,24 +720,27 @@ app.get("/api/v1/cars/:carId/maintenance-plans", async (c) => {
 	const carId = c.req.param("carId");
 	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
 	const plans = await db(c.env).select().from(maintenancePlan).where(eq(maintenancePlan.carId, carId));
-	return c.json({ maintenancePlans: await Promise.all(plans.map((value) => planDue(c, value))) });
+	const timezone = await ownerTimezone(c);
+	const count = await planSessionCount(c, carId);
+	return c.json({ maintenancePlans: plans.map((value) => planDue(value, count, timezone)) });
 });
 
 app.get("/api/v1/cars/:carId/maintenance-cockpit", async (c) => {
 	const carId = c.req.param("carId");
 	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
 	const plans = await db(c.env).select().from(maintenancePlan).where(eq(maintenancePlan.carId, carId));
-	const enriched = await Promise.all(plans.map((value) => planDue(c, value)));
+	const timezone = await ownerTimezone(c);
+	const count = await planSessionCount(c, carId);
+	const enriched = plans.map((value) => planDue(value, count, timezone));
 	return c.json({ upcoming: enriched.filter((value) => value.dueStatus === "upcoming"), due: enriched.filter((value) => value.dueStatus === "due"), overdue: enriched.filter((value) => value.dueStatus === "overdue"), paused: enriched.filter((value) => value.dueStatus === "paused"), archived: enriched.filter((value) => value.dueStatus === "archived"), recentActivity: await db(c.env).select().from(serviceRecord).where(and(eq(serviceRecord.carId, carId), isNull(serviceRecord.deletedAt))).orderBy(desc(serviceRecord.performedAt)).limit(20) });
 });
 
 app.get("/api/v1/maintenance-cockpit", async (c) => {
 	const cars = await db(c.env).select({ id: car.id }).from(car).where(eq(car.ownerId, c.get("userId")));
-	const values = await Promise.all(cars.map(async ({ id }) => {
-		const plans = await db(c.env).select().from(maintenancePlan).where(eq(maintenancePlan.carId, id));
-		return Promise.all(plans.map((value) => planDue(c, value)));
-	}));
-	const plans = values.flat();
+	const values = await db(c.env).select({ plan: maintenancePlan }).from(maintenancePlan).innerJoin(car, eq(maintenancePlan.carId, car.id)).where(eq(car.ownerId, c.get("userId")));
+	const timezone = await ownerTimezone(c);
+	const counts = await sessionCountsForCars(c, cars.map(({ id }) => id));
+	const plans = values.map(({ plan }) => planDue(plan, counts.get(plan.carId) ?? 0, timezone));
 	return c.json({ upcoming: plans.filter((value) => value.dueStatus === "upcoming"), due: plans.filter((value) => value.dueStatus === "due"), overdue: plans.filter((value) => value.dueStatus === "overdue"), paused: plans.filter((value) => value.dueStatus === "paused"), archived: plans.filter((value) => value.dueStatus === "archived") });
 });
 
@@ -737,7 +751,8 @@ app.patch("/api/v1/maintenance-plans/:planId", async (c) => {
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 	const intervalDays = parsed.data.intervalUnit === "none" ? null : parsed.data.intervalDays === null ? null : parsed.data.intervalDays ?? (parsed.data.intervalUnit === "days" ? parsed.data.intervalValue : undefined);
 	await db(c.env).update(maintenancePlan).set({ name: parsed.data.name, intervalDays, intervalUnit: parsed.data.intervalUnit ?? (intervalDays !== undefined ? "days" : existing.intervalUnit), intervalValue: parsed.data.intervalValue ?? (parsed.data.intervalUnit === "none" ? 1 : intervalDays ?? existing.intervalValue), intervalSessions: parsed.data.intervalSessions }).where(eq(maintenancePlan.id, existing.id));
-	return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
+	const updated = (await carPlan(c, existing.id))!;
+	return c.json({ maintenancePlan: planDue(updated, await planSessionCount(c, updated.carId), await ownerTimezone(c)) });
 });
 
 const transitionMaintenancePlan = async (c: AppContext) => {
@@ -749,7 +764,8 @@ const transitionMaintenancePlan = async (c: AppContext) => {
 	const nextStatus = action === "pause" ? "paused" : action === "resume" ? "active" : "archived";
 	try {
 		await db(c.env).update(maintenancePlan).set({ status: nextStatus, pauseReason: action === "pause" ? "manual" : null, pausedAt: action === "pause" ? new Date().toISOString() : null }).where(eq(maintenancePlan.id, existing.id));
-		return c.json({ maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) });
+		const updated = (await carPlan(c, existing.id))!;
+		return c.json({ maintenancePlan: planDue(updated, await planSessionCount(c, updated.carId), await ownerTimezone(c)) });
 	} catch (error) {
 		console.error("maintenance plan transition failed", error);
 		return c.json({ error: "Maintenance plan transition failed" }, 500);
@@ -774,11 +790,11 @@ app.post("/api/v1/maintenance-plans/:planId/complete", async (c) => {
 	const id = crypto.randomUUID();
 	const database = db(c.env);
 	await database.batch([
-		database.insert(serviceRecord).values({ id, carId: existing.carId, componentId: existing.componentId, planId: existing.id, performedAt, description, notes: parsed.data.notes ?? description, cost: parsed.data.cost ?? null, currency: parsed.data.currency ?? null, baselineAt: performedAt, baselineSessionCount, previousBaselineAt: existing.baselineAt, previousBaselineSessionCount: existing.baselineSessionCount, deletedAt: null }),
+		database.insert(serviceRecord).values({ id, carId: existing.carId, componentId: existing.componentId, planId: existing.id, performedAt, description, notes: parsed.data.notes ?? undefined, cost: parsed.data.cost ?? null, currency: parsed.data.currency ?? null, baselineAt: performedAt, baselineSessionCount, previousBaselineAt: existing.baselineAt, previousBaselineSessionCount: existing.baselineSessionCount, deletedAt: null }),
 		database.update(maintenancePlan).set({ baselineAt: performedAt, baselineSessionCount }).where(eq(maintenancePlan.id, existing.id)),
 	]);
-	const created = await database.select().from(serviceRecord).where(eq(serviceRecord.id, id)).get();
-	return c.json({ serviceRecord: created, maintenancePlan: await planDue(c, (await carPlan(c, existing.id))!) }, 201);
+	const updatedPlan = (await carPlan(c, existing.id))!;
+	return c.json({ serviceRecord: { id, planId: existing.id, performedAt, description, baselineAt: performedAt, baselineSessionCount }, maintenancePlan: planDue(updatedPlan, baselineSessionCount, await ownerTimezone(c)) }, 201);
 });
 
 app.get("/api/v1/cars/:carId/service-records", async (c) => {
@@ -791,8 +807,9 @@ app.get("/api/v1/cars/:carId/service-records", async (c) => {
 
 app.patch("/api/v1/service-records/:recordId", async (c) => {
 	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
-	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
-	if (!canWrite((await ownedCar(c, record.carId))!)) return c.json({ error: "Car is archived; restore it before editing service history" }, 409);
+	const parentCar = record ? await ownedCar(c, record.carId) : undefined;
+	if (!record || !parentCar) return c.json({ error: "Service record not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before editing service history" }, 409);
 	if (!canEditServiceRecord(record)) return c.json({ error: "Deleted service records are immutable" }, 409);
 	const parsed = serviceRecordUpdateInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -815,8 +832,9 @@ app.patch("/api/v1/service-records/:recordId", async (c) => {
 
 app.delete("/api/v1/service-records/:recordId", async (c) => {
 	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
-	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
-	if (!canWrite((await ownedCar(c, record.carId))!)) return c.json({ error: "Car is archived; restore it before deleting service history" }, 409);
+	const parentCar = record ? await ownedCar(c, record.carId) : undefined;
+	if (!record || !parentCar) return c.json({ error: "Service record not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before deleting service history" }, 409);
 	if (!canDeleteServiceRecord(record)) return c.json({ error: "Service record is already deleted" }, 409);
 	const database = db(c.env);
 	const plan = record.planId ? await db(c.env).select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
@@ -830,9 +848,9 @@ app.delete("/api/v1/service-records/:recordId", async (c) => {
 
 app.post("/api/v1/service-records/:recordId/restore", async (c) => {
 	const record = await db(c.env).select().from(serviceRecord).where(eq(serviceRecord.id, c.req.param("recordId"))).get();
-	if (!record || !await ownedCar(c, record.carId)) return c.json({ error: "Service record not found" }, 404);
-	const parentCar = await ownedCar(c, record.carId);
-	if (!canWrite(parentCar!)) return c.json({ error: "Car is archived; restore it before restoring service history" }, 409);
+	const parentCar = record ? await ownedCar(c, record.carId) : undefined;
+	if (!record || !parentCar) return c.json({ error: "Service record not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before restoring service history" }, 409);
 	if (record.deletedAt === null) return c.json({ error: "Service record is already active" }, 409);
 	const database = db(c.env);
 	const plan = record.planId ? await database.select().from(maintenancePlan).where(eq(maintenancePlan.id, record.planId)).get() : undefined;
@@ -887,7 +905,7 @@ const serviceRecordPatchSchema = {
 	type: "object",
 	minProperties: 1,
 	anyOf: [{ required: ["description"] }, { required: ["notes"] }, { required: ["performedAt"] }, { required: ["cost", "currency"] }],
-	properties: serviceRecordSchema.properties,
+	properties: { ...serviceRecordSchema.properties, notes: { type: "string", nullable: true }, cost: { type: "number", minimum: 0, nullable: true }, currency: { type: "string", pattern: "^[A-Za-z]{3}$", nullable: true } },
 	allOf: serviceRecordSchema.allOf,
 };
 const serviceCompletionSchema = {
@@ -953,7 +971,7 @@ const openApi = {
 		},
 		"/api/v1/cars/{carId}/components/{componentId}": {
 			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "componentId", in: "path", required: true, schema: { type: "string" } }],
-			get: { summary: "Get an owned component, including replacement history", responses: { 200: { description: "Component detail" }, 404: { description: "Component not found" } } },
+			get: { summary: "Get an owned component installation", responses: { 200: { description: "Component detail" }, 404: { description: "Component not found" } } },
 			patch: { summary: "Edit an owned component", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: componentProperties } } } }, responses: { 200: { description: "Component updated" }, 400: { description: "Invalid component" }, 404: { description: "Component not found" }, 409: { description: "Car is archived" } } },
 		},
 		"/api/v1/cars/{carId}/components/{componentId}/replace": { post: { summary: "Replace the current component and preserve its history", parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "componentId", in: "path", required: true, schema: { type: "string" } }], requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["slot", "name"], properties: componentProperties } } } }, responses: { 201: { description: "Replacement installed" }, 400: { description: "Invalid component or slot" }, 404: { description: "Component not found" }, 409: { description: "Component is not current or car is archived" } } } },
@@ -962,11 +980,13 @@ const openApi = {
 			patch: { summary: "Set the authenticated owner's IANA timezone", responses: { 200: { description: "Timezone preference updated" }, 400: { description: "Invalid IANA timezone" } } },
 		},
 		"/api/v1/cars/{carId}/drives": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "history", in: "query", required: false, schema: { type: "boolean" } }],
 			get: { summary: "List an owned car's drive sessions; history=true includes soft-deleted sessions", responses: { 200: { description: "Drive session history" }, 404: { description: "Car not found" } } },
 			post: { summary: "Record a drive session for an active owned car", responses: { 201: { description: "Drive recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } },
 		},
-		"/api/v1/cars/{carId}/drives/count": { get: { summary: "Count non-deleted drive sessions for an owned car", responses: { 200: { description: "Drive session count" }, 404: { description: "Car not found" } } } },
+		"/api/v1/cars/{carId}/drives/count": { parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }], get: { summary: "Count non-deleted drive sessions for an owned car", responses: { 200: { description: "Drive session count" }, 404: { description: "Car not found" } } } },
 		"/api/v1/cars/{carId}/drives/{driveId}": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "driveId", in: "path", required: true, schema: { type: "string" } }],
 			patch: { summary: "Edit an active drive session", responses: { 200: { description: "Drive session updated" }, 404: { description: "Drive session not found" }, 409: { description: "Deleted session" } } },
 			delete: { summary: "Soft-delete a drive session", responses: { 200: { description: "Drive session deleted" }, 404: { description: "Drive session not found" }, 409: { description: "Already deleted" } } },
 		},
