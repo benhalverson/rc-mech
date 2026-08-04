@@ -91,20 +91,21 @@ const componentFormFrom = (component: InstalledComponent): ComponentForm => ({
   notes: component.notes ?? '',
 });
 
-const componentPayload = (form: ComponentForm): Record<string, string> => ({
-  slotType: form.slotType,
-  slot: form.slot.trim(),
-  name: form.name.trim(),
-  manufacturer: form.manufacturer.trim(),
-  model: form.model.trim(),
-  serialNumber: form.serialNumber.trim(),
-  notes: form.notes.trim(),
-});
+const componentPayload = (form: ComponentForm): Record<string, string> => {
+  const optional = Object.fromEntries(
+    Object.entries({ manufacturer: form.manufacturer, model: form.model, serialNumber: form.serialNumber, notes: form.notes })
+      .map(([key, value]) => [key, value.trim()]).filter(([, value]) => value),
+  );
+  return { slotType: form.slotType, slot: form.slot.trim(), name: form.name.trim(), ...optional };
+};
 
-const componentDetailsPayload = (form: ComponentForm): Record<string, string> => ({
-  name: form.name.trim(), manufacturer: form.manufacturer.trim(), model: form.model.trim(),
-  serialNumber: form.serialNumber.trim(), notes: form.notes.trim(),
-});
+const componentDetailsPayload = (form: ComponentForm): Record<string, string> => {
+  const optional = Object.fromEntries(
+    Object.entries({ manufacturer: form.manufacturer, model: form.model, serialNumber: form.serialNumber, notes: form.notes })
+      .map(([key, value]) => [key, value.trim()]).filter(([, value]) => value),
+  );
+  return { name: form.name.trim(), ...optional };
+};
 
 type WebAuthnOptions = {
   challenge: string;
