@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @theme {
 	--color-graphite: #111719;
@@ -39,7 +39,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	*, *::before, *::after {
+	*,
+	*::before,
+	*::after {
 		animation: none;
 		scroll-behavior: auto;
 		transition: none;

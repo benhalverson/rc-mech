@@ -372,7 +372,14 @@ const carPayload = (form: CarForm): Record<string, string> => {
 
 @Component({
 	selector: 'app-root',
-	imports: [DatePipe, TitleCasePipe, FormsModule, MaintenanceCockpit, CarPhotoGallery, MatSidenavModule],
+	imports: [
+		DatePipe,
+		TitleCasePipe,
+		FormsModule,
+		MaintenanceCockpit,
+		CarPhotoGallery,
+		MatSidenavModule,
+	],
 	templateUrl: './app.html',
 	styleUrl: './app.css',
 	changeDetection: ChangeDetectionStrategy.OnPush,
@@ -380,7 +387,9 @@ const carPayload = (form: CarForm): Record<string, string> => {
 export class App {
 	private readonly http = inject(HttpClient);
 	private readonly router = inject(Router, { optional: true });
-	private readonly breakpointObserver = inject(BreakpointObserver, { optional: true });
+	private readonly breakpointObserver = inject(BreakpointObserver, {
+		optional: true,
+	});
 
 	protected readonly state = signal<ViewState>('checking');
 	protected readonly email = signal('');
@@ -505,12 +514,18 @@ export class App {
 	});
 
 	constructor() {
-		this.breakpointObserver?.observe(['(max-width: 700px)']).subscribe(({ matches }) => {
-			this.navMode.set(matches ? 'over' : 'side');
-			this.navOpen.set(!matches);
-		});
+		this.breakpointObserver
+			?.observe(['(max-width: 700px)'])
+			.subscribe(({ matches }) => {
+				this.navMode.set(matches ? 'over' : 'side');
+				this.navOpen.set(!matches);
+			});
 		this.router?.events
-			.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd))
+			.pipe(
+				filter(
+					(event): event is NavigationEnd => event instanceof NavigationEnd,
+				),
+			)
 			.subscribe((event) => {
 				this.currentUrl.set(event.urlAfterRedirects);
 				this.navOpen.set(false);
@@ -820,13 +835,16 @@ export class App {
 		this.carFormError.set('');
 		this.carEditing.set(false);
 		this.carView.set('detail');
-		if (!this.legacyMode()) void this.router?.navigate(['/garage', car.id, 'overview']);
+		if (!this.legacyMode())
+			void this.router?.navigate(['/garage', car.id, 'overview']);
 		this.loadCarSection(car.id);
 	}
 
 	private loadCarSection(carId: string): void {
-		if (this.legacyMode() || this.carSection() === 'build') this.loadComponents(carId);
-		if (this.legacyMode() || this.carSection() === 'runs') this.loadDriveSessions(carId);
+		if (this.legacyMode() || this.carSection() === 'build')
+			this.loadComponents(carId);
+		if (this.legacyMode() || this.carSection() === 'runs')
+			this.loadDriveSessions(carId);
 	}
 
 	protected editCar(): void {

@@ -733,7 +733,9 @@ textarea {
 	border-bottom: 1px solid var(--line);
 }
 .nav-brand strong {
-	font: 700 1.25rem Georgia, serif;
+	font:
+		700 1.25rem Georgia,
+		serif;
 }
 .workspace-nav nav {
 	display: grid;
@@ -748,13 +750,13 @@ textarea {
 	padding: 12px;
 	color: var(--muted);
 	text-decoration: none;
-	font-size: .78rem;
-	letter-spacing: .08em;
+	font-size: 0.78rem;
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
 }
 .nav-number {
 	color: var(--accent);
-	font-size: .68rem;
+	font-size: 0.68rem;
 }
 .workspace-nav nav a:hover,
 .workspace-nav nav a.active-nav,
@@ -775,8 +777,8 @@ textarea {
 }
 .workspace-label {
 	color: var(--muted);
-	font-size: .72rem;
-	letter-spacing: .08em;
+	font-size: 0.72rem;
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
 }
 .car-tabs {
@@ -789,10 +791,10 @@ textarea {
 	padding: 10px 14px;
 	border-bottom: 2px solid transparent;
 	color: var(--muted);
-	font-size: .76rem;
+	font-size: 0.76rem;
 	text-decoration: none;
 	text-transform: uppercase;
-	letter-spacing: .08em;
+	letter-spacing: 0.08em;
 }
 .car-tab:hover,
 .car-tab.active-tab {
