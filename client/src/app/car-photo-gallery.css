@@ -1,0 +1,29 @@
+:host { display: block; }
+.photo-gallery { border-top: 1px solid var(--line); margin-top: 38px; padding-top: 24px; }
+.photo-gallery h4 { margin: 10px 0 0; font: 700 1.45rem Georgia, serif; letter-spacing: -.03em; }
+.upload-button { display: inline-block; cursor: pointer; }
+.photo-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.photo-card { border: 1px solid var(--line); background: #20211c; }
+.primary-photo { border-color: var(--accent); }
+.photo-frame { aspect-ratio: 4 / 3; background: #151610; }
+.photo-frame img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.photo-meta { display: flex; justify-content: space-between; align-items: start; gap: 10px; padding: 12px; }
+.photo-meta strong, .photo-meta span { display: block; }
+.photo-meta strong { color: var(--accent); font-size: .78rem; }
+.photo-meta span { margin-top: 5px; color: var(--muted); font-size: .7rem; }
+.photo-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 8px; }
+.photo-actions .text-button { font-size: .7rem; }
+.replace-button { cursor: pointer; }
+.state-card { display: grid; justify-items: start; gap: 8px; min-height: 140px; align-content: center; padding: 22px; border: 1px dashed var(--line); color: var(--muted); }
+.state-card p, .state-card h5 { margin: 0; }
+.state-card h5 { color: var(--ink); font: 700 1.2rem Georgia, serif; }
+.state-mark { color: var(--accent); font: 700 1.8rem ui-monospace, monospace; }
+.empty-state { font-size: .86rem; }
+.error-state { border-color: #8d5748; }
+.archive-note { color: #df8a72; border-left: 2px solid #df8a72; padding-left: 12px; font-size: .84rem; line-height: 1.5; }
+.message { color: var(--accent); margin: 18px 0; }
+.text-button { border: 0; background: none; color: var(--accent); padding: 3px 0; font: inherit; font-size: .78rem; cursor: pointer; }
+.text-button.danger { color: #df8a72; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (max-width: 700px) { .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .photo-grid { grid-template-columns: 1fr; } .photo-meta { display: block; } .photo-actions { justify-content: start; margin-top: 10px; } }
