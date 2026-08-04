@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { DatePipe } from '@angular/common';
+import { DatePipe, TitleCasePipe } from '@angular/common';
 import {
 	ChangeDetectionStrategy,
 	Component,
@@ -7,8 +7,11 @@ import {
 	inject,
 	signal,
 } from '@angular/core';
+import { MatSidenavModule } from '@angular/material/sidenav';
+import { BreakpointObserver } from '@angular/cdk/layout';
+import { NavigationEnd, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { firstValueFrom } from 'rxjs';
+import { filter, firstValueFrom } from 'rxjs';
 import { MaintenanceCockpit } from './maintenance-cockpit';
 import { CarPhotoGallery } from './car-photo-gallery';
 
@@ -369,13 +372,15 @@ const carPayload = (form: CarForm): Record<string, string> => {
 
 @Component({
 	selector: 'app-root',
-	imports: [DatePipe, FormsModule, MaintenanceCockpit, CarPhotoGallery],
+	imports: [DatePipe, TitleCasePipe, FormsModule, MaintenanceCockpit, CarPhotoGallery, MatSidenavModule],
 	templateUrl: './app.html',
 	styleUrl: './app.css',
 	changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
 	private readonly http = inject(HttpClient);
+	private readonly router = inject(Router, { optional: true });
+	private readonly breakpointObserver = inject(BreakpointObserver, { optional: true });
 
 	protected readonly state = signal<ViewState>('checking');
 	protected readonly email = signal('');
@@ -474,8 +479,48 @@ export class App {
 				window.location.hostname === 'localhost' ||
 				window.location.hostname === '127.0.0.1'),
 	);
+	protected readonly navOpen = signal(true);
+	protected readonly navMode = signal<'side' | 'over'>('side');
+	protected readonly currentUrl = signal(
+		typeof window === 'undefined' ? '/garage' : window.location.pathname,
+	);
+	protected readonly legacyMode = computed(() => {
+		const url = this.router?.url;
+		return !url || url === '/';
+	});
+	protected readonly workspace = computed(() => {
+		if (this.legacyMode()) return 'legacy';
+		const url = this.currentUrl();
+		if (url.startsWith('/maintenance')) return 'maintenance';
+		if (url.startsWith('/settings')) return 'settings';
+		return 'garage';
+	});
+	protected readonly carSection = computed(() => {
+		if (this.legacyMode()) return 'all';
+		const url = this.currentUrl();
+		if (url.includes('/build')) return 'build';
+		if (url.includes('/photos')) return 'photos';
+		if (url.includes('/runs')) return 'runs';
+		return 'overview';
+	});
 
 	constructor() {
+		this.breakpointObserver?.observe(['(max-width: 700px)']).subscribe(({ matches }) => {
+			this.navMode.set(matches ? 'over' : 'side');
+			this.navOpen.set(!matches);
+		});
+		this.router?.events
+			.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd))
+			.subscribe((event) => {
+				this.currentUrl.set(event.urlAfterRedirects);
+				this.navOpen.set(false);
+				const carId = event.urlAfterRedirects.match(/^\/garage\/([^/]+)/)?.[1];
+				if (carId) {
+					this.selectedCarId.set(carId);
+					this.carView.set('detail');
+					this.loadCarSection(carId);
+				}
+			});
 		this.consumeMagicLinkError();
 		this.loadSession();
 	}
@@ -775,8 +820,13 @@ export class App {
 		this.carFormError.set('');
 		this.carEditing.set(false);
 		this.carView.set('detail');
-		this.loadComponents(car.id);
-		this.loadDriveSessions(car.id);
+		if (!this.legacyMode()) void this.router?.navigate(['/garage', car.id, 'overview']);
+		this.loadCarSection(car.id);
+	}
+
+	private loadCarSection(carId: string): void {
+		if (this.legacyMode() || this.carSection() === 'build') this.loadComponents(carId);
+		if (this.legacyMode() || this.carSection() === 'runs') this.loadDriveSessions(carId);
 	}
 
 	protected editCar(): void {
@@ -796,6 +846,7 @@ export class App {
 		this.selectedCarId.set(null);
 		this.carEditing.set(false);
 		this.carView.set('list');
+		if (!this.legacyMode()) void this.router?.navigate(['/garage']);
 	}
 
 	protected retryComponents(): void {

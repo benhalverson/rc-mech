@@ -34,20 +34,33 @@
     </section>
   </main>
 } @else {
+  <mat-sidenav-container class="workspace-shell bg-graphite text-bone">
+    <mat-sidenav #drawer class="workspace-nav bg-graphite" [mode]="navMode()" [opened]="navOpen()" (closedStart)="navOpen.set(false)" aria-label="Workspace navigation">
+      <div class="nav-brand"><span class="eyebrow">RC Mech</span><strong>Field notebook</strong></div>
+      <nav aria-label="Primary workspace">
+        <a href="/garage" [class.active-nav]="workspace() === 'garage'" aria-label="Garage workspace"><span>01</span>Garage</a>
+        <a href="/maintenance" [class.active-nav]="workspace() === 'maintenance'" aria-label="Maintenance workspace"><span>02</span>Maintenance</a>
+        <a href="/settings" [class.active-nav]="workspace() === 'settings'" aria-label="Settings workspace"><span>03</span>Settings</a>
+      </nav>
+      <a class="nav-docs" href="/api/docs">API notes ↗</a>
+    </mat-sidenav>
+    <mat-sidenav-content>
   <main>
     <header>
+      <button class="nav-toggle" type="button" (click)="navOpen.set(true)" aria-label="Open workspace navigation">☰</button>
       <div>
         <div class="eyebrow">RC Mech / Field notebook</div>
         <h1>Garage control<br />for the next run.</h1>
         <p class="stamp">OWNER ACCESS · {{ ownerEmail() }} · PRIVATE BY DEFAULT</p>
       </div>
       <div class="actions">
-        <a class="text-link" href="/api/docs">API notes ↗</a>
+        <span class="workspace-label">{{ workspace() | titlecase }} / {{ ownerEmail() }}</span>
         <button class="button quiet" type="button" (click)="signOut()">Sign out</button>
       </div>
     </header>
 
     @if (message()) { <p class="message" role="alert">{{ message() }}</p> }
+    @if (workspace() === 'garage' || workspace() === 'legacy') {
     <section class="garage-panel" aria-labelledby="garage-title">
       <div class="section-heading garage-heading">
         <div>
@@ -120,6 +133,19 @@
           @if (car.archivedAt) { <p class="archive-note">Archived {{ car.archivedAt | date:'mediumDate' }}. History remains available, but new work should wait until this car is restored.</p> }
           <div class="form-actions"><button class="button" type="button" (click)="editCar()">Edit details</button>@if (car.archivedAt) { <button class="button quiet" type="button" (click)="restoreCar()" [disabled]="carAction() !== null">{{ carAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button> } @else { <button class="button danger-button" type="button" (click)="archiveCar()" [disabled]="carAction() !== null">{{ carAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button> }</div>
 
+          <nav class="car-tabs" aria-label="Car detail sections">
+            <a [href]="'/garage/' + car.id + '/overview'" [class.active-tab]="carSection() === 'overview'">Overview</a>
+            <a [href]="'/garage/' + car.id + '/build'" [class.active-tab]="carSection() === 'build'">Build</a>
+            <a [href]="'/garage/' + car.id + '/photos'" [class.active-tab]="carSection() === 'photos'">Photos</a>
+            <a [href]="'/garage/' + car.id + '/runs'" [class.active-tab]="carSection() === 'runs'">Runs</a>
+          </nav>
+
+          @if (carSection() === 'overview' || carSection() === 'all') {
+          <section class="overview-panel" aria-label="Car overview">
+            <p class="section-intro">The inspection plate is the quick reference for this car. Use the tabs to open its build sheet, private photos, or run log.</p>
+          </section>
+          }
+          @if (carSection() === 'build' || carSection() === 'all') {
           <section class="build-sheet" aria-labelledby="build-sheet-title">
             <div class="section-heading">
               <div>
@@ -177,9 +203,13 @@
               </div>
             }
           </section>
+          }
 
+          @if (carSection() === 'photos' || carSection() === 'all') {
           <app-car-photo-gallery [carId]="car.id" [archived]="!!car.archivedAt"></app-car-photo-gallery>
+          }
 
+          @if (carSection() === 'runs' || carSection() === 'all') {
           <section class="session-log" aria-labelledby="session-log-title">
             <div class="section-heading">
               <div>
@@ -223,14 +253,19 @@
               </div>
             }
           </section>
+          }
         </article>
       } @else {
         <div class="state-card empty-state"><h3>Choose a car or add one.</h3><p>The garage detail view keeps the record and its lifecycle in one place.</p><button class="button" type="button" (click)="openCreateCar()">Add a car</button></div>
       }
     </section>
+    }
 
+    @if (workspace() === 'maintenance' || workspace() === 'legacy') {
     <app-maintenance-cockpit [cars]="cars()" [timezone]="timezone()"></app-maintenance-cockpit>
+    }
 
+    @if (workspace() === 'settings' || workspace() === 'legacy') {
     <section class="security-panel" aria-label="Garage settings">
       <div class="section-heading">
         <div>
@@ -307,5 +342,8 @@
         </ul>
       }
     </section>
+    }
   </main>
+    </mat-sidenav-content>
+  </mat-sidenav-container>
 }
