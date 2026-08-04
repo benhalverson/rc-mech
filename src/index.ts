@@ -953,11 +953,15 @@ const openApi = {
 			post: { summary: "Replace an owned car photo's bytes and metadata", requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["file"], properties: { file: { type: "string", format: "binary" } } } } } }, responses: { 200: { description: "Photo replaced" }, 400: { description: "Unsupported, empty, or oversized photo" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
 		},
 		"/api/v1/photos/{photoId}": {
+			parameters: [{ name: "photoId", in: "path", required: true, schema: { type: "string" } }],
 			get: { summary: "Stream an owned private photo", responses: { 200: { description: "Private photo bytes" }, 404: { description: "Photo not found" } } },
 			patch: { summary: "Reorder or designate an owned photo as primary", requestBody: { required: true, content: { "application/json": { schema: { type: "object", minProperties: 1, properties: { sortOrder: { type: "integer", minimum: 0 }, isPrimary: { type: "boolean" } } } } } }, responses: { 200: { description: "Photo metadata updated" }, 400: { description: "Invalid photo update" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
-			post: { summary: "Replace an owned private photo's bytes and metadata", requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["file"], properties: { file: { type: "string", format: "binary" } } } } } }, responses: { 200: { description: "Photo replaced" }, 400: { description: "Unsupported, empty, or oversized photo" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
 			put: { summary: "Replace an owned photo's bytes and metadata", requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["file"], properties: { file: { type: "string", format: "binary" } } } } } }, responses: { 200: { description: "Photo replaced" }, 400: { description: "Unsupported, empty, or oversized photo" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
 			delete: { summary: "Delete an owned photo", responses: { 200: { description: "Photo deleted" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
+		},
+		"/api/v1/photos/{photoId}/replace": {
+			parameters: [{ name: "photoId", in: "path", required: true, schema: { type: "string" } }],
+			post: { summary: "Replace an owned private photo's bytes and metadata", requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["file"], properties: { file: { type: "string", format: "binary" } } } } } }, responses: { 200: { description: "Photo replaced" }, 400: { description: "Unsupported, empty, or oversized photo" }, 404: { description: "Photo not found" }, 409: { description: "Car is archived" } } },
 		},
 		"/api/v1/component-slots": { get: { summary: "List standard component slots", responses: { 200: { description: "Standard slots; custom slots may also be supplied" } } } },
 		"/api/v1/cars/{carId}/components": {

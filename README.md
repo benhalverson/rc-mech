@@ -30,11 +30,36 @@ After the first magic-link sign-in, add one or more named passkeys from the dash
 
 The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). It is intentionally a no-op in local development when the binding is unavailable, while deployed magic-link requests fail closed unless `EMAIL_FROM` and the binding are configured. Do not commit sender or owner addresses.
 
-For local database work, use `pnpm db:migrate:local`. To inspect or reset local D1, use Wrangler's local commands, for example `pnpm exec wrangler d1 migrations list DB --local`. This issue intentionally keeps the existing `rc-mech-photos` R2 bucket binding and placeholder D1 ID; it does not provision remote resources. Issue #11 should create the production resources and replace the placeholder with commands such as:
+For local database work, use `pnpm db:migrate:local`. To inspect or reset local D1, use Wrangler's local commands, for example `pnpm exec wrangler d1 migrations list DB --local`.
+
+## Production setup and acceptance
+
+Production uses one Worker with four bindings: D1 `DB` for relational data, private R2 `PHOTOS` for car photos, Email Service `EMAIL` for magic links, and static assets `ASSETS` from `./public`. The checked-in Wrangler file intentionally contains a non-production D1 placeholder because resource IDs and domains belong to the deployment account; never deploy production with that placeholder.
+
+Create the account resources, then replace the D1 ID in both the top-level and `env.production.d1_databases` entries and use the real R2 bucket name:
 
 ```sh
 pnpm exec wrangler d1 create rc-mech
 pnpm exec wrangler r2 bucket create rc-mech-photos
 ```
 
-Set `APP_URL`, `BETTER_AUTH_SECRET`, `OWNER_EMAIL`, and `EMAIL_FROM` in the production Worker environment; `APP_URL` is deliberately not given a localhost production default because it controls magic-link redirects, trusted origins, cookies, and passkey RP identity. Local development uses Wrangler's `local` environment and intentionally sends no email. Do not commit sender or owner addresses.
+Apply migrations to the remote database before the first deploy:
+
+```sh
+pnpm exec wrangler d1 migrations apply DB --remote --env production
+```
+
+Configure the Email Service sender in the Cloudflare dashboard/API, bind it as `EMAIL`, and set these production-only values as Worker secrets. `APP_URL` must be the final HTTPS origin, including the custom domain used by the dashboard; it controls redirects, trusted origins, cookies, and passkey RP identity.
+
+```sh
+pnpm exec wrangler secret put BETTER_AUTH_SECRET --env production
+pnpm exec wrangler secret put OWNER_EMAIL --env production
+pnpm exec wrangler secret put EMAIL_FROM --env production
+pnpm exec wrangler secret put APP_URL --env production
+```
+
+`APP_URL` is required as a production Worker secret because the release acceptance script verifies its secret name. `OWNER_EMAIL` and `EMAIL_FROM` must be real addresses accepted by the configured Email Service sender. Do not commit any of these values.
+
+Attach the Worker to the chosen HTTPS domain through the Cloudflare Workers custom-domain or route configuration, then deploy with `pnpm deploy`. Validate the configuration without changing Cloudflare state with `pnpm test:production`; set `RC_MECH_DEPLOYED_URL=https://your-domain.example pnpm test:production` to also check health, docs, unauthenticated API rejection, private-photo rejection, and JSON API 404 behavior. For a release check, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1` plus the deployed URL, owner session cookie/car/photo IDs, a second-owner session cookie, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after verifying the bucket has no public r2.dev or custom-domain access; this mode fails closed on the placeholder D1 ID or missing production secret names, remote migration/R2 checks, deployed passkey RP host, authenticated owner reads, and cross-owner record/photo isolation. Email delivery and a real passkey ceremony remain operator checks because automation would send real mail or require a browser credential. The full local authenticated lifecycle smoke remains `pnpm test:auth:e2e`; it creates only local D1/R2 test data.
+
+The complete release and browser checklist is in [docs/production-acceptance.md](./docs/production-acceptance.md). To make the production-resource check fail when the placeholder ID is still present, run `RC_MECH_REQUIRE_REMOTE_CONFIG=1 pnpm test:production` after account provisioning.
