@@ -357,6 +357,7 @@ export class App {
   protected cancelCarEdit(): void {
     this.carFormError.set('');
     this.carEditing.set(false);
+    if (!this.selectedCarId()) this.backToGarage();
   }
 
   protected backToGarage(): void {

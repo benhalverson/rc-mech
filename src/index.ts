@@ -47,7 +47,7 @@ app.use("/api/v1/*", async (c, next) => {
 app.get("/api/v1/health", (c) => c.json({ ok: true, service: "rc-mech" }));
 
 const ownedCar = async (c: AppContext, carId: string) => {
-	const value = await db(c.env).select().from(car).where(and(eq(car.id, carId), eq(car.ownerId, c.get("userId")))).get();
+	const value = await db(c.env).select().from(car).where(eq(car.id, carId)).get();
 	return value && ownsCar(value.ownerId, c.get("userId")) ? value : undefined;
 };
 
@@ -68,7 +68,7 @@ app.get("/api/v1/cars", async (c) => {
 			? ownerFilter
 			: and(ownerFilter, isNull(car.archivedAt));
 	const cars = await database.select().from(car).where(where).orderBy(desc(car.createdAt));
-	return c.json({ cars: cars.map(publicCar), archived: archived === "true" || archived === "all" });
+	return c.json({ cars: cars.map(publicCar), archived: listMode === "archived" });
 });
 
 app.post("/api/v1/cars", async (c) => {
