@@ -1,37 +1,41 @@
 {
-  "name": "rc-mech",
-  "version": "0.0.1",
-  "private": true,
-  "scripts": {
-    "deploy": "pnpm client:build && wrangler deploy --x-provision=false",
-    "client:build": "pnpm --dir client build",
-    "client:dev": "pnpm --dir client start",
-    "worker:dev": "wrangler dev --env local",
-    "cf-typegen": "wrangler types",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply DB --local --env local",
+	"name": "rc-mech",
+	"version": "0.0.1",
+	"private": true,
+	"scripts": {
+		"deploy": "pnpm client:build && wrangler deploy --x-provision=false",
+		"client:build": "pnpm --dir client build",
+		"client:dev": "pnpm --dir client start",
+		"worker:dev": "wrangler dev --env local",
+		"cf-typegen": "wrangler types",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate:local": "wrangler d1 migrations apply DB --local --env local",
+		"lint": "biome lint .",
+		"format": "biome format --write .",
+		"format:check": "biome format .",
 		"test:backend": "node --experimental-strip-types --test src/auth-policy.test.ts src/car-policy.test.ts src/component-policy.test.ts src/drive-session-policy.test.ts src/maintenance-policy.test.ts src/service-policy.test.ts src/photo-policy.test.ts",
-    "test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
+		"test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
 		"test:production": "bash scripts/production-acceptance.sh",
-    "check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
-    "check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run --x-provision=false"
-  },
-  "dependencies": {
-    "@better-auth/drizzle-adapter": "^1.6.25",
-    "@better-auth/passkey": "^1.6.25",
-    "@scalar/hono-api-reference": "^0.11.12",
-    "better-auth": "^1.6.25",
-    "chanfana": "^2.6.3",
-    "drizzle-orm": "^0.45.2",
-    "hono": "^4.6.20",
-    "zod": "^3.24.1"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260801.1",
-    "@types/node": "22.13.0",
-    "@types/service-worker-mock": "^2.0.4",
-    "drizzle-kit": "^0.31.10",
-    "typescript": "^7.0.2",
-    "wrangler": "^4.118.0"
-  }
+		"check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
+		"check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run --x-provision=false"
+	},
+	"dependencies": {
+		"@better-auth/drizzle-adapter": "^1.6.25",
+		"@better-auth/passkey": "^1.6.25",
+		"@scalar/hono-api-reference": "^0.11.12",
+		"better-auth": "^1.6.25",
+		"chanfana": "^2.6.3",
+		"drizzle-orm": "^0.45.2",
+		"hono": "^4.6.20",
+		"zod": "^3.24.1"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.3.7",
+		"@cloudflare/workers-types": "^5.20260801.1",
+		"@types/node": "22.13.0",
+		"@types/service-worker-mock": "^2.0.4",
+		"drizzle-kit": "^0.31.10",
+		"typescript": "^7.0.2",
+		"wrangler": "^4.118.0"
+	}
 }
