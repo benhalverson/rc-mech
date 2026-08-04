@@ -329,7 +329,8 @@ app.patch("/api/v1/cars/:carId/drives/:driveId", async (c) => {
 		conditions: parsed.data.conditions,
 		notes: parsed.data.notes,
 	}).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId), isNull(driveSession.deletedAt)));
-	const updated = await db(c.env).select().from(driveSession).where(eq(driveSession.id, driveId)).get();
+	const updated = await db(c.env).select().from(driveSession).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId), isNull(driveSession.deletedAt))).get();
+	if (!updated) return c.json({ error: "Drive session is no longer editable" }, 409);
 	return c.json({ driveSession: publicDriveSession(updated!, await ownerTimezone(c)) });
 });
 
@@ -466,11 +467,13 @@ const openApi = {
 			patch: { summary: "Set the authenticated owner's IANA timezone", responses: { 200: { description: "Timezone preference updated" }, 400: { description: "Invalid IANA timezone" } } },
 		},
 		"/api/v1/cars/{carId}/drives": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "history", in: "query", required: false, schema: { type: "boolean" } }],
 			get: { summary: "List an owned car's drive sessions; history=true includes soft-deleted sessions", responses: { 200: { description: "Drive session history" }, 404: { description: "Car not found" } } },
 			post: { summary: "Record a drive session for an active owned car", responses: { 201: { description: "Drive recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } },
 		},
-		"/api/v1/cars/{carId}/drives/count": { get: { summary: "Count non-deleted drive sessions for an owned car", responses: { 200: { description: "Drive session count" }, 404: { description: "Car not found" } } } },
+		"/api/v1/cars/{carId}/drives/count": { parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }], get: { summary: "Count non-deleted drive sessions for an owned car", responses: { 200: { description: "Drive session count" }, 404: { description: "Car not found" } } } },
 		"/api/v1/cars/{carId}/drives/{driveId}": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "driveId", in: "path", required: true, schema: { type: "string" } }],
 			patch: { summary: "Edit an active drive session", responses: { 200: { description: "Drive session updated" }, 404: { description: "Drive session not found" }, 409: { description: "Deleted session" } } },
 			delete: { summary: "Soft-delete a drive session", responses: { 200: { description: "Drive session deleted" }, 404: { description: "Drive session not found" }, 409: { description: "Already deleted" } } },
 		},

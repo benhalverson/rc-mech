@@ -172,7 +172,7 @@ const driveSessionPayload = (form: DriveSessionForm, timezone: string): Record<s
     conditions: form.conditions.trim(),
     notes: form.notes.trim(),
   };
-  if (form.durationMinutes.trim()) payload['durationMinutes'] = Number(form.durationMinutes);
+  payload['durationMinutes'] = form.durationMinutes.trim() ? Number(form.durationMinutes) : null;
   return payload;
 };
 
