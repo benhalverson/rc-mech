@@ -1,7 +1,3 @@
-/**
- * For more details on how to configure Wrangler, refer to:
- * https://developers.cloudflare.com/workers/wrangler/configuration/
- */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "rc-mech",
@@ -10,65 +6,27 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"assets": { "directory": "./public", "binding": "ASSETS" },
 	"send_email": [{ "name": "EMAIL" }],
-	"d1_databases": [{ "binding": "DB", "database_name": "rc-mech", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
+	"d1_databases": [{
+		"binding": "DB",
+		"database_name": "rc-mech",
+		"database_id": "97219482-4250-4c83-9785-7886a8b3a434",
+		"migrations_dir": "migrations"
+	}],
 	"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
 	"vars": { "ENVIRONMENT": "production" },
 	"env": {
 		"local": {
 			"assets": { "directory": "./public", "binding": "ASSETS" },
 			"send_email": [{ "name": "EMAIL" }],
-			"d1_databases": [{ "binding": "DB", "database_name": "rc-mech", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
+			"d1_databases": [{
+				"binding": "DB",
+				"database_name": "rc-mech",
+				"database_id": "00000000-0000-0000-0000-000000000000",
+				"migrations_dir": "migrations"
+			}],
 			"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
-			"vars": {
-				"APP_URL": "http://localhost:8787",
-				"ENVIRONMENT": "local"
-			}
-		},
-		"production": {
-			"assets": { "directory": "./public", "binding": "ASSETS" },
-			"send_email": [{ "name": "EMAIL" }],
-			"d1_databases": [{ "binding": "DB", "database_name": "rc-mech", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
-			"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
-			"vars": {
-				"ENVIRONMENT": "production"
-			}
+			"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }
 		}
 	},
-	"observability": {
-		"enabled": true
-	}
-	/**
-	 * Smart Placement
-	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
-	 */
-	// "placement": { "mode": "smart" },
-
-	/**
-	 * Bindings
-	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
-	 * databases, object storage, AI inference, real-time communication and more.
-	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
-	 */
-
-	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-	 */
-	// "vars": { "MY_VARIABLE": "production_value" },
-	/**
-	 * Note: Use secrets to store sensitive data.
-	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 */
-
-	/**
-	 * Static Assets
-	 * https://developers.cloudflare.com/workers/static-assets/binding/
-	 */
-	// "assets": { "directory": "./public/", "binding": "ASSETS" },
-
-	/**
-	 * Service Bindings (communicate between multiple Workers)
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-	 */
-	// "services": [{ "binding": "MY_SERVICE", "service": "my-service" }]
+	"observability": { "enabled": true }
 }

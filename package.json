@@ -3,18 +3,18 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "deploy": "pnpm client:build && wrangler deploy --env production",
+    "deploy": "pnpm client:build && wrangler deploy --x-provision=false",
     "client:build": "pnpm --dir client build",
     "client:dev": "pnpm --dir client start",
     "worker:dev": "wrangler dev --env local",
     "cf-typegen": "wrangler types",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local --env local",
 		"test:backend": "node --experimental-strip-types --test src/auth-policy.test.ts src/car-policy.test.ts src/component-policy.test.ts src/drive-session-policy.test.ts src/maintenance-policy.test.ts src/service-policy.test.ts src/photo-policy.test.ts",
     "test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
 		"test:production": "bash scripts/production-acceptance.sh",
     "check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
-    "check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run --env production"
+    "check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run --x-provision=false"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.6.25",

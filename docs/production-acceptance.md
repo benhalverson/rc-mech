@@ -7,13 +7,14 @@ Angular shell or change the browser's relative `/api/...` URLs.
 
 ## Production configuration
 
-Create the resources once, then replace the placeholder D1 ID in the
-production Wrangler configuration:
+Create the dedicated production D1 once, then put its returned UUID in the
+top-level production Wrangler configuration. Keep the `env.local` D1
+placeholder isolated for local simulation. Retain the existing private R2
+bucket:
 
 ```sh
 pnpm exec wrangler d1 create rc-mech
-pnpm exec wrangler r2 bucket create rc-mech-photos
-pnpm exec wrangler d1 migrations apply DB --remote --env production
+pnpm exec wrangler d1 migrations apply DB --remote
 ```
 
 The production Worker needs these bindings and values:
@@ -30,10 +31,10 @@ The production Worker needs these bindings and values:
 Set secrets with Wrangler rather than committing them:
 
 ```sh
-pnpm exec wrangler secret put APP_URL --env production
-pnpm exec wrangler secret put BETTER_AUTH_SECRET --env production
-pnpm exec wrangler secret put OWNER_EMAIL --env production
-pnpm exec wrangler secret put EMAIL_FROM --env production
+pnpm exec wrangler secret put APP_URL
+pnpm exec wrangler secret put BETTER_AUTH_SECRET
+pnpm exec wrangler secret put OWNER_EMAIL
+pnpm exec wrangler secret put EMAIL_FROM
 ```
 
 Before deployment, run the clean-checkout checks and build the static shell:
@@ -44,8 +45,8 @@ pnpm cf-typegen
 pnpm db:migrate:local
 pnpm check
 pnpm client:build
-pnpm exec wrangler deploy --dry-run --env production
-pnpm deploy
+pnpm exec wrangler deploy --dry-run --x-provision=false
+pnpm run deploy
 ```
 
 `public/.gitignore` keeps generated Angular bundles untracked while retaining
@@ -53,7 +54,7 @@ the directory marker. A successful build should not dirty tracked files.
 
 `pnpm test:production` is the safe clean-checkout dry-run. For release
 acceptance after provisioning, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1`; that mode
-fails closed unless the real D1 ID and all four production secret names exist,
+requires all four production secret names,
 and it requires `RC_MECH_DEPLOYED_URL`, `RC_MECH_OWNER_COOKIE`,
 `RC_MECH_OWNER_CAR_ID`, `RC_MECH_OWNER_PHOTO_ID`, and
 `RC_MECH_OTHER_OWNER_COOKIE`, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after
