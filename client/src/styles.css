@@ -1,11 +1,29 @@
-/* You can add global styles to this file, and also import other style files */
+@import 'tailwindcss';
+
+@theme {
+	--color-graphite: #111719;
+	--color-workbench: #1d2526;
+	--color-bone: #e5e0d0;
+	--color-brass: #c8a15a;
+	--color-pit-orange: #d66f4b;
+	--color-oxidized-teal: #89a9a6;
+}
+
+:root {
+	--color-graphite: #111719;
+	--color-workbench: #1d2526;
+	--color-bone: #e5e0d0;
+	--color-brass: #c8a15a;
+	--color-pit-orange: #d66f4b;
+	--color-oxidized-teal: #89a9a6;
+}
 :root {
 	color-scheme: dark;
-	--paper: #181915;
-	--ink: #f1ead8;
-	--muted: #a9a18d;
-	--accent: #d5a94f;
-	--line: #3c3a30;
+	--paper: #111719;
+	--ink: #e5e0d0;
+	--muted: #89a9a6;
+	--accent: #c8a15a;
+	--line: #3d4b4c;
 }
 * {
 	box-sizing: border-box;
@@ -18,4 +36,14 @@ body {
 		16px / 1.5 ui-monospace,
 		SFMono-Regular,
 		monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation: none;
+		scroll-behavior: auto;
+		transition: none;
+	}
 }

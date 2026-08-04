@@ -4,7 +4,10 @@ import {
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { provideRouter, Router } from '@angular/router';
 import { App } from './app';
+import { routes } from './app.routes';
 
 type TestMember = {
 	set(value: unknown): void;
@@ -31,6 +34,11 @@ type AppTestHarness = {
 	selectedCarId: TestSignal<string>;
 	carView: TestSignal<string>;
 	components: TestSignal<unknown[]>;
+	currentUrl: TestSignal<string>;
+	workspace: TestSignal<string>;
+	carSection: TestSignal<string>;
+	navMode: TestSignal<string>;
+	navOpen: TestSignal<boolean>;
 };
 
 describe('App', () => {
@@ -40,7 +48,12 @@ describe('App', () => {
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
 			imports: [App],
-			providers: [provideHttpClient(), provideHttpClientTesting()],
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				provideRouter(routes),
+				provideNoopAnimations(),
+			],
 		}).compileComponents();
 
 		http = TestBed.inject(HttpTestingController);
@@ -153,6 +166,87 @@ describe('App', () => {
 		expect(
 			fixture.nativeElement.querySelector('input[type="email"]'),
 		).toBeTruthy();
+	});
+
+	it('uses SPA navigation and exposes the active workspace', async () => {
+		createFixture();
+		showSignedIn();
+
+		const app = fixture.componentInstance as unknown as AppTestHarness;
+		(app.navOpen as TestSignal<boolean>).set(true);
+		fixture.detectChanges();
+		(
+			fixture.nativeElement.querySelector(
+				'a[routerlink="/maintenance"]',
+			) as HTMLAnchorElement
+		).click();
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(TestBed.inject(Router).url).toBe('/maintenance');
+		expect(app.currentUrl()).toBe('/maintenance');
+		expect(app.workspace()).toBe('maintenance');
+		expect(
+			fixture.nativeElement
+				.querySelector('a[routerlink="/maintenance"]')
+				?.getAttribute('aria-current'),
+		).toBe('page');
+		expect(app.navOpen()).toBe(true);
+	});
+
+	it('keeps the car id while changing only the active car section', async () => {
+		createFixture();
+		showSignedIn();
+
+		const app = fixture.componentInstance as unknown as AppTestHarness;
+		app.cars.set([workshopCar]);
+		app.selectedCarId.set(workshopCar.id);
+		app.carView.set('detail');
+		await TestBed.inject(Router).navigateByUrl('/garage/car-1/overview');
+		fixture.detectChanges();
+
+		(
+			fixture.nativeElement.querySelector(
+				'.car-tab:nth-child(2)',
+			) as HTMLAnchorElement
+		).click();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars/car-1/components' &&
+					request.params.get('history') === 'true',
+			)
+			.flush({ components: [] });
+		fixture.detectChanges();
+
+		expect(TestBed.inject(Router).url).toBe('/garage/car-1/build');
+		expect(app.currentUrl()).toBe('/garage/car-1/build');
+		expect(app.carSection()).toBe('build');
+		expect(
+			fixture.nativeElement
+				.querySelector('.car-tab.active-tab')
+				?.getAttribute('aria-current'),
+		).toBe('page');
+	});
+
+	it('closes the drawer on mobile navigation but keeps the desktop rail open', async () => {
+		createFixture();
+		showSignedIn();
+
+		const app = fixture.componentInstance as unknown as AppTestHarness;
+		app.navMode.set('side');
+		app.navOpen.set(true);
+		await TestBed.inject(Router).navigateByUrl('/settings');
+		fixture.detectChanges();
+		expect(app.navOpen()).toBe(true);
+
+		app.navMode.set('over');
+		app.navOpen.set(true);
+		await TestBed.inject(Router).navigateByUrl('/maintenance');
+		fixture.detectChanges();
+		expect(app.navOpen()).toBe(false);
 	});
 
 	it('requests a magic link with the entered email and a same-origin callback', () => {
