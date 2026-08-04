@@ -1,13 +1,41 @@
 import { HttpClient } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 
-type CarsResponse = { cars: unknown[] };
+type Car = {
+  id: string;
+  name: string;
+  manufacturer?: string | null;
+  make?: string | null;
+  model?: string | null;
+  scale?: string | null;
+  vehicleType?: string | null;
+  powerType?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string | null;
+};
+
+type CarForm = {
+  name: string;
+  make: string;
+  model: string;
+  scale: string;
+  vehicleType: string;
+  powerType: string;
+  notes: string;
+};
+
+type CarsResponse = { cars: Car[] };
+type CarResponse = { car: Car };
 type SessionResponse = { session?: unknown; user?: { email?: string } } | null;
 type ViewState = 'checking' | 'signed-out' | 'signed-in';
 type PasskeyState = 'loading' | 'ready' | 'error';
+type CarState = 'loading' | 'ready' | 'error';
+type CarView = 'list' | 'detail';
 
 type Passkey = {
   id: string;
@@ -44,6 +72,32 @@ const webAuthnError = (error: unknown): string => {
   return 'The passkey request could not be completed. Try again or use a magic link.';
 };
 
+const emptyCarForm = (): CarForm => ({
+  name: '', make: '', model: '', scale: '', vehicleType: '', powerType: '', notes: '',
+});
+
+const carFormFrom = (car: Car): CarForm => ({
+  name: car.name,
+  make: car.make ?? car.manufacturer ?? '',
+  model: car.model ?? '',
+  scale: car.scale ?? '',
+  vehicleType: car.vehicleType ?? '',
+  powerType: car.powerType ?? '',
+  notes: car.notes ?? '',
+});
+
+const carPayload = (form: CarForm): Record<string, string> => {
+  const payload: Record<string, string> = { name: form.name.trim() };
+  const values: Array<[string, string]> = [
+    ['make', form.make], ['model', form.model], ['scale', form.scale],
+    ['vehicleType', form.vehicleType], ['powerType', form.powerType], ['notes', form.notes],
+  ];
+  for (const [key, value] of values) {
+    payload[key] = value.trim();
+  }
+  return payload;
+};
+
 @Component({
   selector: 'app-root',
   imports: [DatePipe, FormsModule],
@@ -59,6 +113,19 @@ export class App {
   protected readonly requestState = signal<'idle' | 'sending' | 'sent'>('idle');
   protected readonly message = signal('');
   protected readonly activeCars = signal('—');
+  protected readonly cars = signal<Car[]>([]);
+  protected readonly carState = signal<CarState>('loading');
+  protected readonly carError = signal('');
+  protected readonly showArchived = signal(false);
+  protected readonly selectedCarId = signal<string | null>(null);
+  protected readonly carView = signal<CarView>('list');
+  protected readonly carEditing = signal(false);
+  protected readonly carAction = signal<string | null>(null);
+  protected readonly carForm = signal<CarForm>(emptyCarForm());
+  protected readonly carFormError = signal('');
+  protected readonly visibleCars = computed(() => this.cars().filter((car) =>
+    this.showArchived() ? Boolean(car.archivedAt) : !car.archivedAt));
+  protected readonly selectedCar = computed(() => this.cars().find((car) => car.id === this.selectedCarId()) ?? null);
   protected readonly ownerEmail = signal('');
   protected readonly passkeys = signal<Passkey[]>([]);
   protected readonly passkeyState = signal<PasskeyState>('loading');
@@ -232,9 +299,134 @@ export class App {
   }
 
   private loadCars(): void {
-    this.http.get<CarsResponse>('/api/v1/cars', { withCredentials: true }).subscribe({
-      next: ({ cars }) => this.activeCars.set(String(cars.length)),
-      error: () => this.activeCars.set('—'),
+    this.carState.set('loading');
+    this.carError.set('');
+    const options = this.showArchived()
+      ? { withCredentials: true, params: { archived: 'all' } }
+      : { withCredentials: true };
+    this.http.get<CarsResponse>('/api/v1/cars', options).subscribe({
+      next: ({ cars }) => {
+        this.cars.set(cars);
+        this.activeCars.set(String(cars.filter((car) => !car.archivedAt).length));
+        this.carState.set('ready');
+      },
+      error: (error: { status?: number }) => {
+        this.carState.set('error');
+        this.activeCars.set('—');
+        this.carError.set(error.status === 401
+          ? 'Your garage session has expired. Sign in again to continue.'
+          : 'The garage could not be loaded. Check the connection and try again.');
+        if (error.status === 401) this.state.set('signed-out');
+      },
+    });
+  }
+
+  protected retryCars(): void { this.loadCars(); }
+
+  protected toggleArchived(): void {
+    this.showArchived.update((value) => !value);
+    this.selectedCarId.set(null);
+    this.carView.set('list');
+    this.carEditing.set(false);
+    this.loadCars();
+  }
+
+  protected openCreateCar(): void {
+    this.selectedCarId.set(null);
+    this.carForm.set(emptyCarForm());
+    this.carFormError.set('');
+    this.carEditing.set(true);
+    this.carView.set('detail');
+  }
+
+  protected openCar(car: Car): void {
+    this.selectedCarId.set(car.id);
+    this.carFormError.set('');
+    this.carEditing.set(false);
+    this.carView.set('detail');
+  }
+
+  protected editCar(): void {
+    const car = this.selectedCar();
+    if (!car) return;
+    this.carForm.set(carFormFrom(car));
+    this.carFormError.set('');
+    this.carEditing.set(true);
+  }
+
+  protected cancelCarEdit(): void {
+    this.carFormError.set('');
+    this.carEditing.set(false);
+    if (!this.selectedCarId()) this.backToGarage();
+  }
+
+  protected backToGarage(): void {
+    this.selectedCarId.set(null);
+    this.carEditing.set(false);
+    this.carView.set('list');
+  }
+
+  protected updateCarField(field: keyof CarForm, value: string): void {
+    this.carForm.update((form) => ({ ...form, [field]: value }));
+  }
+
+  protected saveCar(): void {
+    const form = this.carForm();
+    if (!form.name.trim()) {
+      this.carFormError.set('Give this car a name before saving.');
+      return;
+    }
+    if (this.carAction()) return;
+    this.carAction.set(this.selectedCarId() ? 'save' : 'create');
+    this.carFormError.set('');
+    const id = this.selectedCarId();
+    const request = id
+      ? this.http.patch<CarResponse>(`/api/v1/cars/${id}`, carPayload(form), { withCredentials: true })
+      : this.http.post<CarResponse>('/api/v1/cars', carPayload(form), { withCredentials: true });
+    request.subscribe({
+      next: ({ car }) => {
+        this.selectedCarId.set(car.id);
+        this.carEditing.set(false);
+        this.carView.set('detail');
+        this.carAction.set(null);
+        this.message.set(id ? 'Car details saved.' : 'Car added to the garage.');
+        this.loadCars();
+      },
+      error: (error: { status?: number }) => {
+        this.carAction.set(null);
+        this.carFormError.set(error.status === 401
+          ? 'Your garage session has expired. Sign in again to continue.'
+          : 'The car could not be saved. Check the details and try again.');
+        if (error.status === 401) this.state.set('signed-out');
+      },
+    });
+  }
+
+  protected archiveCar(): void { this.changeCarArchiveState('archive'); }
+
+  protected restoreCar(): void { this.changeCarArchiveState('restore'); }
+
+  private changeCarArchiveState(action: 'archive' | 'restore'): void {
+    const car = this.selectedCar();
+    if (!car || this.carAction()) return;
+    this.carAction.set(action);
+    this.message.set('');
+    this.http.post<CarResponse>(`/api/v1/cars/${car.id}/${action}`, {}, { withCredentials: true }).subscribe({
+      next: ({ car: updated }) => {
+        this.cars.update((cars) => cars.map((item) => item.id === updated.id ? updated : item));
+        this.selectedCarId.set(updated.id);
+        this.carAction.set(null);
+        this.message.set(action === 'archive' ? 'Car archived. Its history is still available.' : 'Car restored to the active garage.');
+        if (action === 'archive') this.showArchived.set(true);
+        this.loadCars();
+      },
+      error: (error: { status?: number }) => {
+        this.carAction.set(null);
+        this.carError.set(error.status === 404
+          ? 'That car is no longer available.'
+          : 'The car lifecycle change could not be saved. Try again.');
+        if (error.status === 401) this.state.set('signed-out');
+      },
     });
   }
 
