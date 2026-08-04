@@ -5,6 +5,22 @@
 	"compatibility_date": "2026-07-01",
 	"compatibility_flags": ["nodejs_compat"],
 	"assets": { "directory": "./public", "binding": "ASSETS" },
+	"routes": [
+		{
+			"pattern": "chassisnotes.com",
+			"zone_name": "chassisnotes.com",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false
+		},
+		{
+			"pattern": "www.chassisnotes.com",
+			"zone_name": "chassisnotes.com",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false
+		}
+	],
 	"send_email": [{ "name": "EMAIL" }],
 	"d1_databases": [{
 		"binding": "DB",
