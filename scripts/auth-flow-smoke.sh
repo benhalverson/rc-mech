@@ -215,8 +215,24 @@ completion_delete_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%
 [[ "$completion_delete_status" == "200" ]]
 jq -e '.serviceRecord.deletedAt != null' "$response_file" >/dev/null
 
+ad_hoc_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/service-records" \
+  -H 'Content-Type: application/json' --data '{"performedAt":"2026-08-03T13:00:00.000Z","notes":"Unscheduled repair","cost":42.5,"currency":"usd"}')"
+[[ "$ad_hoc_status" == "201" ]]
+ad_hoc_id="$(jq -r '.serviceRecord.id' "$response_file")"
+jq -e '.serviceRecord.planId == null and .serviceRecord.notes == "Unscheduled repair" and .serviceRecord.cost == 42.5 and .serviceRecord.currency == "USD"' "$response_file" >/dev/null
+service_edit_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/service-records/${ad_hoc_id}" \
+  -H 'Content-Type: application/json' --data '{"notes":"Corrected repair note","cost":45,"currency":"USD"}')"
+[[ "$service_edit_status" == "200" ]]
+jq -e '.serviceRecord.notes == "Corrected repair note" and .serviceRecord.cost == 45' "$response_file" >/dev/null
+service_list_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/service-records")"
+[[ "$service_list_status" == "200" ]]
+jq -e --arg id "$ad_hoc_id" '[.serviceRecords[] | select(.id == $id)] | length == 1' "$response_file" >/dev/null
+
 archive_again_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/archive")"
 [[ "$archive_again_status" == "200" ]]
+archived_service_edit_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/service-records/${ad_hoc_id}" \
+  -H 'Content-Type: application/json' --data '{"notes":"archived write must fail"}')"
+[[ "$archived_service_edit_status" == "409" ]]
 archived_plans_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/maintenance-plans")"
 [[ "$archived_plans_status" == "200" ]]
 jq -e --arg id "$plan_id" '.maintenancePlans[] | select(.id == $id and .status == "paused" and .pauseReason == "car")' "$response_file" >/dev/null

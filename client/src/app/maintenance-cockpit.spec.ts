@@ -15,8 +15,9 @@ describe('MaintenanceCockpit', () => {
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(MaintenanceCockpit);
     fixture.componentRef.setInput('cars', [car]);
-    fixture.componentRef.setInput('timezone', 'America/Los_Angeles');
+    fixture.componentRef.setInput('timezone', undefined as any);
     http.expectOne('/api/v1/maintenance-plans').flush({ maintenancePlans: [plan], activity: [] });
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/service-records' && request.params.get('history') === 'true').flush({ serviceRecords: [] });
     fixture.detectChanges();
   });
 
@@ -45,6 +46,60 @@ describe('MaintenanceCockpit', () => {
     request.flush({ maintenancePlan: { ...plan, name: 'Clean bearings', intervalDays: 14 } });
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Clean bearings');
+  });
+
+  it('records ad hoc service with cost data through the car-scoped route', () => {
+    const app = fixture.componentInstance as any;
+    app.openServiceCreate();
+    http.expectOne('/api/v1/cars/car-1/components').flush({ components: [component] });
+    app.serviceForm.set({ carId: 'car-1', componentId: 'component-1', performedAt: '2026-08-02T10:00', description: 'Rebuilt the front diff', cost: '24.5', currency: 'usd' });
+    app.saveService();
+    const request = http.expectOne('/api/v1/cars/car-1/service-records');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.withCredentials).toBe(true);
+    expect(request.request.body).toMatchObject({ description: 'Rebuilt the front diff', cost: 24.5, currency: 'USD' });
+    request.flush({ serviceRecord: { id: 'record-1', carId: 'car-1', performedAt: '2026-08-02T17:00:00.000Z', description: 'Rebuilt the front diff', cost: 24.5, currency: 'USD' } });
+    expect(app.serviceRecords()[0].id).toBe('record-1');
+  });
+
+  it('completes a plan from the service form and sends notes and cost', () => {
+    const app = fixture.componentInstance as any;
+    app.openCompletion(plan);
+    http.expectOne('/api/v1/cars/car-1/components').flush({ components: [component] });
+    app.serviceForm.update((form: any) => ({ ...form, description: 'Cleaned bearings', cost: '8', currency: 'CAD' }));
+    app.saveService();
+    const request = http.expectOne('/api/v1/maintenance-plans/plan-1/complete');
+    expect(request.request.body).toMatchObject({ description: 'Cleaned bearings', cost: 8, currency: 'CAD' });
+    request.flush({ serviceRecord: { id: 'record-2', planId: 'plan-1', carId: 'car-1', performedAt: '2026-08-02T17:00:00.000Z', description: 'Cleaned bearings', cost: 8, currency: 'CAD' }, maintenancePlan: { ...plan, baselineAt: '2026-08-02T17:00:00.000Z' } });
+    expect(app.plans()[0].baselineAt).toBe('2026-08-02T17:00:00.000Z');
+  });
+
+  it('soft-deletes a record and can undo the correction', () => {
+    const app = fixture.componentInstance as any;
+    const record = { id: 'record-3', carId: 'car-1', performedAt: '2026-08-02T00:00:00.000Z', description: 'Checked tires' };
+    app.serviceRecords.set([record]);
+    app.deleteService(record);
+    const deletion = http.expectOne('/api/v1/service-records/record-3');
+    expect(deletion.request.method).toBe('DELETE');
+    deletion.flush({ serviceRecord: { ...record, deletedAt: '2026-08-03T00:00:00.000Z' } });
+    app.restoreService({ ...record, deletedAt: '2026-08-03T00:00:00.000Z' });
+    const restore = http.expectOne('/api/v1/service-records/record-3/restore');
+    expect(restore.request.method).toBe('POST');
+    restore.flush({ serviceRecord: record });
+    expect(app.serviceRecords()[0].deletedAt).toBeUndefined();
+  });
+
+  it('does not show a mixed-currency total in the history header', () => {
+    const app = fixture.componentInstance as any;
+    app.serviceRecords.set([
+      { id: 'record-1', carId: 'car-1', performedAt: '2026-08-02T17:00:00.000Z', description: 'Rebuilt diff', cost: 24.5, currency: 'USD' },
+      { id: 'record-2', carId: 'car-1', performedAt: '2026-08-03T17:00:00.000Z', description: 'Changed shocks', cost: 8, currency: 'CAD' },
+    ]);
+    fixture.detectChanges();
+    const historyTotal = fixture.nativeElement.querySelector('.history-total')?.textContent ?? '';
+    expect(historyTotal).toContain('2 records');
+    expect(historyTotal).not.toContain('logged');
+    expect(historyTotal).not.toContain('32.50');
   });
 
   it('keeps archived-car plans read-only', () => {
