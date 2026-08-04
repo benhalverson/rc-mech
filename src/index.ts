@@ -4,12 +4,13 @@ import { Scalar } from "@scalar/hono-api-reference";
 import { z } from "zod";
 import { createAuth } from "./auth";
 import { db } from "./db";
-import { car, component, driveSession, maintenancePlan, serviceRecord } from "./schema";
-import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
+import { car, component, driveSession, maintenancePlan, owner, serviceRecord } from "./schema";
+import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, driveSessionUpdateInput, maintenancePlanInput, serviceRecordInput, timezoneInput } from "./types";
 import { carListMode, canArchive, canRestore, canWrite, ownsCar } from "./car-policy";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { STANDARD_COMPONENT_SLOTS, canEditComponent, componentSlotType, normalizeComponentSlot } from "./component-policy";
 import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
+import { canDeleteDriveSession, canEditDriveSession, isIanaTimezone, presentDateTime } from "./drive-session-policy";
 
 const app = new Hono<AppEnv>();
 
@@ -58,6 +59,19 @@ const publicCar = (value: typeof car.$inferSelect) => {
 };
 
 const publicComponent = (value: typeof component.$inferSelect) => value;
+
+const ownerTimezone = async (c: AppContext): Promise<string> =>
+	(await db(c.env).select({ timezone: owner.timezone }).from(owner).where(eq(owner.id, c.get("userId"))).get())?.timezone ?? "UTC";
+
+const publicDriveSession = (value: typeof driveSession.$inferSelect, timezone: string) => ({
+	...value,
+	...presentDateTime(value.startedAt, timezone),
+});
+
+const driveSessionCount = async (c: AppContext, carId: string) => {
+	const rows = await db(c.env).select({ id: driveSession.id }).from(driveSession).where(and(eq(driveSession.carId, carId), isNull(driveSession.deletedAt)));
+	return rows.length;
+};
 
 const ownedComponent = async (c: AppContext, carId: string, componentId: string) =>
 	db(c.env).select().from(component).where(and(eq(component.id, componentId), eq(component.carId, carId))).get();
@@ -250,10 +264,37 @@ app.post("/api/v1/cars/:carId/components/:componentId/replace", async (c) => {
 	return c.json({ previous: publicComponent({ ...previous, removedAt: now }), component: publicComponent(replacement!) }, 201);
 });
 
+app.get("/api/v1/preferences/timezone", async (c) => c.json({ timezone: await ownerTimezone(c) }));
+
+app.patch("/api/v1/preferences/timezone", async (c) => {
+	const parsed = timezoneInput.safeParse(await c.req.json());
+	if (!parsed.success || !isIanaTimezone(parsed.success ? parsed.data.timezone : "")) {
+		return c.json({ error: parsed.success ? "timezone must be a valid IANA timezone" : parsed.error.flatten() }, 400);
+	}
+	await db(c.env).update(owner).set({ timezone: parsed.data.timezone }).where(eq(owner.id, c.get("userId")));
+	return c.json({ timezone: parsed.data.timezone });
+});
+
+app.get("/api/v1/cars/:carId/drives/count", async (c) => {
+	if (!await ownedCar(c, c.req.param("carId"))) return c.json({ error: "Car not found" }, 404);
+	return c.json({ count: await driveSessionCount(c, c.req.param("carId")) });
+});
+
+app.get("/api/v1/cars/:carId/drives", async (c) => {
+	const { carId } = c.req.param();
+	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
+	const history = c.req.query("history") === "true";
+	const where = history ? eq(driveSession.carId, carId) : and(eq(driveSession.carId, carId), isNull(driveSession.deletedAt));
+	const timezone = await ownerTimezone(c);
+	const sessions = await db(c.env).select().from(driveSession).where(where).orderBy(desc(driveSession.startedAt));
+	return c.json({ driveSessions: sessions.map((value) => publicDriveSession(value, timezone)), count: sessions.filter((value) => value.deletedAt === null).length, history, timezone });
+});
+
 app.post("/api/v1/cars/:carId/drives", async (c) => {
-	const parsed = driveSessionInput.safeParse({ ...(await c.req.json()), carId: c.req.param("carId") });
+	const carId = c.req.param("carId");
+	const parsed = driveSessionInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-	const parentCar = await ownedCar(c, parsed.data.carId);
+	const parentCar = await ownedCar(c, carId);
 	if (!parentCar) return c.json({ error: "Car not found" }, 404);
 	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
 	const id = crypto.randomUUID();
@@ -261,13 +302,50 @@ app.post("/api/v1/cars/:carId/drives", async (c) => {
 	const database = db(c.env);
 	await database.insert(driveSession).values({
 		id,
-		carId: value.carId,
-		startedAt: value.startedAt,
+		carId,
+		startedAt: new Date(value.startedAt).toISOString(),
 		durationMinutes: value.durationMinutes ?? null,
 		conditions: value.conditions ?? null,
 		notes: value.notes ?? null,
+		deletedAt: null,
 	});
-	return c.json({ driveSession: { id, ...value } }, 201);
+	const created = await database.select().from(driveSession).where(and(eq(driveSession.id, id), eq(driveSession.carId, carId))).get();
+	return c.json({ driveSession: publicDriveSession(created!, await ownerTimezone(c)) }, 201);
+});
+
+app.patch("/api/v1/cars/:carId/drives/:driveId", async (c) => {
+	const { carId, driveId } = c.req.param();
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before editing drive history" }, 409);
+	const existing = await db(c.env).select().from(driveSession).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId))).get();
+	if (!existing) return c.json({ error: "Drive session not found" }, 404);
+	if (!canEditDriveSession(existing)) return c.json({ error: "Deleted drive sessions are immutable" }, 409);
+	const parsed = driveSessionUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	await db(c.env).update(driveSession).set({
+		startedAt: parsed.data.startedAt ? new Date(parsed.data.startedAt).toISOString() : undefined,
+		durationMinutes: parsed.data.durationMinutes,
+		conditions: parsed.data.conditions,
+		notes: parsed.data.notes,
+	}).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId), isNull(driveSession.deletedAt)));
+	const updated = await db(c.env).select().from(driveSession).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId), isNull(driveSession.deletedAt))).get();
+	if (!updated) return c.json({ error: "Drive session is no longer editable" }, 409);
+	return c.json({ driveSession: publicDriveSession(updated!, await ownerTimezone(c)) });
+});
+
+app.delete("/api/v1/cars/:carId/drives/:driveId", async (c) => {
+	const { carId, driveId } = c.req.param();
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before deleting drive history" }, 409);
+	const existing = await db(c.env).select().from(driveSession).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId))).get();
+	if (!existing) return c.json({ error: "Drive session not found" }, 404);
+	if (!canDeleteDriveSession(existing)) return c.json({ error: "Drive session is already deleted" }, 409);
+	const deletedAt = new Date().toISOString();
+	await db(c.env).update(driveSession).set({ deletedAt }).where(and(eq(driveSession.id, driveId), eq(driveSession.carId, carId), isNull(driveSession.deletedAt)));
+	const deleted = { ...existing, deletedAt };
+	return c.json({ driveSession: publicDriveSession(deleted, await ownerTimezone(c)) });
 });
 
 app.post("/api/v1/cars/:carId/service-records", async (c) => {
@@ -384,7 +462,21 @@ const openApi = {
 			patch: { summary: "Edit an owned component", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: componentProperties } } } }, responses: { 200: { description: "Component updated" }, 400: { description: "Invalid component" }, 404: { description: "Component not found" }, 409: { description: "Car is archived" } } },
 		},
 		"/api/v1/cars/{carId}/components/{componentId}/replace": { post: { summary: "Replace the current component and preserve its history", parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "componentId", in: "path", required: true, schema: { type: "string" } }], requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["slot", "name"], properties: componentProperties } } } }, responses: { 201: { description: "Replacement installed" }, 400: { description: "Invalid component or slot" }, 404: { description: "Component not found" }, 409: { description: "Component is not current or car is archived" } } } },
-		"/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session for an owned car", responses: { 201: { description: "Drive recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
+		"/api/v1/preferences/timezone": {
+			get: { summary: "Get the authenticated owner's IANA timezone", responses: { 200: { description: "Timezone preference" } } },
+			patch: { summary: "Set the authenticated owner's IANA timezone", responses: { 200: { description: "Timezone preference updated" }, 400: { description: "Invalid IANA timezone" } } },
+		},
+		"/api/v1/cars/{carId}/drives": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "history", in: "query", required: false, schema: { type: "boolean" } }],
+			get: { summary: "List an owned car's drive sessions; history=true includes soft-deleted sessions", responses: { 200: { description: "Drive session history" }, 404: { description: "Car not found" } } },
+			post: { summary: "Record a drive session for an active owned car", responses: { 201: { description: "Drive recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } },
+		},
+		"/api/v1/cars/{carId}/drives/count": { parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }], get: { summary: "Count non-deleted drive sessions for an owned car", responses: { 200: { description: "Drive session count" }, 404: { description: "Car not found" } } } },
+		"/api/v1/cars/{carId}/drives/{driveId}": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "driveId", in: "path", required: true, schema: { type: "string" } }],
+			patch: { summary: "Edit an active drive session", responses: { 200: { description: "Drive session updated" }, 404: { description: "Drive session not found" }, 409: { description: "Deleted session" } } },
+			delete: { summary: "Soft-delete a drive session", responses: { 200: { description: "Drive session deleted" }, 404: { description: "Drive session not found" }, 409: { description: "Already deleted" } } },
+		},
 		"/api/v1/cars/{carId}/service-records": { post: { summary: "Record service for an owned car", responses: { 201: { description: "Service recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
 		"/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan for an owned car", responses: { 201: { description: "Maintenance plan created" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
 	},

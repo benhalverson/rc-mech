@@ -94,6 +94,43 @@ active_after_restore_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w
 [[ "$active_after_restore_status" == "200" ]]
 jq -e --arg id "$car_id" '.cars[] | select(.id == $id)' "$response_file" >/dev/null
 
+timezone_update_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/preferences/timezone" \
+  -H 'Content-Type: application/json' --data '{"timezone":"America/Los_Angeles"}')"
+[[ "$timezone_update_status" == "200" ]]
+jq -e '.timezone == "America/Los_Angeles"' "$response_file" >/dev/null
+timezone_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/preferences/timezone")"
+[[ "$timezone_status" == "200" ]]
+jq -e '.timezone == "America/Los_Angeles"' "$response_file" >/dev/null
+invalid_timezone_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/preferences/timezone" \
+  -H 'Content-Type: application/json' --data '{"timezone":"not/a-timezone"}')"
+[[ "$invalid_timezone_status" == "400" ]]
+abbreviated_timezone_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/preferences/timezone" \
+  -H 'Content-Type: application/json' --data '{"timezone":"PST"}')"
+[[ "$abbreviated_timezone_status" == "400" ]]
+
+drive_create_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/drives" \
+  -H 'Content-Type: application/json' --data '{"startedAt":"2026-08-03T07:30:05.000Z","notes":"morning test session"}')"
+[[ "$drive_create_status" == "201" ]]
+drive_id="$(jq -r '.driveSession.id' "$response_file")"
+[[ -n "$drive_id" && "$drive_id" != "null" ]]
+jq -e '.driveSession.startedAt == "2026-08-03T07:30:05.000Z" and .driveSession.localDate == "2026-08-03" and .driveSession.localTime == "00:30:05" and .driveSession.timezone == "America/Los_Angeles" and .driveSession.deletedAt == null' "$response_file" >/dev/null
+drive_update_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/cars/${car_id}/drives/${drive_id}" \
+  -H 'Content-Type: application/json' --data '{"notes":"updated test session"}')"
+[[ "$drive_update_status" == "200" ]]
+jq -e '.driveSession.notes == "updated test session"' "$response_file" >/dev/null
+drive_count_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/drives/count")"
+[[ "$drive_count_status" == "200" ]]
+jq -e '.count == 1' "$response_file" >/dev/null
+drive_delete_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X DELETE "$base/api/v1/cars/${car_id}/drives/${drive_id}")"
+[[ "$drive_delete_status" == "200" ]]
+jq -e '.driveSession.deletedAt != null' "$response_file" >/dev/null
+drive_history_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/drives?history=true")"
+[[ "$drive_history_status" == "200" ]]
+jq -e --arg id "$drive_id" '.count == 0 and ([.driveSessions[] | select(.id == $id and .deletedAt != null)] | length) == 1' "$response_file" >/dev/null
+drive_deleted_update_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/cars/${car_id}/drives/${drive_id}" \
+  -H 'Content-Type: application/json' --data '{"notes":"must stay immutable"}')"
+[[ "$drive_deleted_update_status" == "409" ]]
+
 component_create_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components" \
   -H 'Content-Type: application/json' \
   --data '{"slot":"motor","name":"Competition motor","manufacturer":"RC Mech","model":"M-1","serialNumber":"MOTOR-001","notes":"first installation"}')"
@@ -154,6 +191,17 @@ current_motor_count="$(curl -fsS -b "$cookie_file" "$base/api/v1/cars/${car_id}/
 
 archive_again_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/archive")"
 [[ "$archive_again_status" == "200" ]]
+archived_drive_history_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/drives?history=true")"
+[[ "$archived_drive_history_status" == "200" ]]
+jq -e --arg id "$drive_id" '[.driveSessions[] | select(.id == $id)] | length == 1' "$response_file" >/dev/null
+archived_drive_create_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST "$base/api/v1/cars/${car_id}/drives" \
+  -H 'Content-Type: application/json' --data '{"startedAt":"2026-08-03T08:00:00.000Z"}')"
+[[ "$archived_drive_create_status" == "409" ]]
+archived_drive_update_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X PATCH "$base/api/v1/cars/${car_id}/drives/${drive_id}" \
+  -H 'Content-Type: application/json' --data '{"notes":"archived history is read-only"}')"
+[[ "$archived_drive_update_status" == "409" ]]
+archived_drive_delete_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X DELETE "$base/api/v1/cars/${car_id}/drives/${drive_id}")"
+[[ "$archived_drive_delete_status" == "409" ]]
 archived_component_write_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' -X POST \
   "$base/api/v1/cars/${car_id}/components" -H 'Content-Type: application/json' --data '{"slot":"battery","name":"Battery"}')"
 [[ "$archived_component_write_status" == "409" ]]
@@ -188,6 +236,10 @@ other_component_update_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cooki
 other_component_replace_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' -X POST \
   "$base/api/v1/cars/${car_id}/components/${replacement_id}/replace" -H 'Content-Type: application/json' --data '{"slot":"motor","name":"should not replace"}')"
 [[ "$other_component_replace_status" == "404" ]]
+other_drive_list_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}/drives")"
+[[ "$other_drive_list_status" == "404" ]]
+other_drive_detail_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars/${car_id}/drives/${drive_id}")"
+[[ "$other_drive_detail_status" == "404" ]]
 other_update_status="$(curl -sS -o /dev/null -H "Cookie: ${other_cookie}" -w '%{http_code}' -X PATCH "$base/api/v1/cars/${car_id}" \
   -H 'Content-Type: application/json' --data '{"name":"should not change"}')"
 [[ "$other_update_status" == "404" ]]

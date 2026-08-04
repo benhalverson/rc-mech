@@ -47,12 +47,20 @@ export const componentUpdateInput = z.object({
 }).refine((value) => Object.keys(value).length > 0, "At least one component field is required");
 
 export const driveSessionInput = z.object({
-	carId: z.string().min(1),
 	startedAt: z.string().datetime(),
 	durationMinutes: z.number().int().positive().max(1440).optional(),
 	conditions: z.string().max(1000).optional(),
 	notes: z.string().max(4000).optional(),
 });
+
+export const driveSessionUpdateInput = z.object({
+	startedAt: z.string().datetime().optional(),
+	durationMinutes: z.number().int().positive().max(1440).nullable().optional(),
+	conditions: z.string().max(1000).nullable().optional(),
+	notes: z.string().max(4000).nullable().optional(),
+}).refine((value) => Object.keys(value).length > 0, "At least one drive session field is required");
+
+export const timezoneInput = z.object({ timezone: z.string().min(1).max(100) });
 
 export const serviceRecordInput = z.object({
 	carId: z.string().min(1),

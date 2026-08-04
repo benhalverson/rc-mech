@@ -27,7 +27,15 @@ export const component = sqliteTable("component", {
 	installedAt: text("installed_at").notNull(),
 	removedAt: text("removed_at"),
 });
-export const driveSession = sqliteTable("drive_session", { id: id("id"), carId: text("car_id").notNull(), startedAt: text("started_at").notNull(), durationMinutes: integer("duration_minutes"), conditions: text("conditions"), notes: text("notes") });
+export const driveSession = sqliteTable("drive_session", {
+	id: id("id"),
+	carId: text("car_id").notNull(),
+	startedAt: text("started_at").notNull(),
+	durationMinutes: integer("duration_minutes"),
+	conditions: text("conditions"),
+	notes: text("notes"),
+	deletedAt: text("deleted_at"),
+});
 export const maintenancePlan = sqliteTable("maintenance_plan", { id: id("id"), carId: text("car_id").notNull(), componentId: text("component_id").notNull(), name: text("name").notNull(), intervalDays: integer("interval_days"), intervalSessions: integer("interval_sessions"), baselineAt: text("baseline_at").notNull(), status: text("status").notNull(), pausedAt: text("paused_at") });
 export const serviceRecord = sqliteTable("service_record", { id: id("id"), carId: text("car_id").notNull(), componentId: text("component_id"), performedAt: text("performed_at").notNull(), description: text("description").notNull(), baselineAt: text("baseline_at").notNull() });
 export const photo = sqliteTable("photo", { id: id("id"), carId: text("car_id").notNull(), objectKey: text("object_key").notNull().unique(), contentType: text("content_type").notNull(), createdAt: text("created_at").notNull() });
@@ -40,6 +48,7 @@ export const owner = sqliteTable("owner", {
 	image: text("image"),
 	createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 	updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+	timezone: text("timezone").notNull().default("UTC"),
 });
 
 export const session = sqliteTable("session", {

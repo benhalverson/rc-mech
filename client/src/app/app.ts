@@ -72,6 +72,29 @@ type ComponentForm = {
 
 type ComponentsResponse = { components: InstalledComponent[] };
 
+type DriveSession = {
+  id: string;
+  carId: string;
+  startedAt: string;
+  durationMinutes?: number | null;
+  conditions?: string | null;
+  notes?: string | null;
+  deletedAt?: string | null;
+};
+
+type DriveSessionsResponse = { driveSessions?: DriveSession[]; sessions?: DriveSession[]; count?: number };
+type DriveSessionResponse = { driveSession: DriveSession };
+type TimezoneResponse = { timezone?: string };
+type SessionState = 'idle' | 'loading' | 'ready' | 'error';
+type SessionMode = 'add' | 'edit';
+
+type DriveSessionForm = {
+  startedAt: string;
+  durationMinutes: string;
+  conditions: string;
+  notes: string;
+};
+
 const standardComponentSlots = [
   'motor', 'esc', 'battery', 'steering-servo', 'throttle-servo', 'receiver',
   'gyro', 'transmitter', 'tires', 'wheels', 'shocks', 'front-differential',
@@ -105,6 +128,53 @@ const componentDetailsPayload = (form: ComponentForm): Record<string, string> =>
       .map(([key, value]) => [key, value.trim()]).filter(([, value]) => value),
   );
   return { name: form.name.trim(), ...optional };
+};
+
+const defaultTimezone = (): string => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
+};
+
+const emptyDriveSessionForm = (): DriveSessionForm => ({ startedAt: '', durationMinutes: '', conditions: '', notes: '' });
+
+const driveSessionFormFrom = (session: DriveSession, timezone: string): DriveSessionForm => ({
+  startedAt: localDateTimeForTimezone(session.startedAt, timezone),
+  durationMinutes: session.durationMinutes ? String(session.durationMinutes) : '',
+  conditions: session.conditions ?? '',
+  notes: session.notes ?? '',
+});
+
+const zonedDateToIso = (value: string, timezone: string): string => {
+  const [date, time] = value.split('T');
+  if (!date || !time) return '';
+  const [year, month, day] = date.split('-').map(Number);
+  const [hour, minute] = time.split(':').map(Number);
+  const asUtc = Date.UTC(year, month - 1, day, hour, minute);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(asUtc));
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  const offset = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute')) - asUtc;
+  return new Date(asUtc - offset).toISOString();
+};
+
+const localDateTimeForTimezone = (iso: string, timezone: string): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+};
+
+const driveSessionPayload = (form: DriveSessionForm, timezone: string): Record<string, unknown> => {
+  const payload: Record<string, unknown> = {
+    startedAt: zonedDateToIso(form.startedAt, timezone),
+    conditions: form.conditions.trim(),
+    notes: form.notes.trim(),
+  };
+  payload['durationMinutes'] = form.durationMinutes.trim() ? Number(form.durationMinutes) : null;
+  return payload;
 };
 
 type WebAuthnOptions = {
@@ -196,6 +266,20 @@ export class App {
   protected readonly componentFormError = signal('');
   protected readonly editingComponentId = signal<string | null>(null);
   protected readonly standardComponentSlots = standardComponentSlots;
+  protected readonly driveSessions = signal<DriveSession[]>([]);
+  protected readonly sessionState = signal<SessionState>('idle');
+  protected readonly sessionError = signal('');
+  protected readonly sessionMode = signal<SessionMode>('add');
+  protected readonly sessionEditing = signal(false);
+  protected readonly sessionAction = signal<string | null>(null);
+  protected readonly sessionForm = signal<DriveSessionForm>(emptyDriveSessionForm());
+  protected readonly sessionFormError = signal('');
+  protected readonly editingSessionId = signal<string | null>(null);
+  protected readonly timezone = signal(defaultTimezone());
+  protected readonly timezoneForm = signal(defaultTimezone());
+  protected readonly timezoneState = signal<'loading' | 'ready' | 'saving' | 'error'>('loading');
+  protected readonly timezoneError = signal('');
+  protected readonly sessionCount = computed(() => this.driveSessions().filter((session) => !session.deletedAt).length);
   protected readonly componentSlots = computed(() => {
     const slots = new Set(standardComponentSlots);
     this.components().forEach((component) => slots.add(component.slot));
@@ -367,6 +451,7 @@ export class App {
         this.ownerEmail.set(response.user?.email ?? 'Owner');
         this.loadCars();
         this.loadPasskeys();
+        this.loadTimezone();
       },
       error: () => {
         this.state.set('signed-out');
@@ -433,6 +518,7 @@ export class App {
     this.carEditing.set(false);
     this.carView.set('detail');
     this.loadComponents(car.id);
+    this.loadDriveSessions(car.id);
   }
 
   protected editCar(): void {
@@ -457,6 +543,105 @@ export class App {
   protected retryComponents(): void {
     const car = this.selectedCar();
     if (car) this.loadComponents(car.id);
+  }
+
+  protected retryDriveSessions(): void {
+    const car = this.selectedCar();
+    if (car) this.loadDriveSessions(car.id);
+  }
+
+  protected openAddSession(): void {
+    const car = this.selectedCar();
+    if (!car || car.archivedAt) return;
+    this.sessionMode.set('add');
+    this.editingSessionId.set(null);
+    this.sessionForm.set({ ...emptyDriveSessionForm(), startedAt: localDateTimeForTimezone(new Date().toISOString(), this.timezone()) });
+    this.sessionFormError.set('');
+    this.sessionEditing.set(true);
+  }
+
+  protected openEditSession(session: DriveSession): void {
+    const car = this.selectedCar();
+    if (!car || car.archivedAt || session.deletedAt) return;
+    this.sessionMode.set('edit');
+    this.editingSessionId.set(session.id);
+    this.sessionForm.set(driveSessionFormFrom(session, this.timezone()));
+    this.sessionFormError.set('');
+    this.sessionEditing.set(true);
+  }
+
+  protected cancelSessionEdit(): void {
+    this.sessionEditing.set(false);
+    this.editingSessionId.set(null);
+    this.sessionFormError.set('');
+  }
+
+  protected updateSessionField(field: keyof DriveSessionForm, value: string): void {
+    this.sessionForm.update((form) => ({ ...form, [field]: value }));
+  }
+
+  protected saveSession(): void {
+    const car = this.selectedCar();
+    const form = this.sessionForm();
+    if (!car) return;
+    if (car.archivedAt) {
+      this.sessionFormError.set('This car is archived. Restore it before recording a drive session.');
+      return;
+    }
+    if (!form.startedAt) {
+      this.sessionFormError.set('Add when this drive session started.');
+      return;
+    }
+    const duration = form.durationMinutes.trim() ? Number(form.durationMinutes) : null;
+    if (duration !== null && (!Number.isInteger(duration) || duration < 1 || duration > 1440)) {
+      this.sessionFormError.set('Duration must be a whole number of minutes between 1 and 1,440.');
+      return;
+    }
+    if (this.sessionAction()) return;
+    const mode = this.sessionMode();
+    const sessionId = this.editingSessionId();
+    this.sessionAction.set(mode);
+    this.sessionFormError.set('');
+    const request = mode === 'edit' && sessionId
+      ? this.http.patch<DriveSessionResponse>(`/api/v1/cars/${car.id}/drives/${sessionId}`, driveSessionPayload(form, this.timezone()), { withCredentials: true })
+      : this.http.post<DriveSessionResponse>(`/api/v1/cars/${car.id}/drives`, driveSessionPayload(form, this.timezone()), { withCredentials: true });
+    request.subscribe({
+      next: () => {
+        this.cancelSessionEdit();
+        this.sessionAction.set(null);
+        this.message.set(mode === 'edit' ? 'Drive session updated.' : 'Drive session recorded.');
+        this.loadDriveSessions(car.id);
+      },
+      error: (error: { status?: number }) => {
+        this.sessionAction.set(null);
+        this.sessionFormError.set(error.status === 401
+          ? 'Your garage session has expired. Sign in again to continue.'
+          : error.status === 409
+            ? 'This car is archived. Restore it before recording a drive session.'
+            : 'The drive session could not be saved. Check the details and try again.');
+        if (error.status === 401) this.state.set('signed-out');
+      },
+    });
+  }
+
+  protected deleteSession(session: DriveSession): void {
+    const car = this.selectedCar();
+    if (!car || car.archivedAt || this.sessionAction()) return;
+    this.sessionAction.set(`delete:${session.id}`);
+    this.message.set('');
+    this.http.delete(`/api/v1/cars/${car.id}/drives/${session.id}`, { withCredentials: true }).subscribe({
+      next: () => {
+        this.sessionAction.set(null);
+        this.message.set('Drive session archived from the run log.');
+        this.loadDriveSessions(car.id);
+      },
+      error: (error: { status?: number }) => {
+        this.sessionAction.set(null);
+        this.message.set(error.status === 409
+          ? 'This car is archived. Its drive history is read-only.'
+          : 'The drive session could not be archived. Try again.');
+      },
+    });
   }
 
   protected openAddComponent(slot = ''): void {
@@ -565,6 +750,74 @@ export class App {
         if (error.status === 401) this.state.set('signed-out');
       },
     });
+  }
+
+  private loadDriveSessions(carId: string): void {
+    this.sessionState.set('loading');
+    this.sessionError.set('');
+    this.http.get<DriveSessionsResponse>(`/api/v1/cars/${carId}/drives`, {
+      withCredentials: true, params: { history: 'true' },
+    }).subscribe({
+      next: (response) => {
+        this.driveSessions.set(response.driveSessions ?? response.sessions ?? []);
+        this.sessionState.set('ready');
+      },
+      error: (error: { status?: number }) => {
+        this.sessionState.set('error');
+        this.sessionError.set(error.status === 401
+          ? 'Your garage session has expired. Sign in again to continue.'
+          : 'The run log could not be loaded. Check the connection and try again.');
+        if (error.status === 401) this.state.set('signed-out');
+      },
+    });
+  }
+
+  private loadTimezone(): void {
+    this.timezoneState.set('loading');
+    this.http.get<TimezoneResponse>('/api/v1/preferences/timezone', { withCredentials: true }).subscribe({
+      next: (response) => {
+        const value = response.timezone && this.isValidTimezone(response.timezone) ? response.timezone : defaultTimezone();
+        this.timezone.set(value);
+        this.timezoneForm.set(value);
+        this.timezoneState.set('ready');
+      },
+      error: () => {
+        this.timezoneState.set('error');
+        this.timezoneError.set('The timezone setting could not be loaded. Dates are shown in your browser timezone.');
+      },
+    });
+  }
+
+  protected updateTimezone(value: string): void { this.timezoneForm.set(value); }
+
+  protected saveTimezone(): void {
+    const value = this.timezoneForm().trim();
+    if (!this.isValidTimezone(value)) {
+      this.timezoneError.set('Use a valid IANA timezone, such as America/Los_Angeles.');
+      return;
+    }
+    this.timezoneState.set('saving');
+    this.timezoneError.set('');
+    this.http.patch<TimezoneResponse>('/api/v1/preferences/timezone', { timezone: value }, { withCredentials: true }).subscribe({
+      next: (response) => {
+        const saved = response.timezone ?? value;
+        this.timezone.set(saved);
+        this.timezoneForm.set(saved);
+        this.timezoneState.set('ready');
+        this.message.set(`Dates will now use ${saved}.`);
+      },
+      error: () => {
+        this.timezoneState.set('error');
+        this.timezoneError.set('The timezone could not be saved. Check the name and try again.');
+      },
+    });
+  }
+
+  private isValidTimezone(value: string): boolean {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+      return value.includes('/') || value === 'UTC';
+    } catch { return false; }
   }
 
   protected saveCar(): void {
