@@ -38,7 +38,17 @@ export const driveSession = sqliteTable("drive_session", {
 });
 export const maintenancePlan = sqliteTable("maintenance_plan", { id: id("id"), carId: text("car_id").notNull(), componentId: text("component_id"), name: text("name").notNull(), intervalDays: integer("interval_days"), intervalSessions: integer("interval_sessions"), intervalUnit: text("interval_unit").notNull().default("days"), intervalValue: integer("interval_value").notNull().default(1), baselineAt: text("baseline_at").notNull(), baselineSessionCount: integer("baseline_session_count").notNull().default(0), status: text("status").notNull(), pauseReason: text("pause_reason"), pausedAt: text("paused_at") });
 export const serviceRecord = sqliteTable("service_record", { id: id("id"), carId: text("car_id").notNull(), componentId: text("component_id"), planId: text("plan_id"), performedAt: text("performed_at").notNull(), description: text("description").notNull(), notes: text("notes"), cost: real("cost"), currency: text("currency"), baselineAt: text("baseline_at").notNull(), baselineSessionCount: integer("baseline_session_count"), previousBaselineAt: text("previous_baseline_at"), previousBaselineSessionCount: integer("previous_baseline_session_count"), deletedAt: text("deleted_at") });
-export const photo = sqliteTable("photo", { id: id("id"), carId: text("car_id").notNull(), objectKey: text("object_key").notNull().unique(), contentType: text("content_type").notNull(), createdAt: text("created_at").notNull() });
+export const photo = sqliteTable("photo", {
+	id: id("id"),
+	carId: text("car_id").notNull(),
+	objectKey: text("object_key").notNull().unique(),
+	contentType: text("content_type").notNull(),
+	fileName: text("file_name").notNull().default("photo"),
+	byteSize: integer("byte_size").notNull().default(0),
+	sortOrder: integer("sort_order").notNull().default(0),
+	isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+	createdAt: text("created_at").notNull(),
+});
 
 export const owner = sqliteTable("owner", {
 	id: id("id"),
