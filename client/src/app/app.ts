@@ -102,9 +102,17 @@ type SessionMode = 'add' | 'edit';
 
 type DriveSessionForm = {
 	startedAt: string;
-	durationMinutes: string;
+	durationMinutes: string | number | null;
 	conditions: string;
 	notes: string;
+};
+
+const normalizeDurationMinutes = (
+	value: DriveSessionForm['durationMinutes'],
+): number | null => {
+	if (value === null || (typeof value === 'string' && !value.trim()))
+		return null;
+	return typeof value === 'number' ? value : Number(value.trim());
 };
 
 const standardComponentSlots = [
@@ -271,9 +279,7 @@ const driveSessionPayload = (
 		startedAt: zonedDateToIso(form.startedAt, timezone),
 		conditions: form.conditions.trim(),
 		notes: form.notes.trim(),
-		durationMinutes: form.durationMinutes.trim()
-			? Number(form.durationMinutes)
-			: null,
+		durationMinutes: normalizeDurationMinutes(form.durationMinutes),
 	};
 	return payload;
 };
@@ -836,7 +842,7 @@ export class App {
 
 	protected updateSessionField(
 		field: keyof DriveSessionForm,
-		value: string,
+		value: string | number | null,
 	): void {
 		this.sessionForm.update((form) => ({ ...form, [field]: value }));
 	}
@@ -855,9 +861,7 @@ export class App {
 			this.sessionFormError.set('Add when this drive session started.');
 			return;
 		}
-		const duration = form.durationMinutes.trim()
-			? Number(form.durationMinutes)
-			: null;
+		const duration = normalizeDurationMinutes(form.durationMinutes);
 		if (
 			duration !== null &&
 			(!Number.isInteger(duration) || duration < 1 || duration > 1440)
