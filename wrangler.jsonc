@@ -22,24 +22,28 @@
 		}
 	],
 	"send_email": [{ "name": "EMAIL" }],
-	"d1_databases": [{
-		"binding": "DB",
-		"database_name": "rc-mech",
-		"database_id": "97219482-4250-4c83-9785-7886a8b3a434",
-		"migrations_dir": "migrations"
-	}],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "rc-mech",
+			"database_id": "97219482-4250-4c83-9785-7886a8b3a434",
+			"migrations_dir": "migrations"
+		}
+	],
 	"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
 	"vars": { "ENVIRONMENT": "production" },
 	"env": {
 		"local": {
 			"assets": { "directory": "./public", "binding": "ASSETS" },
 			"send_email": [{ "name": "EMAIL" }],
-			"d1_databases": [{
-				"binding": "DB",
-				"database_name": "rc-mech",
-				"database_id": "00000000-0000-0000-0000-000000000000",
-				"migrations_dir": "migrations"
-			}],
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "rc-mech",
+					"database_id": "00000000-0000-0000-0000-000000000000",
+					"migrations_dir": "migrations"
+				}
+			],
 			"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
 			"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }
 		}

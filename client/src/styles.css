@@ -1,4 +1,21 @@
 /* You can add global styles to this file, and also import other style files */
-:root { color-scheme: dark; --paper: #181915; --ink: #f1ead8; --muted: #a9a18d; --accent: #d5a94f; --line: #3c3a30; }
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 ui-monospace, SFMono-Regular, monospace; }
+:root {
+	color-scheme: dark;
+	--paper: #181915;
+	--ink: #f1ead8;
+	--muted: #a9a18d;
+	--accent: #d5a94f;
+	--line: #3c3a30;
+}
+* {
+	box-sizing: border-box;
+}
+body {
+	margin: 0;
+	background: var(--paper);
+	color: var(--ink);
+	font:
+		16px / 1.5 ui-monospace,
+		SFMono-Regular,
+		monospace;
+}
