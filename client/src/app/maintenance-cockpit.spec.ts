@@ -15,7 +15,7 @@ describe('MaintenanceCockpit', () => {
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(MaintenanceCockpit);
     fixture.componentRef.setInput('cars', [car]);
-    fixture.componentRef.setInput('timezone', 'America/Los_Angeles');
+    fixture.componentRef.setInput('timezone', undefined as any);
     http.expectOne('/api/v1/maintenance-plans').flush({ maintenancePlans: [plan], activity: [] });
     http.expectOne((request) => request.url === '/api/v1/cars/car-1/service-records' && request.params.get('history') === 'true').flush({ serviceRecords: [] });
     fixture.detectChanges();
