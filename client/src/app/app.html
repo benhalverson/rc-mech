@@ -119,6 +119,64 @@
           <div class="notes-block"><span>Workshop notes</span><p>{{ car.notes || 'No notes yet. Add the context that will help on the next bench session.' }}</p></div>
           @if (car.archivedAt) { <p class="archive-note">Archived {{ car.archivedAt | date:'mediumDate' }}. History remains available, but new work should wait until this car is restored.</p> }
           <div class="form-actions"><button class="button" type="button" (click)="editCar()">Edit details</button>@if (car.archivedAt) { <button class="button quiet" type="button" (click)="restoreCar()" [disabled]="carAction() !== null">{{ carAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button> } @else { <button class="button danger-button" type="button" (click)="archiveCar()" [disabled]="carAction() !== null">{{ carAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button> }</div>
+
+          <section class="build-sheet" aria-labelledby="build-sheet-title">
+            <div class="section-heading">
+              <div>
+                <div class="eyebrow">Installed components</div>
+                <h4 id="build-sheet-title">Build sheet</h4>
+              </div>
+              @if (!car.archivedAt && !componentEditing()) { <button class="button quiet" type="button" (click)="openAddComponent()">Add component</button> }
+            </div>
+            <p class="section-intro">One current installation per slot. Replacements close the old installation without losing its service history.</p>
+
+            @if (car.archivedAt) { <p class="archive-note">This build sheet is read-only while the car is archived. Restore the car before adding, editing, or replacing a component.</p> }
+            @if (componentEditing()) {
+              <form class="component-form" (ngSubmit)="saveComponent()" aria-labelledby="component-form-title">
+                <div class="eyebrow">{{ componentMode() === 'replace' ? 'Replacement installation' : componentMode() === 'edit' ? 'Edit installation' : 'New installation' }}</div>
+                <h5 id="component-form-title">{{ componentMode() === 'replace' ? 'Fit the replacement.' : componentMode() === 'edit' ? 'Update the build record.' : 'Add a component.' }}</h5>
+                @if (componentMode() === 'edit') { <p class="hint">Update the installation details without changing its slot.</p> } @else { <p class="hint">Use a standard slot or type a custom slot name. Saving an existing slot records a new installation and keeps the previous one in history.</p> }
+                @if (componentFormError()) { <p class="message" role="alert">{{ componentFormError() }}</p> }
+                <div class="form-grid">
+                  <label>Slot type <select name="component-slot-type" [disabled]="componentMode() === 'edit'" [ngModel]="componentForm().slotType" (ngModelChange)="updateComponentField('slotType', $event)"><option value="standard">Standard slot</option><option value="custom">Custom slot</option></select></label>
+                  @if (componentForm().slotType === 'standard') {
+                    <label>Standard slot <select name="component-slot" required [disabled]="componentMode() === 'edit'" [ngModel]="componentForm().slot" (ngModelChange)="updateComponentField('slot', $event)">@for (slot of standardComponentSlots; track slot) { <option [value]="slot">{{ slot }}</option> }</select></label>
+                  } @else {
+                    <label>Custom slot <input name="component-slot" required maxlength="80" placeholder="Front sway bar…" [disabled]="componentMode() === 'edit'" [ngModel]="componentForm().slot" (ngModelChange)="updateComponentField('slot', $event)" /></label>
+                  }
+                  <label>Component identity <input name="component-name" required maxlength="160" placeholder="Power system" [ngModel]="componentForm().name" (ngModelChange)="updateComponentField('name', $event)" /></label>
+                  <label>Manufacturer <input name="component-manufacturer" maxlength="120" placeholder="Hobbywing" [ngModel]="componentForm().manufacturer" (ngModelChange)="updateComponentField('manufacturer', $event)" /></label>
+                  <label>Model <input name="component-model" maxlength="120" placeholder="Max 10" [ngModel]="componentForm().model" (ngModelChange)="updateComponentField('model', $event)" /></label>
+                  <label>Serial number <input name="component-serial" maxlength="120" placeholder="Optional" [ngModel]="componentForm().serialNumber" (ngModelChange)="updateComponentField('serialNumber', $event)" /></label>
+                  <label class="wide">Notes <textarea name="component-notes" maxlength="4000" rows="4" placeholder="Condition, setup, or fitment notes…" [ngModel]="componentForm().notes" (ngModelChange)="updateComponentField('notes', $event)"></textarea></label>
+                </div>
+                <div class="form-actions"><button class="button" type="submit" [disabled]="componentAction() !== null">{{ componentAction() === 'replace' ? 'Installing…' : componentAction() === 'edit' ? 'Saving…' : 'Add to build sheet' }}</button><button class="button quiet" type="button" (click)="cancelComponentEdit()" [disabled]="componentAction() !== null">Cancel</button></div>
+              </form>
+            } @else if (componentState() === 'loading') {
+              <div class="state-card component-state" aria-live="polite"><span class="state-mark">•••</span><p>Reading the build sheet…</p></div>
+            } @else if (componentState() === 'error') {
+              <div class="state-card error-state component-state" role="alert"><span class="state-mark">!</span><p>{{ componentError() }}</p><button class="text-button" type="button" (click)="retryComponents()">Try again</button></div>
+            } @else if (!hasComponentHistory()) {
+              <div class="state-card empty-state component-state"><span class="state-mark">＋</span><h5>No components recorded</h5><p>Start with a standard slot or add a custom position for this car.</p>@if (!car.archivedAt) { <button class="button" type="button" (click)="openAddComponent()">Add the first component</button> }</div>
+            } @else {
+              <div class="component-groups">
+                @for (group of componentGroups(); track group.slot) {
+                  @if (group.current || group.history.length) {
+                    <article class="component-slot" [class.slot-empty]="!group.current">
+                      <div class="component-slot-heading"><div><span class="slot-label">{{ group.slot }}</span>@if (!group.current) { <span class="slot-empty-label">No current installation</span> }</div>@if (!car.archivedAt && !componentEditing()) { <button class="text-button" type="button" (click)="openAddComponent(group.slot)">{{ group.current ? 'Replace' : 'Install' }}</button> }</div>
+                      @if (group.current; as current) {
+                        <div class="component-current"><div><strong>{{ current.name }}</strong><span class="component-meta">{{ current.manufacturer || 'Manufacturer not recorded' }}@if (current.model) { · {{ current.model }} } · Installed {{ current.installedAt ? (current.installedAt | date:'mediumDate') : 'date not recorded' }}@if (current.serialNumber) { · S/N {{ current.serialNumber }} }</span></div>@if (!car.archivedAt) { <div class="row-actions"><button class="text-button" type="button" (click)="openEditComponent(current)">Edit</button><button class="text-button" type="button" (click)="openReplaceComponent(current)">Replace</button></div> }</div>
+                        @if (current.notes) { <p class="component-notes">{{ current.notes }}</p> }
+                      }
+                      @if (group.history.length) {
+                        <details class="component-history"><summary>Previous installations ({{ group.history.length }})</summary><ul>@for (previous of group.history; track previous.id) { <li><strong>{{ previous.name }}</strong><span>Removed {{ previous.removedAt ? (previous.removedAt | date:'mediumDate') : 'date not recorded' }} · Installed {{ previous.installedAt ? (previous.installedAt | date:'mediumDate') : 'date not recorded' }}</span></li> }</ul></details>
+                      }
+                    </article>
+                  }
+                }
+              </div>
+            }
+          </section>
         </article>
       } @else {
         <div class="state-card empty-state"><h3>Choose a car or add one.</h3><p>The garage detail view keeps the record and its lifecycle in one place.</p><button class="button" type="button" (click)="openCreateCar()">Add a car</button></div>

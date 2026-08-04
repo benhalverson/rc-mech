@@ -45,6 +45,18 @@ describe('App', () => {
     vehicleType: 'Buggy', powerType: 'Electric', notes: 'Fresh diff oil', createdAt: '2026-08-01T00:00:00.000Z', archivedAt: null,
   };
 
+  const currentMotor = {
+    id: 'component-2', carId: 'car-1', slot: 'motor', slotType: 'standard', name: 'Competition motor',
+    manufacturer: 'Reedy', model: 'M3', serialNumber: 'M-002', notes: 'Fresh bearings',
+    installedAt: '2026-08-02T00:00:00.000Z', removedAt: null,
+  };
+
+  const previousMotor = {
+    id: 'component-1', carId: 'car-1', slot: 'motor', slotType: 'standard', name: 'Practice motor',
+    manufacturer: 'Reedy', model: 'M2', serialNumber: 'M-001', notes: 'Retired after race day',
+    installedAt: '2026-07-01T00:00:00.000Z', removedAt: '2026-08-02T00:00:00.000Z',
+  };
+
   it('shows the owner magic-link screen when no session exists', () => {
     createFixture();
     showSignedOut();
@@ -167,6 +179,91 @@ describe('App', () => {
     expect(fixture.nativeElement.querySelector('input[type="email"]')).toBeTruthy();
   });
 
+  it('loads a car build sheet with current installations and replacement history', () => {
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).cars.set([workshopCar]);
+    (fixture.componentInstance as any).openCar(workshopCar);
+    const request = http.expectOne((req) => req.url === '/api/v1/cars/car-1/components' && req.params.get('history') === 'true');
+    request.flush({ components: [currentMotor, previousMotor], history: true });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Competition motor');
+    expect(fixture.nativeElement.textContent).toContain('Reedy');
+    expect(fixture.nativeElement.textContent).toContain('Previous installations (1)');
+    expect(fixture.nativeElement.textContent).toContain('Practice motor');
+  });
+
+  it('adds a custom-slot component using the explicit build-sheet contract', () => {
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).cars.set([workshopCar]);
+    (fixture.componentInstance as any).openCar(workshopCar);
+    http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [], history: true });
+    fixture.detectChanges();
+
+    (fixture.componentInstance as any).openAddComponent();
+    (fixture.componentInstance as any).componentForm.set({
+      slotType: 'custom', slot: 'front-sway-bar', name: 'Sway bar', manufacturer: 'XRAY', model: 'T1', serialNumber: 'SB-7', notes: 'Medium rate',
+    });
+    (fixture.componentInstance as any).saveComponent();
+    const request = http.expectOne('/api/v1/cars/car-1/components');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.withCredentials).toBe(true);
+    expect(request.request.body).toEqual({
+      slotType: 'custom', slot: 'front-sway-bar', name: 'Sway bar', manufacturer: 'XRAY', model: 'T1', serialNumber: 'SB-7', notes: 'Medium rate',
+    });
+    request.flush({ component: { ...currentMotor, slot: 'front-sway-bar', slotType: 'custom', name: 'Sway bar' } });
+    const reload = http.expectOne((req) => req.url === '/api/v1/cars/car-1/components' && req.params.get('history') === 'true');
+    reload.flush({ components: [{ ...currentMotor, slot: 'front-sway-bar', slotType: 'custom', name: 'Sway bar' }], history: true });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('front-sway-bar');
+  });
+
+  it('edits current details and replaces through separate lifecycle endpoints', () => {
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).cars.set([workshopCar]);
+    (fixture.componentInstance as any).openCar(workshopCar);
+    http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [currentMotor, previousMotor], history: true });
+
+    (fixture.componentInstance as any).openEditComponent(currentMotor);
+    (fixture.componentInstance as any).componentForm.update((form: Record<string, string>) => ({ ...form, model: 'M3 Pro' }));
+    (fixture.componentInstance as any).saveComponent();
+    const edit = http.expectOne('/api/v1/cars/car-1/components/component-2');
+    expect(edit.request.method).toBe('PATCH');
+    expect(edit.request.body).toEqual({ name: 'Competition motor', manufacturer: 'Reedy', model: 'M3 Pro', serialNumber: 'M-002', notes: 'Fresh bearings' });
+    edit.flush({ component: { ...currentMotor, model: 'M3 Pro' } });
+    http.expectOne((req) => req.url === '/api/v1/cars/car-1/components' && req.params.get('history') === 'true').flush({ components: [{ ...currentMotor, model: 'M3 Pro' }, previousMotor], history: true });
+
+    (fixture.componentInstance as any).openReplaceComponent({ ...currentMotor, model: 'M3 Pro' });
+    (fixture.componentInstance as any).componentForm.update((form: Record<string, string>) => ({ ...form, name: 'New motor', manufacturer: 'Muchmore', model: 'Fleta' }));
+    (fixture.componentInstance as any).saveComponent();
+    const replace = http.expectOne('/api/v1/cars/car-1/components/component-2/replace');
+    expect(replace.request.method).toBe('POST');
+    expect(replace.request.body.slotType).toBe('standard');
+    replace.flush({ previous: { ...currentMotor, removedAt: '2026-08-03T00:00:00.000Z' }, component: { ...currentMotor, id: 'component-3', name: 'New motor', removedAt: null } });
+    http.expectOne((req) => req.url === '/api/v1/cars/car-1/components' && req.params.get('history') === 'true').flush({ components: [{ ...currentMotor, id: 'component-3', name: 'New motor' }, previousMotor, { ...currentMotor, removedAt: '2026-08-03T00:00:00.000Z' }], history: true });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('New motor');
+    expect(fixture.nativeElement.textContent).toContain('previous installation');
+  });
+
+  it('keeps archived build sheets visible but blocks component writes', () => {
+    createFixture();
+    showSignedIn();
+    const archivedCar = { ...workshopCar, archivedAt: '2026-08-03T00:00:00.000Z' };
+    (fixture.componentInstance as any).cars.set([archivedCar]);
+    (fixture.componentInstance as any).openCar(archivedCar);
+    http.expectOne((req) => req.url === '/api/v1/cars/car-1/components').flush({ components: [currentMotor], history: true });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('read-only while the car is archived');
+    expect(fixture.nativeElement.querySelector('.build-sheet .button')).toBeNull();
+    (fixture.componentInstance as any).openAddComponent('motor');
+    expect((fixture.componentInstance as any).componentEditing()).toBe(false);
+  });
+
   it('shows a useful empty garage state after loading', () => {
     createFixture();
     showSignedIn();
@@ -265,6 +362,57 @@ describe('App', () => {
 
     expect(fixture.nativeElement.querySelector('.car-row')?.textContent).toContain('Archived');
     expect(fixture.nativeElement.textContent).toContain('Show active cars');
+  });
+
+  it('loads component history and supports adding and replacing an installation', () => {
+    const current = {
+      id: 'component-2', carId: 'car-1', slot: 'motor', slotType: 'standard', name: 'Motor v2',
+      manufacturer: 'Tekin', model: 'RX8', serialNumber: 'new-2', notes: 'Fresh install',
+      installedAt: '2026-08-02T00:00:00.000Z', removedAt: null,
+    };
+    const previous = {
+      id: 'component-1', carId: 'car-1', slot: 'motor', slotType: 'standard', name: 'Motor v1',
+      manufacturer: 'Tekin', model: 'RX4', serialNumber: 'old-1', notes: 'Original',
+      installedAt: '2026-07-01T00:00:00.000Z', removedAt: '2026-08-02T00:00:00.000Z',
+    };
+    createFixture();
+    showSignedIn();
+    (fixture.componentInstance as any).cars.set([workshopCar]);
+    (fixture.componentInstance as any).openCar(workshopCar);
+    fixture.detectChanges();
+    const historyRequest = http.expectOne((request) =>
+      request.url === '/api/v1/cars/car-1/components' && request.params.get('history') === 'true');
+    historyRequest.flush({ components: [current, previous] });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.component-current')?.textContent).toContain('Tekin');
+    expect(fixture.nativeElement.querySelector('.component-history')).toBeTruthy();
+
+    (fixture.nativeElement.querySelector('.build-sheet .section-heading .button') as HTMLButtonElement).click();
+    (fixture.componentInstance as any).componentForm.set({
+      slotType: 'custom', slot: 'front-sway-bar', name: 'Sway bar', manufacturer: 'RPM', model: 'X1', serialNumber: 'custom-1', notes: 'Custom fit',
+    });
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.component-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+    const add = http.expectOne('/api/v1/cars/car-1/components');
+    expect(add.request.body).toMatchObject({ slotType: 'custom', slot: 'front-sway-bar', manufacturer: 'RPM', model: 'X1' });
+    add.flush({ component: { ...current, id: 'component-3', slot: 'front-sway-bar', slotType: 'custom', name: 'Sway bar' } });
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/components' && request.params.get('history') === 'true')
+      .flush({ components: [current, previous, { id: 'component-3', carId: 'car-1', slot: 'front-sway-bar', slotType: 'custom', name: 'Sway bar', removedAt: null }] });
+    fixture.detectChanges();
+
+    (fixture.componentInstance as any).components.set([current, previous]);
+    (fixture.componentInstance as any).openReplaceComponent(current);
+    (fixture.componentInstance as any).componentForm.set({
+      slotType: 'standard', slot: 'motor', name: 'Motor v3', manufacturer: 'Tekin', model: 'RX9', serialNumber: 'new-3', notes: 'Replaced',
+    });
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.component-form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+    const replace = http.expectOne('/api/v1/cars/car-1/components/component-2/replace');
+    expect(replace.request.body).toMatchObject({ slotType: 'standard', model: 'RX9' });
+    replace.flush({ component: { ...current, id: 'component-4', name: 'Motor v3' }, previous });
+    http.expectOne((request) => request.url === '/api/v1/cars/car-1/components' && request.params.get('history') === 'true')
+      .flush({ components: [previous, current, { ...current, id: 'component-4', name: 'Motor v3', removedAt: null }] });
   });
 
   it('shows a generic recovery message and removes callback errors from the URL', () => {

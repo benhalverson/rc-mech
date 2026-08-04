@@ -36,12 +36,75 @@ type ViewState = 'checking' | 'signed-out' | 'signed-in';
 type PasskeyState = 'loading' | 'ready' | 'error';
 type CarState = 'loading' | 'ready' | 'error';
 type CarView = 'list' | 'detail';
+type ComponentState = 'idle' | 'loading' | 'ready' | 'error';
+type ComponentMode = 'add' | 'edit' | 'replace';
 
 type Passkey = {
   id: string;
   name?: string | null;
   createdAt?: string;
   aaguid?: string | null;
+};
+
+type InstalledComponent = {
+  id: string;
+  carId: string;
+  slot: string;
+  slotType?: 'standard' | 'custom' | null;
+  name: string;
+  manufacturer?: string | null;
+  model?: string | null;
+  serialNumber?: string | null;
+  notes?: string | null;
+  installedAt?: string;
+  removedAt?: string | null;
+};
+
+type ComponentForm = {
+  slotType: 'standard' | 'custom';
+  slot: string;
+  name: string;
+  manufacturer: string;
+  model: string;
+  serialNumber: string;
+  notes: string;
+};
+
+type ComponentsResponse = { components: InstalledComponent[] };
+
+const standardComponentSlots = [
+  'motor', 'esc', 'battery', 'steering-servo', 'throttle-servo', 'receiver',
+  'gyro', 'transmitter', 'tires', 'wheels', 'shocks', 'front-differential',
+  'center-differential', 'rear-differential', 'slipper-clutch', 'pinion-gear',
+  'spur-gear', 'body', 'wing',
+];
+
+const emptyComponentForm = (): ComponentForm => ({ slotType: 'standard', slot: 'motor', name: '', manufacturer: '', model: '', serialNumber: '', notes: '' });
+
+const componentFormFrom = (component: InstalledComponent): ComponentForm => ({
+  slotType: component.slotType ?? (standardComponentSlots.includes(component.slot as never) ? 'standard' : 'custom'),
+  slot: component.slot,
+  name: component.name,
+  manufacturer: component.manufacturer ?? '',
+  model: component.model ?? '',
+  serialNumber: component.serialNumber ?? '',
+  notes: component.notes ?? '',
+});
+
+const componentPayload = (form: ComponentForm): Record<string, string> => {
+  const optional = Object.fromEntries(
+    Object.entries({ manufacturer: form.manufacturer, model: form.model, serialNumber: form.serialNumber, notes: form.notes })
+      .map(([key, value]) => [key, value.trim()]).filter(([, value]) => value),
+  );
+  return { slotType: form.slotType, slot: form.slot.trim(), name: form.name.trim(), ...optional };
+};
+
+const componentDetailsPayload = (form: ComponentForm): Record<string, string> => {
+  const optional = Object.fromEntries(
+    Object.entries({ manufacturer: form.manufacturer, model: form.model, serialNumber: form.serialNumber, notes: form.notes })
+      .map(([key, value]) => [key, value.trim()]).filter(([, value]) => value),
+  );
+  return { name: form.name.trim(), ...optional };
 };
 
 type WebAuthnOptions = {
@@ -123,6 +186,31 @@ export class App {
   protected readonly carAction = signal<string | null>(null);
   protected readonly carForm = signal<CarForm>(emptyCarForm());
   protected readonly carFormError = signal('');
+  protected readonly components = signal<InstalledComponent[]>([]);
+  protected readonly componentState = signal<ComponentState>('idle');
+  protected readonly componentError = signal('');
+  protected readonly componentMode = signal<ComponentMode>('add');
+  protected readonly componentEditing = signal(false);
+  protected readonly componentAction = signal<string | null>(null);
+  protected readonly componentForm = signal<ComponentForm>(emptyComponentForm());
+  protected readonly componentFormError = signal('');
+  protected readonly editingComponentId = signal<string | null>(null);
+  protected readonly standardComponentSlots = standardComponentSlots;
+  protected readonly componentSlots = computed(() => {
+    const slots = new Set(standardComponentSlots);
+    this.components().forEach((component) => slots.add(component.slot));
+    return [...slots];
+  });
+  protected readonly componentGroups = computed(() => this.componentSlots().map((slot) => {
+    const history = this.components().filter((component) => component.slot === slot)
+      .sort((left, right) => (right.installedAt ?? '').localeCompare(left.installedAt ?? ''));
+    return {
+      slot,
+      current: history.find((component) => !component.removedAt) ?? null,
+      history: history.filter((component) => Boolean(component.removedAt)),
+    };
+  }));
+  protected readonly hasComponentHistory = computed(() => this.componentGroups().some((group) => Boolean(group.current) || group.history.length > 0));
   protected readonly visibleCars = computed(() => this.cars().filter((car) =>
     this.showArchived() ? Boolean(car.archivedAt) : !car.archivedAt));
   protected readonly selectedCar = computed(() => this.cars().find((car) => car.id === this.selectedCarId()) ?? null);
@@ -344,6 +432,7 @@ export class App {
     this.carFormError.set('');
     this.carEditing.set(false);
     this.carView.set('detail');
+    this.loadComponents(car.id);
   }
 
   protected editCar(): void {
@@ -366,8 +455,117 @@ export class App {
     this.carView.set('list');
   }
 
+  protected retryComponents(): void {
+    const car = this.selectedCar();
+    if (car) this.loadComponents(car.id);
+  }
+
+  protected openAddComponent(slot = ''): void {
+    const car = this.selectedCar();
+    if (!car || car.archivedAt) return;
+    this.componentMode.set('add');
+    this.editingComponentId.set(null);
+    this.componentForm.set({ ...emptyComponentForm(), slot: slot || 'motor', slotType: slot && !standardComponentSlots.includes(slot as never) ? 'custom' : 'standard' });
+    this.componentFormError.set('');
+    this.componentEditing.set(true);
+  }
+
+  protected openEditComponent(component: InstalledComponent): void {
+    const car = this.selectedCar();
+    if (!car || car.archivedAt) return;
+    this.componentMode.set('edit');
+    this.editingComponentId.set(component.id);
+    this.componentForm.set(componentFormFrom(component));
+    this.componentFormError.set('');
+    this.componentEditing.set(true);
+  }
+
+  protected openReplaceComponent(component: InstalledComponent): void {
+    const car = this.selectedCar();
+    if (!car || car.archivedAt) return;
+    this.componentMode.set('replace');
+    this.editingComponentId.set(component.id);
+    this.componentForm.set({ ...emptyComponentForm(), slotType: component.slotType ?? 'custom', slot: component.slot });
+    this.componentFormError.set('');
+    this.componentEditing.set(true);
+  }
+
+  protected cancelComponentEdit(): void {
+    this.componentEditing.set(false);
+    this.editingComponentId.set(null);
+    this.componentFormError.set('');
+  }
+
+  protected updateComponentField(field: keyof ComponentForm, value: string): void {
+    this.componentForm.update((form) => ({ ...form, [field]: value }));
+  }
+
+  protected saveComponent(): void {
+    const car = this.selectedCar();
+    const form = this.componentForm();
+    if (!car) return;
+    if (car.archivedAt) {
+      this.componentFormError.set('This car is archived. Restore it before recording component work.');
+      return;
+    }
+    if (!form.slot.trim() || !form.name.trim()) {
+      this.componentFormError.set('Choose a slot and describe the component before saving.');
+      return;
+    }
+    if (this.componentAction()) return;
+    const mode = this.componentMode();
+    const componentId = this.editingComponentId();
+    this.componentAction.set(mode);
+    this.componentFormError.set('');
+    const request = mode === 'edit' && componentId
+      ? this.http.patch<{ component: InstalledComponent }>(`/api/v1/cars/${car.id}/components/${componentId}`, componentDetailsPayload(form), { withCredentials: true })
+      : mode === 'replace' && componentId
+        ? this.http.post<{ component: InstalledComponent }>(`/api/v1/cars/${car.id}/components/${componentId}/replace`, componentPayload(form), { withCredentials: true })
+        : this.http.post<{ component: InstalledComponent }>(`/api/v1/cars/${car.id}/components`, componentPayload(form), { withCredentials: true });
+    request.subscribe({
+      next: () => {
+        this.componentEditing.set(false);
+        this.editingComponentId.set(null);
+        this.componentAction.set(null);
+        this.message.set(mode === 'replace'
+          ? `${form.slot} replaced. The previous installation remains in the build history.`
+          : mode === 'edit' ? `${form.slot} details saved.` : `${form.slot} added to the build sheet.`);
+        this.loadComponents(car.id);
+      },
+      error: (error: { status?: number }) => {
+        this.componentAction.set(null);
+        this.componentFormError.set(error.status === 401
+          ? 'Your garage session has expired. Sign in again to continue.'
+          : error.status === 409
+            ? 'This car is archived. Restore it before recording component work.'
+            : 'The component could not be saved. Check the details and try again.');
+        if (error.status === 401) this.state.set('signed-out');
+      },
+    });
+  }
+
   protected updateCarField(field: keyof CarForm, value: string): void {
     this.carForm.update((form) => ({ ...form, [field]: value }));
+  }
+
+  private loadComponents(carId: string): void {
+    this.componentState.set('loading');
+    this.componentError.set('');
+    this.http.get<ComponentsResponse>(`/api/v1/cars/${carId}/components`, {
+      withCredentials: true, params: { history: 'true' },
+    }).subscribe({
+      next: ({ components }) => {
+        this.components.set(components);
+        this.componentState.set('ready');
+      },
+      error: (error: { status?: number }) => {
+        this.componentState.set('error');
+        this.componentError.set(error.status === 401
+          ? 'Your garage session has expired. Sign in again to continue.'
+          : 'The build sheet could not be loaded. Check the connection and try again.');
+        if (error.status === 401) this.state.set('signed-out');
+      },
+    });
   }
 
   protected saveCar(): void {

@@ -5,9 +5,10 @@ import { z } from "zod";
 import { createAuth } from "./auth";
 import { db } from "./db";
 import { car, component, driveSession, maintenancePlan, serviceRecord } from "./schema";
-import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
+import { AppContext, AppEnv, carInput, carUpdateInput, componentInput, componentUpdateInput, driveSessionInput, maintenancePlanInput, serviceRecordInput } from "./types";
 import { carListMode, canArchive, canRestore, canWrite, ownsCar } from "./car-policy";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { STANDARD_COMPONENT_SLOTS, canEditComponent, componentSlotType, normalizeComponentSlot } from "./component-policy";
 import { hasEmailDelivery, hasMagicLinkConfiguration, isAllowedOrigin, isConfiguredOwner, isLocalDevelopment, normalizeEmail } from "./auth-policy";
 
 const app = new Hono<AppEnv>();
@@ -54,6 +55,16 @@ const ownedCar = async (c: AppContext, carId: string) => {
 const publicCar = (value: typeof car.$inferSelect) => {
 	const { ownerId: _ownerId, ...result } = value;
 	return result;
+};
+
+const publicComponent = (value: typeof component.$inferSelect) => value;
+
+const ownedComponent = async (c: AppContext, carId: string, componentId: string) =>
+	db(c.env).select().from(component).where(and(eq(component.id, componentId), eq(component.carId, carId))).get();
+
+const parseComponentSlot = (slot: string, requested?: "standard" | "custom") => {
+	const slotType = componentSlotType(slot, requested);
+	return slotType === "invalid" ? undefined : { slot: slotType === "standard" ? normalizeComponentSlot(slot) : slot.trim(), slotType };
 };
 
 app.get("/api/v1/cars", async (c) => {
@@ -135,21 +146,108 @@ app.post("/api/v1/cars/:carId/components", async (c) => {
 	const parentCar = await ownedCar(c, carId);
 	if (!parentCar) return c.json({ error: "Car not found" }, 404);
 	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
+	const slot = parseComponentSlot(parsed.data.slot, parsed.data.slotType);
+	if (!slot) return c.json({ error: "slotType does not match the selected slot" }, 400);
 	const id = crypto.randomUUID();
 	const now = new Date().toISOString();
 	const value = parsed.data;
 	const database = db(c.env);
-	await database.update(component).set({ removedAt: now }).where(and(eq(component.carId, carId), eq(component.slot, value.slot), isNull(component.removedAt)));
-	await database.insert(component).values({
-		id,
-		carId,
-		slot: value.slot,
-		name: value.name,
-		serialNumber: value.serialNumber ?? null,
-		notes: value.notes ?? null,
-		installedAt: now,
-	});
-	return c.json({ component: { id, carId, ...value, installedAt: now } }, 201);
+	await database.batch([
+		database.update(component).set({ removedAt: now }).where(and(eq(component.carId, carId), eq(component.slot, slot.slot), isNull(component.removedAt))),
+		database.insert(component).values({
+			id,
+			carId,
+			slot: slot.slot,
+			slotType: slot.slotType,
+			name: value.name,
+			manufacturer: value.manufacturer ?? null,
+			model: value.model ?? null,
+			serialNumber: value.serialNumber ?? null,
+			notes: value.notes ?? null,
+			installedAt: value.installedAt ?? now,
+			removedAt: null,
+		}),
+	]);
+	const created = await ownedComponent(c, carId, id);
+	return c.json({ component: publicComponent(created!) }, 201);
+});
+
+app.get("/api/v1/component-slots", (c) => c.json({ standard: STANDARD_COMPONENT_SLOTS }));
+
+app.get("/api/v1/cars/:carId/components", async (c) => {
+	const { carId } = c.req.param();
+	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
+	const history = c.req.query("history") === "true";
+	const where = history ? eq(component.carId, carId) : and(eq(component.carId, carId), isNull(component.removedAt));
+	const components = await db(c.env).select().from(component).where(where).orderBy(desc(component.installedAt));
+	return c.json({ components: components.map(publicComponent), history });
+});
+
+app.get("/api/v1/cars/:carId/components/:componentId", async (c) => {
+	const { carId, componentId } = c.req.param();
+	if (!await ownedCar(c, carId)) return c.json({ error: "Car not found" }, 404);
+	const value = await ownedComponent(c, carId, componentId);
+	if (!value) return c.json({ error: "Component not found" }, 404);
+	return c.json({ component: publicComponent(value) });
+});
+
+app.patch("/api/v1/cars/:carId/components/:componentId", async (c) => {
+	const parsed = componentUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const { carId, componentId } = c.req.param();
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
+	const existing = await ownedComponent(c, carId, componentId);
+	if (!existing) return c.json({ error: "Component not found" }, 404);
+	if (!canEditComponent(existing.removedAt)) return c.json({ error: "Historical component installations are immutable" }, 409);
+	await db(c.env).update(component).set({
+		name: parsed.data.name,
+		manufacturer: parsed.data.manufacturer,
+		model: parsed.data.model,
+		serialNumber: parsed.data.serialNumber,
+		notes: parsed.data.notes,
+		installedAt: parsed.data.installedAt,
+	}).where(and(eq(component.id, componentId), eq(component.carId, carId)));
+	const updated = await ownedComponent(c, carId, componentId);
+	return c.json({ component: publicComponent(updated!) });
+});
+
+app.post("/api/v1/cars/:carId/components/:componentId/replace", async (c) => {
+	const parsed = componentInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const { carId, componentId } = c.req.param();
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: "Car not found" }, 404);
+	if (!canWrite(parentCar)) return c.json({ error: "Car is archived; restore it before recording new work" }, 409);
+	const previous = await ownedComponent(c, carId, componentId);
+	if (!previous) return c.json({ error: "Component not found" }, 404);
+	if (previous.removedAt !== null) return c.json({ error: "Component is no longer current" }, 409);
+	const slot = parseComponentSlot(parsed.data.slot, parsed.data.slotType);
+	if (!slot) return c.json({ error: "slotType does not match the selected slot" }, 400);
+	const previousSlot = previous.slotType === "standard" ? normalizeComponentSlot(previous.slot) : previous.slot.trim();
+	if (slot.slot !== previousSlot) return c.json({ error: "Replacement must use the existing component slot" }, 400);
+	const id = crypto.randomUUID();
+	const now = new Date().toISOString();
+	const database = db(c.env);
+	await database.batch([
+		database.update(component).set({ removedAt: now }).where(and(eq(component.id, previous.id), eq(component.carId, carId), isNull(component.removedAt))),
+		database.insert(component).values({
+			id,
+			carId,
+			slot: previous.slot,
+			slotType: previous.slotType,
+			name: parsed.data.name,
+			manufacturer: parsed.data.manufacturer ?? null,
+			model: parsed.data.model ?? null,
+			serialNumber: parsed.data.serialNumber ?? null,
+			notes: parsed.data.notes ?? null,
+			installedAt: parsed.data.installedAt ?? now,
+			removedAt: null,
+		}),
+	]);
+	const replacement = await ownedComponent(c, carId, id);
+	return c.json({ previous: publicComponent({ ...previous, removedAt: now }), component: publicComponent(replacement!) }, 201);
 });
 
 app.post("/api/v1/cars/:carId/drives", async (c) => {
@@ -240,6 +338,17 @@ const carProperties = {
 	powerType: { type: "string", maxLength: 80 },
 	notes: { type: "string", maxLength: 4000 },
 };
+const componentProperties = {
+	slot: { type: "string", description: "A standard slot name or an owner-defined custom slot." },
+	slotType: { type: "string", enum: ["standard", "custom"] },
+	name: { type: "string", maxLength: 160 },
+	manufacturer: { type: "string", maxLength: 120 },
+	model: { type: "string", maxLength: 120 },
+	serialNumber: { type: "string", maxLength: 120 },
+	notes: { type: "string", maxLength: 4000 },
+	installedAt: { type: "string", format: "date-time" },
+	removedAt: { type: "string", format: "date-time", nullable: true },
+};
 const openApi = {
 	openapi: "3.1.0",
 	info: { title: "RC Mech API", version: "0.1.0" },
@@ -263,7 +372,18 @@ const openApi = {
 		},
 		"/api/v1/cars/{carId}/archive": { post: { summary: "Archive an owned car; it leaves the active list", responses: { 200: { description: "Car archived" }, 404: { description: "Car not found" }, 409: { description: "Already archived" } } } },
 		"/api/v1/cars/{carId}/restore": { post: { summary: "Restore an owned archived car to the active list", responses: { 200: { description: "Car restored" }, 404: { description: "Car not found" }, 409: { description: "Already active" } } } },
-		"/api/v1/cars/{carId}/components": { post: { summary: "Install or replace a component on an owned car", responses: { 201: { description: "Component installed" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
+		"/api/v1/component-slots": { get: { summary: "List standard component slots", responses: { 200: { description: "Standard slots; custom slots may also be supplied" } } } },
+		"/api/v1/cars/{carId}/components": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }],
+			get: { summary: "List current components, or replacement history with history=true", parameters: [{ name: "history", in: "query", schema: { type: "boolean" } }], responses: { 200: { description: "Owned car components" }, 404: { description: "Car not found" } } },
+			post: { summary: "Install a component; an existing current component in the slot is closed", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["slot", "name"], properties: componentProperties } } } }, responses: { 201: { description: "Component installed" }, 400: { description: "Invalid component or slot" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } },
+		},
+		"/api/v1/cars/{carId}/components/{componentId}": {
+			parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "componentId", in: "path", required: true, schema: { type: "string" } }],
+			get: { summary: "Get an owned component installation", responses: { 200: { description: "Component detail" }, 404: { description: "Component not found" } } },
+			patch: { summary: "Edit an owned component", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: componentProperties } } } }, responses: { 200: { description: "Component updated" }, 400: { description: "Invalid component" }, 404: { description: "Component not found" }, 409: { description: "Car is archived" } } },
+		},
+		"/api/v1/cars/{carId}/components/{componentId}/replace": { post: { summary: "Replace the current component and preserve its history", parameters: [{ name: "carId", in: "path", required: true, schema: { type: "string" } }, { name: "componentId", in: "path", required: true, schema: { type: "string" } }], requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["slot", "name"], properties: componentProperties } } } }, responses: { 201: { description: "Replacement installed" }, 400: { description: "Invalid component or slot" }, 404: { description: "Component not found" }, 409: { description: "Component is not current or car is archived" } } } },
 		"/api/v1/cars/{carId}/drives": { post: { summary: "Record a drive session for an owned car", responses: { 201: { description: "Drive recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
 		"/api/v1/cars/{carId}/service-records": { post: { summary: "Record service for an owned car", responses: { 201: { description: "Service recorded" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
 		"/api/v1/maintenance-plans": { post: { summary: "Create a maintenance plan for an owned car", responses: { 201: { description: "Maintenance plan created" }, 404: { description: "Car not found" }, 409: { description: "Car is archived" } } } },
