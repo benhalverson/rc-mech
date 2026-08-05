@@ -1,5 +1,6 @@
-import { HttpClient } from '@angular/common/http';
+import { BreakpointObserver } from '@angular/cdk/layout';
 import { DatePipe, TitleCasePipe } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import {
 	ChangeDetectionStrategy,
 	Component,
@@ -7,13 +8,13 @@ import {
 	inject,
 	signal,
 } from '@angular/core';
-import { MatSidenavModule } from '@angular/material/sidenav';
-import { BreakpointObserver } from '@angular/cdk/layout';
-import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { MatSidenavModule } from '@angular/material/sidenav';
+import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { filter, firstValueFrom } from 'rxjs';
-import { MaintenanceCockpit } from './maintenance-cockpit';
 import { CarPhotoGallery } from './car-photo-gallery';
+import { MaintenanceCockpit } from './maintenance-cockpit';
+import { SetupSnapshots } from './setup-snapshots';
 
 type Car = {
 	id: string;
@@ -378,6 +379,7 @@ const carPayload = (form: CarForm): Record<string, string> => {
 		FormsModule,
 		MaintenanceCockpit,
 		CarPhotoGallery,
+		SetupSnapshots,
 		MatSidenavModule,
 		RouterLink,
 	],
@@ -509,6 +511,7 @@ export class App {
 		if (this.legacyMode()) return 'all';
 		const url = this.currentUrl();
 		if (url.includes('/build')) return 'build';
+		if (url.includes('/setups')) return 'setups';
 		if (url.includes('/photos')) return 'photos';
 		if (url.includes('/runs')) return 'runs';
 		return 'overview';
