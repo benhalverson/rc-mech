@@ -136,6 +136,7 @@
           <nav class="car-tabs" aria-label="Car detail sections">
             <a class="car-tab" [routerLink]="['/garage', car.id, 'overview']" [class.active-tab]="carSection() === 'overview'" [attr.aria-current]="carSection() === 'overview' ? 'page' : null">Overview</a>
             <a class="car-tab" [routerLink]="['/garage', car.id, 'build']" [class.active-tab]="carSection() === 'build'" [attr.aria-current]="carSection() === 'build' ? 'page' : null">Build</a>
+            <a class="car-tab" [routerLink]="['/garage', car.id, 'setups']" [class.active-tab]="carSection() === 'setups'" [attr.aria-current]="carSection() === 'setups' ? 'page' : null">Setups</a>
             <a class="car-tab" [routerLink]="['/garage', car.id, 'photos']" [class.active-tab]="carSection() === 'photos'" [attr.aria-current]="carSection() === 'photos' ? 'page' : null">Photos</a>
             <a class="car-tab" [routerLink]="['/garage', car.id, 'runs']" [class.active-tab]="carSection() === 'runs'" [attr.aria-current]="carSection() === 'runs' ? 'page' : null">Runs</a>
           </nav>
@@ -144,6 +145,9 @@
           <section class="overview-panel" aria-label="Car overview">
             <p class="section-intro">The inspection plate is the quick reference for this car. Use the tabs to open its build sheet, private photos, or run log.</p>
           </section>
+          }
+          @if (carSection() === 'setups') {
+          <app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt"></app-setup-snapshots>
           }
           @if (carSection() === 'build' || carSection() === 'all') {
           <section class="build-sheet" aria-labelledby="build-sheet-title">

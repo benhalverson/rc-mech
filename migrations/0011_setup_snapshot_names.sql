@@ -1,0 +1,1 @@
+ALTER TABLE setup ADD COLUMN name TEXT NOT NULL DEFAULT 'Untitled setup';

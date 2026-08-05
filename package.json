@@ -13,7 +13,7 @@
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format --reporter=summary .",
-		"test:backend": "node --experimental-strip-types --test src/auth-policy.test.ts src/car-policy.test.ts src/component-policy.test.ts src/drive-session-policy.test.ts src/maintenance-policy.test.ts src/service-policy.test.ts src/photo-policy.test.ts",
+		"test:backend": "node --experimental-strip-types --test src/auth-policy.test.ts src/car-policy.test.ts src/component-policy.test.ts src/drive-session-policy.test.ts src/maintenance-policy.test.ts src/service-policy.test.ts src/photo-policy.test.ts src/setup-policy.test.ts",
 		"test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
 		"test:production": "bash scripts/production-acceptance.sh",
 		"check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",

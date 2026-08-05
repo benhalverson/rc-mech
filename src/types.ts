@@ -208,3 +208,65 @@ export const photoUpdateInput = z
 export const photoReorderInput = z.object({
 	photoIds: z.array(z.string().min(1)).max(1000),
 });
+
+const setupSection = z.record(z.string().min(1).max(120), z.unknown());
+const setupContext = {
+	name: z.string().trim().min(1).max(160),
+	status: z.enum(['draft', 'reviewed', 'active']).optional(),
+	setupDate: z.string().datetime().optional(),
+	track: z.string().max(160).optional(),
+	event: z.string().max(160).optional(),
+	surface: z.string().max(120).optional(),
+	traction: z.string().max(120).optional(),
+	moisture: z.string().max(120).optional(),
+	condition: z.string().max(120).optional(),
+	temperature: z.string().max(80).optional(),
+	vehicle: setupSection.optional(),
+	drivetrain: setupSection.optional(),
+	electronics: setupSection.optional(),
+	tires: setupSection.optional(),
+	shocks: setupSection.optional(),
+	frontSuspension: setupSection.optional(),
+	rearSuspension: setupSection.optional(),
+	notes: z.string().max(10000).optional(),
+	sourceUrl: z.string().url().max(2000).optional(),
+	sourcePdfReference: z.string().max(2000).optional(),
+	sourceMetadata: setupSection.optional(),
+	rawValues: setupSection.optional(),
+	unmappedValues: setupSection.optional(),
+};
+
+const nullableSetupContext = Object.fromEntries(
+	Object.entries(setupContext).map(([key, value]) => [
+		key,
+		key === 'name' || key === 'status'
+			? value
+			: (value as z.ZodTypeAny).nullable().optional(),
+	]),
+) as typeof setupContext;
+
+export const setupInput = z.object({
+	...nullableSetupContext,
+	makeCurrent: z.boolean().optional(),
+});
+export type SetupInput = z.infer<typeof setupInput>;
+
+export const setupUpdateInput = z
+	.object({
+		...Object.fromEntries(
+			Object.entries(nullableSetupContext).map(([key, value]) => [
+				key,
+				key === 'name' || key === 'status'
+					? (
+							setupContext[key as keyof typeof setupContext] as z.ZodTypeAny
+						).optional()
+					: value,
+			]),
+		),
+	})
+	.refine(
+		(value) => Object.keys(value).length > 0,
+		'At least one setup field is required',
+	);
+
+export const setupCopyInput = setupInput.partial();
