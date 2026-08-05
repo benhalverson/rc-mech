@@ -89,6 +89,19 @@
 .setup-history {
 	border-top: 1px solid var(--line);
 }
+.history-heading {
+	display: flex;
+	justify-content: space-between;
+	align-items: end;
+	gap: 14px;
+	padding: 14px 0 10px;
+	border-bottom: 1px solid var(--line);
+}
+.history-heading p {
+	margin: 4px 0 0;
+	color: var(--muted);
+	font-size: 0.72rem;
+}
 .setup-row {
 	width: 100%;
 	display: grid;
@@ -277,5 +290,9 @@ dd {
 		border-left: 0;
 		border-top: 2px solid var(--accent);
 		padding: 18px 0 0;
+	}
+	.history-heading {
+		align-items: start;
+		flex-direction: column;
 	}
 }

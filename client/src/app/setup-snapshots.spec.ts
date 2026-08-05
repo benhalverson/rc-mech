@@ -16,6 +16,8 @@ import { SetupSnapshots } from './setup-snapshots';
 type Harness = {
 	form: { set(value: unknown): void };
 	openAdd(): void;
+	copyPrevious(): void;
+	openEdit(): void;
 	makeCurrent(): void;
 	copy(): void;
 	save(): void;
@@ -121,6 +123,25 @@ describe('SetupSnapshots', () => {
 		);
 	});
 
+	it('shows a loading state before setup history returns', () => {
+		expect(fixture.nativeElement.textContent).toContain(
+			'Reading setup history',
+		);
+		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
+	});
+
+	it('guides an owner to record the first baseline when history is empty', () => {
+		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'No setup snapshots yet',
+		);
+		expect(fixture.nativeElement.textContent).toContain(
+			'Record the first setup',
+		);
+	});
+
 	it('creates an optional baseline through the setup collection endpoint', () => {
 		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
 		const app = fixture.componentInstance as unknown as Harness;
@@ -200,6 +221,58 @@ describe('SetupSnapshots', () => {
 		const current = http.expectOne('/api/v1/cars/car-1/setups/setup-2/current');
 		expect(current.request.method).toBe('POST');
 		current.flush({ setup: { ...currentSetup, id: 'setup-2', current: true } });
+	});
+
+	it('copies the current setup by default even when an older history row is selected', () => {
+		http.expectOne('/api/v1/cars/car-1/setups').flush({
+			setups: [
+				currentSetup,
+				{
+					...currentSetup,
+					id: 'setup-0',
+					name: 'Old baseline',
+					current: false,
+				},
+			],
+		});
+		const app = fixture.componentInstance as unknown as Harness;
+		app.copyPrevious();
+		const request = http.expectOne('/api/v1/cars/car-1/setups/setup-1/copy');
+		expect(request.request.method).toBe('POST');
+		request.flush({
+			setup: { ...currentSetup, id: 'setup-2', name: 'New baseline' },
+		});
+	});
+
+	it('opens the same grouped editor for an existing setup', () => {
+		http
+			.expectOne('/api/v1/cars/car-1/setups')
+			.flush({ setups: [currentSetup] });
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openEdit();
+		fixture.detectChanges();
+
+		expect(
+			fixture.nativeElement.querySelector('form.setup-editor'),
+		).toBeTruthy();
+		expect(fixture.nativeElement.textContent).toContain('Drivetrain');
+		expect(fixture.nativeElement.textContent).toContain(
+			'Source and provenance',
+		);
+	});
+
+	it('keeps archived setup history readable and removes mutation controls', () => {
+		fixture.componentRef.setInput('archived', true);
+		http
+			.expectOne('/api/v1/cars/car-1/setups')
+			.flush({ setups: [currentSetup] });
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain('This car is archived');
+		expect(fixture.nativeElement.textContent).toContain('Clay baseline');
+		expect(
+			fixture.nativeElement.querySelector('button:not(.setup-row)'),
+		).toBeNull();
 	});
 
 	it('rejects malformed URLs before asking the importer to read a source', () => {

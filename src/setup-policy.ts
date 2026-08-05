@@ -14,6 +14,31 @@ export const copySetupSnapshot = <T extends Record<string, unknown>>(
 	overrides: Partial<T> = {},
 ): T => structuredClone({ ...source, ...overrides });
 
+export type SetupCandidate = {
+	id: string;
+	updatedAt: string;
+	createdAt: string;
+};
+
+/** Prefer the explicitly selected setup, then the newest setup as copy source. */
+export const chooseCopySource = <T extends SetupCandidate>(
+	candidates: readonly T[],
+	currentSetupId?: string | null,
+): T | undefined => {
+	let latest: T | undefined;
+	for (const candidate of candidates) {
+		if (candidate.id === currentSetupId) return candidate;
+		if (
+			!latest ||
+			candidate.updatedAt.localeCompare(latest.updatedAt) > 0 ||
+			(candidate.updatedAt === latest.updatedAt &&
+				candidate.createdAt.localeCompare(latest.createdAt) > 0)
+		)
+			latest = candidate;
+	}
+	return latest;
+};
+
 export const shouldSelectCurrentSetup = (makeCurrent = false): boolean =>
 	makeCurrent;
 

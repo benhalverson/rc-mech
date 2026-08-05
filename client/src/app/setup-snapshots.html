@@ -33,6 +33,7 @@
   } @else {
     <div class="setup-layout">
       <div class="setup-history" aria-label="Setup snapshot history">
+        <div class="history-heading"><div><div class="eyebrow">History</div><p>Start from the current setup, or choose an earlier baseline.</p></div>@if (!archived()) { <button class="button quiet" type="button" (click)="copyPrevious()" [disabled]="action() !== null">{{ action() === 'copy' ? 'Copying…' : 'Copy previous' }}</button> }</div>
         @for (setup of setups(); track setup.id) {
           <button class="setup-row" type="button" [class.selected-setup]="selected()?.id === setup.id" (click)="select(setup)">
             <span class="setup-row-index">{{ $index + 1 | number:'2.0-0' }}</span>
@@ -85,9 +86,8 @@
             }
           </div>
 
-          <fieldset class="source-fields"><legend>Source and provenance</legend><p class="hint">Keep the link or PDF reference when this setup came from an external sheet. Nothing here is required for a manual baseline.</p><div class="form-grid">
+          <fieldset class="source-fields"><legend>Source and provenance</legend><p class="hint">Keep the source link and retained PDF reference when this setup came from an external sheet. Nothing here is required for a manual baseline.</p><div class="form-grid">
             <label class="wide">Source URL <input name="setup-source-url" type="url" placeholder="https://…" [ngModel]="form().sourceUrl" (ngModelChange)="updateField('sourceUrl', $event)" /></label>
-            <label>Original PDF URL <input name="setup-pdf-url" type="url" placeholder="https://…" [ngModel]="form().pdfUrl" (ngModelChange)="updateField('pdfUrl', $event)" /></label>
             <label>PDF title / reference <input name="setup-pdf-title" maxlength="240" placeholder="Setup sheet, page 2" [ngModel]="form().pdfTitle" (ngModelChange)="updateField('pdfTitle', $event)" /></label>
             <label>PDF page <input name="setup-pdf-page" type="number" min="1" step="1" placeholder="Optional" [ngModel]="form().pdfPage" (ngModelChange)="updateField('pdfPage', $event)" /></label>
             <label class="wide">Uncertain or unmapped values <textarea name="setup-unmapped" rows="5" placeholder="Values that still need review…" [ngModel]="form().unmappedValues" (ngModelChange)="updateField('unmappedValues', $event)"></textarea></label>
