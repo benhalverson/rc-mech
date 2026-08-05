@@ -11,6 +11,7 @@ import {
 	owner,
 	photo,
 	serviceRecord,
+	setup,
 } from './schema';
 import {
 	AppContext,
@@ -28,6 +29,10 @@ import {
 	photoUpdateInput,
 	serviceRecordInput,
 	serviceRecordUpdateInput,
+	setupCopyInput,
+	setupInput,
+	setupUpdateInput,
+	type SetupInput,
 	timezoneInput,
 } from './types';
 import {
@@ -77,6 +82,11 @@ import {
 	primaryAfterDelete,
 	validatePhotoMetadata,
 } from './photo-policy';
+import {
+	canWriteSetup,
+	ownsSetup,
+	shouldSelectCurrentSetup,
+} from './setup-policy';
 
 const app = new Hono<AppEnv>();
 
@@ -158,6 +168,124 @@ const ownedCar = async (c: AppContext, carId: string) => {
 const publicCar = (value: typeof car.$inferSelect) => {
 	const { ownerId: _ownerId, ...result } = value;
 	return result;
+};
+
+const jsonText = (value: unknown): string | null | undefined =>
+	value === undefined
+		? undefined
+		: value === null
+			? null
+			: JSON.stringify(value);
+
+const jsonValue = (value: string | null): unknown => {
+	if (value === null) return null;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+};
+
+const publicSetup = (value: typeof setup.$inferSelect) => ({
+	...value,
+	vehicle: jsonValue(value.vehicle),
+	drivetrain: jsonValue(value.drivetrain),
+	electronics: jsonValue(value.electronics),
+	tires: jsonValue(value.tires),
+	shocks: jsonValue(value.shocks),
+	frontSuspension: jsonValue(value.frontSuspension),
+	rearSuspension: jsonValue(value.rearSuspension),
+	sourceMetadata: jsonValue(value.sourceMetadata),
+	rawValues: jsonValue(value.rawValues),
+	unmappedValues: jsonValue(value.unmappedValues),
+});
+
+const setupInsertValues = (
+	id: string,
+	carId: string,
+	value: SetupInput,
+	now: string,
+	copiedFromId: string | null = null,
+) => ({
+	id,
+	carId,
+	status: value.status ?? 'active',
+	setupDate: value.setupDate ? new Date(value.setupDate).toISOString() : null,
+	track: value.track ?? null,
+	event: value.event ?? null,
+	surface: value.surface ?? null,
+	traction: value.traction ?? null,
+	moisture: value.moisture ?? null,
+	condition: value.condition ?? null,
+	temperature: value.temperature ?? null,
+	vehicle: jsonText(value.vehicle) ?? null,
+	drivetrain: jsonText(value.drivetrain) ?? null,
+	electronics: jsonText(value.electronics) ?? null,
+	tires: jsonText(value.tires) ?? null,
+	shocks: jsonText(value.shocks) ?? null,
+	frontSuspension: jsonText(value.frontSuspension) ?? null,
+	rearSuspension: jsonText(value.rearSuspension) ?? null,
+	notes: value.notes ?? null,
+	sourceUrl: value.sourceUrl ?? null,
+	sourcePdfReference: value.sourcePdfReference ?? null,
+	sourceMetadata: jsonText(value.sourceMetadata) ?? null,
+	copiedFromId,
+	rawValues: jsonText(value.rawValues) ?? null,
+	unmappedValues: jsonText(value.unmappedValues) ?? null,
+	createdAt: now,
+	updatedAt: now,
+});
+
+const setupCopyValue = (value: typeof setup.$inferSelect): SetupInput => ({
+	status: value.status as SetupInput['status'],
+	setupDate: value.setupDate ?? undefined,
+	track: value.track ?? undefined,
+	event: value.event ?? undefined,
+	surface: value.surface ?? undefined,
+	traction: value.traction ?? undefined,
+	moisture: value.moisture ?? undefined,
+	condition: value.condition ?? undefined,
+	temperature: value.temperature ?? undefined,
+	vehicle:
+		(jsonValue(value.vehicle) as Record<string, unknown> | null) ?? undefined,
+	drivetrain:
+		(jsonValue(value.drivetrain) as Record<string, unknown> | null) ??
+		undefined,
+	electronics:
+		(jsonValue(value.electronics) as Record<string, unknown> | null) ??
+		undefined,
+	tires:
+		(jsonValue(value.tires) as Record<string, unknown> | null) ?? undefined,
+	shocks:
+		(jsonValue(value.shocks) as Record<string, unknown> | null) ?? undefined,
+	frontSuspension:
+		(jsonValue(value.frontSuspension) as Record<string, unknown> | null) ??
+		undefined,
+	rearSuspension:
+		(jsonValue(value.rearSuspension) as Record<string, unknown> | null) ??
+		undefined,
+	notes: value.notes ?? undefined,
+	sourceUrl: value.sourceUrl ?? undefined,
+	sourcePdfReference: value.sourcePdfReference ?? undefined,
+	sourceMetadata:
+		(jsonValue(value.sourceMetadata) as Record<string, unknown> | null) ??
+		undefined,
+	rawValues:
+		(jsonValue(value.rawValues) as Record<string, unknown> | null) ?? undefined,
+	unmappedValues:
+		(jsonValue(value.unmappedValues) as Record<string, unknown> | null) ??
+		undefined,
+});
+
+const ownedSetup = async (c: AppContext, carId: string, setupId: string) => {
+	const value = await db(c.env)
+		.select()
+		.from(setup)
+		.where(and(eq(setup.id, setupId), eq(setup.carId, carId)))
+		.get();
+	return value && ownsSetup(value, carId) && (await ownedCar(c, carId))
+		? value
+		: undefined;
 };
 
 const publicComponent = (value: typeof component.$inferSelect) => value;
@@ -437,6 +565,193 @@ app.post('/api/v1/cars/:carId/restore', async (c) => {
 	return c.json({
 		car: publicCar(required(restored, 'Restored car could not be loaded')),
 	});
+});
+
+app.get('/api/v1/cars/:carId/setups/current', async (c) => {
+	const parentCar = await ownedCar(c, c.req.param('carId'));
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!parentCar.currentSetupId) return c.json({ setup: null });
+	const current = await ownedSetup(c, parentCar.id, parentCar.currentSetupId);
+	return c.json({ setup: current ? publicSetup(current) : null });
+});
+
+app.get('/api/v1/cars/:carId/setups', async (c) => {
+	const carId = c.req.param('carId');
+	if (!(await ownedCar(c, carId)))
+		return c.json({ error: 'Car not found' }, 404);
+	const values = await db(c.env)
+		.select()
+		.from(setup)
+		.where(eq(setup.carId, carId))
+		.orderBy(desc(setup.updatedAt), desc(setup.createdAt));
+	return c.json({ setups: values.map(publicSetup) });
+});
+
+app.post('/api/v1/cars/:carId/setups', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWriteSetup(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before editing setups' },
+			409,
+		);
+	const parsed = setupInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const id = crypto.randomUUID();
+	const now = new Date().toISOString();
+	const database = db(c.env);
+	const value = setupInsertValues(id, carId, parsed.data, now);
+	await database.batch([
+		database.insert(setup).values(value),
+		...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+			? [
+					database
+						.update(car)
+						.set({ currentSetupId: id })
+						.where(eq(car.id, carId)),
+				]
+			: []),
+	]);
+	const created = await database
+		.select()
+		.from(setup)
+		.where(eq(setup.id, id))
+		.get();
+	return c.json(
+		{
+			setup: publicSetup(
+				required(created, 'Created setup could not be loaded'),
+			),
+		},
+		201,
+	);
+});
+
+app.get('/api/v1/cars/:carId/setups/:setupId', async (c) => {
+	const value = await ownedSetup(
+		c,
+		c.req.param('carId'),
+		c.req.param('setupId'),
+	);
+	if (!value) return c.json({ error: 'Setup not found' }, 404);
+	return c.json({ setup: publicSetup(value) });
+});
+
+app.patch('/api/v1/cars/:carId/setups/:setupId', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWriteSetup(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before editing setups' },
+			409,
+		);
+	const existing = await ownedSetup(c, carId, c.req.param('setupId'));
+	if (!existing) return c.json({ error: 'Setup not found' }, 404);
+	const parsed = setupUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const value = parsed.data;
+	await db(c.env)
+		.update(setup)
+		.set({
+			status: value.status,
+			setupDate:
+				value.setupDate === undefined
+					? undefined
+					: value.setupDate === null
+						? null
+						: new Date(value.setupDate).toISOString(),
+			track: value.track,
+			event: value.event,
+			surface: value.surface,
+			traction: value.traction,
+			moisture: value.moisture,
+			condition: value.condition,
+			temperature: value.temperature,
+			vehicle: jsonText(value.vehicle),
+			drivetrain: jsonText(value.drivetrain),
+			electronics: jsonText(value.electronics),
+			tires: jsonText(value.tires),
+			shocks: jsonText(value.shocks),
+			frontSuspension: jsonText(value.frontSuspension),
+			rearSuspension: jsonText(value.rearSuspension),
+			notes: value.notes,
+			sourceUrl: value.sourceUrl,
+			sourcePdfReference: value.sourcePdfReference,
+			sourceMetadata: jsonText(value.sourceMetadata),
+			rawValues: jsonText(value.rawValues),
+			unmappedValues: jsonText(value.unmappedValues),
+			updatedAt: new Date().toISOString(),
+		})
+		.where(eq(setup.id, existing.id));
+	const updated = required(
+		await ownedSetup(c, carId, existing.id),
+		'Updated setup could not be loaded',
+	);
+	return c.json({ setup: publicSetup(updated) });
+});
+
+app.post('/api/v1/cars/:carId/setups/:setupId/copy', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWriteSetup(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before copying setups' },
+			409,
+		);
+	const source = await ownedSetup(c, carId, c.req.param('setupId'));
+	if (!source) return c.json({ error: 'Setup not found' }, 404);
+	const parsed = setupCopyInput.safeParse(await c.req.json().catch(() => ({})));
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const sourceValue = setupCopyValue(source);
+	const value = { ...sourceValue, ...parsed.data };
+	const id = crypto.randomUUID();
+	const now = new Date().toISOString();
+	const database = db(c.env);
+	await database.batch([
+		database
+			.insert(setup)
+			.values(setupInsertValues(id, carId, value, now, source.id)),
+		...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+			? [
+					database
+						.update(car)
+						.set({ currentSetupId: id })
+						.where(eq(car.id, carId)),
+				]
+			: []),
+	]);
+	const copied = await database
+		.select()
+		.from(setup)
+		.where(eq(setup.id, id))
+		.get();
+	return c.json(
+		{
+			setup: publicSetup(required(copied, 'Copied setup could not be loaded')),
+		},
+		201,
+	);
+});
+
+app.post('/api/v1/cars/:carId/setups/:setupId/current', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWriteSetup(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before selecting a setup' },
+			409,
+		);
+	const value = await ownedSetup(c, carId, c.req.param('setupId'));
+	if (!value) return c.json({ error: 'Setup not found' }, 404);
+	await db(c.env)
+		.update(car)
+		.set({ currentSetupId: value.id })
+		.where(eq(car.id, carId));
+	return c.json({ setup: publicSetup(value) });
 });
 
 app.get('/api/v1/cars/:carId/photos', async (c) => {
@@ -2700,6 +3015,27 @@ const openApi = {
 		},
 	},
 };
+
+const setupPaths = openApi.paths as Record<string, unknown>;
+Object.assign(setupPaths, {
+	'/api/v1/cars/{carId}/setups': {
+		get: { summary: 'List setup snapshots for an owned car' },
+		post: { summary: 'Create an owned-car setup snapshot' },
+	},
+	'/api/v1/cars/{carId}/setups/current': {
+		get: { summary: 'Read the current setup selected for an owned car' },
+	},
+	'/api/v1/cars/{carId}/setups/{setupId}': {
+		get: { summary: 'Read an owned-car setup snapshot' },
+		patch: { summary: 'Edit an owned-car setup snapshot' },
+	},
+	'/api/v1/cars/{carId}/setups/{setupId}/copy': {
+		post: { summary: 'Copy an owned-car setup snapshot' },
+	},
+	'/api/v1/cars/{carId}/setups/{setupId}/current': {
+		post: { summary: 'Select an owned-car setup as current' },
+	},
+});
 
 const serviceRecordPaths = openApi.paths as unknown as Record<
 	string,
