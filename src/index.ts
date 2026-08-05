@@ -1019,19 +1019,42 @@ app.post('/api/v1/setup-imports/drafts', async (c) => {
 			422,
 		);
 	}
-	await db(c.env)
-		.insert(setupImportDraft)
-		.values({
-			id,
-			ownerId: c.get('userId'),
-			carId: parsed.data.carId ?? null,
-			sourceUrl: sourceKey,
-			sourceKey,
-			status: 'draft',
-			...draftValues(extraction),
-			createdAt: now,
-			updatedAt: now,
-		});
+	try {
+		await db(c.env)
+			.insert(setupImportDraft)
+			.values({
+				id,
+				ownerId: c.get('userId'),
+				carId: parsed.data.carId ?? null,
+				sourceUrl: sourceKey,
+				sourceKey,
+				status: 'draft',
+				...draftValues(extraction),
+				createdAt: now,
+				updatedAt: now,
+			});
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.includes('UNIQUE'))
+			throw error;
+		const concurrent = await db(c.env)
+			.select()
+			.from(setupImportDraft)
+			.where(
+				and(
+					eq(setupImportDraft.ownerId, c.get('userId')),
+					eq(setupImportDraft.sourceKey, sourceKey),
+					eq(setupImportDraft.status, 'draft'),
+				),
+			)
+			.get();
+		return c.json(
+			{
+				error: 'An open draft already exists for this source',
+				draft: concurrent ? publicImportDraft(concurrent) : null,
+			},
+			409,
+		);
+	}
 	const draft = await ownedImportDraft(c, id);
 	return c.json(
 		{

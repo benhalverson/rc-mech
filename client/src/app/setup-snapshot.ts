@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, throwError } from 'rxjs';
+import { Observable, map, throwError } from 'rxjs';
 
 export const setupSectionKeys = [
 	'vehicle',
@@ -86,6 +86,7 @@ export type ImportCarOption = {
 };
 
 export type SoDialedImportPreview = {
+	draftId: string;
 	source: SetupSource & { title?: string | null };
 	carIdentity: {
 		make?: string | null;
@@ -114,25 +115,122 @@ export class SoDialedImporterClient {
 			return (
 				url.protocol === 'https:' &&
 				(url.hostname === 'sodialed.com' ||
-					url.hostname.endsWith('.sodialed.com')) &&
-				url.pathname !== '/'
+					url.hostname === 'www.sodialed.com') &&
+				/^\/setup\/[A-Za-z0-9]+\/?$/.test(url.pathname)
 			);
 		} catch {
 			return false;
 		}
 	}
 
-	preview(url: string): Observable<SoDialedImportPreview> {
+	preview(url: string, carId: string): Observable<SoDialedImportPreview> {
 		if (!SoDialedImporterClient.isSupportedUrl(url)) {
 			return throwError(() => new Error('Enter a supported So Dialed URL.'));
 		}
-		return this.http.post<SoDialedImportPreview>(
-			'/api/v1/setup-imports/preview',
-			{ url: url.trim() },
+		return this.http
+			.post<{ draft: ImportDraft }>(
+				'/api/v1/setup-imports/drafts',
+				{ sourceUrl: url.trim(), carId },
+				{ withCredentials: true },
+			)
+			.pipe(map(({ draft }) => importPreviewFromDraft(draft)));
+	}
+
+	update(draftId: string, payload: ImportDraftPatch): Observable<ImportDraft> {
+		return this.http
+			.patch<{ draft: ImportDraft }>(
+				`/api/v1/setup-imports/drafts/${draftId}`,
+				payload,
+				{ withCredentials: true },
+			)
+			.pipe(map(({ draft }) => draft));
+	}
+
+	cancel(draftId: string): Observable<void> {
+		return this.http.post<void>(
+			`/api/v1/setup-imports/drafts/${draftId}/cancel`,
+			{},
+			{ withCredentials: true },
+		);
+	}
+
+	accept(
+		draftId: string,
+		carId: string,
+		name: string,
+	): Observable<SetupResponse> {
+		return this.http.post<SetupResponse>(
+			`/api/v1/setup-imports/drafts/${draftId}/accept`,
+			{ carId, name, makeCurrent: false },
 			{ withCredentials: true },
 		);
 	}
 }
+
+type ImportDraft = {
+	id: string;
+	carId?: string | null;
+	sourceUrl: string;
+	sourceIdentity: Record<string, unknown>;
+	source: {
+		url: string;
+		pdfReference?: string | null;
+		metadata?: Record<string, unknown> | null;
+	};
+	knownValues: Record<string, unknown>;
+	uncertainValues: Record<string, unknown>;
+	rawValues: Record<string, unknown>;
+	unmappedValues: Record<string, unknown>;
+};
+type ImportDraftPatch = {
+	carId?: string | null;
+	knownValues?: Record<string, unknown>;
+	uncertainValues?: Record<string, unknown>;
+	rawValues?: Record<string, unknown>;
+	unmappedValues?: Record<string, unknown>;
+	sourceMetadata?: Record<string, unknown>;
+};
+const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => ({
+	draftId: draft.id,
+	source: {
+		url: draft.source.url,
+		pdfUrl:
+			typeof draft.source.pdfReference === 'string' &&
+			draft.source.pdfReference.startsWith('https://')
+				? draft.source.pdfReference
+				: null,
+		pdfTitle: draft.source.pdfReference,
+		pdfPage:
+			typeof (draft.source.metadata as { pdfPage?: unknown } | null)
+				?.pdfPage === 'number'
+				? ((draft.source.metadata as { pdfPage?: unknown }).pdfPage as number)
+				: null,
+		...draft.source.metadata,
+	},
+	carIdentity: {
+		name:
+			typeof (draft.sourceIdentity as { name?: unknown }).name === 'string'
+				? ((draft.sourceIdentity as { name?: unknown }).name as string)
+				: null,
+		make:
+			typeof (draft.sourceIdentity as { make?: unknown }).make === 'string'
+				? ((draft.sourceIdentity as { make?: unknown }).make as string)
+				: null,
+		model:
+			typeof (draft.sourceIdentity as { model?: unknown }).model === 'string'
+				? ((draft.sourceIdentity as { model?: unknown }).model as string)
+				: null,
+	},
+	context: (draft.knownValues as { context?: SetupContext }).context ?? {},
+	sections:
+		(draft.knownValues as { sections?: SetupSections }).sections ??
+		emptyImportSections(),
+	uncertainValues: draft.uncertainValues,
+	unmappedValues: draft.unmappedValues,
+	rawValues: draft.rawValues,
+});
+const emptyImportSections = (): SetupSections =>
+	Object.fromEntries(setupSectionKeys.map((key) => [key, {}])) as SetupSections;
 
 type SetupsResponse = { setups: SetupSnapshot[] };
 type SetupResponse = { setup: SetupSnapshot };

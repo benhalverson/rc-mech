@@ -9,6 +9,7 @@ import {
 	signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { switchMap } from 'rxjs';
 import {
 	ImportCarOption,
 	SetupSectionKey,
@@ -209,6 +210,22 @@ const payloadFrom = (form: SetupForm): SetupSnapshotPayload => {
 	};
 };
 
+const parseJsonObject = (value: string): Record<string, unknown> => {
+	try {
+		const parsed: unknown = JSON.parse(value);
+		return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: {};
+	} catch {
+		return value.trim() ? { raw: value.trim() } : {};
+	}
+};
+
+const importKnownValues = (payload: SetupSnapshotPayload) => ({
+	...payload,
+	makeCurrent: undefined,
+});
+
 @Component({
 	selector: 'app-setup-snapshots',
 	imports: [DatePipe, DecimalPipe, JsonPipe, KeyValuePipe, FormsModule],
@@ -303,7 +320,7 @@ export class SetupSnapshots {
 		}
 		if (this.archived()) return;
 		this.importState.set('loading');
-		this.importer.preview(url).subscribe({
+		this.importer.preview(url, this.carId()).subscribe({
 			next: (preview) => {
 				this.importPreview.set(preview);
 				this.importCarId.set(this.carId());
@@ -325,6 +342,8 @@ export class SetupSnapshots {
 	}
 
 	protected cancelImport(): void {
+		const draftId = this.importPreview()?.draftId;
+		if (draftId) this.importer.cancel(draftId).subscribe();
 		this.importPreview.set(null);
 		this.importState.set('idle');
 		this.importError.set('');
@@ -391,14 +410,31 @@ export class SetupSnapshots {
 		this.action.set('save');
 		this.formError.set('');
 		const setup = this.importPreview() ? null : this.selected();
+		const importDraft = this.importPreview();
 		const targetCarId = this.importCarId() || this.carId();
 		const request =
 			this.mode() === 'edit' && setup
 				? this.service.update(this.carId(), setup.id, payloadFrom(form))
-				: this.service.create(targetCarId, {
-						...payloadFrom(form),
-						status: this.importPreview() ? 'reviewed' : undefined,
-					});
+				: importDraft
+					? this.importer
+							.update(importDraft.draftId, {
+								carId: targetCarId,
+								knownValues: importKnownValues(payloadFrom(form)),
+								uncertainValues: importDraft.uncertainValues,
+								rawValues: parseJsonObject(form.rawValues),
+								unmappedValues: parseJsonObject(form.unmappedValues),
+								sourceMetadata: payloadFrom(form).sourceMetadata ?? {},
+							})
+							.pipe(
+								switchMap(() =>
+									this.importer.accept(
+										importDraft.draftId,
+										targetCarId,
+										form.name.trim(),
+									),
+								),
+							)
+					: this.service.create(targetCarId, payloadFrom(form));
 		request.subscribe({
 			next: ({ setup: saved }) => {
 				this.editing.set(false);

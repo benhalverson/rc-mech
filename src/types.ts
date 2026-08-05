@@ -280,7 +280,8 @@ export const setupImportSourceUrl = z
 		const url = new URL(value);
 		return (
 			url.protocol === 'https:' &&
-			url.hostname === 'www.sodialed.com' &&
+			(url.hostname === 'sodialed.com' ||
+				url.hostname === 'www.sodialed.com') &&
 			/^\/setup\/[A-Za-z0-9]+\/?$/.test(url.pathname)
 		);
 	}, 'Only supported So Dialed setup URLs are accepted');

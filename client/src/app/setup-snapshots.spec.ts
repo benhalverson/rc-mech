@@ -25,6 +25,7 @@ type Harness = {
 };
 
 const preview: SoDialedImportPreview = {
+	draftId: 'draft-1',
 	source: {
 		url: 'https://sodialed.com/setup/abc',
 		pdfUrl: 'https://sodialed.com/setup/abc.pdf',
@@ -237,6 +238,9 @@ describe('SetupSnapshots', () => {
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Save as new snapshot');
 		app.cancelImport();
+		http
+			.expectOne('/api/v1/setup-imports/drafts/draft-1/cancel')
+			.flush({ ok: true });
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Import review draft',
@@ -245,14 +249,25 @@ describe('SetupSnapshots', () => {
 		app.previewImport();
 		fixture.detectChanges();
 		app.save();
-		const request = http.expectOne(
-			(item) =>
-				item.url === '/api/v1/cars/car-1/setups' && item.method === 'POST',
+		const update = http.expectOne('/api/v1/setup-imports/drafts/draft-1');
+		expect(update.request.method).toBe('PATCH');
+		expect(update.request.body.knownValues.name).toBe('Team Associated B6.4');
+		expect(update.request.body.rawValues).toEqual(preview.rawValues);
+		update.flush({ draft: { id: 'draft-1' } });
+		const accept = http.expectOne(
+			'/api/v1/setup-imports/drafts/draft-1/accept',
 		);
-		expect(request.request.body.sourceUrl).toBe(preview.source.url);
-		expect(request.request.body.rawValues).toEqual(preview.rawValues);
-		request.flush({
-			setup: { ...currentSetup, id: 'setup-imported', name: 'Imported setup' },
+		expect(accept.request.body).toEqual({
+			carId: 'car-1',
+			name: 'Team Associated B6.4',
+			makeCurrent: false,
+		});
+		accept.flush({
+			setup: {
+				...currentSetup,
+				id: 'setup-imported',
+				name: 'Team Associated B6.4',
+			},
 		});
 	});
 

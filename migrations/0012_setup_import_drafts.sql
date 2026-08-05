@@ -24,3 +24,7 @@ CREATE INDEX setup_import_draft_owner_source_idx
   ON setup_import_draft(owner_id, source_key);
 CREATE INDEX setup_import_draft_car_idx
   ON setup_import_draft(car_id, updated_at DESC);
+
+CREATE UNIQUE INDEX setup_import_draft_open_source_uidx
+  ON setup_import_draft(owner_id, source_key)
+  WHERE status = 'draft';

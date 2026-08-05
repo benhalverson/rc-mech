@@ -13,6 +13,7 @@ import {
 } from './types.ts';
 
 const supported = 'https://www.sodialed.com/setup/abc123?share=1#sheet';
+const supportedWithoutWww = 'https://sodialed.com/setup/abc123';
 
 test('import URL contract only accepts canonical So Dialed setup links', () => {
 	assert.equal(
@@ -34,6 +35,10 @@ test('import URL contract only accepts canonical So Dialed setup links', () => {
 	assert.equal(
 		sourceKeyFor(supported),
 		'https://www.sodialed.com/setup/abc123',
+	);
+	assert.equal(
+		canonicalSetupImportUrl(supportedWithoutWww),
+		sourceKeyFor(supported),
 	);
 });
 
