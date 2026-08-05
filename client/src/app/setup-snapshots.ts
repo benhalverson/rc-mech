@@ -411,6 +411,7 @@ export class SetupSnapshots {
 		this.formError.set('');
 		const setup = this.importPreview() ? null : this.selected();
 		const importDraft = this.importPreview();
+		const reviewValues = parseJsonObject(form.unmappedValues);
 		const targetCarId = this.importCarId() || this.carId();
 		const request =
 			this.mode() === 'edit' && setup
@@ -420,9 +421,15 @@ export class SetupSnapshots {
 							.update(importDraft.draftId, {
 								carId: targetCarId,
 								knownValues: importKnownValues(payloadFrom(form)),
-								uncertainValues: importDraft.uncertainValues,
+								uncertainValues:
+									(reviewValues['uncertain'] as
+										| Record<string, unknown>
+										| undefined) ?? importDraft.uncertainValues,
 								rawValues: parseJsonObject(form.rawValues),
-								unmappedValues: parseJsonObject(form.unmappedValues),
+								unmappedValues:
+									(reviewValues['unmapped'] as
+										| Record<string, unknown>
+										| undefined) ?? {},
 								sourceMetadata: payloadFrom(form).sourceMetadata ?? {},
 							})
 							.pipe(

@@ -116,6 +116,9 @@ export class SoDialedImporterClient {
 				url.protocol === 'https:' &&
 				(url.hostname === 'sodialed.com' ||
 					url.hostname === 'www.sodialed.com') &&
+				url.username === '' &&
+				url.password === '' &&
+				(url.port === '' || url.port === '443') &&
 				/^\/setup\/[A-Za-z0-9]+\/?$/.test(url.pathname)
 			);
 		} catch {
@@ -174,7 +177,7 @@ type ImportDraft = {
 	sourceIdentity: Record<string, unknown>;
 	source: {
 		url: string;
-		pdfReference?: string | null;
+		hasPdfReference?: boolean;
 		metadata?: Record<string, unknown> | null;
 	};
 	knownValues: Record<string, unknown>;
@@ -194,12 +197,8 @@ const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => ({
 	draftId: draft.id,
 	source: {
 		url: draft.source.url,
-		pdfUrl:
-			typeof draft.source.pdfReference === 'string' &&
-			draft.source.pdfReference.startsWith('https://')
-				? draft.source.pdfReference
-				: null,
-		pdfTitle: draft.source.pdfReference,
+		pdfUrl: null,
+		pdfTitle: draft.source.hasPdfReference ? 'Original setup PDF' : null,
 		pdfPage:
 			typeof (draft.source.metadata as { pdfPage?: unknown } | null)
 				?.pdfPage === 'number'

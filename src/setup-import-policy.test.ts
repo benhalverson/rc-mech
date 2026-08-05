@@ -40,6 +40,12 @@ test('import URL contract only accepts canonical So Dialed setup links', () => {
 		canonicalSetupImportUrl(supportedWithoutWww),
 		sourceKeyFor(supported),
 	);
+	assert.equal(
+		canonicalSetupImportUrl(
+			'https://user:pass@www.sodialed.com:8443/setup/abc123',
+		),
+		null,
+	);
 });
 
 test('resolver and extractor are injectable and preserve uncertain/raw values', async () => {

@@ -282,6 +282,9 @@ export const setupImportSourceUrl = z
 			url.protocol === 'https:' &&
 			(url.hostname === 'sodialed.com' ||
 				url.hostname === 'www.sodialed.com') &&
+			url.username === '' &&
+			url.password === '' &&
+			(url.port === '' || url.port === '443') &&
 			/^\/setup\/[A-Za-z0-9]+\/?$/.test(url.pathname)
 		);
 	}, 'Only supported So Dialed setup URLs are accepted');

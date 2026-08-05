@@ -25,6 +25,10 @@ export const canonicalSetupImportUrl = (value: string): string | null => {
 	if (!parsed.success) return null;
 	const url = new URL(parsed.data);
 	url.hostname = 'www.sodialed.com';
+	url.username = '';
+	url.password = '';
+	url.port = '';
+	url.hostname = 'www.sodialed.com';
 	url.hash = '';
 	url.search = '';
 	url.pathname = url.pathname.replace(/\/$/, '');
