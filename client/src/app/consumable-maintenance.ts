@@ -33,6 +33,8 @@ export type ConsumableEntry = {
 	rearDetails?: string | null;
 	frontCost?: number | null;
 	rearCost?: number | null;
+	cost?: number | null;
+	currency?: string | null;
 	notes?: string | null;
 	deletedAt?: string | null;
 };
@@ -178,7 +180,14 @@ export class ConsumableMaintenance {
 			axle: entry.axle ?? 'front',
 			frontDetails: entry.frontDetails ?? '',
 			rearDetails: entry.rearDetails ?? '',
-			frontCost: entry.frontCost == null ? '' : String(entry.frontCost),
+			frontCost:
+				entry.kind === 'tires'
+					? entry.frontCost == null
+						? ''
+						: String(entry.frontCost)
+					: entry.cost == null
+						? ''
+						: String(entry.cost),
 			rearCost: entry.rearCost == null ? '' : String(entry.rearCost),
 			notes: entry.notes ?? '',
 		});
@@ -206,9 +215,12 @@ export class ConsumableMaintenance {
 		}
 		if (
 			form.kind === 'tires' &&
-			form.axle === 'both' &&
-			!form.frontDetails.trim() &&
-			!form.rearDetails.trim()
+			((form.axle !== 'rear' &&
+				!form.frontDetails.trim() &&
+				!form.frontCost.trim()) ||
+				(form.axle !== 'front' &&
+					!form.rearDetails.trim() &&
+					!form.rearCost.trim()))
 		) {
 			this.formError.set('Add front or rear tire details before saving.');
 			return;
@@ -345,8 +357,17 @@ export class ConsumableMaintenance {
 				: (entry.fluidArea ?? '').replaceAll('-', ' ');
 	}
 	protected entryCost(entry: ConsumableEntry): string {
-		const total = (entry.frontCost ?? 0) + (entry.rearCost ?? 0);
-		return total ? `$${total.toFixed(2)}` : 'No cost logged';
+		const isFluid = entry.kind !== 'tires';
+		const hasCost = isFluid
+			? entry.cost !== null && entry.cost !== undefined
+			: (entry.frontCost !== null && entry.frontCost !== undefined) ||
+				(entry.rearCost !== null && entry.rearCost !== undefined);
+		const total = isFluid
+			? (entry.cost ?? 0)
+			: (entry.frontCost ?? 0) + (entry.rearCost ?? 0);
+		return hasCost
+			? `${entry.currency ?? 'USD'} ${total.toFixed(2)}`
+			: 'No cost logged';
 	}
 	protected setHistoryFilter(value: 'active' | 'archived'): void {
 		this.historyFilter.set(value);

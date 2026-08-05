@@ -1353,7 +1353,10 @@ app.get('/api/v1/cars/:carId/consumable-maintenance', async (c) => {
 		.select()
 		.from(consumableMaintenanceEntry)
 		.where(eq(consumableMaintenanceEntry.carId, carId))
-		.orderBy(desc(consumableMaintenanceEntry.performedAt));
+		.orderBy(
+			desc(consumableMaintenanceEntry.performedAt),
+			desc(consumableMaintenanceEntry.createdAt),
+		);
 	return c.json({ consumableMaintenance: values.map(publicConsumable) });
 });
 
@@ -4447,6 +4450,20 @@ const consumableSchema = {
 		prefillFromCurrentSetup: { type: 'boolean' },
 	},
 };
+const consumableUpdateSchema = {
+	type: 'object',
+	minProperties: 1,
+	properties: {
+		performedAt: { type: 'string', format: 'date-time' },
+		notes: { type: 'string', nullable: true },
+		fluidArea: consumableSchema.properties.fluidArea,
+		customFluidArea: { type: 'string', nullable: true },
+		front: { ...consumableAxleSchema, nullable: true },
+		rear: { ...consumableAxleSchema, nullable: true },
+		cost: { type: 'number', minimum: 0, nullable: true },
+		currency: { type: 'string', pattern: '^[A-Za-z]{3}$', nullable: true },
+	},
+};
 Object.assign(consumablePaths, {
 	'/api/v1/cars/{carId}/consumables': {
 		parameters: [carIdParameter],
@@ -4488,7 +4505,7 @@ Object.assign(consumablePaths, {
 			requestBody: {
 				required: true,
 				content: {
-					'application/json': { schema: { ...consumableSchema, required: [] } },
+					'application/json': { schema: consumableUpdateSchema },
 				},
 			},
 			responses: {
