@@ -542,7 +542,11 @@ const publicConsumable = (
 		carId: value.carId,
 		kind:
 			value.kind === 'fluid'
-				? value.fluidArea?.includes('shocks')
+				? (
+						value.fluidArea === 'custom'
+							? value.customFluidArea?.toLowerCase().includes('shock')
+							: value.fluidArea?.includes('shocks')
+					)
 					? 'shock-fluid'
 					: 'differential-fluid'
 				: value.kind,
@@ -1177,15 +1181,34 @@ app.patch('/api/v1/consumables/:entryId', async (c) => {
 			value.currency !== undefined)
 	)
 		return c.json({ error: 'Tire entries cannot have fluid fields' }, 400);
-	if (existing.kind === 'tires' && value.front === null && value.rear === null)
+	const nextFront =
+		value.front === undefined
+			? existing.frontDetails
+			: value.front === null
+				? null
+				: jsonText(value.front);
+	const nextRear =
+		value.rear === undefined
+			? existing.rearDetails
+			: value.rear === null
+				? null
+				: jsonText(value.rear);
+	if (existing.kind === 'tires' && !nextFront && !nextRear)
 		return c.json({ error: 'A front or rear tire set is required' }, 400);
-	if (
-		existing.kind === 'fluid' &&
-		value.fluidArea === 'custom' &&
-		!value.customFluidArea &&
-		!existing.customFluidArea
-	)
-		return c.json({ error: 'Custom fluid area is required' }, 400);
+	if (existing.kind === 'fluid') {
+		const nextArea = value.fluidArea ?? existing.fluidArea;
+		const nextCustom =
+			value.customFluidArea === undefined
+				? existing.customFluidArea
+				: value.customFluidArea;
+		if (nextArea === 'custom' && !nextCustom)
+			return c.json({ error: 'Custom fluid area is required' }, 400);
+		if (nextArea !== 'custom' && nextCustom)
+			return c.json(
+				{ error: 'Custom fluid area is only valid for custom' },
+				400,
+			);
+	}
 	await db(c.env)
 		.update(consumableMaintenanceEntry)
 		.set({
@@ -1301,7 +1324,7 @@ const legacyConsumableInput = (body: Record<string, unknown>) => {
 	}
 	const fluidKind =
 		body.kind === 'shock-fluid'
-			? 'front-shocks'
+			? (body.fluidArea ?? 'front-shocks')
 			: body.kind === 'differential-fluid'
 				? (body.fluidArea ?? 'front-differential')
 				: body.fluidArea;
@@ -1386,6 +1409,8 @@ app.patch('/api/v1/cars/:carId/consumable-maintenance/:entryId', async (c) => {
 	const parsed = consumableUpdateInput.safeParse(
 		legacyConsumableInput({
 			...body,
+			fluidArea: body.fluidArea ?? existing.fluidArea,
+			customArea: body.customArea ?? existing.customFluidArea,
 			kind:
 				existing.kind === 'tires'
 					? 'tires'
@@ -4387,7 +4412,12 @@ const consumablePaths = openApi.paths as Record<string, unknown>;
 const consumableAxleSchema = {
 	type: 'object',
 	properties: {
-		details: { type: 'string' },
+		details: {
+			anyOf: [
+				{ type: 'string' },
+				{ type: 'object', additionalProperties: true },
+			],
+		},
 		cost: { type: 'number', minimum: 0 },
 		currency: { type: 'string', pattern: '^[A-Za-z]{3}$' },
 	},

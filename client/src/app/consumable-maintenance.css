@@ -60,17 +60,17 @@
 	gap: 8px;
 }
 .choice {
-	display: flex !important;
+	display: flex;
 	grid-template-columns: auto 1fr;
 	align-items: center;
-	gap: 7px !important;
+	gap: 7px;
 	border: 1px solid var(--line);
 	padding: 10px 12px;
 	cursor: pointer;
 }
 .choice:has(input:checked) {
 	border-color: var(--accent);
-	color: var(--accent) !important;
+	color: var(--accent);
 }
 .choice input {
 	width: auto;
