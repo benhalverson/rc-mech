@@ -1,9 +1,10 @@
-import { Component } from '@angular/core';
 import { Routes } from '@angular/router';
+import { GarageStore } from './garage/garage-store';
 import { ownerSessionCanMatch } from './owner-session.guard';
 
-@Component({ template: '' })
-export class RoutedWorkspace {}
+const loadWorkspace = () =>
+	import('./garage-workspace').then(({ GarageWorkspace }) => GarageWorkspace);
+const loadGarage = () => import('./garage/garage').then(({ Garage }) => Garage);
 
 export const signInRoute = {
 	path: 'sign-in',
@@ -17,42 +18,48 @@ export const routes: Routes = [
 		path: 'garage',
 		pathMatch: 'full',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: () => import('./garage/garage').then(({ Garage }) => Garage),
+		loadComponent: loadGarage,
+		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/overview',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: () => import('./garage/garage').then(({ Garage }) => Garage),
+		loadComponent: loadWorkspace,
+		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/setups',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: () => import('./garage/garage').then(({ Garage }) => Garage),
+		loadComponent: loadWorkspace,
+		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/build',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: () => import('./garage/garage').then(({ Garage }) => Garage),
+		loadComponent: loadWorkspace,
+		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/photos',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: () => import('./garage/garage').then(({ Garage }) => Garage),
+		loadComponent: loadWorkspace,
+		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/runs',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: () => import('./garage/garage').then(({ Garage }) => Garage),
+		loadComponent: loadWorkspace,
+		providers: [GarageStore],
 	},
 	{
 		path: 'maintenance',
 		canMatch: [ownerSessionCanMatch],
-		component: RoutedWorkspace,
+		loadComponent: loadWorkspace,
 	},
 	{
 		path: 'settings',
 		canMatch: [ownerSessionCanMatch],
-		component: RoutedWorkspace,
+		loadComponent: loadWorkspace,
 	},
 	{ path: '**', redirectTo: 'garage' },
 ];

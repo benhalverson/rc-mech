@@ -18,6 +18,7 @@ export type GarageCar = {
 	scale?: string | null;
 	vehicleType?: string | null;
 	powerType?: string | null;
+	notes?: string | null;
 	archivedAt?: string | null;
 	createdAt?: string;
 };
@@ -55,6 +56,9 @@ export const GarageStore = signalStore(
 	withMethods((store) => ({
 		selectCar(activeCarId: string | null): void {
 			patchState(store, { activeCarId });
+		},
+		setArchivedFilter(showArchived: boolean): void {
+			patchState(store, { showArchived, activeCarId: null });
 		},
 		toggleArchived(): void {
 			patchState(store, {

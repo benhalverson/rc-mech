@@ -3,11 +3,20 @@ import {
 	HttpTestingController,
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
+import { Component } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
-import { provideRouter, Router } from '@angular/router';
-import { App } from './app';
-import { routes } from './app.routes';
+import {
+	provideRouter,
+	Router,
+	withDisabledInitialNavigation,
+} from '@angular/router';
+import { GarageWorkspace as App } from './garage-workspace';
+
+@Component({ template: '' })
+class TestRoute {}
+
+const legacyRoutes = [{ path: '**', component: TestRoute }];
 
 type TestMember = {
 	set(value: unknown): void;
@@ -51,7 +60,7 @@ describe('App', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				provideRouter(routes),
+				provideRouter(legacyRoutes, withDisabledInitialNavigation()),
 				provideNoopAnimations(),
 			],
 		}).compileComponents();
@@ -90,6 +99,10 @@ describe('App', () => {
 	const showSignedOut = () => {
 		http.expectOne('/api/auth/get-session').flush(null);
 		fixture.detectChanges();
+		http
+			.match('/api/v1/cars')
+			.forEach((request) => request.flush({ cars: [] }));
+		fixture.detectChanges();
 	};
 
 	const showSignedIn = () => {
@@ -97,12 +110,21 @@ describe('App', () => {
 			session: { id: 'session-1' },
 			user: { email: 'owner@example.test' },
 		});
-		http.expectOne('/api/v1/cars').flush({ cars: [] });
-		http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush({ timezone: 'America/Los_Angeles' });
-		fixture.detectChanges();
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			fixture.detectChanges();
+			http
+				.match(() => true)
+				.forEach((request) => {
+					if (request.request.url === '/api/v1/cars')
+						request.flush({ cars: [] });
+					else if (
+						request.request.url === '/api/auth/passkey/list-user-passkeys'
+					)
+						request.flush([]);
+					else if (request.request.url === '/api/v1/preferences/timezone')
+						request.flush({ timezone: 'America/Los_Angeles' });
+				});
+		}
 	};
 
 	const flushDriveSessions = (sessions: unknown[] = []) => {
