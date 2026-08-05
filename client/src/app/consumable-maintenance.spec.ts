@@ -16,7 +16,10 @@ type Harness = {
 	save: () => void;
 	archive: (entry: ConsumableEntry) => void;
 	restore: (entry: ConsumableEntry) => void;
-	form: (() => Record<string, string>) & {
+	form: (() => Record<string, string> & {
+		frontDetails?: string;
+		rearDetails?: string;
+	}) & {
 		set(value: Record<string, string>): void;
 	};
 	entries: (() => ConsumableEntry[]) & { set(value: ConsumableEntry[]): void };
@@ -108,7 +111,7 @@ describe('ConsumableMaintenance', () => {
 			frontDetails: 'Front A',
 			frontCost: 18,
 		});
-		expect(request.request.body['rearDetails']).toBeUndefined();
+		expect(request.request.body.rearDetails).toBeUndefined();
 	});
 
 	it('sends a rear-only tire change without a front snapshot', () => {
@@ -130,7 +133,7 @@ describe('ConsumableMaintenance', () => {
 			rearDetails: 'Rear B',
 			rearCost: 21,
 		});
-		expect(request.request.body['frontDetails']).toBeUndefined();
+		expect(request.request.body.frontDetails).toBeUndefined();
 	});
 
 	it('prefills tire details from the current setup but sends a historical snapshot', () => {
@@ -140,8 +143,8 @@ describe('ConsumableMaintenance', () => {
 		http
 			.expectOne('/api/v1/cars/car-1/setups/current')
 			.flush({ setup: { tires: { front: 'Blue', insert: 'Medium' } } });
-		expect(app.form()['frontDetails']).toContain('front: Blue');
-		expect(app.form()['rearDetails']).toContain('insert: Medium');
+		expect(app.form().frontDetails).toContain('front: Blue');
+		expect(app.form().rearDetails).toContain('insert: Medium');
 		app.form.set({
 			...app.form(),
 			axle: 'front',
@@ -149,8 +152,8 @@ describe('ConsumableMaintenance', () => {
 		});
 		app.save();
 		const request = http.expectOne('/api/v1/cars/car-1/consumable-maintenance');
-		expect(request.request.body['frontDetails']).toContain('front: Blue');
-		expect(request.request.body['rearDetails']).toBeUndefined();
+		expect(request.request.body.frontDetails).toContain('front: Blue');
+		expect(request.request.body.rearDetails).toBeUndefined();
 	});
 
 	it('records a fluid service area and optional cost', () => {
