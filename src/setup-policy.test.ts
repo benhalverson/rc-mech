@@ -14,11 +14,6 @@ test('setup ownership and archived-car policy fail closed', () => {
 	assert.equal(ownsSetup({ carId: 'car-1' }, 'car-1'), true);
 	assert.equal(ownsSetup({ carId: 'car-2' }, 'car-1'), false);
 	assert.equal(ownsSetup(undefined, 'car-1'), false);
-	assert.equal(
-		ownsSetup({ carId: 'car-1' }, 'car-1'),
-		true,
-		'Archived cars remain readable; the write policy below blocks mutation',
-	);
 	assert.equal(canWriteSetup({ archivedAt: null }), true);
 	assert.equal(
 		canWriteSetup({ archivedAt: '2026-08-05T00:00:00.000Z' }),

@@ -127,7 +127,7 @@ describe('SetupSnapshots', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Reading setup history',
 		);
-		http.expectOne('/api/v1/cars/car-1/setups');
+		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
 	});
 
 	it('guides an owner to record the first baseline when history is empty', () => {
