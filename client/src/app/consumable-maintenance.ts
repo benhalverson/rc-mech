@@ -4,6 +4,7 @@ import {
 	ChangeDetectionStrategy,
 	Component,
 	Input,
+	computed,
 	inject,
 	signal,
 } from '@angular/core';
@@ -37,6 +38,23 @@ export type ConsumableEntry = {
 	currency?: string | null;
 	notes?: string | null;
 	deletedAt?: string | null;
+};
+export type TireReport = {
+	front: TireReportAxle;
+	rear: TireReportAxle;
+	spend: {
+		front: number;
+		rear: number;
+		combined: number;
+		missingCostEntries: number;
+	};
+	fluidEntries: ConsumableEntry[];
+};
+export type TireReportAxle = {
+	latest: ConsumableEntry | null;
+	eventCount: number;
+	averageDays: number | null;
+	missingDetails: boolean;
 };
 type MaintenanceResponse = {
 	consumableMaintenance?: ConsumableEntry[];
@@ -75,6 +93,73 @@ const emptyForm = (): EntryForm => ({
 	notes: '',
 });
 
+const isTireEntry = (entry: ConsumableEntry): boolean =>
+	entry.kind === 'tires' && !entry.deletedAt;
+
+const includesAxle = (
+	entry: ConsumableEntry,
+	axle: 'front' | 'rear',
+): boolean => entry.axle === axle || entry.axle === 'both';
+
+const averageIntervalDays = (entries: ConsumableEntry[]): number | null => {
+	if (entries.length < 2) return null;
+	let total = 0;
+	for (let index = 1; index < entries.length; index += 1) {
+		total +=
+			(new Date(entries[index - 1].performedAt).getTime() -
+				new Date(entries[index].performedAt).getTime()) /
+			86400000;
+	}
+	return Math.round((total / (entries.length - 1)) * 10) / 10;
+};
+
+const reportAxle = (
+	entries: ConsumableEntry[],
+	axle: 'front' | 'rear',
+): TireReportAxle => {
+	const events = entries
+		.filter((entry) => includesAxle(entry, axle))
+		.sort((a, b) => b.performedAt.localeCompare(a.performedAt));
+	return {
+		latest: events[0] ?? null,
+		eventCount: events.length,
+		averageDays: averageIntervalDays(events),
+		missingDetails: events.some((entry) =>
+			axle === 'front'
+				? !entry.frontDetails?.trim()
+				: !entry.rearDetails?.trim(),
+		),
+	};
+};
+
+export const buildTireReport = (entries: ConsumableEntry[]): TireReport => {
+	const tires = entries.filter(isTireEntry);
+	const fluidEntries = entries
+		.filter((entry) => entry.kind !== 'tires' && !entry.deletedAt)
+		.sort((a, b) => b.performedAt.localeCompare(a.performedAt));
+	const missingCostEntries = tires.filter((entry) => {
+		const frontMissing =
+			includesAxle(entry, 'front') && entry.frontCost == null;
+		const rearMissing = includesAxle(entry, 'rear') && entry.rearCost == null;
+		return frontMissing || rearMissing;
+	}).length;
+	return {
+		front: reportAxle(tires, 'front'),
+		rear: reportAxle(tires, 'rear'),
+		spend: {
+			front: tires.reduce((total, entry) => total + (entry.frontCost ?? 0), 0),
+			rear: tires.reduce((total, entry) => total + (entry.rearCost ?? 0), 0),
+			combined: tires.reduce(
+				(total, entry) =>
+					total + (entry.frontCost ?? 0) + (entry.rearCost ?? 0),
+				0,
+			),
+			missingCostEntries,
+		},
+		fluidEntries,
+	};
+};
+
 @Component({
 	selector: 'app-consumable-maintenance',
 	standalone: true,
@@ -108,6 +193,7 @@ export class ConsumableMaintenance {
 	protected readonly historyFilter = signal<'active' | 'archived'>('active');
 	protected readonly form = signal<EntryForm>(emptyForm());
 	protected readonly loaded = signal(false);
+	protected readonly report = computed(() => buildTireReport(this.entries()));
 	private isEnabled = false;
 
 	protected load(): void {
@@ -355,6 +441,15 @@ export class ConsumableMaintenance {
 			: entry.fluidArea === 'custom'
 				? entry.customArea || 'Custom area'
 				: (entry.fluidArea ?? '').replaceAll('-', ' ');
+	}
+	protected axleDetails(entry: ConsumableEntry, axle: string): string {
+		const details = axle === 'front' ? entry.frontDetails : entry.rearDetails;
+		return details?.trim() || 'Details not recorded.';
+	}
+	protected axleCost(entry: ConsumableEntry, axle: string): number | null {
+		return axle === 'front'
+			? (entry.frontCost ?? null)
+			: (entry.rearCost ?? null);
 	}
 	protected entryCost(entry: ConsumableEntry): string {
 		const isFluid = entry.kind !== 'tires';
