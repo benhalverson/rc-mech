@@ -28,3 +28,4 @@
     <div class="service-notes"><div class="eyebrow">Record notes</div>@for (record of visibleServiceRecords(); track record.id) { @if (record.notes) { <p><strong>{{ record.performedAt | date:'mediumDate':undefined:timezone }}</strong> · {{ record.notes }}</p> } }</div>
   }
 </section>
+<app-consumable-maintenance [cars]="garage()" [timezone]="timezone" [enabled]="consumablesEnabled"></app-consumable-maintenance>

@@ -316,3 +316,111 @@ export type SetupImportDraftInput = z.infer<typeof setupImportDraftInput>;
 export type SetupImportDraftUpdateInput = z.infer<
 	typeof setupImportDraftUpdateInput
 >;
+
+const costFields = {
+	cost: z.number().finite().nonnegative().max(1_000_000_000),
+	currency: z
+		.string()
+		.regex(/^[A-Za-z]{3}$/)
+		.transform((value) => value.toUpperCase()),
+};
+const tireAxleInput = z
+	.object({
+		details: z
+			.union([
+				z.string().trim().min(1).max(4000),
+				z.record(z.string(), z.unknown()),
+			])
+			.optional(),
+		cost: costFields.cost.optional(),
+		currency: costFields.currency.optional(),
+	})
+	.refine(
+		(value) => (value.cost === undefined) === (value.currency === undefined),
+		'Cost and currency must be supplied together',
+	);
+
+export const consumableKind = z.enum(['fluid', 'tires']);
+export const fluidArea = z.enum([
+	'front-shocks',
+	'rear-shocks',
+	'front-differential',
+	'rear-differential',
+	'custom',
+]);
+const consumableBase = {
+	performedAt: z.string().datetime(),
+	notes: z.string().max(4000).optional(),
+	prefillFromCurrentSetup: z.boolean().optional(),
+};
+export const consumableInput = z
+	.discriminatedUnion('kind', [
+		z.object({
+			...consumableBase,
+			kind: z.literal('fluid'),
+			fluidArea,
+			customFluidArea: z.string().trim().min(1).max(160).optional(),
+			cost: costFields.cost.optional(),
+			currency: costFields.currency.optional(),
+		}),
+		z.object({
+			...consumableBase,
+			kind: z.literal('tires'),
+			front: tireAxleInput.optional(),
+			rear: tireAxleInput.optional(),
+		}),
+	])
+	.superRefine((value, context) => {
+		if (value.kind === 'fluid') {
+			if (value.fluidArea === 'custom' && !value.customFluidArea)
+				context.addIssue({
+					code: 'custom',
+					message: 'Custom fluid area is required',
+					path: ['customFluidArea'],
+				});
+			if (value.fluidArea !== 'custom' && value.customFluidArea)
+				context.addIssue({
+					code: 'custom',
+					message: 'Custom fluid area is only valid for custom',
+					path: ['customFluidArea'],
+				});
+			if ((value.cost === undefined) !== (value.currency === undefined))
+				context.addIssue({
+					code: 'custom',
+					message: 'Cost and currency must be supplied together',
+					path: ['cost'],
+				});
+		} else if (!value.front && !value.rear && !value.prefillFromCurrentSetup)
+			context.addIssue({
+				code: 'custom',
+				message: 'A front or rear tire set is required',
+				path: ['front'],
+			});
+	});
+export const consumableUpdateInput = z
+	.object({
+		performedAt: z.string().datetime().optional(),
+		notes: z.string().max(4000).nullable().optional(),
+		fluidArea: fluidArea.optional(),
+		customFluidArea: z.string().trim().min(1).max(160).nullable().optional(),
+		cost: costFields.cost.nullable().optional(),
+		currency: costFields.currency.nullable().optional(),
+		front: tireAxleInput.nullable().optional(),
+		rear: tireAxleInput.nullable().optional(),
+	})
+	.refine(
+		(value) => Object.keys(value).length > 0,
+		'At least one consumable field is required',
+	)
+	.refine(
+		(value) =>
+			(value.cost === undefined && value.currency === undefined) ||
+			(value.cost === null && value.currency === null) ||
+			(value.cost !== undefined &&
+				value.cost !== null &&
+				value.currency !== undefined &&
+				value.currency !== null),
+		'Cost and currency must be supplied together',
+	);
+export type ConsumableInput = z.infer<typeof consumableInput>;
+export type ConsumableUpdateInput = z.infer<typeof consumableUpdateInput>;
