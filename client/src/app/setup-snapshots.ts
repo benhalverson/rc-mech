@@ -264,6 +264,8 @@ export class SetupSnapshots {
 
 	protected readonly selected = () =>
 		this.setups().find((setup) => setup.id === this.selectedId()) ?? null;
+	protected readonly copySource = () =>
+		this.setups().find((setup) => setup.current) ?? this.setups()[0] ?? null;
 
 	constructor() {
 		effect(() => this.load(this.carId()));
@@ -302,6 +304,11 @@ export class SetupSnapshots {
 		this.form.set(emptyForm());
 		this.formError.set('');
 		this.editing.set(true);
+	}
+
+	protected copyPrevious(): void {
+		const source = this.copySource();
+		if (source) this.copySetup(source);
 	}
 
 	protected updateImportUrl(value: string): void {
@@ -467,6 +474,10 @@ export class SetupSnapshots {
 
 	protected copy(): void {
 		const setup = this.selected();
+		if (setup) this.copySetup(setup);
+	}
+
+	private copySetup(setup: SetupSnapshot): void {
 		if (!setup || this.archived() || this.action()) return;
 		this.action.set('copy');
 		this.service.copy(this.carId(), setup.id).subscribe({
