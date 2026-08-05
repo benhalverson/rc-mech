@@ -236,8 +236,17 @@ const setupContext = {
 	unmappedValues: setupSection.optional(),
 };
 
+const nullableSetupContext = Object.fromEntries(
+	Object.entries(setupContext).map(([key, value]) => [
+		key,
+		key === 'name' || key === 'status'
+			? value
+			: (value as z.ZodTypeAny).nullable().optional(),
+	]),
+) as typeof setupContext;
+
 export const setupInput = z.object({
-	...setupContext,
+	...nullableSetupContext,
 	makeCurrent: z.boolean().optional(),
 });
 export type SetupInput = z.infer<typeof setupInput>;
@@ -245,9 +254,13 @@ export type SetupInput = z.infer<typeof setupInput>;
 export const setupUpdateInput = z
 	.object({
 		...Object.fromEntries(
-			Object.entries(setupContext).map(([key, value]) => [
+			Object.entries(nullableSetupContext).map(([key, value]) => [
 				key,
-				(value as z.ZodTypeAny).nullable().optional(),
+				key === 'name' || key === 'status'
+					? (
+							setupContext[key as keyof typeof setupContext] as z.ZodTypeAny
+						).optional()
+					: value,
 			]),
 		),
 	})

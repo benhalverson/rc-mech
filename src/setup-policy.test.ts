@@ -45,4 +45,12 @@ test('current selection and source metadata are explicit contracts', () => {
 		}).success,
 		true,
 	);
+	assert.equal(
+		setupInput.safeParse({ name: 'Clearable', track: null }).success,
+		true,
+	);
+	assert.equal(
+		setupInput.safeParse({ name: 'Invalid', status: null }).success,
+		false,
+	);
 });

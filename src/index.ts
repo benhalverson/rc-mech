@@ -210,7 +210,7 @@ const publicSetup = (value: typeof setup.$inferSelect, current = false) => ({
 		shocks: jsonValue(value.shocks) ?? {},
 		frontSuspension: jsonValue(value.frontSuspension) ?? {},
 		rearSuspension: jsonValue(value.rearSuspension) ?? {},
-		notes: value.notes ? { text: value.notes } : {},
+		notes: value.notes ? { setupNotes: value.notes } : {},
 	},
 	notes: value.notes,
 	source: {
@@ -222,7 +222,12 @@ const publicSetup = (value: typeof setup.$inferSelect, current = false) => ({
 					null)
 				: null,
 		pdfTitle: value.sourcePdfReference,
-		pdfPage: null,
+		pdfPage:
+			typeof jsonValue(value.sourceMetadata) === 'object' &&
+			jsonValue(value.sourceMetadata) !== null
+				? ((jsonValue(value.sourceMetadata) as { pdfPage?: number }).pdfPage ??
+					null)
+				: null,
 		metadata: jsonValue(value.sourceMetadata),
 	},
 	copiedFromSetupId: value.copiedFromId,
@@ -611,9 +616,8 @@ app.get('/api/v1/cars/:carId/setups/current', async (c) => {
 
 app.get('/api/v1/cars/:carId/setups', async (c) => {
 	const carId = c.req.param('carId');
-	if (!(await ownedCar(c, carId)))
-		return c.json({ error: 'Car not found' }, 404);
 	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
 	const values = await db(c.env)
 		.select()
 		.from(setup)
@@ -694,6 +698,7 @@ app.patch('/api/v1/cars/:carId/setups/:setupId', async (c) => {
 	await db(c.env)
 		.update(setup)
 		.set({
+			name: value.name,
 			status: value.status,
 			setupDate:
 				value.setupDate === undefined
