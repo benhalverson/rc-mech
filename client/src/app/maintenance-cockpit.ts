@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { forkJoin } from 'rxjs';
+import { ConsumableMaintenance } from './consumable-maintenance';
 
 export type MaintenanceCar = {
 	id: string;
@@ -151,13 +152,14 @@ export const calculatePlanState = (
 @Component({
 	selector: 'app-maintenance-cockpit',
 	standalone: true,
-	imports: [CommonModule, DatePipe, FormsModule],
+	imports: [CommonModule, DatePipe, FormsModule, ConsumableMaintenance],
 	templateUrl: './maintenance-cockpit.html',
 	styleUrl: './maintenance-cockpit.css',
 	changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MaintenanceCockpit {
 	private readonly http = inject(HttpClient);
+	@Input() consumablesEnabled = false;
 	@Input() set cars(value: MaintenanceCar[]) {
 		const wasEmpty = this.garage().length === 0;
 		this.garage.set(value);
