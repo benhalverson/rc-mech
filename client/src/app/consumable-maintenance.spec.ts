@@ -7,6 +7,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import {
 	ConsumableMaintenance,
 	ConsumableEntry,
+	buildTireReport,
 } from './consumable-maintenance';
 
 type Harness = {
@@ -26,6 +27,89 @@ type Harness = {
 };
 
 describe('ConsumableMaintenance', () => {
+	it('reports empty history descriptively', () => {
+		const report = buildTireReport([]);
+		expect(report.front.latest).toBeNull();
+		expect(report.front.averageDays).toBeNull();
+		expect(report.spend.combined).toBe(0);
+		expect(report.fluidEntries).toEqual([]);
+	});
+
+	it('reports one front event without inventing a frequency', () => {
+		const entry = tire('front-1', '2026-08-01', 'front', 'Front tire');
+		const report = buildTireReport([entry]);
+		expect(report.front.latest?.id).toBe('front-1');
+		expect(report.front.eventCount).toBe(1);
+		expect(report.front.averageDays).toBeNull();
+	});
+
+	it('calculates independent front and rear frequency from multiple events', () => {
+		const report = buildTireReport([
+			tire('front-new', '2026-08-21', 'front', 'Front newer', 30),
+			tire(
+				'rear-new',
+				'2026-08-16',
+				'rear',
+				undefined,
+				undefined,
+				'Rear newer',
+				40,
+			),
+			tire('front-old', '2026-08-01', 'front', 'Front older', 20),
+			tire(
+				'rear-old',
+				'2026-08-01',
+				'rear',
+				undefined,
+				undefined,
+				'Rear older',
+				25,
+			),
+		]);
+		expect(report.front.latest?.id).toBe('front-new');
+		expect(report.rear.latest?.id).toBe('rear-new');
+		expect(report.front.averageDays).toBe(20);
+		expect(report.rear.averageDays).toBe(15);
+		expect(report.spend).toMatchObject({ front: 50, rear: 65, combined: 115 });
+	});
+
+	it('counts a both-axle entry once for each axle and separates spend', () => {
+		const report = buildTireReport([
+			tire('both-1', '2026-08-10', 'both', 'Front set', 31, 'Rear set', 37),
+		]);
+		expect(report.front.eventCount).toBe(1);
+		expect(report.rear.eventCount).toBe(1);
+		expect(report.spend).toMatchObject({ front: 31, rear: 37, combined: 68 });
+	});
+
+	it('keeps recorded spend while identifying missing cost and mixed details', () => {
+		const report = buildTireReport([
+			tire('mixed', '2026-08-10', 'both', '', 30, 'Rear set'),
+			tire(
+				'rear-only',
+				'2026-08-01',
+				'rear',
+				undefined,
+				undefined,
+				'Rear older',
+			),
+		]);
+		expect(report.spend.combined).toBe(30);
+		expect(report.spend.missingCostEntries).toBe(2);
+		expect(report.front.missingDetails).toBe(true);
+		expect(report.rear.missingDetails).toBe(false);
+	});
+
+	it('keeps fluid history beside tire reporting', () => {
+		const report = buildTireReport([
+			fluid('fluid-1', '2026-08-02', 'front-shocks'),
+			tire('tire-1', '2026-08-01', 'front', 'Front set'),
+		]);
+		expect(report.fluidEntries.map((entry) => entry.fluidArea)).toEqual([
+			'front-shocks',
+		]);
+	});
+
 	let fixture: ComponentFixture<ConsumableMaintenance>;
 	let http: HttpTestingController;
 	const car = { id: 'car-1', name: 'Red Runner', archivedAt: null };
@@ -203,3 +287,39 @@ describe('ConsumableMaintenance', () => {
 		expect(app.entries()[0].deletedAt).toBeUndefined();
 	});
 });
+
+function tire(
+	id: string,
+	performedAt: string,
+	axle: 'front' | 'rear' | 'both',
+	frontDetails?: string,
+	frontCost?: number,
+	rearDetails?: string,
+	rearCost?: number,
+): ConsumableEntry {
+	return {
+		id,
+		carId: 'car-1',
+		kind: 'tires',
+		performedAt: `${performedAt}T00:00:00.000Z`,
+		axle,
+		frontDetails,
+		frontCost,
+		rearDetails,
+		rearCost,
+	};
+}
+
+function fluid(
+	id: string,
+	performedAt: string,
+	fluidArea: ConsumableEntry['fluidArea'],
+): ConsumableEntry {
+	return {
+		id,
+		carId: 'car-1',
+		kind: 'shock-fluid',
+		performedAt: `${performedAt}T00:00:00.000Z`,
+		fluidArea,
+	};
+}
