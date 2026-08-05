@@ -120,7 +120,7 @@
 	margin: 7px 0 0;
 }
 .report-warning {
-	color: var(--accent) !important;
+	color: var(--accent);
 	font-size: 0.86rem;
 }
 .spend-strip {
