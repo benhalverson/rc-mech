@@ -10,7 +10,7 @@ trap 'rm -f "$response_file"' EXIT
 
 test -f wrangler.jsonc
 test -f public/.gitkeep
-pnpm exec wrangler deploy --dry-run --x-provision=false
+pnpm exec wrangler deploy --dry-run
 
 if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 	: "${RC_MECH_DEPLOYED_URL:?RC_MECH_DEPLOYED_URL is required for release acceptance}"
