@@ -22,12 +22,40 @@ _Avoid_: Mount, location
 
 ## Driving and maintenance
 
+**Setup**:
+A recorded configuration of a car for a particular baseline, track, event, or driving condition. A setup contains the practical tuning values and context used to prepare or drive the car; it is not an inventory of every physical component.
+_Avoid_: Build, component inventory, configuration
+
+**Setup import**:
+A setup created from an external setup-sheet link and reviewed by the owner before it becomes part of the garage history.
+_Avoid_: Automatic sync, scrape
+
+**Current setup**:
+The setup an owner is using as the starting point for the next change. A car can have many setups, but only one needs to be current at a time.
+_Avoid_: Permanent setup, active component list
+
 **Drive session**:
 A recorded occasion on which an owner drives a car, including the conditions and usage that matter for maintenance.
 _Avoid_: Run, outing, trip
 
+**Consumable maintenance entry**:
+A record of replacing or servicing something whose condition or life matters to driving, such as a front or rear tire set, shock fluid, or differential fluid.
+_Avoid_: Component record, work order
+
+**Tire set**:
+The matched pair of tires installed on one axle, either front or rear. Tire maintenance is recorded per axle set and never as individual tires.
+_Avoid_: Tire, wheel, individual tire
+
+**Maintenance history**:
+The chronological record of consumable maintenance entries for a car, including when tires or fluids were changed and any cost or service detail worth remembering.
+_Avoid_: Maintenance schedule, due list
+
+**Tire report**:
+A summary of tire-set changes by axle, including last change, replacement frequency, and spend.
+_Avoid_: Tire inventory, tire rotation
+
 **Maintenance plan**:
-A recurring care rule for an installed component, expressed in calendar time, drive sessions, or both.
+A recurring care rule for an installed component, expressed in calendar time, drive sessions, or both. It remains part of the broader garage language, but it is not required for the setup-focused consumable history.
 _Avoid_: Reminder, task, schedule
 
 **Service record**:
