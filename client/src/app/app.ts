@@ -834,6 +834,20 @@ export class App {
 		this.carView.set('detail');
 	}
 
+	protected openCreateCarFromImport(identity: {
+		name: string;
+		make: string;
+		model: string;
+	}): void {
+		this.openCreateCar();
+		this.carForm.set({
+			...emptyCarForm(),
+			name: identity.name,
+			make: identity.make,
+			model: identity.model,
+		});
+	}
+
 	protected openCar(car: Car): void {
 		this.selectedCarId.set(car.id);
 		this.carFormError.set('');

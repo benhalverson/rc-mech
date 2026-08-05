@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, throwError } from 'rxjs';
 
 export const setupSectionKeys = [
 	'vehicle',
@@ -76,6 +76,63 @@ export type SetupSnapshotPayload = {
 	unmappedValues?: Record<string, unknown> | null;
 	makeCurrent?: boolean;
 };
+
+export type ImportCarOption = {
+	id: string;
+	name: string;
+	make?: string | null;
+	model?: string | null;
+	archivedAt?: string | null;
+};
+
+export type SoDialedImportPreview = {
+	source: SetupSource & { title?: string | null };
+	carIdentity: {
+		make?: string | null;
+		model?: string | null;
+		name?: string | null;
+	};
+	context: SetupContext;
+	sections: SetupSections;
+	uncertainValues: Record<string, unknown>;
+	unmappedValues: Record<string, unknown>;
+	rawValues: Record<string, unknown>;
+	duplicate?: {
+		setupId: string;
+		name: string;
+		createdAt?: string;
+	} | null;
+};
+
+@Injectable({ providedIn: 'root' })
+export class SoDialedImporterClient {
+	private readonly http = inject(HttpClient);
+
+	static isSupportedUrl(value: string): boolean {
+		try {
+			const url = new URL(value.trim());
+			return (
+				url.protocol === 'https:' &&
+				(url.hostname === 'sodialed.com' ||
+					url.hostname.endsWith('.sodialed.com')) &&
+				url.pathname !== '/'
+			);
+		} catch {
+			return false;
+		}
+	}
+
+	preview(url: string): Observable<SoDialedImportPreview> {
+		if (!SoDialedImporterClient.isSupportedUrl(url)) {
+			return throwError(() => new Error('Enter a supported So Dialed URL.'));
+		}
+		return this.http.post<SoDialedImportPreview>(
+			'/api/v1/setup-imports/preview',
+			{ url: url.trim() },
+			{ withCredentials: true },
+		);
+	}
+}
 
 type SetupsResponse = { setups: SetupSnapshot[] };
 type SetupResponse = { setup: SetupSnapshot };

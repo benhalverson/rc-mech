@@ -8,6 +8,20 @@
   </div>
   <p class="section-intro">Keep each baseline intact. Copy the setup you are starting from, then change only what the next run needs.</p>
   @if (archived()) { <p class="archive-note">This car is archived. Setup history remains available, but snapshots cannot be changed.</p> }
+  @if (!archived()) {
+    <form class="import-strip" (ngSubmit)="previewImport()" aria-labelledby="import-setup-title">
+      <div>
+        <div class="eyebrow">Reviewed source import</div>
+        <h5 id="import-setup-title">Bring a So Dialed sheet to the bench.</h5>
+        <p>Paste a supported setup URL. The importer returns a draft for you to check; it never writes a snapshot by itself.</p>
+      </div>
+      <div class="import-controls">
+        <label class="wide">So Dialed setup URL <input name="sodialed-url" type="url" required placeholder="https://sodialed.com/…" [ngModel]="importUrl()" (ngModelChange)="updateImportUrl($event)" /></label>
+        <button class="button" type="submit" [disabled]="importState() === 'loading'">{{ importState() === 'loading' ? 'Reading sheet…' : 'Review setup' }}</button>
+      </div>
+      @if (importError()) { <p class="message" role="alert">{{ importError() }}</p> }
+    </form>
+  }
   @if (error()) { <p class="message" role="alert">{{ error() }} <button class="text-button" type="button" (click)="retry()">Try again</button></p> }
 
   @if (state() === 'loading') {
@@ -30,8 +44,26 @@
 
       @if (editing()) {
         <form class="setup-editor" (ngSubmit)="save()" aria-labelledby="setup-editor-title">
-          <div class="eyebrow">{{ mode() === 'edit' ? 'Edit snapshot' : 'New snapshot' }}</div>
-          <h5 id="setup-editor-title">{{ mode() === 'edit' ? 'Tune the setup record.' : 'Put a baseline on the bench.' }}</h5>
+          @if (importPreview(); as preview) {
+            <div class="review-banner">
+              <div class="eyebrow">Import review draft</div>
+              <h5 id="setup-editor-title">Check the sheet before saving a new snapshot.</h5>
+              <p><strong>{{ preview.carIdentity.make || 'Unknown make' }} {{ preview.carIdentity.model || 'vehicle identity' }}</strong> · {{ preview.context.track || 'Track not recorded' }} · {{ preview.context.condition || 'Condition not recorded' }}</p>
+              @if (preview.duplicate; as duplicate) { <p class="duplicate-notice">This source was already imported as “{{ duplicate.name }}”. Saving will create another snapshot and will not change that record.</p> }
+              <div class="import-car-choice">
+                <label>Save to car
+                  <select name="import-car" [ngModel]="importCarId()" (ngModelChange)="selectImportCar($event)">
+                    @for (car of availableCars(); track car.id) { <option [value]="car.id">{{ car.name }}{{ car.make || car.model ? ' · ' + (car.make || '') + ' ' + (car.model || '') : '' }}</option> }
+                  </select>
+                </label>
+                <button class="text-button" type="button" (click)="requestCreateCar()">Create a car from this identity</button>
+              </div>
+              <div class="review-counts"><span>{{ importValueCount(preview.sections.vehicle) + importValueCount(preview.sections.drivetrain) + importValueCount(preview.sections.electronics) + importValueCount(preview.sections.tires) + importValueCount(preview.sections.shocks) + importValueCount(preview.sections.frontSuspension) + importValueCount(preview.sections.rearSuspension) }} mapped values</span><span>{{ importValueCount(preview.uncertainValues) }} uncertain</span><span>{{ importValueCount(preview.unmappedValues) }} unmapped</span></div>
+            </div>
+          } @else {
+            <div class="eyebrow">{{ mode() === 'edit' ? 'Edit snapshot' : 'New snapshot' }}</div>
+            <h5 id="setup-editor-title">{{ mode() === 'edit' ? 'Tune the setup record.' : 'Put a baseline on the bench.' }}</h5>
+          }
           @if (formError()) { <p class="message" role="alert">{{ formError() }}</p> }
           <div class="form-grid">
             <label class="wide">Setup name <input name="setup-name" required maxlength="160" placeholder="Outdoor clay baseline" [ngModel]="form().name" (ngModelChange)="updateField('name', $event)" /></label>
@@ -58,9 +90,10 @@
             <label>Original PDF URL <input name="setup-pdf-url" type="url" placeholder="https://…" [ngModel]="form().pdfUrl" (ngModelChange)="updateField('pdfUrl', $event)" /></label>
             <label>PDF title / reference <input name="setup-pdf-title" maxlength="240" placeholder="Setup sheet, page 2" [ngModel]="form().pdfTitle" (ngModelChange)="updateField('pdfTitle', $event)" /></label>
             <label>PDF page <input name="setup-pdf-page" type="number" min="1" step="1" placeholder="Optional" [ngModel]="form().pdfPage" (ngModelChange)="updateField('pdfPage', $event)" /></label>
-            <label class="wide">Unmapped or raw values <textarea name="setup-unmapped" rows="5" placeholder="Paste JSON or notes that still need review…" [ngModel]="form().unmappedValues" (ngModelChange)="updateField('unmappedValues', $event)"></textarea></label>
+            <label class="wide">Uncertain or unmapped values <textarea name="setup-unmapped" rows="5" placeholder="Values that still need review…" [ngModel]="form().unmappedValues" (ngModelChange)="updateField('unmappedValues', $event)"></textarea></label>
+            <label class="wide">Raw source values <textarea name="setup-raw" rows="5" placeholder="The original extracted values are retained here…" [ngModel]="form().rawValues" (ngModelChange)="updateField('rawValues', $event)"></textarea></label>
           </div></fieldset>
-          <div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">{{ action() === 'save' ? 'Saving…' : 'Save snapshot' }}</button><button class="button quiet" type="button" (click)="cancelEdit()" [disabled]="action() !== null">Cancel</button></div>
+          <div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">{{ action() === 'save' ? 'Saving…' : importPreview() ? 'Save as new snapshot' : 'Save snapshot' }}</button><button class="button quiet" type="button" (click)="importPreview() ? cancelImport() : cancelEdit()" [disabled]="action() !== null">Cancel</button></div>
         </form>
       } @else if (selected(); as setup) {
         <article class="setup-detail" aria-labelledby="selected-setup-title">

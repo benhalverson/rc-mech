@@ -5,22 +5,27 @@ import {
 	effect,
 	inject,
 	input,
+	output,
 	signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
+	ImportCarOption,
 	SetupSectionKey,
 	SetupSections,
 	SetupSectionValues,
 	SetupSnapshot,
 	SetupSnapshotPayload,
 	SetupSnapshotService,
+	SoDialedImporterClient,
+	SoDialedImportPreview,
 	setupSectionKeys,
 } from './setup-snapshot';
 
 type SetupState = 'loading' | 'ready' | 'error';
 type SetupMode = 'add' | 'edit';
 type SetupAction = 'save' | 'copy' | 'current' | null;
+type ImportState = 'idle' | 'loading' | 'review' | 'error';
 
 type SetupForm = {
 	name: string;
@@ -38,6 +43,7 @@ type SetupForm = {
 	pdfPage: string;
 	sections: SetupSections;
 	unmappedValues: string;
+	rawValues: string;
 };
 
 const sectionLabels: Record<SetupSectionKey, string> = {
@@ -86,6 +92,7 @@ const emptyForm = (): SetupForm => ({
 	pdfPage: '',
 	sections: emptySections(),
 	unmappedValues: '',
+	rawValues: '',
 });
 
 const formFrom = (setup: SetupSnapshot): SetupForm => ({
@@ -107,6 +114,39 @@ const formFrom = (setup: SetupSnapshot): SetupForm => ({
 	unmappedValues: setup.unmappedValues
 		? JSON.stringify(setup.unmappedValues, null, 2)
 		: '',
+	rawValues: setup.rawValues ? JSON.stringify(setup.rawValues, null, 2) : '',
+});
+
+const formFromImport = (
+	preview: SoDialedImportPreview,
+	url: string,
+): SetupForm => ({
+	...emptyForm(),
+	name:
+		preview.source.title?.trim() ||
+		[preview.carIdentity.make, preview.carIdentity.model]
+			.filter(Boolean)
+			.join(' ') ||
+		'Imported setup',
+	recordedAt: preview.context.recordedAt?.slice(0, 10) ?? '',
+	track: preview.context.track ?? '',
+	event: preview.context.event ?? '',
+	surface: preview.context.surface ?? '',
+	traction: preview.context.traction ?? '',
+	moisture: preview.context.moisture ?? '',
+	condition: preview.context.condition ?? '',
+	temperature: preview.context.temperature ?? '',
+	sourceUrl: preview.source.url ?? url,
+	pdfUrl: preview.source.pdfUrl ?? '',
+	pdfTitle: preview.source.pdfTitle ?? preview.source.title ?? '',
+	pdfPage: preview.source.pdfPage == null ? '' : String(preview.source.pdfPage),
+	sections: preview.sections,
+	unmappedValues: JSON.stringify(
+		{ uncertain: preview.uncertainValues, unmapped: preview.unmappedValues },
+		null,
+		2,
+	),
+	rawValues: JSON.stringify(preview.rawValues, null, 2),
 });
 
 const optionalRecord = (values: Record<string, string | null>) =>
@@ -129,6 +169,16 @@ const payloadFrom = (form: SetupForm): SetupSnapshotPayload => {
 				unmappedValues = parsed as Record<string, unknown>;
 		} catch {
 			unmappedValues = { raw: form.unmappedValues.trim() };
+		}
+	}
+	let rawValues: Record<string, unknown> | null = null;
+	if (form.rawValues?.trim()) {
+		try {
+			const parsed: unknown = JSON.parse(form.rawValues);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+				rawValues = parsed as Record<string, unknown>;
+		} catch {
+			rawValues = { raw: form.rawValues.trim() };
 		}
 	}
 	return {
@@ -155,7 +205,7 @@ const payloadFrom = (form: SetupForm): SetupSnapshotPayload => {
 		sourcePdfReference: form.pdfTitle.trim() || null,
 		sourceMetadata,
 		unmappedValues,
-		rawValues: unmappedValues,
+		rawValues,
 	};
 };
 
@@ -168,8 +218,15 @@ const payloadFrom = (form: SetupForm): SetupSnapshotPayload => {
 })
 export class SetupSnapshots {
 	private readonly service = inject(SetupSnapshotService);
+	private readonly importer = inject(SoDialedImporterClient);
 	readonly carId = input.required<string>();
 	readonly archived = input(false);
+	readonly availableCars = input<ImportCarOption[]>([]);
+	readonly createCarFromImport = output<{
+		name: string;
+		make: string;
+		model: string;
+	}>();
 	protected readonly setups = signal<SetupSnapshot[]>([]);
 	protected readonly selectedId = signal<string | null>(null);
 	protected readonly state = signal<SetupState>('loading');
@@ -179,6 +236,11 @@ export class SetupSnapshots {
 	protected readonly action = signal<SetupAction>(null);
 	protected readonly form = signal<SetupForm>(emptyForm());
 	protected readonly formError = signal('');
+	protected readonly importUrl = signal('');
+	protected readonly importState = signal<ImportState>('idle');
+	protected readonly importError = signal('');
+	protected readonly importPreview = signal<SoDialedImportPreview | null>(null);
+	protected readonly importCarId = signal('');
 	protected readonly sectionKeys = setupSectionKeys;
 	protected readonly sectionLabels = sectionLabels;
 	protected readonly sectionFields = sectionFields;
@@ -225,6 +287,68 @@ export class SetupSnapshots {
 		this.editing.set(true);
 	}
 
+	protected updateImportUrl(value: string): void {
+		this.importUrl.set(value);
+	}
+
+	protected previewImport(): void {
+		const url = this.importUrl().trim();
+		this.importError.set('');
+		if (!SoDialedImporterClient.isSupportedUrl(url)) {
+			this.importState.set('error');
+			this.importError.set(
+				'Paste a supported So Dialed URL, including https://.',
+			);
+			return;
+		}
+		if (this.archived()) return;
+		this.importState.set('loading');
+		this.importer.preview(url).subscribe({
+			next: (preview) => {
+				this.importPreview.set(preview);
+				this.importCarId.set(this.carId());
+				this.mode.set('add');
+				this.form.set(formFromImport(preview, url));
+				this.formError.set('');
+				this.editing.set(true);
+				this.importState.set('review');
+			},
+			error: (error: unknown) => {
+				this.importState.set('error');
+				this.importError.set(
+					error instanceof Error && error.message
+						? error.message
+						: 'That source could not be read. Check the link and try again.',
+				);
+			},
+		});
+	}
+
+	protected cancelImport(): void {
+		this.importPreview.set(null);
+		this.importState.set('idle');
+		this.importError.set('');
+		this.importUrl.set('');
+		this.cancelEdit();
+	}
+
+	protected selectImportCar(carId: string): void {
+		this.importCarId.set(carId);
+	}
+
+	protected requestCreateCar(): void {
+		const identity = this.importPreview()?.carIdentity;
+		if (!identity) return;
+		this.createCarFromImport.emit({
+			name:
+				identity.name ||
+				[identity.make, identity.model].filter(Boolean).join(' ') ||
+				'Imported car',
+			make: identity.make ?? '',
+			model: identity.model ?? '',
+		});
+	}
+
 	protected openEdit(): void {
 		const setup = this.selected();
 		if (!setup || this.archived()) return;
@@ -266,17 +390,28 @@ export class SetupSnapshots {
 		if (this.action()) return;
 		this.action.set('save');
 		this.formError.set('');
-		const setup = this.selected();
+		const setup = this.importPreview() ? null : this.selected();
+		const targetCarId = this.importCarId() || this.carId();
 		const request =
 			this.mode() === 'edit' && setup
 				? this.service.update(this.carId(), setup.id, payloadFrom(form))
-				: this.service.create(this.carId(), payloadFrom(form));
+				: this.service.create(targetCarId, {
+						...payloadFrom(form),
+						status: this.importPreview() ? 'reviewed' : undefined,
+					});
 		request.subscribe({
 			next: ({ setup: saved }) => {
 				this.editing.set(false);
 				this.action.set(null);
-				this.replaceSetup(saved);
-				this.selectedId.set(saved.id);
+				this.importPreview.set(null);
+				this.importState.set('idle');
+				this.importUrl.set('');
+				if (targetCarId === this.carId()) {
+					this.replaceSetup(saved);
+					this.selectedId.set(saved.id);
+				} else {
+					this.error.set('Imported setup saved to the selected car.');
+				}
 			},
 			error: () => {
 				this.action.set(null);
@@ -329,6 +464,10 @@ export class SetupSnapshots {
 		return field
 			.replace(/([A-Z])/g, ' $1')
 			.replace(/^./, (letter) => letter.toUpperCase());
+	}
+
+	protected importValueCount(values: Record<string, unknown>): number {
+		return Object.keys(values).length;
 	}
 
 	protected sectionHasValues(section: SetupSectionValues): boolean {
