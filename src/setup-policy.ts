@@ -24,13 +24,20 @@ export type SetupCandidate = {
 export const chooseCopySource = <T extends SetupCandidate>(
 	candidates: readonly T[],
 	currentSetupId?: string | null,
-): T | undefined =>
-	candidates.find((candidate) => candidate.id === currentSetupId) ??
-	[...candidates].sort(
-		(a, b) =>
-			b.updatedAt.localeCompare(a.updatedAt) ||
-			b.createdAt.localeCompare(a.createdAt),
-	)[0];
+): T | undefined => {
+	let latest: T | undefined;
+	for (const candidate of candidates) {
+		if (candidate.id === currentSetupId) return candidate;
+		if (
+			!latest ||
+			candidate.updatedAt.localeCompare(latest.updatedAt) > 0 ||
+			(candidate.updatedAt === latest.updatedAt &&
+				candidate.createdAt.localeCompare(latest.createdAt) > 0)
+		)
+			latest = candidate;
+	}
+	return latest;
+};
 
 export const shouldSelectCurrentSetup = (makeCurrent = false): boolean =>
 	makeCurrent;
