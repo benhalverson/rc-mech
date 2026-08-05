@@ -1,3 +1,4 @@
+<div class="route-announcement" aria-live="polite" aria-atomic="true">{{ routeAnnouncement() }}</div>
 @if (state() === 'checking') {
   <main class="access-shell" aria-live="polite">
     <div class="eyebrow">RC Mech / Field notebook</div>
@@ -45,7 +46,7 @@
       <a class="nav-docs" href="/api/docs">API notes ↗</a>
     </mat-sidenav>
     <mat-sidenav-content>
-  <main>
+  <main tabindex="-1" [attr.aria-busy]="routeLoading()">
     <header>
       <button class="nav-toggle" type="button" (click)="navOpen.set(true)" aria-label="Open workspace navigation">☰</button>
       <div>

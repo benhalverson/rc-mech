@@ -1,0 +1,66 @@
+:host {
+	display: block;
+}
+.garage-workspace {
+	border-top: 1px solid var(--line);
+	padding-top: 28px;
+	outline: none;
+}
+.garage-toolbar {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	margin: 26px 0 12px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--line);
+	color: var(--muted);
+}
+.garage-toolbar strong {
+	color: var(--accent);
+	font:
+		700 1.45rem Georgia,
+		serif;
+	margin-right: 7px;
+}
+.garage-toolbar button,
+.state-card button {
+	background: transparent;
+	border: 1px solid var(--accent);
+	color: var(--accent);
+	padding: 8px 12px;
+	font: inherit;
+	cursor: pointer;
+}
+.state-card {
+	display: grid;
+	gap: 8px;
+	min-height: 180px;
+	align-content: center;
+	padding: 28px;
+	border: 1px dashed var(--line);
+	color: var(--muted);
+}
+.state-card h3,
+.state-card p {
+	margin: 0;
+}
+.car-list {
+	border-top: 1px solid var(--line);
+}
+.car-row {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 20px 0;
+	border-bottom: 1px solid var(--line);
+	color: var(--ink);
+	text-decoration: none;
+}
+.car-row span {
+	color: var(--muted);
+	font-size: 0.8rem;
+}
+.car-row:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+}

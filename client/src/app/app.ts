@@ -1,13 +1,7 @@
 import { BreakpointObserver } from '@angular/cdk/layout';
 import { DatePipe, TitleCasePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import {
-	ChangeDetectionStrategy,
-	Component,
-	computed,
-	inject,
-	signal,
-} from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
@@ -15,6 +9,7 @@ import { filter, firstValueFrom } from 'rxjs';
 import { CarPhotoGallery } from './car-photo-gallery';
 import { MaintenanceCockpit } from './maintenance-cockpit';
 import { SetupSnapshots } from './setup-snapshots';
+import { RouteTransitionAnnouncer } from './route-transition-announcer';
 
 type Car = {
 	id: string;
@@ -385,10 +380,10 @@ const carPayload = (form: CarForm): Record<string, string> => {
 	],
 	templateUrl: './app.html',
 	styleUrl: './app.css',
-	changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
 	private readonly http = inject(HttpClient);
+	private readonly routeTransition = inject(RouteTransitionAnnouncer);
 	private readonly router = inject(Router, { optional: true });
 	private readonly breakpointObserver = inject(BreakpointObserver, {
 		optional: true,
@@ -398,6 +393,17 @@ export class App {
 	protected readonly email = signal('');
 	protected readonly requestState = signal<'idle' | 'sending' | 'sent'>('idle');
 	protected readonly message = signal('');
+	private readonly returnTo =
+		typeof window === 'undefined'
+			? '/garage'
+			: (() => {
+					const value = new URL(window.location.href).searchParams.get(
+						'returnTo',
+					);
+					return value?.startsWith('/') && !value.startsWith('//')
+						? value
+						: '/garage';
+				})();
 	protected readonly activeCars = signal('—');
 	protected readonly cars = signal<Car[]>([]);
 	protected readonly carState = signal<CarState>('loading');
@@ -496,6 +502,8 @@ export class App {
 	protected readonly currentUrl = signal(
 		typeof window === 'undefined' ? '/garage' : window.location.pathname,
 	);
+	protected readonly routeLoading = this.routeTransition.loading;
+	protected readonly routeAnnouncement = this.routeTransition.announcement;
 	protected readonly legacyMode = computed(() => {
 		const url = this.currentUrl();
 		return !url || url === '/';
@@ -751,6 +759,8 @@ export class App {
 					this.loadCars();
 					this.loadPasskeys();
 					this.loadTimezone();
+					if (this.currentUrl().startsWith('/sign-in'))
+						void this.router?.navigateByUrl(this.returnTo);
 				},
 				error: () => {
 					this.state.set('signed-out');
