@@ -99,9 +99,9 @@ describe('App', () => {
 	const showSignedOut = () => {
 		http.expectOne('/api/auth/get-session').flush(null);
 		fixture.detectChanges();
-		http
-			.match('/api/v1/cars')
-			.forEach((request) => request.flush({ cars: [] }));
+		http.match('/api/v1/cars').forEach((request) => {
+			request.flush({ cars: [] });
+		});
 		fixture.detectChanges();
 	};
 
