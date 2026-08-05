@@ -3,8 +3,14 @@ import {
 	HttpTestingController,
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
+import { Injectable } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { Observable, of, throwError } from 'rxjs';
+import {
+	SoDialedImporterClient,
+	SoDialedImportPreview,
+} from './setup-snapshot';
 import { SetupSnapshots } from './setup-snapshots';
 
 type Harness = {
@@ -12,7 +18,44 @@ type Harness = {
 	openAdd(): void;
 	makeCurrent(): void;
 	copy(): void;
+	save(): void;
+	updateImportUrl(value: string): void;
+	previewImport(): void;
+	cancelImport(): void;
 };
+
+const preview: SoDialedImportPreview = {
+	draftId: 'draft-1',
+	source: {
+		url: 'https://sodialed.com/setup/abc',
+		pdfUrl: 'https://sodialed.com/setup/abc.pdf',
+		pdfTitle: 'ABC setup sheet',
+	},
+	carIdentity: { make: 'Team Associated', model: 'B6.4' },
+	context: { track: 'Home clay', condition: 'Dry', recordedAt: '2026-08-04' },
+	sections: {
+		vehicle: { rideHeight: '22mm' },
+		drivetrain: { pinion: '27T' },
+		electronics: {},
+		tires: {},
+		shocks: {},
+		frontSuspension: {},
+		rearSuspension: {},
+		notes: {},
+	},
+	uncertainValues: { casterDiagram: 'review' },
+	unmappedValues: { checkbox: 'unknown' },
+	rawValues: { sourceLabel: 'Caster' },
+};
+
+@Injectable()
+class MockImporter extends SoDialedImporterClient {
+	result: Observable<SoDialedImportPreview> = of(preview);
+
+	override preview(): Observable<SoDialedImportPreview> {
+		return this.result;
+	}
+}
 
 describe('SetupSnapshots', () => {
 	let fixture: ComponentFixture<SetupSnapshots>;
@@ -25,6 +68,7 @@ describe('SetupSnapshots', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideNoopAnimations(),
+				{ provide: SoDialedImporterClient, useClass: MockImporter },
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -96,6 +140,7 @@ describe('SetupSnapshots', () => {
 			pdfTitle: '',
 			pdfPage: '',
 			unmappedValues: '',
+			rawValues: '',
 			sections: {
 				vehicle: { rideHeight: '' },
 				drivetrain: {},
@@ -108,9 +153,7 @@ describe('SetupSnapshots', () => {
 			},
 		});
 		fixture.detectChanges();
-		(
-			fixture.nativeElement.querySelector('form') as HTMLFormElement
-		).dispatchEvent(new Event('submit'));
+		app.save();
 		const request = http.expectOne(
 			(item) =>
 				item.url === '/api/v1/cars/car-1/setups' && item.method === 'POST',
@@ -157,5 +200,90 @@ describe('SetupSnapshots', () => {
 		const current = http.expectOne('/api/v1/cars/car-1/setups/setup-2/current');
 		expect(current.request.method).toBe('POST');
 		current.flush({ setup: { ...currentSetup, id: 'setup-2', current: true } });
+	});
+
+	it('rejects malformed URLs before asking the importer to read a source', () => {
+		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://example.com/not-sodialed');
+		app.previewImport();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'supported So Dialed URL',
+		);
+	});
+
+	it('shows a source review draft with mapped, uncertain, raw, and duplicate data', () => {
+		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
+		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		importer.result = of({
+			...preview,
+			duplicate: { setupId: 'setup-old', name: 'Earlier import' },
+		});
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Team Associated B6.4');
+		expect(fixture.nativeElement.textContent).toContain('Earlier import');
+		expect(fixture.nativeElement.textContent).toContain('1 uncertain');
+		expect(fixture.nativeElement.textContent).toContain('Raw source values');
+	});
+
+	it('keeps source review cancelable and saves the edited draft as a new snapshot', () => {
+		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Save as new snapshot');
+		app.cancelImport();
+		http
+			.expectOne('/api/v1/setup-imports/drafts/draft-1/cancel')
+			.flush({ ok: true });
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Import review draft',
+		);
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+		fixture.detectChanges();
+		app.save();
+		const update = http.expectOne('/api/v1/setup-imports/drafts/draft-1');
+		expect(update.request.method).toBe('PATCH');
+		expect(update.request.body.knownValues.name).toBe('Team Associated B6.4');
+		expect(update.request.body.rawValues).toEqual(preview.rawValues);
+		update.flush({ draft: { id: 'draft-1' } });
+		const accept = http.expectOne(
+			'/api/v1/setup-imports/drafts/draft-1/accept',
+		);
+		expect(accept.request.body).toEqual({
+			carId: 'car-1',
+			name: 'Team Associated B6.4',
+			makeCurrent: false,
+		});
+		accept.flush({
+			setup: {
+				...currentSetup,
+				id: 'setup-imported',
+				name: 'Team Associated B6.4',
+			},
+		});
+	});
+
+	it('reports an unavailable source without opening a review form', () => {
+		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
+		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		importer.result = throwError(() => new Error('Source is unavailable.'));
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/missing');
+		app.previewImport();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Source is unavailable.',
+		);
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Import review draft',
+		);
 	});
 });

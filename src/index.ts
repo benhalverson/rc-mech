@@ -12,6 +12,7 @@ import {
 	photo,
 	serviceRecord,
 	setup,
+	setupImportDraft,
 } from './schema';
 import {
 	AppContext,
@@ -32,6 +33,9 @@ import {
 	setupCopyInput,
 	setupInput,
 	setupUpdateInput,
+	setupImportAcceptInput,
+	setupImportDraftInput,
+	setupImportDraftUpdateInput,
 	type SetupInput,
 	timezoneInput,
 } from './types';
@@ -87,6 +91,14 @@ import {
 	ownsSetup,
 	shouldSelectCurrentSetup,
 } from './setup-policy';
+import {
+	canonicalSetupImportUrl,
+	defaultImportExtractor,
+	resolveSetupImport,
+	sourceKeyFor,
+	type SetupImportExtraction,
+	type SetupImportSource,
+} from './setup-import-policy';
 
 const app = new Hono<AppEnv>();
 
@@ -182,9 +194,85 @@ const jsonValue = (value: string | null): unknown => {
 	try {
 		return JSON.parse(value);
 	} catch {
-		return null;
+		return value;
 	}
 };
+
+const readLimitedText = async (response: Response, limit = 1_000_000) => {
+	if (!response.body) return '';
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		while (true) {
+			const next = await reader.read();
+			if (next.done) break;
+			size += next.value.byteLength;
+			if (size > limit) throw new Error('Source page is too large');
+			chunks.push(next.value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	const bytes = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(bytes);
+};
+
+const fetchSoDialedSource = async (url: URL): Promise<SetupImportSource> => {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 8_000);
+	try {
+		const response = await fetch(url, {
+			redirect: 'manual',
+			headers: { accept: 'text/html' },
+			signal: controller.signal,
+		});
+		if (!response.ok || response.headers.has('location'))
+			throw new Error('So Dialed setup page is unavailable');
+		const canonicalUrl = canonicalSetupImportUrl(response.url);
+		if (!canonicalUrl)
+			throw new Error('So Dialed source redirected unexpectedly');
+		return { canonicalUrl, html: await readLimitedText(response) };
+	} finally {
+		clearTimeout(timeout);
+	}
+};
+
+const publicImportDraft = (value: typeof setupImportDraft.$inferSelect) => ({
+	id: value.id,
+	carId: value.carId,
+	sourceUrl: value.sourceUrl,
+	status: value.status,
+	sourceIdentity: jsonValue(value.sourceIdentity),
+	source: {
+		url: value.sourceUrl,
+		hasPdfReference: value.sourcePdfReference !== null,
+		metadata: jsonValue(value.sourceMetadata),
+	},
+	knownValues: jsonValue(value.knownValues) ?? {},
+	uncertainValues: jsonValue(value.uncertainValues) ?? {},
+	rawValues: jsonValue(value.rawValues) ?? {},
+	unmappedValues: jsonValue(value.unmappedValues) ?? {},
+	error: value.error,
+	acceptedSetupId: value.acceptedSetupId,
+	createdAt: value.createdAt,
+	updatedAt: value.updatedAt,
+});
+
+const draftValues = (value: SetupImportExtraction) => ({
+	sourceIdentity: jsonText(value.sourceIdentity) ?? null,
+	sourcePdfReference: value.sourcePdfReference ?? null,
+	sourceMetadata: jsonText(value.sourceMetadata) ?? null,
+	knownValues: jsonText(value.knownValues) ?? null,
+	uncertainValues: jsonText(value.uncertainValues) ?? null,
+	rawValues: jsonText(value.rawValues) ?? null,
+	unmappedValues: jsonText(value.unmappedValues) ?? null,
+});
 
 const publicSetup = (value: typeof setup.$inferSelect, current = false) => {
 	const sourceMetadata = jsonValue(value.sourceMetadata);
@@ -793,6 +881,310 @@ app.post('/api/v1/cars/:carId/setups/:setupId/current', async (c) => {
 		.set({ currentSetupId: value.id })
 		.where(eq(car.id, carId));
 	return c.json({ setup: publicSetup(value) });
+});
+
+const ownedImportDraft = async (c: AppContext, draftId: string) =>
+	db(c.env)
+		.select()
+		.from(setupImportDraft)
+		.where(
+			and(
+				eq(setupImportDraft.id, draftId),
+				eq(setupImportDraft.ownerId, c.get('userId')),
+			),
+		)
+		.get();
+
+const ownedImportedSetup = async (c: AppContext, sourceKey: string) => {
+	const candidates = await db(c.env)
+		.select()
+		.from(setup)
+		.where(eq(setup.sourceUrl, sourceKey));
+	for (const candidate of candidates) {
+		if (await ownedCar(c, candidate.carId)) return candidate;
+	}
+	return undefined;
+};
+
+const draftSetupInput = (
+	draft: typeof setupImportDraft.$inferSelect,
+	name?: string,
+): SetupInput => {
+	const known = jsonValue(draft.knownValues);
+	const raw = jsonValue(draft.rawValues);
+	const uncertain = jsonValue(draft.uncertainValues);
+	const unmapped = jsonValue(draft.unmappedValues);
+	const identity = jsonValue(draft.sourceIdentity);
+	const candidate = {
+		...(known && typeof known === 'object' ? known : {}),
+		name:
+			name ??
+			(identity && typeof identity === 'object' && 'title' in identity
+				? String(identity.title)
+				: 'Imported setup'),
+		status: 'reviewed' as const,
+		sourceUrl: draft.sourceUrl,
+		sourcePdfReference: draft.sourcePdfReference ?? undefined,
+		sourceMetadata:
+			(jsonValue(draft.sourceMetadata) as Record<string, unknown> | null) ??
+			undefined,
+		rawValues: {
+			...(raw && typeof raw === 'object' ? raw : {}),
+			uncertainValues: uncertain ?? {},
+		},
+		unmappedValues:
+			unmapped && typeof unmapped === 'object'
+				? (unmapped as Record<string, unknown>)
+				: {},
+	};
+	const parsed = setupInput.safeParse(candidate);
+	if (parsed.success) return parsed.data;
+	return {
+		name: candidate.name,
+		status: 'reviewed',
+		sourceUrl: draft.sourceUrl,
+		sourcePdfReference: draft.sourcePdfReference ?? undefined,
+		sourceMetadata:
+			(jsonValue(draft.sourceMetadata) as Record<string, unknown> | null) ??
+			undefined,
+		rawValues: candidate.rawValues as Record<string, unknown>,
+		unmappedValues: candidate.unmappedValues as Record<string, unknown>,
+	};
+};
+
+app.post('/api/v1/setup-imports/drafts', async (c) => {
+	const parsed = setupImportDraftInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const sourceKey = sourceKeyFor(parsed.data.sourceUrl);
+	if (!sourceKey)
+		return c.json({ error: 'Unsupported So Dialed setup URL' }, 400);
+	if (parsed.data.carId && !(await ownedCar(c, parsed.data.carId)))
+		return c.json({ error: 'Car not found' }, 404);
+	const existingSetup = await ownedImportedSetup(c, sourceKey);
+	const existingDraft = await db(c.env)
+		.select()
+		.from(setupImportDraft)
+		.where(
+			and(
+				eq(setupImportDraft.ownerId, c.get('userId')),
+				eq(setupImportDraft.sourceKey, sourceKey),
+				eq(setupImportDraft.status, 'draft'),
+			),
+		)
+		.get();
+	if (existingSetup || existingDraft)
+		return c.json(
+			{
+				error: 'Source has already been imported',
+				existingSetupId: existingSetup?.id ?? null,
+				draft: existingDraft ? publicImportDraft(existingDraft) : null,
+			},
+			409,
+		);
+
+	const id = crypto.randomUUID();
+	const now = new Date().toISOString();
+	let extraction: SetupImportExtraction;
+	try {
+		const resolved = await resolveSetupImport(
+			sourceKey,
+			fetchSoDialedSource,
+			defaultImportExtractor,
+		);
+		extraction = resolved;
+	} catch (error) {
+		const message =
+			error instanceof Error ? error.message : 'Source unavailable';
+		await db(c.env)
+			.insert(setupImportDraft)
+			.values({
+				id,
+				ownerId: c.get('userId'),
+				carId: parsed.data.carId ?? null,
+				sourceUrl: sourceKey,
+				sourceKey,
+				status: 'error',
+				error: message,
+				createdAt: now,
+				updatedAt: now,
+			});
+		const draft = await ownedImportDraft(c, id);
+		return c.json(
+			{
+				error: message,
+				draft: publicImportDraft(
+					required(draft, 'Import draft could not be loaded'),
+				),
+			},
+			422,
+		);
+	}
+	try {
+		await db(c.env)
+			.insert(setupImportDraft)
+			.values({
+				id,
+				ownerId: c.get('userId'),
+				carId: parsed.data.carId ?? null,
+				sourceUrl: sourceKey,
+				sourceKey,
+				status: 'draft',
+				...draftValues(extraction),
+				createdAt: now,
+				updatedAt: now,
+			});
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.includes('UNIQUE'))
+			throw error;
+		const concurrent = await db(c.env)
+			.select()
+			.from(setupImportDraft)
+			.where(
+				and(
+					eq(setupImportDraft.ownerId, c.get('userId')),
+					eq(setupImportDraft.sourceKey, sourceKey),
+					eq(setupImportDraft.status, 'draft'),
+				),
+			)
+			.get();
+		return c.json(
+			{
+				error: 'An open draft already exists for this source',
+				draft: concurrent ? publicImportDraft(concurrent) : null,
+			},
+			409,
+		);
+	}
+	const draft = await ownedImportDraft(c, id);
+	return c.json(
+		{
+			draft: publicImportDraft(
+				required(draft, 'Import draft could not be loaded'),
+			),
+		},
+		201,
+	);
+});
+
+app.get('/api/v1/setup-imports/drafts', async (c) => {
+	const drafts = await db(c.env)
+		.select()
+		.from(setupImportDraft)
+		.where(eq(setupImportDraft.ownerId, c.get('userId')))
+		.orderBy(desc(setupImportDraft.updatedAt));
+	return c.json({ drafts: drafts.map(publicImportDraft) });
+});
+
+app.get('/api/v1/setup-imports/drafts/:draftId', async (c) => {
+	const draft = await ownedImportDraft(c, c.req.param('draftId'));
+	if (!draft) return c.json({ error: 'Import draft not found' }, 404);
+	return c.json({ draft: publicImportDraft(draft) });
+});
+
+app.patch('/api/v1/setup-imports/drafts/:draftId', async (c) => {
+	const draft = await ownedImportDraft(c, c.req.param('draftId'));
+	if (!draft) return c.json({ error: 'Import draft not found' }, 404);
+	if (draft.status !== 'draft')
+		return c.json({ error: 'Only an open import draft can be edited' }, 409);
+	const parsed = setupImportDraftUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	if (parsed.data.carId && !(await ownedCar(c, parsed.data.carId)))
+		return c.json({ error: 'Car not found' }, 404);
+	const value = parsed.data;
+	await db(c.env)
+		.update(setupImportDraft)
+		.set({
+			carId: value.carId === undefined ? undefined : value.carId,
+			knownValues: jsonText(value.knownValues),
+			uncertainValues: jsonText(value.uncertainValues),
+			rawValues: jsonText(value.rawValues),
+			unmappedValues: jsonText(value.unmappedValues),
+			sourceMetadata: jsonText(value.sourceMetadata),
+			updatedAt: new Date().toISOString(),
+		})
+		.where(eq(setupImportDraft.id, draft.id));
+	const updated = await ownedImportDraft(c, draft.id);
+	return c.json({
+		draft: publicImportDraft(
+			required(updated, 'Import draft could not be loaded'),
+		),
+	});
+});
+
+app.post('/api/v1/setup-imports/drafts/:draftId/cancel', async (c) => {
+	const draft = await ownedImportDraft(c, c.req.param('draftId'));
+	if (!draft) return c.json({ error: 'Import draft not found' }, 404);
+	if (draft.status !== 'draft' && draft.status !== 'error')
+		return c.json({ error: 'Import draft is already closed' }, 409);
+	await db(c.env)
+		.update(setupImportDraft)
+		.set({ status: 'cancelled', updatedAt: new Date().toISOString() })
+		.where(eq(setupImportDraft.id, draft.id));
+	return c.json({ ok: true });
+});
+
+app.post('/api/v1/setup-imports/drafts/:draftId/accept', async (c) => {
+	const draft = await ownedImportDraft(c, c.req.param('draftId'));
+	if (!draft) return c.json({ error: 'Import draft not found' }, 404);
+	if (draft.status !== 'draft')
+		return c.json({ error: 'Only an open import draft can be accepted' }, 409);
+	const parsed = setupImportAcceptInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const parentCar = await ownedCar(c, parsed.data.carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWriteSetup(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before accepting imports' },
+			409,
+		);
+	const sourceSetup = await ownedImportedSetup(c, draft.sourceKey);
+	if (sourceSetup)
+		return c.json(
+			{
+				error: 'Source has already been imported',
+				existingSetupId: sourceSetup.id,
+			},
+			409,
+		);
+	const setupId = crypto.randomUUID();
+	const now = new Date().toISOString();
+	const value = draftSetupInput(draft, parsed.data.name);
+	const database = db(c.env);
+	await database.batch([
+		database
+			.insert(setup)
+			.values(setupInsertValues(setupId, parsed.data.carId, value, now)),
+		database
+			.update(setupImportDraft)
+			.set({
+				status: 'accepted',
+				acceptedSetupId: setupId,
+				carId: parsed.data.carId,
+				updatedAt: now,
+			})
+			.where(eq(setupImportDraft.id, draft.id)),
+		...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+			? [
+					database
+						.update(car)
+						.set({ currentSetupId: setupId })
+						.where(eq(car.id, parsed.data.carId)),
+				]
+			: []),
+	]);
+	const created = await database
+		.select()
+		.from(setup)
+		.where(eq(setup.id, setupId))
+		.get();
+	return c.json(
+		{
+			setup: publicSetup(
+				required(created, 'Imported setup could not be loaded'),
+			),
+		},
+		201,
+	);
 });
 
 app.get('/api/v1/cars/:carId/photos', async (c) => {
@@ -3170,6 +3562,128 @@ Object.assign(setupPaths, {
 		post: {
 			summary: 'Select an owned-car setup as current',
 			responses: { 200: { description: 'Current setup selected' } },
+		},
+	},
+});
+
+Object.assign(setupPaths, {
+	'/api/v1/setup-imports/drafts': {
+		post: {
+			summary:
+				'Resolve a supported So Dialed URL into an owner-scoped review draft',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							required: ['sourceUrl'],
+							properties: {
+								sourceUrl: { type: 'string', format: 'uri' },
+								carId: { type: 'string' },
+							},
+						},
+					},
+				},
+			},
+			responses: {
+				201: { description: 'Created import review draft' },
+				400: { description: 'Malformed or unsupported source URL' },
+				409: { description: 'Source has already been imported' },
+				422: { description: 'Source could not be resolved' },
+			},
+		},
+		get: {
+			summary: 'List import drafts for the authenticated owner',
+			responses: { 200: { description: 'Owner-scoped import drafts' } },
+		},
+	},
+	'/api/v1/setup-imports/drafts/{draftId}': {
+		parameters: [
+			{
+				name: 'draftId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+		],
+		get: {
+			summary: 'Read an owner-scoped import review draft',
+			responses: {
+				200: { description: 'Import review draft' },
+				404: { description: 'Draft not found' },
+			},
+		},
+		patch: {
+			summary: 'Edit an open import review draft',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							minProperties: 1,
+							additionalProperties: true,
+						},
+					},
+				},
+			},
+			responses: {
+				200: { description: 'Updated import draft' },
+				400: { description: 'Invalid draft edit' },
+				409: { description: 'Draft is closed' },
+			},
+		},
+	},
+	'/api/v1/setup-imports/drafts/{draftId}/cancel': {
+		parameters: [
+			{
+				name: 'draftId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+		],
+		post: {
+			summary: 'Cancel an owner-scoped import draft',
+			responses: {
+				200: { description: 'Draft cancelled' },
+				404: { description: 'Draft not found' },
+			},
+		},
+	},
+	'/api/v1/setup-imports/drafts/{draftId}/accept': {
+		parameters: [
+			{
+				name: 'draftId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+		],
+		post: {
+			summary: 'Accept a reviewed draft as a new setup snapshot',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							required: ['carId'],
+							properties: {
+								carId: { type: 'string' },
+								name: { type: 'string' },
+								makeCurrent: { type: 'boolean' },
+							},
+						},
+					},
+				},
+			},
+			responses: {
+				201: { description: 'New setup snapshot created' },
+				404: { description: 'Draft or car not found' },
+				409: { description: 'Duplicate source or archived car' },
+			},
 		},
 	},
 });

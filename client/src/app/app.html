@@ -147,7 +147,7 @@
           </section>
           }
           @if (carSection() === 'setups') {
-          <app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt"></app-setup-snapshots>
+          <app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="cars()" (createCarFromImport)="openCreateCarFromImport($event)"></app-setup-snapshots>
           }
           @if (carSection() === 'build' || carSection() === 'all') {
           <section class="build-sheet" aria-labelledby="build-sheet-title">

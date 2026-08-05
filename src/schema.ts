@@ -45,6 +45,27 @@ export const setup = sqliteTable('setup', {
 	createdAt: text('created_at').notNull(),
 	updatedAt: text('updated_at').notNull(),
 });
+export const setupImportDraft = sqliteTable('setup_import_draft', {
+	id: id('id'),
+	ownerId: text('owner_id')
+		.notNull()
+		.references(() => owner.id),
+	carId: text('car_id').references(() => car.id),
+	sourceUrl: text('source_url').notNull(),
+	sourceKey: text('source_key').notNull(),
+	status: text('status').notNull().default('draft'),
+	sourceIdentity: text('source_identity'),
+	sourcePdfReference: text('source_pdf_reference'),
+	sourceMetadata: text('source_metadata'),
+	knownValues: text('known_values'),
+	uncertainValues: text('uncertain_values'),
+	rawValues: text('raw_values'),
+	unmappedValues: text('unmapped_values'),
+	error: text('error'),
+	acceptedSetupId: text('accepted_setup_id').references(() => setup.id),
+	createdAt: text('created_at').notNull(),
+	updatedAt: text('updated_at').notNull(),
+});
 export const component = sqliteTable('component', {
 	id: id('id'),
 	carId: text('car_id').notNull(),

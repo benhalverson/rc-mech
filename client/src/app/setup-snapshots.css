@@ -19,6 +19,73 @@
 	gap: 28px;
 	margin-top: 26px;
 }
+.import-strip {
+	display: grid;
+	gap: 16px;
+	margin-top: 24px;
+	padding: 18px 20px;
+	border: 1px solid var(--accent);
+	background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.import-strip h5,
+.review-banner h5 {
+	margin: 7px 0 0;
+	font:
+		700 1.15rem Georgia,
+		serif;
+}
+.import-strip p,
+.review-banner p {
+	margin: 8px 0 0;
+	color: var(--muted);
+	font-size: 0.8rem;
+}
+.import-controls {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 12px;
+	align-items: end;
+}
+.review-banner {
+	margin-bottom: 22px;
+	padding-bottom: 18px;
+	border-bottom: 1px solid var(--line);
+}
+.duplicate-notice {
+	padding: 10px 12px;
+	border-left: 3px solid var(--accent);
+	background: var(--color-workbench);
+}
+.import-car-choice {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: 14px;
+	margin-top: 16px;
+}
+.import-car-choice label {
+	min-width: min(100%, 280px);
+}
+.import-car-choice select {
+	display: block;
+	width: 100%;
+	margin-top: 6px;
+	padding: 10px;
+	border: 1px solid var(--line);
+	background: var(--paper);
+	color: var(--ink);
+	font: inherit;
+}
+.review-counts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 14px;
+	margin-top: 15px;
+	color: var(--accent);
+	font-size: 0.7rem;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
 .setup-history {
 	border-top: 1px solid var(--line);
 }
@@ -198,6 +265,9 @@ dd {
 	white-space: pre-wrap;
 }
 @media (max-width: 700px) {
+	.import-controls {
+		grid-template-columns: 1fr;
+	}
 	.setup-layout,
 	.setup-sections,
 	.setup-readout {
