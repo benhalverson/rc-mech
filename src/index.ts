@@ -25,6 +25,7 @@ import {
 	STANDARD_COMPONENT_SLOTS,
 } from './component-policy';
 import {
+	calculateConsumableReport,
 	canArchiveConsumable,
 	canEditConsumable,
 	canRestoreConsumable,
@@ -1092,6 +1093,23 @@ app.get('/api/v1/cars/:carId/consumables', async (c) => {
 			desc(consumableMaintenanceEntry.createdAt),
 		);
 	return c.json({ consumables: values.map(publicConsumable) });
+});
+
+app.get('/api/v1/cars/:carId/consumables/report', async (c) => {
+	const carId = c.req.param('carId');
+	if (!(await ownedCar(c, carId)))
+		return c.json({ error: 'Car not found' }, 404);
+	const values = await db(c.env)
+		.select()
+		.from(consumableMaintenanceEntry)
+		.where(
+			and(
+				eq(consumableMaintenanceEntry.carId, carId),
+				isNull(consumableMaintenanceEntry.archivedAt),
+			),
+		)
+		.orderBy(desc(consumableMaintenanceEntry.performedAt));
+	return c.json({ report: calculateConsumableReport(values) });
 });
 
 app.post('/api/v1/cars/:carId/consumables', async (c) => {
@@ -4495,6 +4513,20 @@ Object.assign(consumablePaths, {
 				'Map tire details from the owned car current setup into front and rear axle values',
 			responses: {
 				200: { description: 'Setup tire prefill' },
+				404: { description: 'Car not found' },
+			},
+		},
+	},
+	'/api/v1/cars/{carId}/consumables/report': {
+		parameters: [carIdParameter],
+		get: {
+			summary:
+				'Report owner-scoped tire replacement history, spend, and fluid changes',
+			responses: {
+				200: {
+					description:
+						'Historical consumable report without reminders or due dates',
+				},
 				404: { description: 'Car not found' },
 			},
 		},
