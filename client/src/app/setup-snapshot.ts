@@ -45,14 +45,37 @@ export type SetupSnapshot = {
 	source?: SetupSource | null;
 	copiedFromSetupId?: string | null;
 	unmappedValues?: Record<string, unknown> | null;
+	rawValues?: Record<string, unknown> | null;
 	createdAt?: string;
 	updatedAt?: string;
 };
 
-export type SetupSnapshotPayload = Omit<
-	SetupSnapshot,
-	'id' | 'carId' | 'current' | 'createdAt' | 'updatedAt'
->;
+export type SetupSnapshotPayload = {
+	name: string;
+	status?: 'draft' | 'reviewed' | 'active';
+	setupDate?: string | null;
+	track?: string | null;
+	event?: string | null;
+	surface?: string | null;
+	traction?: string | null;
+	moisture?: string | null;
+	condition?: string | null;
+	temperature?: string | null;
+	vehicle?: Record<string, unknown> | null;
+	drivetrain?: Record<string, unknown> | null;
+	electronics?: Record<string, unknown> | null;
+	tires?: Record<string, unknown> | null;
+	shocks?: Record<string, unknown> | null;
+	frontSuspension?: Record<string, unknown> | null;
+	rearSuspension?: Record<string, unknown> | null;
+	notes?: string | null;
+	sourceUrl?: string | null;
+	sourcePdfReference?: string | null;
+	sourceMetadata?: Record<string, unknown> | null;
+	rawValues?: Record<string, unknown> | null;
+	unmappedValues?: Record<string, unknown> | null;
+	makeCurrent?: boolean;
+};
 
 type SetupsResponse = { setups: SetupSnapshot[] };
 type SetupResponse = { setup: SetupSnapshot };

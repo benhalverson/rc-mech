@@ -9,14 +9,12 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
-	SetupContext,
 	SetupSectionKey,
 	SetupSections,
 	SetupSectionValues,
 	SetupSnapshot,
 	SetupSnapshotPayload,
 	SetupSnapshotService,
-	SetupSource,
 	setupSectionKeys,
 } from './setup-snapshot';
 
@@ -119,20 +117,8 @@ const optionalRecord = (values: Record<string, string | null>) =>
 	);
 
 const payloadFrom = (form: SetupForm): SetupSnapshotPayload => {
-	const context: SetupContext = {
-		recordedAt: form.recordedAt || null,
-		track: form.track.trim() || null,
-		event: form.event.trim() || null,
-		surface: form.surface.trim() || null,
-		traction: form.traction.trim() || null,
-		moisture: form.moisture.trim() || null,
-		condition: form.condition.trim() || null,
-		temperature: form.temperature.trim() || null,
-	};
-	const source: SetupSource = {
-		url: form.sourceUrl.trim() || null,
+	const sourceMetadata = {
 		pdfUrl: form.pdfUrl.trim() || null,
-		pdfTitle: form.pdfTitle.trim() || null,
 		pdfPage: form.pdfPage.trim() ? Number(form.pdfPage) : null,
 	};
 	let unmappedValues: Record<string, unknown> | null = null;
@@ -147,12 +133,29 @@ const payloadFrom = (form: SetupForm): SetupSnapshotPayload => {
 	}
 	return {
 		name: form.name.trim(),
-		context,
-		sections: Object.fromEntries(
-			setupSectionKeys.map((key) => [key, optionalRecord(form.sections[key])]),
-		) as SetupSections,
-		source,
+		setupDate: form.recordedAt
+			? new Date(`${form.recordedAt}T00:00:00.000Z`).toISOString()
+			: null,
+		track: form.track.trim() || null,
+		event: form.event.trim() || null,
+		surface: form.surface.trim() || null,
+		traction: form.traction.trim() || null,
+		moisture: form.moisture.trim() || null,
+		condition: form.condition.trim() || null,
+		temperature: form.temperature.trim() || null,
+		vehicle: optionalRecord(form.sections.vehicle),
+		drivetrain: optionalRecord(form.sections.drivetrain),
+		electronics: optionalRecord(form.sections.electronics),
+		tires: optionalRecord(form.sections.tires),
+		shocks: optionalRecord(form.sections.shocks),
+		frontSuspension: optionalRecord(form.sections.frontSuspension),
+		rearSuspension: optionalRecord(form.sections.rearSuspension),
+		notes: optionalRecord(form.sections.notes).setupNotes ?? null,
+		sourceUrl: form.sourceUrl.trim() || null,
+		sourcePdfReference: form.pdfTitle.trim() || null,
+		sourceMetadata,
 		unmappedValues,
+		rawValues: unmappedValues,
 	};
 };
 

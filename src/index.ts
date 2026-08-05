@@ -186,18 +186,50 @@ const jsonValue = (value: string | null): unknown => {
 	}
 };
 
-const publicSetup = (value: typeof setup.$inferSelect) => ({
-	...value,
-	vehicle: jsonValue(value.vehicle),
-	drivetrain: jsonValue(value.drivetrain),
-	electronics: jsonValue(value.electronics),
-	tires: jsonValue(value.tires),
-	shocks: jsonValue(value.shocks),
-	frontSuspension: jsonValue(value.frontSuspension),
-	rearSuspension: jsonValue(value.rearSuspension),
-	sourceMetadata: jsonValue(value.sourceMetadata),
+const publicSetup = (value: typeof setup.$inferSelect, current = false) => ({
+	id: value.id,
+	carId: value.carId,
+	name: value.name,
+	status: value.status,
+	current,
+	context: {
+		recordedAt: value.setupDate,
+		track: value.track,
+		event: value.event,
+		surface: value.surface,
+		traction: value.traction,
+		moisture: value.moisture,
+		condition: value.condition,
+		temperature: value.temperature,
+	},
+	sections: {
+		vehicle: jsonValue(value.vehicle) ?? {},
+		drivetrain: jsonValue(value.drivetrain) ?? {},
+		electronics: jsonValue(value.electronics) ?? {},
+		tires: jsonValue(value.tires) ?? {},
+		shocks: jsonValue(value.shocks) ?? {},
+		frontSuspension: jsonValue(value.frontSuspension) ?? {},
+		rearSuspension: jsonValue(value.rearSuspension) ?? {},
+		notes: value.notes ? { text: value.notes } : {},
+	},
+	notes: value.notes,
+	source: {
+		url: value.sourceUrl,
+		pdfUrl:
+			typeof jsonValue(value.sourceMetadata) === 'object' &&
+			jsonValue(value.sourceMetadata) !== null
+				? ((jsonValue(value.sourceMetadata) as { pdfUrl?: string }).pdfUrl ??
+					null)
+				: null,
+		pdfTitle: value.sourcePdfReference,
+		pdfPage: null,
+		metadata: jsonValue(value.sourceMetadata),
+	},
+	copiedFromSetupId: value.copiedFromId,
 	rawValues: jsonValue(value.rawValues),
 	unmappedValues: jsonValue(value.unmappedValues),
+	createdAt: value.createdAt,
+	updatedAt: value.updatedAt,
 });
 
 const setupInsertValues = (
@@ -209,6 +241,7 @@ const setupInsertValues = (
 ) => ({
 	id,
 	carId,
+	name: value.name,
 	status: value.status ?? 'active',
 	setupDate: value.setupDate ? new Date(value.setupDate).toISOString() : null,
 	track: value.track ?? null,
@@ -237,6 +270,7 @@ const setupInsertValues = (
 });
 
 const setupCopyValue = (value: typeof setup.$inferSelect): SetupInput => ({
+	name: value.name,
 	status: value.status as SetupInput['status'],
 	setupDate: value.setupDate ?? undefined,
 	track: value.track ?? undefined,
@@ -572,19 +606,24 @@ app.get('/api/v1/cars/:carId/setups/current', async (c) => {
 	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
 	if (!parentCar.currentSetupId) return c.json({ setup: null });
 	const current = await ownedSetup(c, parentCar.id, parentCar.currentSetupId);
-	return c.json({ setup: current ? publicSetup(current) : null });
+	return c.json({ setup: current ? publicSetup(current, true) : null });
 });
 
 app.get('/api/v1/cars/:carId/setups', async (c) => {
 	const carId = c.req.param('carId');
 	if (!(await ownedCar(c, carId)))
 		return c.json({ error: 'Car not found' }, 404);
+	const parentCar = await ownedCar(c, carId);
 	const values = await db(c.env)
 		.select()
 		.from(setup)
 		.where(eq(setup.carId, carId))
 		.orderBy(desc(setup.updatedAt), desc(setup.createdAt));
-	return c.json({ setups: values.map(publicSetup) });
+	return c.json({
+		setups: values.map((value) =>
+			publicSetup(value, value.id === parentCar?.currentSetupId),
+		),
+	});
 });
 
 app.post('/api/v1/cars/:carId/setups', async (c) => {
@@ -3017,23 +3056,119 @@ const openApi = {
 };
 
 const setupPaths = openApi.paths as Record<string, unknown>;
+const setupSchema = {
+	type: 'object',
+	required: ['name'],
+	properties: {
+		name: { type: 'string' },
+		status: { type: 'string', enum: ['draft', 'reviewed', 'active'] },
+		setupDate: { type: 'string', format: 'date-time' },
+		track: { type: 'string' },
+		event: { type: 'string' },
+		surface: { type: 'string' },
+		traction: { type: 'string' },
+		moisture: { type: 'string' },
+		condition: { type: 'string' },
+		temperature: { type: 'string' },
+		vehicle: { type: 'object', additionalProperties: true },
+		drivetrain: { type: 'object', additionalProperties: true },
+		electronics: { type: 'object', additionalProperties: true },
+		tires: { type: 'object', additionalProperties: true },
+		shocks: { type: 'object', additionalProperties: true },
+		frontSuspension: { type: 'object', additionalProperties: true },
+		rearSuspension: { type: 'object', additionalProperties: true },
+		notes: { type: 'string' },
+		sourceUrl: { type: 'string', format: 'uri' },
+		sourcePdfReference: { type: 'string' },
+		sourceMetadata: { type: 'object', additionalProperties: true },
+		rawValues: { type: 'object', additionalProperties: true },
+		unmappedValues: { type: 'object', additionalProperties: true },
+		makeCurrent: { type: 'boolean' },
+	},
+};
+const setupIdParameter = {
+	name: 'setupId',
+	in: 'path',
+	required: true,
+	schema: { type: 'string' },
+};
+const carIdParameter = {
+	name: 'carId',
+	in: 'path',
+	required: true,
+	schema: { type: 'string' },
+};
 Object.assign(setupPaths, {
 	'/api/v1/cars/{carId}/setups': {
-		get: { summary: 'List setup snapshots for an owned car' },
-		post: { summary: 'Create an owned-car setup snapshot' },
+		parameters: [carIdParameter],
+		get: {
+			summary: 'List setup snapshots for an owned car',
+			responses: {
+				200: { description: 'Setup snapshots' },
+				404: { description: 'Car not found' },
+			},
+		},
+		post: {
+			summary: 'Create an owned-car setup snapshot',
+			requestBody: {
+				required: true,
+				content: { 'application/json': { schema: setupSchema } },
+			},
+			responses: {
+				201: { description: 'Created setup snapshot' },
+				400: { description: 'Invalid setup' },
+				409: { description: 'Archived car' },
+			},
+		},
 	},
 	'/api/v1/cars/{carId}/setups/current': {
-		get: { summary: 'Read the current setup selected for an owned car' },
+		parameters: [carIdParameter],
+		get: {
+			summary: 'Read the current setup selected for an owned car',
+			responses: { 200: { description: 'Current setup' } },
+		},
 	},
 	'/api/v1/cars/{carId}/setups/{setupId}': {
-		get: { summary: 'Read an owned-car setup snapshot' },
-		patch: { summary: 'Edit an owned-car setup snapshot' },
+		parameters: [carIdParameter, setupIdParameter],
+		get: {
+			summary: 'Read an owned-car setup snapshot',
+			responses: {
+				200: { description: 'Setup snapshot' },
+				404: { description: 'Setup not found' },
+			},
+		},
+		patch: {
+			summary: 'Edit an owned-car setup snapshot',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': { schema: { ...setupSchema, required: [] } },
+				},
+			},
+			responses: {
+				200: { description: 'Updated setup snapshot' },
+				400: { description: 'Invalid setup' },
+			},
+		},
 	},
 	'/api/v1/cars/{carId}/setups/{setupId}/copy': {
-		post: { summary: 'Copy an owned-car setup snapshot' },
+		parameters: [carIdParameter, setupIdParameter],
+		post: {
+			summary: 'Copy an owned-car setup snapshot',
+			requestBody: {
+				content: {
+					'application/json': { schema: { ...setupSchema, required: [] } },
+				},
+			},
+			responses: { 201: { description: 'Copied setup snapshot' } },
+		},
 	},
 	'/api/v1/cars/{carId}/setups/{setupId}/current': {
-		post: { summary: 'Select an owned-car setup as current' },
+		parameters: [carIdParameter, setupIdParameter],
+		post: {
+			summary: 'Select an owned-car setup as current',
+			responses: { 200: { description: 'Current setup selected' } },
+		},
 	},
 });
 

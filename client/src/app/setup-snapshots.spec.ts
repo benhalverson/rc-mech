@@ -116,7 +116,7 @@ describe('SetupSnapshots', () => {
 				item.url === '/api/v1/cars/car-1/setups' && item.method === 'POST',
 		);
 		expect(request.request.body.name).toBe('Quick baseline');
-		expect(request.request.body.context.track).toBeNull();
+		expect(request.request.body.track).toBeNull();
 		request.flush({
 			setup: {
 				...currentSetup,

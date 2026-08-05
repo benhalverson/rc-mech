@@ -72,7 +72,7 @@
             @for (section of sectionKeys; track section) { @if (sectionHasValues(setup.sections[section])) { <section><h6>{{ sectionLabels[section] }}</h6><dl>@for (entry of setup.sections[section] | keyvalue; track entry.key) { @if (entry.value) { <div><dt>{{ displayName(entry.key) }}</dt><dd>{{ entry.value }}</dd></div> } }</dl></section> } }
           </div>
           @if (setup.source?.url || setup.source?.pdfUrl || setup.copiedFromSetupId) { <aside class="provenance"><h6>Source trail</h6>@if (setup.source?.url) { <a [href]="setup.source?.url" target="_blank" rel="noreferrer">Open source link ↗</a> }@if (setup.source?.pdfUrl) { <a [href]="setup.source?.pdfUrl" target="_blank" rel="noreferrer">Open original PDF ↗</a> }@if (setup.copiedFromSetupId) { <span>Copied from an earlier snapshot</span> }</aside> }
-          @if (setup.unmappedValues && (setup.unmappedValues | json) !== '{}') { <details class="unmapped"><summary>Unmapped / raw values</summary><pre>{{ setup.unmappedValues | json }}</pre></details> }
+          @if (setup.unmappedValues || setup.rawValues) { <details class="unmapped"><summary>Unmapped / raw values</summary><pre>{{ { unmapped: setup.unmappedValues, raw: setup.rawValues } | json }}</pre></details> }
         </article>
       }
     </div>

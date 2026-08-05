@@ -18,6 +18,7 @@ export const car = sqliteTable('car', {
 export const setup = sqliteTable('setup', {
 	id: id('id'),
 	carId: text('car_id').notNull(),
+	name: text('name').notNull().default('Untitled setup'),
 	status: text('status').notNull().default('active'),
 	setupDate: text('setup_date'),
 	track: text('track'),

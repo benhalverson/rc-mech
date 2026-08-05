@@ -211,6 +211,7 @@ export const photoReorderInput = z.object({
 
 const setupSection = z.record(z.string().min(1).max(120), z.unknown());
 const setupContext = {
+	name: z.string().trim().min(1).max(160),
 	status: z.enum(['draft', 'reviewed', 'active']).optional(),
 	setupDate: z.string().datetime().optional(),
 	track: z.string().max(160).optional(),
@@ -255,4 +256,4 @@ export const setupUpdateInput = z
 		'At least one setup field is required',
 	);
 
-export const setupCopyInput = setupInput;
+export const setupCopyInput = setupInput.partial();

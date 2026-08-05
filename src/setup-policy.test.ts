@@ -39,6 +39,7 @@ test('current selection and source metadata are explicit contracts', () => {
 	assert.equal(hasSourceMetadata({}), false);
 	assert.equal(
 		setupInput.safeParse({
+			name: 'Imported baseline',
 			sourceUrl: 'https://example.test/setup',
 			rawValues: { caster: 'not mapped' },
 		}).success,
