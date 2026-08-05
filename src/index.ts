@@ -88,6 +88,7 @@ import {
 } from './photo-policy';
 import {
 	canWriteSetup,
+	chooseCopySource,
 	ownsSetup,
 	shouldSelectCurrentSetup,
 } from './setup-policy';
@@ -709,6 +710,7 @@ app.get('/api/v1/cars/:carId/setups', async (c) => {
 		.where(eq(setup.carId, carId))
 		.orderBy(desc(setup.updatedAt), desc(setup.createdAt));
 	return c.json({
+		currentSetupId: parentCar.currentSetupId,
 		setups: values.map((value) =>
 			publicSetup(value, value.id === parentCar?.currentSetupId),
 		),
@@ -750,6 +752,7 @@ app.post('/api/v1/cars/:carId/setups', async (c) => {
 		{
 			setup: publicSetup(
 				required(created, 'Created setup could not be loaded'),
+				parsed.data.makeCurrent === true,
 			),
 		},
 		201,
@@ -757,13 +760,65 @@ app.post('/api/v1/cars/:carId/setups', async (c) => {
 });
 
 app.get('/api/v1/cars/:carId/setups/:setupId', async (c) => {
-	const value = await ownedSetup(
-		c,
-		c.req.param('carId'),
-		c.req.param('setupId'),
-	);
+	const carId = c.req.param('carId');
+	const value = await ownedSetup(c, carId, c.req.param('setupId'));
 	if (!value) return c.json({ error: 'Setup not found' }, 404);
-	return c.json({ setup: publicSetup(value) });
+	const parentCar = await ownedCar(c, carId);
+	return c.json({
+		setup: publicSetup(value, value.id === parentCar?.currentSetupId),
+	});
+});
+
+app.post('/api/v1/cars/:carId/setups/copy', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWriteSetup(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before copying setups' },
+			409,
+		);
+	const parsed = setupCopyInput.safeParse(await c.req.json().catch(() => ({})));
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const candidates = await db(c.env)
+		.select()
+		.from(setup)
+		.where(eq(setup.carId, carId))
+		.orderBy(desc(setup.updatedAt), desc(setup.createdAt));
+	const source = chooseCopySource(candidates, parentCar.currentSetupId);
+	if (!source) return c.json({ error: 'No setup exists to copy' }, 404);
+	const value = { ...setupCopyValue(source), ...parsed.data };
+	const id = crypto.randomUUID();
+	const now = new Date().toISOString();
+	const database = db(c.env);
+	await database.batch([
+		database
+			.insert(setup)
+			.values(setupInsertValues(id, carId, value, now, source.id)),
+		...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+			? [
+					database
+						.update(car)
+						.set({ currentSetupId: id })
+						.where(eq(car.id, carId)),
+				]
+			: []),
+	]);
+	const copied = await database
+		.select()
+		.from(setup)
+		.where(eq(setup.id, id))
+		.get();
+	return c.json(
+		{
+			setup: publicSetup(
+				required(copied, 'Copied setup could not be loaded'),
+				parsed.data.makeCurrent === true,
+			),
+			sourceSetupId: source.id,
+		},
+		201,
+	);
 });
 
 app.patch('/api/v1/cars/:carId/setups/:setupId', async (c) => {
@@ -818,7 +873,9 @@ app.patch('/api/v1/cars/:carId/setups/:setupId', async (c) => {
 		await ownedSetup(c, carId, existing.id),
 		'Updated setup could not be loaded',
 	);
-	return c.json({ setup: publicSetup(updated) });
+	return c.json({
+		setup: publicSetup(updated, updated.id === parentCar.currentSetupId),
+	});
 });
 
 app.post('/api/v1/cars/:carId/setups/:setupId/copy', async (c) => {
@@ -859,7 +916,10 @@ app.post('/api/v1/cars/:carId/setups/:setupId/copy', async (c) => {
 		.get();
 	return c.json(
 		{
-			setup: publicSetup(required(copied, 'Copied setup could not be loaded')),
+			setup: publicSetup(
+				required(copied, 'Copied setup could not be loaded'),
+				parsed.data.makeCurrent === true,
+			),
 		},
 		201,
 	);
@@ -880,7 +940,7 @@ app.post('/api/v1/cars/:carId/setups/:setupId/current', async (c) => {
 		.update(car)
 		.set({ currentSetupId: value.id })
 		.where(eq(car.id, carId));
-	return c.json({ setup: publicSetup(value) });
+	return c.json({ setup: publicSetup(value, true) });
 });
 
 const ownedImportDraft = async (c: AppContext, draftId: string) =>
@@ -3480,6 +3540,45 @@ const setupSchema = {
 		makeCurrent: { type: 'boolean' },
 	},
 };
+const setupResponseSchema = {
+	allOf: [
+		setupSchema,
+		{
+			type: 'object',
+			properties: {
+				id: { type: 'string' },
+				carId: { type: 'string' },
+				current: { type: 'boolean' },
+				context: { type: 'object', additionalProperties: true },
+				sections: { type: 'object', additionalProperties: true },
+				source: { type: 'object', nullable: true, additionalProperties: true },
+				copiedFromSetupId: { type: 'string', nullable: true },
+				createdAt: { type: 'string', format: 'date-time' },
+				updatedAt: { type: 'string', format: 'date-time' },
+			},
+		},
+	],
+};
+const setupResponse = {
+	type: 'object',
+	required: ['setup'],
+	properties: { setup: setupResponseSchema },
+};
+const nullableSetupResponse = {
+	...setupResponse,
+	properties: {
+		...setupResponse.properties,
+		setup: { ...setupResponseSchema, nullable: true },
+	},
+};
+const setupListResponse = {
+	type: 'object',
+	required: ['currentSetupId', 'setups'],
+	properties: {
+		currentSetupId: { type: 'string', nullable: true },
+		setups: { type: 'array', items: setupResponseSchema },
+	},
+};
 const setupIdParameter = {
 	name: 'setupId',
 	in: 'path',
@@ -3498,7 +3597,10 @@ Object.assign(setupPaths, {
 		get: {
 			summary: 'List setup snapshots for an owned car',
 			responses: {
-				200: { description: 'Setup snapshots' },
+				200: {
+					description: 'Setup snapshots',
+					content: { 'application/json': { schema: setupListResponse } },
+				},
 				404: { description: 'Car not found' },
 			},
 		},
@@ -3509,7 +3611,10 @@ Object.assign(setupPaths, {
 				content: { 'application/json': { schema: setupSchema } },
 			},
 			responses: {
-				201: { description: 'Created setup snapshot' },
+				201: {
+					description: 'Created setup snapshot',
+					content: { 'application/json': { schema: setupResponse } },
+				},
 				400: { description: 'Invalid setup' },
 				409: { description: 'Archived car' },
 			},
@@ -3519,7 +3624,13 @@ Object.assign(setupPaths, {
 		parameters: [carIdParameter],
 		get: {
 			summary: 'Read the current setup selected for an owned car',
-			responses: { 200: { description: 'Current setup' } },
+			responses: {
+				200: {
+					description: 'Current setup',
+					content: { 'application/json': { schema: nullableSetupResponse } },
+				},
+				404: { description: 'Car not found' },
+			},
 		},
 	},
 	'/api/v1/cars/{carId}/setups/{setupId}': {
@@ -3527,7 +3638,10 @@ Object.assign(setupPaths, {
 		get: {
 			summary: 'Read an owned-car setup snapshot',
 			responses: {
-				200: { description: 'Setup snapshot' },
+				200: {
+					description: 'Setup snapshot',
+					content: { 'application/json': { schema: setupResponse } },
+				},
 				404: { description: 'Setup not found' },
 			},
 		},
@@ -3540,8 +3654,42 @@ Object.assign(setupPaths, {
 				},
 			},
 			responses: {
-				200: { description: 'Updated setup snapshot' },
+				200: {
+					description: 'Updated setup snapshot',
+					content: { 'application/json': { schema: setupResponse } },
+				},
 				400: { description: 'Invalid setup' },
+				404: { description: 'Setup not found' },
+				409: { description: 'Archived car' },
+			},
+		},
+	},
+	'/api/v1/cars/{carId}/setups/copy': {
+		parameters: [carIdParameter],
+		post: {
+			summary: 'Copy the current setup, or newest setup when none is current',
+			requestBody: {
+				content: {
+					'application/json': { schema: { ...setupSchema, required: [] } },
+				},
+			},
+			responses: {
+				201: {
+					description: 'Copied setup snapshot',
+					content: {
+						'application/json': {
+							schema: {
+								...setupResponse,
+								properties: {
+									...setupResponse.properties,
+									sourceSetupId: { type: 'string' },
+								},
+							},
+						},
+					},
+				},
+				404: { description: 'Car or source setup not found' },
+				409: { description: 'Archived car' },
 			},
 		},
 	},
@@ -3554,14 +3702,28 @@ Object.assign(setupPaths, {
 					'application/json': { schema: { ...setupSchema, required: [] } },
 				},
 			},
-			responses: { 201: { description: 'Copied setup snapshot' } },
+			responses: {
+				201: {
+					description: 'Copied setup snapshot',
+					content: { 'application/json': { schema: setupResponse } },
+				},
+				404: { description: 'Setup not found' },
+				409: { description: 'Archived car' },
+			},
 		},
 	},
 	'/api/v1/cars/{carId}/setups/{setupId}/current': {
 		parameters: [carIdParameter, setupIdParameter],
 		post: {
 			summary: 'Select an owned-car setup as current',
-			responses: { 200: { description: 'Current setup selected' } },
+			responses: {
+				200: {
+					description: 'Current setup selected',
+					content: { 'application/json': { schema: setupResponse } },
+				},
+				404: { description: 'Setup not found' },
+				409: { description: 'Archived car' },
+			},
 		},
 	},
 });
