@@ -66,6 +66,34 @@ export const setupImportDraft = sqliteTable('setup_import_draft', {
 	createdAt: text('created_at').notNull(),
 	updatedAt: text('updated_at').notNull(),
 });
+export const consumableMaintenanceEntry = sqliteTable(
+	'consumable_maintenance_entry',
+	{
+		id: id('id'),
+		carId: text('car_id')
+			.notNull()
+			.references(() => car.id),
+		kind: text('kind').notNull(),
+		performedAt: text('performed_at').notNull(),
+		fluidArea: text('fluid_area'),
+		customFluidArea: text('custom_fluid_area'),
+		frontDetails: text('front_details'),
+		frontCost: real('front_cost'),
+		frontCurrency: text('front_currency'),
+		rearDetails: text('rear_details'),
+		rearCost: real('rear_cost'),
+		rearCurrency: text('rear_currency'),
+		cost: real('cost'),
+		currency: text('currency'),
+		notes: text('notes'),
+		prefilledFromSetupId: text('prefilled_from_setup_id').references(
+			() => setup.id,
+		),
+		archivedAt: text('archived_at'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+	},
+);
 export const component = sqliteTable('component', {
 	id: id('id'),
 	carId: text('car_id').notNull(),

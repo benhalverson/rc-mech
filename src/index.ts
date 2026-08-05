@@ -1,58 +1,8 @@
+import { Scalar } from '@scalar/hono-api-reference';
+import { and, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { Scalar } from '@scalar/hono-api-reference';
 import { createAuth } from './auth';
-import { db } from './db';
-import {
-	car,
-	component,
-	driveSession,
-	maintenancePlan,
-	owner,
-	photo,
-	serviceRecord,
-	setup,
-	setupImportDraft,
-} from './schema';
-import {
-	AppContext,
-	AppEnv,
-	carInput,
-	carUpdateInput,
-	componentInput,
-	componentUpdateInput,
-	driveSessionInput,
-	driveSessionUpdateInput,
-	maintenanceCompletionInput,
-	maintenancePlanInput,
-	maintenancePlanUpdateInput,
-	photoReorderInput,
-	photoUpdateInput,
-	serviceRecordInput,
-	serviceRecordUpdateInput,
-	setupCopyInput,
-	setupInput,
-	setupUpdateInput,
-	setupImportAcceptInput,
-	setupImportDraftInput,
-	setupImportDraftUpdateInput,
-	type SetupInput,
-	timezoneInput,
-} from './types';
-import {
-	carListMode,
-	canArchive,
-	canRestore,
-	canWrite,
-	ownsCar,
-} from './car-policy';
-import { and, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
-import {
-	STANDARD_COMPONENT_SLOTS,
-	canEditComponent,
-	componentSlotType,
-	normalizeComponentSlot,
-} from './component-policy';
 import {
 	hasEmailDelivery,
 	hasMagicLinkConfiguration,
@@ -61,6 +11,26 @@ import {
 	isLocalDevelopment,
 	normalizeEmail,
 } from './auth-policy';
+import {
+	canArchive,
+	canRestore,
+	canWrite,
+	carListMode,
+	ownsCar,
+} from './car-policy';
+import {
+	canEditComponent,
+	componentSlotType,
+	normalizeComponentSlot,
+	STANDARD_COMPONENT_SLOTS,
+} from './component-policy';
+import {
+	canArchiveConsumable,
+	canEditConsumable,
+	canRestoreConsumable,
+	mapSetupTiresToAxles,
+} from './consumable-policy';
+import { db } from './db';
 import {
 	canDeleteDriveSession,
 	canEditDriveSession,
@@ -74,18 +44,38 @@ import {
 	type MaintenanceStatus,
 } from './maintenance-policy';
 import {
+	isCompletePhotoOrder,
+	normalizePhotoOrder,
+	PHOTO_MAX_BYTES,
+	photoObjectKey,
+	primaryAfterDelete,
+	validatePhotoMetadata,
+} from './photo-policy';
+import {
+	car,
+	component,
+	consumableMaintenanceEntry,
+	driveSession,
+	maintenancePlan,
+	owner,
+	photo,
+	serviceRecord,
+	setup,
+	setupImportDraft,
+} from './schema';
+import {
 	canDeleteServiceRecord,
 	canEditServiceRecord,
 	shouldRestoreBaseline,
 } from './service-policy';
 import {
-	PHOTO_MAX_BYTES,
-	isCompletePhotoOrder,
-	normalizePhotoOrder,
-	photoObjectKey,
-	primaryAfterDelete,
-	validatePhotoMetadata,
-} from './photo-policy';
+	canonicalSetupImportUrl,
+	defaultImportExtractor,
+	resolveSetupImport,
+	type SetupImportExtraction,
+	type SetupImportSource,
+	sourceKeyFor,
+} from './setup-import-policy';
 import {
 	canWriteSetup,
 	chooseCopySource,
@@ -93,13 +83,33 @@ import {
 	shouldSelectCurrentSetup,
 } from './setup-policy';
 import {
-	canonicalSetupImportUrl,
-	defaultImportExtractor,
-	resolveSetupImport,
-	sourceKeyFor,
-	type SetupImportExtraction,
-	type SetupImportSource,
-} from './setup-import-policy';
+	AppContext,
+	AppEnv,
+	type ConsumableInput,
+	carInput,
+	carUpdateInput,
+	componentInput,
+	componentUpdateInput,
+	consumableInput,
+	consumableUpdateInput,
+	driveSessionInput,
+	driveSessionUpdateInput,
+	maintenanceCompletionInput,
+	maintenancePlanInput,
+	maintenancePlanUpdateInput,
+	photoReorderInput,
+	photoUpdateInput,
+	type SetupInput,
+	serviceRecordInput,
+	serviceRecordUpdateInput,
+	setupCopyInput,
+	setupImportAcceptInput,
+	setupImportDraftInput,
+	setupImportDraftUpdateInput,
+	setupInput,
+	setupUpdateInput,
+	timezoneInput,
+} from './types';
 
 const app = new Hono<AppEnv>();
 
@@ -307,6 +317,7 @@ const publicSetup = (value: typeof setup.$inferSelect, current = false) => {
 			rearSuspension: jsonValue(value.rearSuspension) ?? {},
 			notes: value.notes ? { setupNotes: value.notes } : {},
 		},
+		tires: jsonValue(value.tires),
 		notes: value.notes,
 		source: {
 			url: value.sourceUrl,
@@ -516,6 +527,98 @@ const ownedPhoto = async (c: AppContext, photoId: string) => {
 		.get();
 	return value && (await ownedCar(c, value.carId)) ? value : undefined;
 };
+
+const publicConsumable = (
+	value: typeof consumableMaintenanceEntry.$inferSelect,
+) => {
+	const front = value.frontDetails ? jsonValue(value.frontDetails) : null;
+	const rear = value.rearDetails ? jsonValue(value.rearDetails) : null;
+	const details = (item: unknown) =>
+		item && typeof item === 'object' && 'details' in item
+			? (item as { details?: unknown }).details
+			: item;
+	return {
+		id: value.id,
+		carId: value.carId,
+		kind:
+			value.kind === 'fluid'
+				? value.fluidArea?.includes('shocks')
+					? 'shock-fluid'
+					: 'differential-fluid'
+				: value.kind,
+		performedAt: value.performedAt,
+		fluidArea: value.fluidArea,
+		customFluidArea: value.customFluidArea,
+		customArea: value.customFluidArea,
+		front,
+		rear,
+		axle:
+			value.kind === 'tires'
+				? front && rear
+					? 'both'
+					: front
+						? 'front'
+						: 'rear'
+				: null,
+		frontDetails: details(front),
+		rearDetails: details(rear),
+		frontCost: value.frontCost,
+		rearCost: value.rearCost,
+		cost: value.cost,
+		currency: value.currency,
+		notes: value.notes,
+		prefilledFromSetupId: value.prefilledFromSetupId,
+		archivedAt: value.archivedAt,
+		deletedAt: value.archivedAt,
+		createdAt: value.createdAt,
+		updatedAt: value.updatedAt,
+	};
+};
+
+const ownedConsumable = async (c: AppContext, entryId: string) => {
+	const value = await db(c.env)
+		.select()
+		.from(consumableMaintenanceEntry)
+		.where(eq(consumableMaintenanceEntry.id, entryId))
+		.get();
+	return value && (await ownedCar(c, value.carId)) ? value : undefined;
+};
+
+const consumableInsertValues = (
+	id: string,
+	carId: string,
+	value: ConsumableInput,
+	now: string,
+	prefilledFromSetupId: string | null,
+) => ({
+	id,
+	carId,
+	kind: value.kind,
+	performedAt: new Date(value.performedAt).toISOString(),
+	fluidArea: value.kind === 'fluid' ? value.fluidArea : null,
+	customFluidArea:
+		value.kind === 'fluid' ? (value.customFluidArea ?? null) : null,
+	frontDetails:
+		value.kind === 'tires' && value.front
+			? (jsonText(value.front) ?? '{}')
+			: null,
+	frontCost: value.kind === 'tires' ? (value.front?.cost ?? null) : null,
+	frontCurrency:
+		value.kind === 'tires' ? (value.front?.currency ?? null) : null,
+	rearDetails:
+		value.kind === 'tires' && value.rear
+			? (jsonText(value.rear) ?? '{}')
+			: null,
+	rearCost: value.kind === 'tires' ? (value.rear?.cost ?? null) : null,
+	rearCurrency: value.kind === 'tires' ? (value.rear?.currency ?? null) : null,
+	cost: value.kind === 'fluid' ? (value.cost ?? null) : null,
+	currency: value.kind === 'fluid' ? (value.currency ?? null) : null,
+	notes: value.notes ?? null,
+	prefilledFromSetupId,
+	archivedAt: null,
+	createdAt: now,
+	updatedAt: now,
+});
 
 const publicPhoto = (value: typeof photo.$inferSelect) => ({
 	id: value.id,
@@ -942,6 +1045,416 @@ app.post('/api/v1/cars/:carId/setups/:setupId/current', async (c) => {
 		.where(eq(car.id, carId));
 	return c.json({ setup: publicSetup(value, true) });
 });
+
+app.get('/api/v1/cars/:carId/consumables/prefill', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!parentCar.currentSetupId)
+		return c.json({ setupId: null, front: null, rear: null });
+	const current = await db(c.env)
+		.select()
+		.from(setup)
+		.where(and(eq(setup.id, parentCar.currentSetupId), eq(setup.carId, carId)))
+		.get();
+	if (!current) return c.json({ setupId: null, front: null, rear: null });
+	const mapped = mapSetupTiresToAxles(jsonValue(current.tires));
+	return c.json({ setupId: current.id, ...mapped });
+});
+
+app.get('/api/v1/cars/:carId/consumables', async (c) => {
+	const carId = c.req.param('carId');
+	if (!(await ownedCar(c, carId)))
+		return c.json({ error: 'Car not found' }, 404);
+	const archived = c.req.query('archived');
+	const condition =
+		archived === 'all'
+			? eq(consumableMaintenanceEntry.carId, carId)
+			: archived === 'true'
+				? and(
+						eq(consumableMaintenanceEntry.carId, carId),
+						isNotNull(consumableMaintenanceEntry.archivedAt),
+					)
+				: and(
+						eq(consumableMaintenanceEntry.carId, carId),
+						isNull(consumableMaintenanceEntry.archivedAt),
+					);
+	const values = await db(c.env)
+		.select()
+		.from(consumableMaintenanceEntry)
+		.where(condition)
+		.orderBy(
+			desc(consumableMaintenanceEntry.performedAt),
+			desc(consumableMaintenanceEntry.createdAt),
+		);
+	return c.json({ consumables: values.map(publicConsumable) });
+});
+
+app.post('/api/v1/cars/:carId/consumables', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWrite(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before recording consumables' },
+			409,
+		);
+	const parsed = consumableInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	let value = parsed.data;
+	let prefilledFromSetupId: string | null = null;
+	if (value.kind === 'tires' && value.prefillFromCurrentSetup) {
+		if (parentCar.currentSetupId) {
+			const current = await db(c.env)
+				.select()
+				.from(setup)
+				.where(
+					and(eq(setup.id, parentCar.currentSetupId), eq(setup.carId, carId)),
+				)
+				.get();
+			if (current) {
+				const mapped = mapSetupTiresToAxles(jsonValue(current.tires));
+				value = {
+					...value,
+					front:
+						value.front ??
+						(mapped.front ? { details: mapped.front } : undefined),
+					rear:
+						value.rear ?? (mapped.rear ? { details: mapped.rear } : undefined),
+				};
+				prefilledFromSetupId = current.id;
+			}
+		}
+		if (!value.front && !value.rear)
+			return c.json(
+				{ error: 'Current setup has no tire details to prefill' },
+				400,
+			);
+	}
+	const id = crypto.randomUUID();
+	const now = new Date().toISOString();
+	const created = await db(c.env)
+		.insert(consumableMaintenanceEntry)
+		.values(consumableInsertValues(id, carId, value, now, prefilledFromSetupId))
+		.returning()
+		.get();
+	return c.json(
+		{
+			consumable: publicConsumable(
+				required(created, 'Created consumable could not be loaded'),
+			),
+		},
+		201,
+	);
+});
+
+app.get('/api/v1/consumables/:entryId', async (c) => {
+	const value = await ownedConsumable(c, c.req.param('entryId'));
+	if (!value) return c.json({ error: 'Consumable entry not found' }, 404);
+	return c.json({ consumable: publicConsumable(value) });
+});
+
+app.patch('/api/v1/consumables/:entryId', async (c) => {
+	const existing = await ownedConsumable(c, c.req.param('entryId'));
+	if (!existing) return c.json({ error: 'Consumable entry not found' }, 404);
+	const parentCar = await ownedCar(c, existing.carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWrite(parentCar) || !canEditConsumable(existing))
+		return c.json({ error: 'Archived cars and entries are read-only' }, 409);
+	const parsed = consumableUpdateInput.safeParse(await c.req.json());
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const value = parsed.data;
+	if (
+		existing.kind === 'fluid' &&
+		(value.front !== undefined || value.rear !== undefined)
+	)
+		return c.json({ error: 'Fluid entries cannot have tire axles' }, 400);
+	if (
+		existing.kind === 'tires' &&
+		(value.fluidArea !== undefined ||
+			value.customFluidArea !== undefined ||
+			value.cost !== undefined ||
+			value.currency !== undefined)
+	)
+		return c.json({ error: 'Tire entries cannot have fluid fields' }, 400);
+	if (existing.kind === 'tires' && value.front === null && value.rear === null)
+		return c.json({ error: 'A front or rear tire set is required' }, 400);
+	if (
+		existing.kind === 'fluid' &&
+		value.fluidArea === 'custom' &&
+		!value.customFluidArea &&
+		!existing.customFluidArea
+	)
+		return c.json({ error: 'Custom fluid area is required' }, 400);
+	await db(c.env)
+		.update(consumableMaintenanceEntry)
+		.set({
+			performedAt: value.performedAt
+				? new Date(value.performedAt).toISOString()
+				: undefined,
+			notes: value.notes,
+			fluidArea: value.fluidArea,
+			customFluidArea: value.customFluidArea,
+			cost: value.cost,
+			currency: value.currency,
+			frontDetails:
+				value.front === undefined
+					? undefined
+					: value.front === null
+						? null
+						: jsonText(value.front),
+			frontCost:
+				value.front === undefined ? undefined : (value.front?.cost ?? null),
+			frontCurrency:
+				value.front === undefined ? undefined : (value.front?.currency ?? null),
+			rearDetails:
+				value.rear === undefined
+					? undefined
+					: value.rear === null
+						? null
+						: jsonText(value.rear),
+			rearCost:
+				value.rear === undefined ? undefined : (value.rear?.cost ?? null),
+			rearCurrency:
+				value.rear === undefined ? undefined : (value.rear?.currency ?? null),
+			updatedAt: new Date().toISOString(),
+		})
+		.where(eq(consumableMaintenanceEntry.id, existing.id));
+	const updated = await ownedConsumable(c, existing.id);
+	return c.json({
+		consumable: publicConsumable(
+			required(updated, 'Updated consumable could not be loaded'),
+		),
+	});
+});
+
+const transitionConsumable = async (c: AppContext) => {
+	const existing = await ownedConsumable(c, c.req.param('entryId'));
+	if (!existing) return c.json({ error: 'Consumable entry not found' }, 404);
+	if (c.req.param('carId') && existing.carId !== c.req.param('carId'))
+		return c.json({ error: 'Consumable entry not found' }, 404);
+	const parentCar = await ownedCar(c, existing.carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	const action =
+		c.req.method === 'DELETE' || c.req.path.endsWith('/archive')
+			? 'archive'
+			: 'restore';
+	if (!canWrite(parentCar))
+		return c.json(
+			{
+				error: 'Car is archived; restore it before changing consumable history',
+			},
+			409,
+		);
+	if (action === 'archive' && !canArchiveConsumable(existing))
+		return c.json({ error: 'Consumable entry is already archived' }, 409);
+	if (action === 'restore' && !canRestoreConsumable(existing))
+		return c.json({ error: 'Consumable entry is already active' }, 409);
+	const updated = await db(c.env)
+		.update(consumableMaintenanceEntry)
+		.set({
+			archivedAt: action === 'archive' ? new Date().toISOString() : null,
+			updatedAt: new Date().toISOString(),
+		})
+		.where(eq(consumableMaintenanceEntry.id, existing.id))
+		.returning()
+		.get();
+	const result = publicConsumable(
+		required(updated, 'Consumable transition failed'),
+	);
+	return c.json({ consumable: result, consumableMaintenance: result });
+};
+app.post('/api/v1/consumables/:entryId/archive', transitionConsumable);
+app.post('/api/v1/consumables/:entryId/restore', transitionConsumable);
+
+// Compatibility aliases for the maintenance cockpit contract. The persisted model above
+// remains the canonical fluid/tires shape; these aliases only translate its flat UI payload.
+const legacyConsumableInput = (body: Record<string, unknown>) => {
+	if (body.kind === 'tires') {
+		const axle =
+			body.axle === 'rear' ? 'rear' : body.axle === 'both' ? 'both' : 'front';
+		const front =
+			axle !== 'rear' &&
+			(body.frontDetails !== undefined || body.frontCost !== undefined)
+				? {
+						details: body.frontDetails,
+						cost: body.frontCost,
+						currency: body.frontCost === undefined ? undefined : 'USD',
+					}
+				: undefined;
+		const rear =
+			axle !== 'front' &&
+			(body.rearDetails !== undefined || body.rearCost !== undefined)
+				? {
+						details: body.rearDetails,
+						cost: body.rearCost,
+						currency: body.rearCost === undefined ? undefined : 'USD',
+					}
+				: undefined;
+		return {
+			kind: 'tires',
+			performedAt: body.performedAt,
+			notes: body.notes,
+			front,
+			rear,
+		};
+	}
+	const fluidKind =
+		body.kind === 'shock-fluid'
+			? 'front-shocks'
+			: body.kind === 'differential-fluid'
+				? (body.fluidArea ?? 'front-differential')
+				: body.fluidArea;
+	return {
+		kind: 'fluid',
+		performedAt: body.performedAt,
+		notes: body.notes,
+		fluidArea: fluidKind,
+		customFluidArea: body.customArea,
+		cost: body.cost,
+		currency: body.cost === undefined ? undefined : 'USD',
+	};
+};
+
+const legacyConsumableResponse = (
+	value: typeof consumableMaintenanceEntry.$inferSelect,
+) => ({
+	consumableMaintenance: publicConsumable(value),
+});
+
+app.get('/api/v1/cars/:carId/consumable-maintenance', async (c) => {
+	const carId = c.req.param('carId');
+	if (!(await ownedCar(c, carId)))
+		return c.json({ error: 'Car not found' }, 404);
+	const values = await db(c.env)
+		.select()
+		.from(consumableMaintenanceEntry)
+		.where(eq(consumableMaintenanceEntry.carId, carId))
+		.orderBy(desc(consumableMaintenanceEntry.performedAt));
+	return c.json({ consumableMaintenance: values.map(publicConsumable) });
+});
+
+app.post('/api/v1/cars/:carId/consumable-maintenance', async (c) => {
+	const carId = c.req.param('carId');
+	const parentCar = await ownedCar(c, carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWrite(parentCar))
+		return c.json(
+			{ error: 'Car is archived; restore it before recording maintenance' },
+			409,
+		);
+	const body = (await c.req.json().catch(() => ({}))) as Record<
+		string,
+		unknown
+	>;
+	const parsed = consumableInput.safeParse(legacyConsumableInput(body));
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	const id = crypto.randomUUID();
+	const created = await db(c.env)
+		.insert(consumableMaintenanceEntry)
+		.values(
+			consumableInsertValues(
+				id,
+				carId,
+				parsed.data,
+				new Date().toISOString(),
+				null,
+			),
+		)
+		.returning()
+		.get();
+	return c.json(
+		legacyConsumableResponse(
+			required(created, 'Created consumable could not be loaded'),
+		),
+		201,
+	);
+});
+
+app.patch('/api/v1/cars/:carId/consumable-maintenance/:entryId', async (c) => {
+	const existing = await ownedConsumable(c, c.req.param('entryId'));
+	if (!existing || existing.carId !== c.req.param('carId'))
+		return c.json({ error: 'Consumable entry not found' }, 404);
+	const parentCar = await ownedCar(c, existing.carId);
+	if (!parentCar) return c.json({ error: 'Car not found' }, 404);
+	if (!canWrite(parentCar) || !canEditConsumable(existing))
+		return c.json({ error: 'Archived cars and entries are read-only' }, 409);
+	const body = (await c.req.json().catch(() => ({}))) as Record<
+		string,
+		unknown
+	>;
+	const parsed = consumableUpdateInput.safeParse(
+		legacyConsumableInput({
+			...body,
+			kind:
+				existing.kind === 'tires'
+					? 'tires'
+					: existing.fluidArea?.includes('shocks')
+						? 'shock-fluid'
+						: 'differential-fluid',
+		}),
+	);
+	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+	await db(c.env)
+		.update(consumableMaintenanceEntry)
+		.set({
+			performedAt: parsed.data.performedAt
+				? new Date(parsed.data.performedAt).toISOString()
+				: undefined,
+			notes: parsed.data.notes,
+			fluidArea: parsed.data.fluidArea,
+			customFluidArea: parsed.data.customFluidArea,
+			cost: parsed.data.cost,
+			currency: parsed.data.currency,
+			frontDetails:
+				parsed.data.front === undefined
+					? undefined
+					: parsed.data.front === null
+						? null
+						: jsonText(parsed.data.front),
+			frontCost:
+				parsed.data.front === undefined
+					? undefined
+					: (parsed.data.front?.cost ?? null),
+			frontCurrency:
+				parsed.data.front === undefined
+					? undefined
+					: (parsed.data.front?.currency ?? null),
+			rearDetails:
+				parsed.data.rear === undefined
+					? undefined
+					: parsed.data.rear === null
+						? null
+						: jsonText(parsed.data.rear),
+			rearCost:
+				parsed.data.rear === undefined
+					? undefined
+					: (parsed.data.rear?.cost ?? null),
+			rearCurrency:
+				parsed.data.rear === undefined
+					? undefined
+					: (parsed.data.rear?.currency ?? null),
+			updatedAt: new Date().toISOString(),
+		})
+		.where(eq(consumableMaintenanceEntry.id, existing.id));
+	return c.json(
+		legacyConsumableResponse(
+			required(
+				await ownedConsumable(c, existing.id),
+				'Updated consumable could not be loaded',
+			),
+		),
+	);
+});
+
+app.delete(
+	'/api/v1/cars/:carId/consumable-maintenance/:entryId',
+	transitionConsumable,
+);
+app.post(
+	'/api/v1/cars/:carId/consumable-maintenance/:entryId/restore',
+	transitionConsumable,
+);
 
 const ownedImportDraft = async (c: AppContext, draftId: string) =>
 	db(c.env)
@@ -3865,6 +4378,121 @@ Object.assign(setupPaths, {
 				201: { description: 'New setup snapshot created' },
 				404: { description: 'Draft or car not found' },
 				409: { description: 'Duplicate source or archived car' },
+			},
+		},
+	},
+});
+
+const consumablePaths = openApi.paths as Record<string, unknown>;
+const consumableAxleSchema = {
+	type: 'object',
+	properties: {
+		details: { type: 'string' },
+		cost: { type: 'number', minimum: 0 },
+		currency: { type: 'string', pattern: '^[A-Za-z]{3}$' },
+	},
+};
+const consumableSchema = {
+	type: 'object',
+	required: ['kind', 'performedAt'],
+	properties: {
+		kind: { type: 'string', enum: ['fluid', 'tires'] },
+		performedAt: { type: 'string', format: 'date-time' },
+		fluidArea: {
+			type: 'string',
+			enum: [
+				'front-shocks',
+				'rear-shocks',
+				'front-differential',
+				'rear-differential',
+				'custom',
+			],
+		},
+		customFluidArea: { type: 'string' },
+		front: consumableAxleSchema,
+		rear: consumableAxleSchema,
+		cost: { type: 'number', minimum: 0 },
+		currency: { type: 'string', pattern: '^[A-Za-z]{3}$' },
+		notes: { type: 'string' },
+		prefillFromCurrentSetup: { type: 'boolean' },
+	},
+};
+Object.assign(consumablePaths, {
+	'/api/v1/cars/{carId}/consumables': {
+		parameters: [carIdParameter],
+		get: {
+			summary: 'List active consumable maintenance history for an owned car',
+			responses: {
+				200: { description: 'Consumable history' },
+				404: { description: 'Car not found' },
+			},
+		},
+		post: {
+			summary: 'Record an owned-car fluid or tire-set change',
+			requestBody: {
+				required: true,
+				content: { 'application/json': { schema: consumableSchema } },
+			},
+			responses: {
+				201: { description: 'Consumable entry created' },
+				400: { description: 'Invalid consumable entry' },
+				404: { description: 'Car not found' },
+				409: { description: 'Car is archived' },
+			},
+		},
+	},
+	'/api/v1/cars/{carId}/consumables/prefill': {
+		parameters: [carIdParameter],
+		get: {
+			summary:
+				'Map tire details from the owned car current setup into front and rear axle values',
+			responses: {
+				200: { description: 'Setup tire prefill' },
+				404: { description: 'Car not found' },
+			},
+		},
+	},
+	'/api/v1/consumables/{entryId}': {
+		patch: {
+			summary: 'Edit an owned consumable maintenance entry',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': { schema: { ...consumableSchema, required: [] } },
+				},
+			},
+			responses: {
+				200: { description: 'Consumable entry updated' },
+				400: { description: 'Invalid update' },
+				404: { description: 'Entry not found' },
+				409: { description: 'Entry or car is archived' },
+			},
+		},
+		get: {
+			summary: 'Read an owned consumable maintenance entry',
+			responses: {
+				200: { description: 'Consumable entry' },
+				404: { description: 'Entry not found' },
+			},
+		},
+	},
+	'/api/v1/consumables/{entryId}/archive': {
+		post: {
+			summary: 'Archive an owned consumable entry',
+			responses: {
+				200: { description: 'Entry archived' },
+				404: { description: 'Entry not found' },
+				409: { description: 'Invalid lifecycle transition' },
+			},
+		},
+	},
+	'/api/v1/consumables/{entryId}/restore': {
+		post: {
+			summary: 'Restore an archived owned consumable entry',
+			responses: {
+				200: { description: 'Entry restored' },
+				404: { description: 'Entry not found' },
+				409: { description: 'Invalid lifecycle transition' },
 			},
 		},
 	},
