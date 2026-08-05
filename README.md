@@ -44,11 +44,22 @@ pnpm exec wrangler d1 create rc-mech
 
 Put the returned D1 UUID in the top-level `d1_databases` binding in `wrangler.jsonc`. The local environment intentionally keeps its local placeholder.
 
-Apply migrations to the remote database before the first deploy:
+The Cloudflare-managed production deployment runs the remote migration step
+before deploying the Worker. D1 records applied migrations, so this step is
+safe on every deployment: already-applied migrations are skipped and pending
+migrations are applied. A migration failure stops the deployment.
+
+To run the production migration step explicitly:
 
 ```sh
 pnpm exec wrangler d1 migrations apply DB --remote
 ```
+
+`pnpm deploy` builds the Angular assets, runs that production migration step,
+and then deploys the Worker. Keep `pnpm db:migrate:local` for local D1 only.
+Production migrations must be backward-compatible with the currently deployed
+Worker; use an expand/deploy/contract sequence for changes that eventually
+remove or rename schema elements.
 
 Configure the Email Service sender in the Cloudflare dashboard/API, bind it as `EMAIL`, and set these production-only values as Worker secrets. `APP_URL` must be the final HTTPS origin, including the custom domain used by the dashboard; it controls redirects, trusted origins, cookies, and passkey RP identity.
 

@@ -14,8 +14,13 @@ bucket:
 
 ```sh
 pnpm exec wrangler d1 create rc-mech
-pnpm exec wrangler d1 migrations apply DB --remote
 ```
+
+The Cloudflare-managed deployment invokes `pnpm deploy` on `main`. That
+command builds the Angular assets, runs `pnpm db:migrate:production`, and then
+deploys the Worker. The remote D1 migration command consults D1's migration
+ledger, so applied migrations are no-ops and pending migrations are applied.
+If the migration step fails, the Worker is not deployed.
 
 The production Worker needs these bindings and values:
 
@@ -45,9 +50,16 @@ pnpm cf-typegen
 pnpm db:migrate:local
 pnpm check
 pnpm client:build
-pnpm exec wrangler deploy --dry-run --x-provision=false
+pnpm exec wrangler deploy --dry-run
 pnpm run deploy
 ```
+
+The dry-run and local migration commands above do not change production. The
+production remote migration is part of `pnpm run deploy`.
+
+Production migrations must remain backward-compatible with the currently
+deployed Worker. Use an expand/deploy/contract sequence: add compatible schema
+first, deploy code that uses it, and remove old schema only in a later release.
 
 `public/.gitignore` keeps generated Angular bundles untracked while retaining
 the directory marker. A successful build should not dirty tracked files.
