@@ -270,3 +270,45 @@ export const setupUpdateInput = z
 	);
 
 export const setupCopyInput = setupInput.partial();
+
+export const setupImportSourceUrl = z
+	.string()
+	.trim()
+	.url()
+	.max(2000)
+	.refine((value) => {
+		const url = new URL(value);
+		return (
+			url.protocol === 'https:' &&
+			url.hostname === 'www.sodialed.com' &&
+			/^\/setup\/[A-Za-z0-9]+\/?$/.test(url.pathname)
+		);
+	}, 'Only supported So Dialed setup URLs are accepted');
+
+const importValues = z.record(z.string().min(1).max(160), z.unknown());
+const importDraftPatch = z.object({
+	carId: z.string().min(1).max(160).nullable().optional(),
+	knownValues: importValues.optional(),
+	uncertainValues: importValues.optional(),
+	rawValues: importValues.optional(),
+	unmappedValues: importValues.optional(),
+	sourceMetadata: importValues.optional(),
+});
+
+export const setupImportDraftInput = z.object({
+	sourceUrl: setupImportSourceUrl,
+	carId: z.string().min(1).max(160).optional(),
+});
+export const setupImportDraftUpdateInput = importDraftPatch.refine(
+	(value) => Object.keys(value).length > 0,
+	'At least one import draft field is required',
+);
+export const setupImportAcceptInput = z.object({
+	carId: z.string().min(1).max(160),
+	name: z.string().trim().min(1).max(160).optional(),
+	makeCurrent: z.boolean().optional(),
+});
+export type SetupImportDraftInput = z.infer<typeof setupImportDraftInput>;
+export type SetupImportDraftUpdateInput = z.infer<
+	typeof setupImportDraftUpdateInput
+>;
