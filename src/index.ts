@@ -182,60 +182,57 @@ const jsonValue = (value: string | null): unknown => {
 	try {
 		return JSON.parse(value);
 	} catch {
-		return value;
+		return null;
 	}
 };
 
-const publicSetup = (value: typeof setup.$inferSelect, current = false) => ({
-	id: value.id,
-	carId: value.carId,
-	name: value.name,
-	status: value.status,
-	current,
-	context: {
-		recordedAt: value.setupDate,
-		track: value.track,
-		event: value.event,
-		surface: value.surface,
-		traction: value.traction,
-		moisture: value.moisture,
-		condition: value.condition,
-		temperature: value.temperature,
-	},
-	sections: {
-		vehicle: jsonValue(value.vehicle) ?? {},
-		drivetrain: jsonValue(value.drivetrain) ?? {},
-		electronics: jsonValue(value.electronics) ?? {},
-		tires: jsonValue(value.tires) ?? {},
-		shocks: jsonValue(value.shocks) ?? {},
-		frontSuspension: jsonValue(value.frontSuspension) ?? {},
-		rearSuspension: jsonValue(value.rearSuspension) ?? {},
-		notes: value.notes ? { setupNotes: value.notes } : {},
-	},
-	notes: value.notes,
-	source: {
-		url: value.sourceUrl,
-		pdfUrl:
-			typeof jsonValue(value.sourceMetadata) === 'object' &&
-			jsonValue(value.sourceMetadata) !== null
-				? ((jsonValue(value.sourceMetadata) as { pdfUrl?: string }).pdfUrl ??
-					null)
-				: null,
-		pdfTitle: value.sourcePdfReference,
-		pdfPage:
-			typeof jsonValue(value.sourceMetadata) === 'object' &&
-			jsonValue(value.sourceMetadata) !== null
-				? ((jsonValue(value.sourceMetadata) as { pdfPage?: number }).pdfPage ??
-					null)
-				: null,
-		metadata: jsonValue(value.sourceMetadata),
-	},
-	copiedFromSetupId: value.copiedFromId,
-	rawValues: jsonValue(value.rawValues),
-	unmappedValues: jsonValue(value.unmappedValues),
-	createdAt: value.createdAt,
-	updatedAt: value.updatedAt,
-});
+const publicSetup = (value: typeof setup.$inferSelect, current = false) => {
+	const sourceMetadata = jsonValue(value.sourceMetadata);
+	const sourceObject =
+		sourceMetadata && typeof sourceMetadata === 'object'
+			? (sourceMetadata as { pdfUrl?: string; pdfPage?: number })
+			: null;
+	return {
+		id: value.id,
+		carId: value.carId,
+		name: value.name,
+		status: value.status,
+		current,
+		context: {
+			recordedAt: value.setupDate,
+			track: value.track,
+			event: value.event,
+			surface: value.surface,
+			traction: value.traction,
+			moisture: value.moisture,
+			condition: value.condition,
+			temperature: value.temperature,
+		},
+		sections: {
+			vehicle: jsonValue(value.vehicle) ?? {},
+			drivetrain: jsonValue(value.drivetrain) ?? {},
+			electronics: jsonValue(value.electronics) ?? {},
+			tires: jsonValue(value.tires) ?? {},
+			shocks: jsonValue(value.shocks) ?? {},
+			frontSuspension: jsonValue(value.frontSuspension) ?? {},
+			rearSuspension: jsonValue(value.rearSuspension) ?? {},
+			notes: value.notes ? { setupNotes: value.notes } : {},
+		},
+		notes: value.notes,
+		source: {
+			url: value.sourceUrl,
+			pdfUrl: sourceObject?.pdfUrl ?? null,
+			pdfTitle: value.sourcePdfReference,
+			pdfPage: sourceObject?.pdfPage ?? null,
+			metadata: sourceMetadata,
+		},
+		copiedFromSetupId: value.copiedFromId,
+		rawValues: jsonValue(value.rawValues),
+		unmappedValues: jsonValue(value.unmappedValues),
+		createdAt: value.createdAt,
+		updatedAt: value.updatedAt,
+	};
+};
 
 const setupInsertValues = (
 	id: string,
