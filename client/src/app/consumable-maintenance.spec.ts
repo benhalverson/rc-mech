@@ -17,6 +17,7 @@ type Harness = {
 	save: () => void;
 	archive: (entry: ConsumableEntry) => void;
 	restore: (entry: ConsumableEntry) => void;
+	entryCost: (entry: ConsumableEntry) => string;
 	form: (() => Record<string, string> & {
 		frontDetails?: string;
 		rearDetails?: string;
@@ -108,6 +109,28 @@ describe('ConsumableMaintenance', () => {
 		expect(report.fluidEntries.map((entry) => entry.fluidArea)).toEqual([
 			'front-shocks',
 		]);
+	});
+
+	it('renders recorded fluid and zero tire costs instead of treating them as missing', () => {
+		const app = fixture.componentInstance as unknown as Harness;
+		expect(
+			app.entryCost({
+				id: 'fluid-1',
+				carId: 'car-1',
+				kind: 'shock-fluid',
+				performedAt: '2026-08-02T00:00:00.000Z',
+				cost: 12.5,
+			}),
+		).toBe('USD 12.50');
+		expect(
+			app.entryCost({
+				id: 'tire-1',
+				carId: 'car-1',
+				kind: 'tires',
+				performedAt: '2026-08-02T00:00:00.000Z',
+				frontCost: 0,
+			}),
+		).toBe('USD 0.00');
 	});
 
 	let fixture: ComponentFixture<ConsumableMaintenance>;

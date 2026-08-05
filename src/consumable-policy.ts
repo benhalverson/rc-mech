@@ -183,9 +183,11 @@ export const calculateConsumableReport = (input: ConsumableReportEntry[]) => {
 				rear: rearSpend,
 				combined: {
 					total:
-						combinedByCurrency.length === 1
-							? combinedByCurrency[0].total
-							: null,
+						combinedByCurrency.length === 0
+							? 0
+							: combinedByCurrency.length === 1
+								? combinedByCurrency[0].total
+								: null,
 					currency:
 						combinedByCurrency.length === 1
 							? combinedByCurrency[0].currency

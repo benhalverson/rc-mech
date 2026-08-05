@@ -460,6 +460,7 @@ export class ConsumableMaintenance {
 		const total = isFluid
 			? (entry.cost ?? 0)
 			: (entry.frontCost ?? 0) + (entry.rearCost ?? 0);
+<<<<<<< HEAD
 		return hasCost
 			? `${entry.currency ?? 'USD'} ${total.toFixed(2)}`
 			: 'No cost logged';

@@ -169,6 +169,18 @@ test('report marks missing axle costs without inventing spend', () => {
 	assert.equal(report.tires.spend.combined.isIncomplete, true);
 });
 
+test('report returns zero combined spend when tire costs are not recorded', () => {
+	const report = calculateConsumableReport([
+		{
+			kind: 'tires',
+			performedAt: '2026-04-01T00:00:00.000Z',
+			frontDetails: { compound: 'soft' },
+		},
+	]);
+	assert.equal(report.tires.spend.combined.total, 0);
+	assert.equal(report.tires.spend.combined.currency, null);
+});
+
 test('report includes fluid service areas and excludes archived history', () => {
 	const report = calculateConsumableReport([
 		{

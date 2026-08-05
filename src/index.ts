@@ -1108,7 +1108,10 @@ app.get('/api/v1/cars/:carId/consumables/report', async (c) => {
 				isNull(consumableMaintenanceEntry.archivedAt),
 			),
 		)
-		.orderBy(desc(consumableMaintenanceEntry.performedAt));
+		.orderBy(
+			desc(consumableMaintenanceEntry.performedAt),
+			desc(consumableMaintenanceEntry.createdAt),
+		);
 	return c.json({ report: calculateConsumableReport(values) });
 });
 
