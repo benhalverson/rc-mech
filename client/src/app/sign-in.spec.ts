@@ -8,6 +8,7 @@ import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { provideRouter } from '@angular/router';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { SignIn } from './sign-in';
+import { OwnerSessionStore } from './owner-session-store';
 
 describe('SignIn', () => {
 	let fixture: ComponentFixture<SignIn>;
@@ -21,6 +22,7 @@ describe('SignIn', () => {
 				provideHttpClientTesting(),
 				provideNoopAnimations(),
 				provideRouter([]),
+				OwnerSessionStore,
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);

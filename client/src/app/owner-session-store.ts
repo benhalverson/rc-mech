@@ -8,8 +8,9 @@ export type OwnerSessionResponse = {
 	user?: { email?: string };
 } | null;
 
-@Injectable({ providedIn: 'root' })
+@Injectable()
 export class OwnerSessionStore {
+	private resolvedOnce = false;
 	readonly session = httpResource<OwnerSessionResponse>(() => ({
 		url: '/api/auth/get-session',
 		withCredentials: true,
@@ -30,7 +31,12 @@ export class OwnerSessionStore {
 				take(1),
 			),
 		);
+		this.resolvedOnce = true;
 		return this.session.value() ?? null;
+	}
+
+	get hasResolvedSession(): boolean {
+		return this.resolvedOnce;
 	}
 
 	refresh(): void {

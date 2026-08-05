@@ -10,6 +10,7 @@ import { CarPhotoGallery } from './car-photo-gallery';
 import { MaintenanceCockpit } from './maintenance-cockpit';
 import { SetupSnapshots } from './setup-snapshots';
 import { RouteTransitionAnnouncer } from './route-transition-announcer';
+import { OwnerSessionStore } from './owner-session-store';
 
 type Car = {
 	id: string;
@@ -382,6 +383,7 @@ const carPayload = (form: CarForm): Record<string, string> => {
 	styleUrl: './garage-workspace.css',
 })
 export class GarageWorkspace {
+	private readonly sessionStore = inject(OwnerSessionStore, { optional: true });
 	private readonly http = inject(HttpClient);
 	private readonly routeTransition = inject(RouteTransitionAnnouncer);
 	private readonly router = inject(Router, { optional: true });
@@ -549,7 +551,13 @@ export class GarageWorkspace {
 				}
 			});
 		this.consumeMagicLinkError();
-		this.loadSession();
+		const hasSharedSession = this.sessionStore?.hasResolvedSession ?? false;
+		const sharedSession = hasSharedSession
+			? this.sessionStore?.session.value()
+			: null;
+		if (hasSharedSession && sharedSession?.session)
+			this.applySession(sharedSession);
+		else this.loadSession();
 	}
 
 	protected requestMagicLink(): void {
@@ -747,20 +755,7 @@ export class GarageWorkspace {
 		this.http
 			.get<SessionResponse>('/api/auth/get-session', { withCredentials: true })
 			.subscribe({
-				next: (response) => {
-					if (!response?.session) {
-						this.state.set('signed-out');
-						return;
-					}
-
-					this.state.set('signed-in');
-					this.ownerEmail.set(response.user?.email ?? 'Owner');
-					this.loadCars();
-					this.loadPasskeys();
-					this.loadTimezone();
-					if (this.currentUrl().startsWith('/sign-in'))
-						void this.router?.navigateByUrl(this.returnTo);
-				},
+				next: (response) => this.applySession(response),
 				error: () => {
 					this.state.set('signed-out');
 					if (!this.message())
@@ -769,6 +764,20 @@ export class GarageWorkspace {
 						);
 				},
 			});
+	}
+
+	private applySession(response: SessionResponse): void {
+		if (!response?.session) {
+			this.state.set('signed-out');
+			return;
+		}
+		this.state.set('signed-in');
+		this.ownerEmail.set(response.user?.email ?? 'Owner');
+		this.loadCars();
+		this.loadPasskeys();
+		this.loadTimezone();
+		if (this.currentUrl().startsWith('/sign-in'))
+			void this.router?.navigateByUrl(this.returnTo);
 	}
 
 	private consumeMagicLinkError(): void {

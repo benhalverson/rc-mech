@@ -7,6 +7,7 @@ import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideRouter } from '@angular/router';
 
 import { routes } from './app.routes';
+import { OwnerSessionStore } from './owner-session-store';
 
 export const appConfig: ApplicationConfig = {
 	providers: [
@@ -14,5 +15,6 @@ export const appConfig: ApplicationConfig = {
 		provideHttpClient(),
 		provideRouter(routes),
 		provideAnimations(),
+		OwnerSessionStore,
 	],
 };
