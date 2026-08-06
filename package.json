@@ -2,6 +2,7 @@
 	"name": "rc-mech",
 	"version": "0.0.1",
 	"private": true,
+	"type": "module",
 	"scripts": {
 		"deploy": "pnpm client:build && pnpm db:migrate:production && wrangler deploy",
 		"client:build": "pnpm --dir client build",
@@ -14,7 +15,7 @@
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format --reporter=summary .",
-		"test:backend": "node --experimental-strip-types --test src/auth-policy.test.ts src/car-policy.test.ts src/component-policy.test.ts src/drive-session-policy.test.ts src/maintenance-policy.test.ts src/service-policy.test.ts src/photo-policy.test.ts src/setup-policy.test.ts src/setup-import-policy.test.ts src/consumable-policy.test.ts",
+		"test:backend": "vitest run",
 		"test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
 		"test:production": "bash scripts/production-acceptance.sh",
 		"check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
@@ -32,11 +33,13 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.7",
+		"@cloudflare/vitest-pool-workers": "^0.20.2",
 		"@cloudflare/workers-types": "^5.20260801.1",
 		"@types/node": "22.13.0",
 		"@types/service-worker-mock": "^2.0.4",
 		"drizzle-kit": "^0.31.10",
 		"typescript": "^7.0.2",
+		"vitest": "^4.1.10",
 		"wrangler": "^4.118.0"
 	}
 }
