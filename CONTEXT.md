@@ -5,11 +5,29 @@ RC Mech is the shared language for an owner's collection of radio-controlled car
 ## People and collection
 
 **Owner**:
-The person responsible for a garage and its cars.
-_Avoid_: User, customer, account
+The creator and operator of RC Mech. The Owner is the only person with
+application-level ownership; this role is not granted to invited users.
+
+**User**:
+A person who registers through an invite and has one isolated garage and its
+own settings. Users do not share garage records by default and are not Owners.
+_Avoid_: Customer, account
+
+**Registration**:
+The act of establishing a user's access to RC Mech through a verified email
+address and a valid invite code. Registration creates access to that user's
+isolated garage.
+_Avoid_: Account creation
+
+**Invite code**:
+A private value provided by the RC Mech operator that permits one prospective
+user to begin registration. Each code is single-use; each registered User may
+receive five codes to pass on. The User may choose each code's
+human-shareable text, provided it is unique.
+_Avoid_: Coupon, access token
 
 **Car**:
-A radio-controlled vehicle tracked as a distinct thing in an owner's garage.
+A radio-controlled vehicle tracked as a distinct thing in a user's garage.
 _Avoid_: Build, chassis
 
 **Component**:
@@ -27,15 +45,15 @@ A recorded configuration of a car for a particular baseline, track, event, or dr
 _Avoid_: Build, component inventory, configuration
 
 **Setup import**:
-A setup created from an external setup-sheet link and reviewed by the owner before it becomes part of the garage history.
+A setup created from an external setup-sheet link and reviewed by the user before it becomes part of the garage history.
 _Avoid_: Automatic sync, scrape
 
 **Current setup**:
-The setup an owner is using as the starting point for the next change. A car can have many setups, but only one needs to be current at a time.
+The setup a user is using as the starting point for the next change. A car can have many setups, but only one needs to be current at a time.
 _Avoid_: Permanent setup, active component list
 
 **Drive session**:
-A recorded occasion on which an owner drives a car, including the conditions and usage that matter for maintenance.
+A recorded occasion on which a user drives a car, including the conditions and usage that matter for maintenance.
 _Avoid_: Run, outing, trip
 
 **Consumable maintenance entry**:
@@ -67,5 +85,5 @@ The point from which a maintenance plan measures elapsed time or drive-session u
 _Avoid_: Reset date, starting point
 
 **Archived**:
-A retained car or record that is no longer part of the owner's active garage or workflow.
+A retained car or record that is no longer part of the user's active garage or workflow.
 _Avoid_: Deleted, removed
