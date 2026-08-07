@@ -62,14 +62,14 @@ const browserTimezone = (): string => {
 const displayTimezone = (value: unknown): string =>
 	isValidTimezone(value) ? value : browserTimezone();
 
-const resourceMessage = (errors: unknown[]): string => {
+const resourceMessage = (errors: unknown[], fallback: string): string => {
 	if (
 		errors.some(
 			(error) => error instanceof HttpErrorResponse && error.status === 401,
 		)
 	)
 		return 'Your garage session has expired. Sign in again to continue.';
-	return 'The maintenance ledger could not be loaded.';
+	return fallback;
 };
 
 export const MaintenanceStore = signalStore(
@@ -201,14 +201,31 @@ export const MaintenanceStore = signalStore(
 			),
 			cockpitLoading,
 			cockpitError: computed(() =>
-				cockpitErrors().length ? resourceMessage(cockpitErrors()) : '',
+				cockpitErrors().length
+					? resourceMessage(
+							cockpitErrors(),
+							'The maintenance ledger could not be loaded.',
+						)
+					: '',
 			),
 			consumablesLoading,
 			consumablesError: computed(() =>
-				consumableErrors().length ? resourceMessage(consumableErrors()) : '',
+				consumableErrors().length
+					? resourceMessage(
+							consumableErrors(),
+							'Consumable history could not be loaded.',
+						)
+					: '',
 			),
 			loading,
-			error: computed(() => (errors().length ? resourceMessage(errors()) : '')),
+			error: computed(() =>
+				errors().length
+					? resourceMessage(
+							errors(),
+							'The maintenance ledger could not be loaded.',
+						)
+					: '',
+			),
 		};
 	}),
 	withMethods((store) => ({

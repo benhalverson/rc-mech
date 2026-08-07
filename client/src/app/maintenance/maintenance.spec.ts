@@ -127,6 +127,34 @@ describe('Maintenance workspace', () => {
 		expect(consumables.querySelector('[role="alert"]')).toBeNull();
 	});
 
+	it('identifies consumable history when its required read fails', async () => {
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			)
+			.flush({ cars: [] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http
+			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlans: [], activity: [] });
+		http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+		http
+			.expectOne('/api/v1/consumable-maintenance')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		http.expectOne('/api/v1/consumables/report').flush({ report: {} });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const consumables = fixture.nativeElement.querySelector(
+			'.consumable-ledger',
+		) as HTMLElement;
+		expect(consumables.querySelector('[role="alert"]')?.textContent).toContain(
+			'Consumable history could not be loaded.',
+		);
+	});
+
 	it('falls back from an invalid stored timezone', async () => {
 		http
 			.expectOne(
