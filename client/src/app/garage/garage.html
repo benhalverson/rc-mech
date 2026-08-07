@@ -52,7 +52,7 @@
 		} @else {
 			<nav class="car-list" aria-label="Cars">
 				@for (car of store.cars(); track car.id) {
-					<a class="car-row" [routerLink]="['/garage', car.id, 'overview']" (click)="store.selectCar(car.id)">
+					<a class="car-row" [routerLink]="['/garage', car.id, 'overview']">
 						<strong>{{ car.name }}</strong><span>{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</span>
 					</a>
 				}

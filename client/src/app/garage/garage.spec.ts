@@ -11,6 +11,7 @@ import {
 	convertToParamMap,
 	provideRouter,
 } from '@angular/router';
+import { BehaviorSubject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Garage } from './garage';
 import { GarageStore } from './garage-store';
@@ -108,8 +109,10 @@ describe('Garage', () => {
 describe('Garage overview', () => {
 	let fixture: ComponentFixture<Garage>;
 	let http: HttpTestingController;
+	let routeParams: BehaviorSubject<ReturnType<typeof convertToParamMap>>;
 
 	beforeEach(async () => {
+		routeParams = new BehaviorSubject(convertToParamMap({ carId: 'car-1' }));
 		await TestBed.configureTestingModule({
 			imports: [Garage],
 			providers: [
@@ -122,6 +125,7 @@ describe('Garage overview', () => {
 					provide: ActivatedRoute,
 					useValue: {
 						snapshot: { paramMap: convertToParamMap({ carId: 'car-1' }) },
+						paramMap: routeParams.asObservable(),
 					},
 				},
 			],
@@ -155,6 +159,25 @@ describe('Garage overview', () => {
 				'nav[aria-label="Car detail sections"] a[aria-current="page"]',
 			)?.textContent,
 		).toContain('Overview');
+	});
+
+	it('loads a new overview when a reused route receives another car id', async () => {
+		http
+			.expectOne('/api/v1/cars/car-1')
+			.flush({ car: { id: 'car-1', name: 'Red Runner' } });
+		await fixture.whenStable();
+
+		routeParams.next(convertToParamMap({ carId: 'car-2' }));
+		fixture.detectChanges();
+		let nextOverview: TestRequest | undefined;
+		await vi.waitFor(() => {
+			nextOverview = http.expectOne('/api/v1/cars/car-2');
+		});
+		nextOverview?.flush({ car: { id: 'car-2', name: 'Blue Runner' } });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain('Blue Runner');
 	});
 
 	it('renders and retries an overview error', async () => {

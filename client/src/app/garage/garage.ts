@@ -1,5 +1,7 @@
-import { Component, inject } from '@angular/core';
+import { Component, effect, inject } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { map } from 'rxjs';
 import { GarageStore } from './garage-store';
 
 @Component({
@@ -10,8 +12,13 @@ import { GarageStore } from './garage-store';
 })
 export class Garage {
 	protected readonly store = inject(GarageStore);
+	private readonly route = inject(ActivatedRoute);
+	private readonly routeCarId = toSignal(
+		this.route.paramMap.pipe(map((params) => params.get('carId'))),
+		{ initialValue: this.route.snapshot.paramMap.get('carId') },
+	);
 
 	constructor() {
-		this.store.selectCar(inject(ActivatedRoute).snapshot.paramMap.get('carId'));
+		effect(() => this.store.selectCar(this.routeCarId()));
 	}
 }
