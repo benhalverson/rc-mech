@@ -58,6 +58,7 @@ import {
 	validatePhotoMetadata,
 } from './photo-policy';
 import {
+	authRateLimit,
 	car,
 	component,
 	consumableMaintenanceEntry,
@@ -69,7 +70,6 @@ import {
 	serviceRecord,
 	setup,
 	setupImportDraft,
-	authRateLimit,
 } from './schema';
 import {
 	canDeleteServiceRecord,
@@ -1655,6 +1655,47 @@ const legacyConsumableResponse = (
 	consumableMaintenance: publicConsumable(value),
 });
 
+app.get('/api/v1/consumable-maintenance', async (c) => {
+	const values = await db(c.env)
+		.select()
+		.from(consumableMaintenanceEntry)
+		.innerJoin(car, eq(consumableMaintenanceEntry.carId, car.id))
+		.where(eq(car.ownerId, c.get('userId')))
+		.orderBy(
+			desc(consumableMaintenanceEntry.performedAt),
+			desc(consumableMaintenanceEntry.createdAt),
+		);
+	return c.json({
+		consumableMaintenance: values.map(({ consumable_maintenance_entry }) =>
+			publicConsumable(consumable_maintenance_entry),
+		),
+	});
+});
+
+app.get('/api/v1/consumables/report', async (c) => {
+	const values = await db(c.env)
+		.select()
+		.from(consumableMaintenanceEntry)
+		.innerJoin(car, eq(consumableMaintenanceEntry.carId, car.id))
+		.where(
+			and(
+				eq(car.ownerId, c.get('userId')),
+				isNull(consumableMaintenanceEntry.archivedAt),
+			),
+		)
+		.orderBy(
+			desc(consumableMaintenanceEntry.performedAt),
+			desc(consumableMaintenanceEntry.createdAt),
+		);
+	return c.json({
+		report: calculateConsumableReport(
+			values.map(
+				({ consumable_maintenance_entry }) => consumable_maintenance_entry,
+			),
+		),
+	});
+});
+
 app.get('/api/v1/cars/:carId/consumable-maintenance', async (c) => {
 	const carId = c.req.param('carId');
 	if (!(await ownedCar(c, carId)))
@@ -2972,6 +3013,18 @@ app.post('/api/v1/cars/:carId/service-records', async (c) => {
 	return c.json({ serviceRecord: created }, 201);
 });
 
+app.get('/api/v1/service-records', async (c) => {
+	const records = await db(c.env)
+		.select()
+		.from(serviceRecord)
+		.innerJoin(car, eq(serviceRecord.carId, car.id))
+		.where(eq(car.ownerId, c.get('userId')))
+		.orderBy(desc(serviceRecord.performedAt));
+	return c.json({
+		serviceRecords: records.map(({ service_record }) => service_record),
+	});
+});
+
 app.post('/api/v1/maintenance-plans', async (c) => {
 	const parsed = maintenancePlanInput.safeParse(await c.req.json());
 	if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -4247,6 +4300,15 @@ const openApi = {
 				},
 			},
 		},
+		'/api/v1/service-records': {
+			get: {
+				summary: "List service records across the authenticated owner's cars",
+				responses: {
+					200: { description: 'Owner-scoped service history' },
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
 		'/api/v1/service-records/{recordId}': {
 			patch: {
 				summary: 'Edit an active service record',
@@ -4794,6 +4856,26 @@ const consumableUpdateSchema = {
 	},
 };
 Object.assign(consumablePaths, {
+	'/api/v1/consumable-maintenance': {
+		get: {
+			summary:
+				"List consumable maintenance history across the authenticated owner's cars",
+			responses: {
+				200: { description: 'Owner-scoped consumable maintenance history' },
+				401: { description: 'Authentication required' },
+			},
+		},
+	},
+	'/api/v1/consumables/report': {
+		get: {
+			summary:
+				"Report consumable history and spend across the authenticated owner's cars",
+			responses: {
+				200: { description: 'Owner-scoped consumable report' },
+				401: { description: 'Authentication required' },
+			},
+		},
+	},
 	'/api/v1/cars/{carId}/consumables': {
 		parameters: [carIdParameter],
 		get: {

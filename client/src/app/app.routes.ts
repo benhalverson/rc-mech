@@ -9,6 +9,10 @@ const loadSettingsRoutes = () =>
 	import('./settings/settings.routes').then(
 		({ SETTINGS_ROUTES }) => SETTINGS_ROUTES,
 	);
+const loadMaintenanceRoutes = () =>
+	import('./maintenance/maintenance.routes').then(
+		({ MAINTENANCE_ROUTES }) => MAINTENANCE_ROUTES,
+	);
 
 export const signInRoute = {
 	path: 'sign-in',
@@ -58,7 +62,7 @@ export const routes: Routes = [
 	{
 		path: 'maintenance',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadGaragePages,
+		loadChildren: loadMaintenanceRoutes,
 	},
 	{
 		path: 'settings',

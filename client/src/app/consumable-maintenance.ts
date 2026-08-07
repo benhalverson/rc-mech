@@ -1,14 +1,17 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import {
-	ChangeDetectionStrategy,
 	Component,
-	Input,
 	computed,
 	inject,
+	linkedSignal,
 	signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import {
+	type MaintenanceReport,
+	MaintenanceStore,
+} from './maintenance/maintenance-store';
 
 export type ConsumableCar = {
 	id: string;
@@ -43,9 +46,9 @@ export type TireReport = {
 	front: TireReportAxle;
 	rear: TireReportAxle;
 	spend: {
-		front: number;
-		rear: number;
-		combined: number;
+		front: number | null;
+		rear: number | null;
+		combined: number | null;
 		missingCostEntries: number;
 	};
 	fluidEntries: ConsumableEntry[];
@@ -55,10 +58,6 @@ export type TireReportAxle = {
 	eventCount: number;
 	averageDays: number | null;
 	missingDetails: boolean;
-};
-type MaintenanceResponse = {
-	consumableMaintenance?: ConsumableEntry[];
-	entries?: ConsumableEntry[];
 };
 type EntryResponse = { consumableMaintenance: ConsumableEntry };
 type SetupResponse = {
@@ -160,81 +159,82 @@ export const buildTireReport = (entries: ConsumableEntry[]): TireReport => {
 	};
 };
 
+export const mergeTireReport = (
+	local: TireReport,
+	server: MaintenanceReport | null | undefined,
+): TireReport => {
+	if (
+		!server?.tires?.frequency?.front ||
+		!server.tires.frequency.rear ||
+		!server.tires.spend?.front ||
+		!server.tires.spend.rear ||
+		!server.tires.spend.combined
+	)
+		return local;
+	return {
+		...local,
+		front: {
+			...local.front,
+			eventCount: server.tires.frequency.front.eventCount,
+			averageDays: server.tires.frequency.front.averageIntervalDays,
+		},
+		rear: {
+			...local.rear,
+			eventCount: server.tires.frequency.rear.eventCount,
+			averageDays: server.tires.frequency.rear.averageIntervalDays,
+		},
+		spend: {
+			...local.spend,
+			front: server.tires.spend.front.total,
+			rear: server.tires.spend.rear.total,
+			combined: server.tires.spend.combined.total,
+		},
+	};
+};
+
+export const spendLabel = (value: number | null): string =>
+	value === null ? 'Multiple currencies' : `$${value.toFixed(2)}`;
+
 @Component({
 	selector: 'app-consumable-maintenance',
-	standalone: true,
 	imports: [CommonModule, DatePipe, FormsModule],
 	templateUrl: './consumable-maintenance.html',
 	styleUrl: './consumable-maintenance.css',
-	changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ConsumableMaintenance {
 	private readonly http = inject(HttpClient);
-	@Input() set enabled(value: boolean) {
-		this.isEnabled = value;
-		if (value && this.garage().length && !this.loaded()) this.load();
-	}
-	@Input() set cars(value: ConsumableCar[]) {
-		this.garage.set(value);
-		if (this.isEnabled && !this.loaded() && value.length) this.load();
-	}
-	@Input() timezone = 'UTC';
-
-	protected readonly garage = signal<ConsumableCar[]>([]);
-	protected readonly entries = signal<ConsumableEntry[]>([]);
-	protected readonly state = signal<'idle' | 'loading' | 'ready' | 'error'>(
-		'idle',
+	private readonly store = inject(MaintenanceStore);
+	protected readonly garage = linkedSignal(() => this.store.cars());
+	protected readonly entries = linkedSignal(() =>
+		this.store.consumableEntries(),
 	);
-	protected readonly error = signal('');
+	protected readonly timezone = this.store.timezone;
+	protected readonly mutationError = signal('');
+	protected readonly state = computed(() =>
+		this.store.consumablesLoading()
+			? 'loading'
+			: this.store.consumablesError()
+				? 'error'
+				: 'ready',
+	);
+	protected readonly error = this.store.consumablesError;
 	protected readonly formError = signal('');
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
 	protected readonly action = signal<string | null>(null);
 	protected readonly historyFilter = signal<'active' | 'archived'>('active');
+	protected readonly hasActiveCars = computed(() =>
+		this.garage().some((car) => !car.archivedAt),
+	);
 	protected readonly form = signal<EntryForm>(emptyForm());
-	protected readonly loaded = signal(false);
-	protected readonly report = computed(() => buildTireReport(this.entries()));
-	private isEnabled = false;
+	protected readonly report = computed(() =>
+		mergeTireReport(buildTireReport(this.entries()), this.store.report()),
+	);
+	protected readonly spendLabel = spendLabel;
 
 	protected load(): void {
-		this.state.set('loading');
-		this.error.set('');
-		const requests = this.garage().map((car) =>
-			this.http.get<MaintenanceResponse>(this.path(car.id), {
-				withCredentials: true,
-				params: { history: 'true' },
-			}),
-		);
-		if (!requests.length) {
-			this.state.set('ready');
-			return;
-		}
-		let remaining = requests.length;
-		const values: ConsumableEntry[] = [];
-		let failed = false;
-		for (const request of requests) {
-			request.subscribe({
-				next: (response) => {
-					values.push(
-						...(response.consumableMaintenance ?? response.entries ?? []),
-					);
-					if (!--remaining && !failed) this.finishLoad(values);
-				},
-				error: () => {
-					failed = true;
-					this.state.set('error');
-					this.error.set('Consumable history could not be loaded.');
-				},
-			});
-		}
-	}
-
-	private finishLoad(values: ConsumableEntry[]): void {
-		this.entries.set(
-			values.sort((a, b) => b.performedAt.localeCompare(a.performedAt)),
-		);
-		this.state.set('ready');
-		this.loaded.set(true);
+		this.mutationError.set('');
+		this.store.retryConsumables();
 	}
 	protected visibleEntries(): ConsumableEntry[] {
 		return this.entries().filter((entry) =>
@@ -244,6 +244,7 @@ export class ConsumableMaintenance {
 		);
 	}
 	protected openCreate(): void {
+		if (!this.hasActiveCars()) return;
 		const car = this.garage().find((item) => !item.archivedAt);
 		this.form.set({
 			...emptyForm(),
@@ -318,6 +319,7 @@ export class ConsumableMaintenance {
 			return;
 		}
 		if (this.action()) return;
+		this.mutationError.set('');
 		const payload =
 			form.kind === 'tires'
 				? {
@@ -359,14 +361,8 @@ export class ConsumableMaintenance {
 					withCredentials: true,
 				});
 		request.subscribe({
-			next: ({ consumableMaintenance }) => {
-				this.entries.update((items) =>
-					id
-						? items.map((item) =>
-								item.id === id ? consumableMaintenance : item,
-							)
-						: [consumableMaintenance, ...items],
-				);
+			next: () => {
+				this.store.refreshConsumables();
 				this.action.set(null);
 				this.cancelEdit();
 			},
@@ -382,24 +378,28 @@ export class ConsumableMaintenance {
 	}
 	protected archive(entry: ConsumableEntry): void {
 		if (this.isReadOnly(entry) || this.action()) return;
+		this.mutationError.set('');
 		this.action.set(`archive:${entry.id}`);
 		this.http
 			.delete<EntryResponse>(`${this.path(entry.carId)}/${entry.id}`, {
 				withCredentials: true,
 			})
 			.subscribe({
-				next: ({ consumableMaintenance }) => {
-					this.replace(consumableMaintenance);
+				next: () => {
+					this.store.refreshConsumables();
 					this.action.set(null);
 				},
 				error: () => {
 					this.action.set(null);
-					this.error.set('That consumable entry could not be archived.');
+					this.mutationError.set(
+						'That consumable entry could not be archived.',
+					);
 				},
 			});
 	}
 	protected restore(entry: ConsumableEntry): void {
 		if (this.action()) return;
+		this.mutationError.set('');
 		this.action.set(`restore:${entry.id}`);
 		this.http
 			.post<EntryResponse>(
@@ -408,13 +408,15 @@ export class ConsumableMaintenance {
 				{ withCredentials: true },
 			)
 			.subscribe({
-				next: ({ consumableMaintenance }) => {
-					this.replace(consumableMaintenance);
+				next: () => {
+					this.store.refreshConsumables();
 					this.action.set(null);
 				},
 				error: () => {
 					this.action.set(null);
-					this.error.set('That consumable entry could not be restored.');
+					this.mutationError.set(
+						'That consumable entry could not be restored.',
+					);
 				},
 			});
 	}
@@ -467,11 +469,6 @@ export class ConsumableMaintenance {
 	protected setHistoryFilter(value: 'active' | 'archived'): void {
 		this.historyFilter.set(value);
 	}
-	private replace(entry: ConsumableEntry): void {
-		this.entries.update((items) =>
-			items.map((item) => (item.id === entry.id ? entry : item)),
-		);
-	}
 	private path(carId: string): string {
 		return `/api/v1/cars/${carId}/consumable-maintenance`;
 	}
@@ -506,7 +503,7 @@ export class ConsumableMaintenance {
 	}
 	private localDateTime(date: Date): string {
 		const parts = new Intl.DateTimeFormat('en-CA', {
-			timeZone: this.timezone,
+			timeZone: this.timezone(),
 			year: 'numeric',
 			month: '2-digit',
 			day: '2-digit',
@@ -525,7 +522,7 @@ export class ConsumableMaintenance {
 		const [hour, minute] = time.split(':').map(Number);
 		const asUtc = Date.UTC(year, month - 1, day, hour, minute);
 		const parts = new Intl.DateTimeFormat('en-US', {
-			timeZone: this.timezone,
+			timeZone: this.timezone(),
 			year: 'numeric',
 			month: '2-digit',
 			day: '2-digit',
