@@ -1,19 +1,28 @@
 import { Routes } from '@angular/router';
-import { CarStore } from './car/car-store';
-import { GarageStore } from './garage/garage-store';
 import { ownerSessionCanMatch } from './owner-session.guard';
 
-const loadGarage = () => import('./garage/garage').then(({ Garage }) => Garage);
-const loadCarOverview = () =>
-	import('./car/car-overview').then(({ CarOverview }) => CarOverview);
-const loadCarBuild = () =>
-	import('./car/car-build').then(({ CarBuild }) => CarBuild);
-const loadCarSetups = () =>
-	import('./car/car-setups').then(({ CarSetups }) => CarSetups);
-const loadCarPhotos = () =>
-	import('./car/car-photos').then(({ CarPhotos }) => CarPhotos);
-const loadCarRuns = () =>
-	import('./car/car-runs').then(({ CarRuns }) => CarRuns);
+const loadGarageRoutes = () =>
+	import('./garage/garage.routes').then(({ GARAGE_ROUTES }) => GARAGE_ROUTES);
+const loadCarOverviewRoutes = () =>
+	import('./car/car-overview.routes').then(
+		({ CAR_OVERVIEW_ROUTES }) => CAR_OVERVIEW_ROUTES,
+	);
+const loadCarBuildRoutes = () =>
+	import('./car/car-build.routes').then(
+		({ CAR_BUILD_ROUTES }) => CAR_BUILD_ROUTES,
+	);
+const loadCarSetupsRoutes = () =>
+	import('./car/car-setups.routes').then(
+		({ CAR_SETUPS_ROUTES }) => CAR_SETUPS_ROUTES,
+	);
+const loadCarPhotosRoutes = () =>
+	import('./car/car-photos.routes').then(
+		({ CAR_PHOTOS_ROUTES }) => CAR_PHOTOS_ROUTES,
+	);
+const loadCarRunsRoutes = () =>
+	import('./car/car-runs.routes').then(
+		({ CAR_RUNS_ROUTES }) => CAR_RUNS_ROUTES,
+	);
 const loadSettingsRoutes = () =>
 	import('./settings/settings.routes').then(
 		({ SETTINGS_ROUTES }) => SETTINGS_ROUTES,
@@ -35,38 +44,32 @@ export const routes: Routes = [
 		path: 'garage',
 		pathMatch: 'full',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadGarage,
-		providers: [GarageStore],
+		loadChildren: loadGarageRoutes,
 	},
 	{
 		path: 'garage/:carId/overview',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadCarOverview,
-		providers: [CarStore],
+		loadChildren: loadCarOverviewRoutes,
 	},
 	{
 		path: 'garage/:carId/setups',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadCarSetups,
-		providers: [CarStore],
+		loadChildren: loadCarSetupsRoutes,
 	},
 	{
 		path: 'garage/:carId/build',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadCarBuild,
-		providers: [CarStore],
+		loadChildren: loadCarBuildRoutes,
 	},
 	{
 		path: 'garage/:carId/photos',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadCarPhotos,
-		providers: [CarStore],
+		loadChildren: loadCarPhotosRoutes,
 	},
 	{
 		path: 'garage/:carId/runs',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadCarRuns,
-		providers: [CarStore],
+		loadChildren: loadCarRunsRoutes,
 	},
 	{
 		path: 'maintenance',

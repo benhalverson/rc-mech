@@ -41,7 +41,10 @@ test('invite registration, management, isolation, and accessible states', async 
 		'OWNER-01',
 	]);
 
-	await page.goto('/sign-in');
+	await page.goto('/garage/private-car/photos');
+	await expect(page).toHaveURL(
+		/sign-in\?returnTo=%2Fgarage%2Fprivate-car%2Fphotos/,
+	);
 	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 	let violations = await scan(page);
 	expect(violations).toEqual([]);
@@ -53,12 +56,36 @@ test('invite registration, management, isolation, and accessible states', async 
 		page.getByRole('heading', { name: 'Your invite codes' }),
 	).toBeVisible();
 	await expectSingleShell(page);
+	const carResponse = await page.request.post('/api/v1/cars', {
+		data: {
+			name: 'Accessibility buggy',
+			make: 'Team Associated',
+			model: 'B7',
+		},
+	});
+	expect(carResponse.ok()).toBe(true);
+	const created = (await carResponse.json()) as { car: { id: string } };
+	for (const section of ['overview', 'build', 'setups', 'photos', 'runs']) {
+		await page.goto(`/garage/${created.car.id}/${section}`);
+		await expect(page).toHaveURL(
+			new RegExp(`/garage/${created.car.id}/${section}$`),
+		);
+		await expect(page.locator('[data-route-focus]')).toBeFocused();
+		await expect(page.locator('.route-announcement')).toContainText(
+			'Opened Garage',
+		);
+		violations = await scan(page);
+		expect(violations).toEqual([]);
+	}
 	for (const destination of [
 		['Garage', '/garage'],
 		['Maintenance', '/maintenance'],
 		['Settings', '/settings'],
 	] as const) {
-		await page.getByRole('link', { name: destination[0] }).click();
+		await page
+			.getByRole('navigation', { name: 'Primary workspace' })
+			.getByRole('link', { name: destination[0] })
+			.click();
 		await expect(page).toHaveURL(new RegExp(`${destination[1]}$`));
 		await expectSingleShell(page);
 		violations = await scan(page);

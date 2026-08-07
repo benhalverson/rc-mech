@@ -6,7 +6,7 @@
 	margin-top: 38px;
 	padding-top: 24px;
 }
-.setup-panel h4 {
+.setup-panel h3 {
 	margin: 10px 0 0;
 	font:
 		700 1.45rem Georgia,
@@ -27,8 +27,8 @@
 	border: 1px solid var(--accent);
 	background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
-.import-strip h5,
-.review-banner h5 {
+.import-strip h4,
+.review-banner h4 {
 	margin: 7px 0 0;
 	font:
 		700 1.15rem Georgia,
@@ -153,8 +153,8 @@
 	min-width: 0;
 	max-width: 820px;
 }
-.setup-editor h5,
-.setup-detail h5 {
+.setup-editor h4,
+.setup-detail h4 {
 	margin: 8px 0 0;
 	color: var(--ink);
 	font:
@@ -216,8 +216,8 @@ legend {
 	border-top: 1px solid var(--line);
 	padding-top: 12px;
 }
-.setup-readout h6,
-.provenance h6 {
+.setup-readout h5,
+.provenance h5 {
 	margin: 0 0 10px;
 	color: var(--accent);
 	font-size: 0.72rem;

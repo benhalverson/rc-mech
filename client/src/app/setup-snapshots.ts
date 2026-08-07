@@ -1,5 +1,4 @@
 import { DatePipe, DecimalPipe, JsonPipe, KeyValuePipe } from '@angular/common';
-import { httpResource } from '@angular/common/http';
 import {
 	Component,
 	computed,
@@ -18,7 +17,6 @@ import {
 	validate,
 } from '@angular/forms/signals';
 import { switchMap } from 'rxjs';
-import { carReadFailure } from './car/car-read-failure';
 import {
 	emptySetupForm,
 	importKnownValues,
@@ -38,6 +36,7 @@ import {
 	type SoDialedImportPreview,
 	setupSectionKeys,
 } from './setup-snapshot';
+import { SetupSnapshotStore } from './setup-snapshot-store';
 
 type SetupMode = 'add' | 'edit';
 type SetupAction = 'save' | 'copy' | 'current' | null;
@@ -81,7 +80,8 @@ const isSessionExpired = (error: unknown): boolean =>
 export class SetupSnapshots {
 	private readonly service = inject(SetupSnapshotService);
 	private readonly importer = inject(SoDialedImporterClient);
-	readonly carId = input.required<string>();
+	private readonly readStore = inject(SetupSnapshotStore);
+	readonly carId = input('');
 	readonly archived = input(false);
 	readonly availableCars = input<ImportCarOption[]>([]);
 	readonly createCarFromImport = output<{
@@ -89,36 +89,18 @@ export class SetupSnapshots {
 		make: string;
 		model: string;
 	}>();
-	private readonly setupsResource = httpResource<{ setups: SetupSnapshot[] }>(
-		() => {
-			const carId = this.carId();
-			return carId
-				? {
-						url: `/api/v1/cars/${encodeURIComponent(carId)}/setups`,
-						withCredentials: true,
-					}
-				: undefined;
-		},
-	);
-	protected readonly setups = linkedSignal(() =>
-		this.setupsResource.hasValue() ? this.setupsResource.value().setups : [],
-	);
+	protected readonly setups = linkedSignal(() => this.readStore.setups());
 	protected readonly selectedId = signal<string | null>(null);
 	protected readonly state = computed(() =>
-		this.setupsResource.isLoading()
+		this.readStore.loading()
 			? 'loading'
-			: this.setupsResource.error()
+			: this.readStore.failure()
 				? 'error'
 				: 'ready',
 	);
 	protected readonly actionError = signal('');
 	protected readonly actionMessage = signal('');
-	protected readonly readFailure = computed(() =>
-		carReadFailure(
-			this.setupsResource.error(),
-			'Setup history could not be loaded. Check the connection and try again.',
-		),
-	);
+	protected readonly readFailure = this.readStore.failure;
 	protected readonly mode = signal<SetupMode>('add');
 	protected readonly editing = signal(false);
 	protected readonly action = signal<SetupAction>(null);
@@ -222,6 +204,10 @@ export class SetupSnapshots {
 			previousCarId = carId;
 		});
 		effect(() => {
+			const carId = this.carId();
+			if (carId) this.readStore.selectCar(carId);
+		});
+		effect(() => {
 			const setups = this.setups();
 			if (!setups.some((setup) => setup.id === this.selectedId()))
 				this.selectedId.set(
@@ -254,7 +240,7 @@ export class SetupSnapshots {
 	}
 
 	protected retry(): void {
-		this.setupsResource.reload();
+		this.readStore.retry();
 	}
 
 	protected select(setup: SetupSnapshot): void {
@@ -429,7 +415,7 @@ export class SetupSnapshots {
 				if (targetCarId === sourceCarId) {
 					this.replaceSetup(saved);
 					this.selectedId.set(saved.id);
-					this.setupsResource.reload();
+					this.readStore.refresh();
 				} else {
 					this.actionMessage.set('Imported setup saved to the selected car.');
 				}
@@ -466,7 +452,7 @@ export class SetupSnapshots {
 				this.mode.set('edit');
 				this.setupForm().reset(setupFormFromSnapshot(copied));
 				this.editing.set(true);
-				this.setupsResource.reload();
+				this.readStore.refresh();
 			},
 			error: (error: unknown) => {
 				if (this.carId() !== carId) return;
@@ -494,7 +480,7 @@ export class SetupSnapshots {
 				this.setups.update((setups) =>
 					setups.map((item) => ({ ...item, current: item.id === current.id })),
 				);
-				this.setupsResource.reload();
+				this.readStore.refresh();
 			},
 			error: (error: unknown) => {
 				if (this.carId() !== carId) return;

@@ -12,11 +12,16 @@ import {
 } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CarPhotoStore } from '../car-photo-store';
+import { SetupSnapshotStore } from '../setup-snapshot-store';
 import { CarBuild } from './car-build';
+import { CarBuildStore } from './car-build-store';
 import { CarOverview } from './car-overview';
 import { CarPhotos } from './car-photos';
 import { CarRuns } from './car-runs';
+import { CarRunsStore } from './car-runs-store';
 import { CarSetups } from './car-setups';
+import { CarSetupsStore } from './car-setups-store';
 import { CarStore } from './car-store';
 
 type TestSignal<T> = (() => T) & { set(value: T): void };
@@ -30,22 +35,22 @@ const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/build',
 		component: CarBuild,
-		providers: [CarStore],
+		providers: [CarBuildStore, CarStore],
 	},
 	{
 		path: 'garage/:carId/setups',
 		component: CarSetups,
-		providers: [CarStore],
+		providers: [CarSetupsStore, CarStore, SetupSnapshotStore],
 	},
 	{
 		path: 'garage/:carId/photos',
 		component: CarPhotos,
-		providers: [CarStore],
+		providers: [CarPhotoStore, CarStore],
 	},
 	{
 		path: 'garage/:carId/runs',
 		component: CarRuns,
-		providers: [CarStore],
+		providers: [CarRunsStore, CarStore],
 	},
 ];
 
@@ -216,6 +221,21 @@ describe('Car section routes', () => {
 		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
 		expect(alert?.textContent).toContain('Your garage session has expired');
 		expect(alert?.querySelector('button')).toBeNull();
+	});
+
+	it('explains an expired session while preparing setup imports', async () => {
+		await harness.navigateByUrl('/garage/car-1/setups');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne('/api/v1/cars')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Your garage session has expired');
+		expect(alert?.querySelector('button')).toBeNull();
+		http.expectNone('/api/v1/cars/car-1/setups');
 	});
 
 	it('edits car details and refreshes the overview resource', async () => {
@@ -750,6 +770,33 @@ describe('Car section routes', () => {
 		setupRefresh?.flush({ setups: [] });
 	});
 
+	it.each([
+		{
+			path: 'build',
+			endpoint: '/api/v1/cars/car%2Fone/components',
+			body: { components: [] },
+		},
+		{
+			path: 'runs',
+			endpoint: '/api/v1/cars/car%2Fone/drives',
+			body: { driveSessions: [] },
+		},
+	])('encodes reserved characters for $path reads', async ({
+		path,
+		endpoint,
+		body,
+	}) => {
+		await harness.navigateByUrl(`/garage/car%2Fone/${path}`);
+		http.expectOne('/api/v1/cars/car%2Fone').flush({
+			car: { ...car, id: 'car/one' },
+		});
+		http.expectOne((request) => request.url === endpoint).flush(body);
+		if (path === 'runs')
+			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+	});
+
 	it('keeps an archived car readable while hiding build mutations', async () => {
 		await harness.navigateByUrl('/garage/car-1/build');
 		http.expectOne('/api/v1/cars/car-1').flush({
@@ -864,6 +911,11 @@ describe('Car section routes', () => {
 			) as HTMLButtonElement
 		).click();
 		harness.detectChanges();
+		expect(
+			harness.routeNativeElement
+				?.querySelector('form')
+				?.getAttribute('aria-describedby'),
+		).toBeNull();
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
 			action: TestSignal<string | null>;
@@ -923,6 +975,17 @@ describe('Car section routes', () => {
 		component.action.set(null);
 		component.openAdd();
 		harness.detectChanges();
+		const startedAt = harness.routeNativeElement?.querySelector(
+			'input[type="datetime-local"]',
+		) as HTMLInputElement;
+		startedAt.value = '';
+		startedAt.dispatchEvent(new Event('input'));
+		harness.detectChanges();
+		expect(
+			harness.routeNativeElement
+				?.querySelector('form')
+				?.getAttribute('aria-describedby'),
+		).toBeNull();
 		component.action.set('save');
 		harness.detectChanges();
 		const cancel = [
@@ -1007,8 +1070,10 @@ describe('Car section routes', () => {
 		harness.detectChanges();
 
 		const component = harness.routeDebugElement
-			?.componentInstance as unknown as { timezone(): string };
-		expect(component.timezone()).toBe('UTC');
+			?.componentInstance as unknown as {
+			runsStore: { timezone(): string };
+		};
+		expect(component.runsStore.timezone()).toBe('UTC');
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Conditions not recorded',
 		);

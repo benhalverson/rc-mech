@@ -1,6 +1,12 @@
 import { HttpClient } from '@angular/common/http';
 import { Component, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import {
+	disabled,
+	FormField,
+	form,
+	required,
+	validate,
+} from '@angular/forms/signals';
 import { ActivatedRoute, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { OwnerSessionStore } from './owner-session-store';
@@ -36,7 +42,7 @@ const bytesToBase64Url = (value: ArrayBuffer): string => {
 
 @Component({
 	selector: 'app-sign-in',
-	imports: [FormsModule],
+	imports: [FormField],
 	styleUrl: './garage-pages.css',
 	template: `
 		<main class="access-shell" tabindex="-1">
@@ -44,12 +50,14 @@ const bytesToBase64Url = (value: ArrayBuffer): string => {
 				<div class="eyebrow">RC Mech / Owner access</div>
 				<h1 id="sign-in-title" data-route-focus tabindex="-1">Back to the<br />workbench.</h1>
 				<p class="intro">{{ registering() ? 'Use an invite code to start your own private garage.' : 'Use your email to receive a one-time link, or continue with a passkey.' }}</p>
-				<form (ngSubmit)="registering() ? register() : requestMagicLink()">
+				<form (submit)="submit($event)" novalidate>
 					<label for="owner-email">Email address</label>
-					<input id="owner-email" name="email" type="email" autocomplete="email" required [ngModel]="email()" (ngModelChange)="email.set($event)" [disabled]="sending()" />
+					<input id="owner-email" type="email" autocomplete="email" [formField]="credentialsForm.email" [attr.aria-describedby]="credentialsForm.email().touched() && credentialsForm.email().invalid() ? 'email-validation' : null" />
+					@if (credentialsForm.email().touched() && credentialsForm.email().invalid()) { <p id="email-validation" class="hint" role="alert">{{ credentialsForm.email().errors()[0]?.message }}</p> }
 					@if (registering()) {
 						<label for="invite-code">Invite code</label>
-						<input id="invite-code" name="inviteCode" autocomplete="off" minlength="6" maxlength="32" required [ngModel]="inviteCode()" (ngModelChange)="inviteCode.set($event)" [disabled]="sending()" />
+						<input id="invite-code" autocomplete="off" [formField]="credentialsForm.inviteCode" [attr.aria-describedby]="credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid() ? 'invite-code-validation' : null" />
+						@if (credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid()) { <p id="invite-code-validation" class="hint" role="alert">{{ credentialsForm.inviteCode().errors()[0]?.message }}</p> }
 					}
 					<button class="button" type="submit" [disabled]="sending()">{{ sending() ? 'Sending link…' : registering() ? 'Start registration' : 'Send magic link' }}</button>
 				</form>
@@ -69,12 +77,35 @@ export class SignIn {
 	private readonly route = inject(ActivatedRoute);
 	private readonly router = inject(Router);
 	private readonly sessionStore = inject(OwnerSessionStore);
-	protected readonly email = signal('');
-	protected readonly inviteCode = signal('');
 	protected readonly registering = signal(false);
 	protected readonly sending = signal(false);
 	protected readonly working = signal(false);
 	protected readonly sent = signal(false);
+	protected readonly credentialsModel = signal({ email: '', inviteCode: '' });
+	protected readonly credentialsForm = form(this.credentialsModel, (path) => {
+		disabled(path.email, { when: () => this.sending() });
+		disabled(path.inviteCode, { when: () => this.sending() });
+		required(path.email, { message: 'Enter your email address.' });
+		validate(path.email, ({ value }) =>
+			/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value().trim())
+				? undefined
+				: { kind: 'email', message: 'Enter a valid email address.' },
+		);
+		required(path.inviteCode, { message: 'Enter an invite code.' });
+		validate(path.inviteCode, ({ value }) => {
+			const code = value().trim();
+			if (code.length < 6)
+				return { kind: 'minLength', message: 'Use at least 6 characters.' };
+			if (code.length > 32)
+				return { kind: 'maxLength', message: 'Use 32 characters or fewer.' };
+			return /^[A-Za-z0-9-]+$/.test(code)
+				? undefined
+				: {
+						kind: 'pattern',
+						message: 'Use only letters, numbers, or hyphens.',
+					};
+		});
+	});
 	protected readonly message = signal(this.initialMessage());
 	protected readonly webAuthnAvailable =
 		typeof window !== 'undefined' && 'PublicKeyCredential' in window;
@@ -106,12 +137,32 @@ export class SignIn {
 		this.registering.update((value) => !value);
 		this.message.set('');
 		this.sent.set(false);
+		this.credentialsForm.inviteCode().reset('');
+	}
+
+	protected submit(event: Event): void {
+		event.preventDefault();
+		if (this.registering()) this.register();
+		else this.requestMagicLink();
 	}
 
 	protected register(): void {
-		const email = this.email().trim();
-		const inviteCode = this.inviteCode().trim();
-		if (!email || inviteCode.length < 6 || this.sending()) return;
+		this.credentialsForm.email().markAsTouched();
+		this.credentialsForm.inviteCode().markAsTouched();
+		const { email: rawEmail, inviteCode: rawInviteCode } =
+			this.credentialsModel();
+		const email = rawEmail.trim();
+		const inviteCode = rawInviteCode.trim();
+		if (
+			this.credentialsForm.email().invalid() ||
+			this.credentialsForm.inviteCode().invalid() ||
+			this.sending()
+		) {
+			if (this.credentialsForm.email().invalid())
+				this.credentialsForm.email().focusBoundControl();
+			else this.credentialsForm.inviteCode().focusBoundControl();
+			return;
+		}
 		this.sending.set(true);
 		this.message.set('');
 		this.http
@@ -140,8 +191,12 @@ export class SignIn {
 	}
 
 	protected requestMagicLink(): void {
-		const email = this.email().trim();
-		if (!email || this.sending()) return;
+		this.credentialsForm.email().markAsTouched();
+		const email = this.credentialsModel().email.trim();
+		if (this.credentialsForm.email().invalid() || this.sending()) {
+			this.credentialsForm.email().focusBoundControl();
+			return;
+		}
 		this.sending.set(true);
 		this.message.set('');
 		const callbackURL = new URL(this.returnTo, window.location.origin);

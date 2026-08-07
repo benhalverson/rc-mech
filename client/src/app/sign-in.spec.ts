@@ -83,12 +83,12 @@ describe('SignIn', () => {
 	});
 
 	it('preserves the requested destination in a magic-link callback', () => {
-		const component = fixture.componentInstance as unknown as {
-			email: { set(value: string): void };
-			requestMagicLink(): void;
-		};
-		component.email.set('owner@example.test');
-		component.requestMagicLink();
+		const email = fixture.nativeElement.querySelector(
+			'#owner-email',
+		) as HTMLInputElement;
+		email.value = 'owner@example.test';
+		email.dispatchEvent(new Event('input'));
+		email.closest('form')?.dispatchEvent(new Event('submit'));
 
 		const request = http.expectOne('/api/auth/sign-in/magic-link');
 		expect(request.request.body.email).toBe('owner@example.test');
@@ -96,6 +96,8 @@ describe('SignIn', () => {
 			'/garage/car-42/photos',
 		);
 		expect(new URL(request.request.body.callbackURL).search).toBe('');
+		fixture.detectChanges();
+		expect(email.disabled).toBe(true);
 		request.flush({});
 	});
 
@@ -145,27 +147,31 @@ describe('SignIn', () => {
 	});
 
 	it('toggles registration and posts a normalized invite request', () => {
-		const component = fixture.componentInstance as unknown as {
-			email: { set(value: string): void };
-			inviteCode: { set(value: string): void };
-			toggleRegistration(): void;
-			register(): void;
-		};
-		component.toggleRegistration();
+		const toggle = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.includes('Register'),
+		) as HTMLButtonElement;
+		toggle.click();
 		fixture.detectChanges();
+		const email = fixture.nativeElement.querySelector(
+			'#owner-email',
+		) as HTMLInputElement;
 		const invite = fixture.nativeElement.querySelector(
 			'#invite-code',
 		) as HTMLInputElement;
 		expect(invite).toBeTruthy();
-		expect(invite.required).toBe(true);
-		component.email.set(' User@Example.Test ');
-		component.inviteCode.set(' track-01 ');
-		component.register();
+		email.value = ' User@Example.Test ';
+		email.dispatchEvent(new Event('input'));
+		invite.value = ' track-01 ';
+		invite.dispatchEvent(new Event('input'));
+		invite.closest('form')?.dispatchEvent(new Event('submit'));
 		const request = http.expectOne('/api/auth/register');
 		expect(request.request.body).toMatchObject({
 			email: 'User@Example.Test',
 			inviteCode: 'track-01',
 		});
+		fixture.detectChanges();
+		expect(email.disabled).toBe(true);
+		expect(invite.disabled).toBe(true);
 		request.flush({ status: true });
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
@@ -174,16 +180,22 @@ describe('SignIn', () => {
 	});
 
 	it('shows a neutral registration error without exposing invite validity', () => {
-		const component = fixture.componentInstance as unknown as {
-			email: { set(value: string): void };
-			inviteCode: { set(value: string): void };
-			toggleRegistration(): void;
-			register(): void;
-		};
-		component.toggleRegistration();
-		component.email.set('user@example.test');
-		component.inviteCode.set('TRACK-01');
-		component.register();
+		const toggle = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.includes('Register'),
+		) as HTMLButtonElement;
+		toggle.click();
+		fixture.detectChanges();
+		const email = fixture.nativeElement.querySelector(
+			'#owner-email',
+		) as HTMLInputElement;
+		const invite = fixture.nativeElement.querySelector(
+			'#invite-code',
+		) as HTMLInputElement;
+		email.value = 'user@example.test';
+		email.dispatchEvent(new Event('input'));
+		invite.value = 'TRACK-01';
+		invite.dispatchEvent(new Event('input'));
+		invite.closest('form')?.dispatchEvent(new Event('submit'));
 		http
 			.expectOne('/api/auth/register')
 			.flush({}, { status: 503, statusText: 'Unavailable' });

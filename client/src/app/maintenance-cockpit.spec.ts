@@ -6,6 +6,7 @@ import {
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
+import { MaintenanceLookups } from './maintenance/maintenance-lookups';
 import { MaintenanceStore } from './maintenance/maintenance-store';
 import {
 	calculatePlanState,
@@ -22,9 +23,11 @@ type TestMember = {
 type TestSignal<T> = TestMember & (() => T);
 type MaintenanceTestHarness = {
 	openCreate: (...args: unknown[]) => unknown;
+	changePlanCar: (event: Event) => void;
 	form: TestSignal<Record<string, string>>;
 	save: (...args: unknown[]) => unknown;
 	openServiceCreate: (...args: unknown[]) => unknown;
+	changeServiceCar: (event: Event) => void;
 	serviceForm: TestSignal<Record<string, string>>;
 	saveService: (...args: unknown[]) => unknown;
 	openCompletion: (...args: unknown[]) => unknown;
@@ -67,6 +70,7 @@ describe('MaintenanceCockpit', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
+				MaintenanceLookups,
 				MaintenanceStore,
 			],
 		}).compileComponents();
@@ -90,6 +94,36 @@ describe('MaintenanceCockpit', () => {
 			.flush({ consumableMaintenance: [] });
 		http.expectOne('/api/v1/consumables/report').flush({ report: {} });
 		fixture.detectChanges();
+	});
+
+	it('loads plan components from the selected car event value', () => {
+		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		app.openCreate();
+		http.expectOne('/api/v1/cars/car-1/components').flush({ components: [] });
+		const select = document.createElement('select');
+		select.add(new Option('Blue Buggy', 'car-2'));
+		select.value = 'car-2';
+		select.addEventListener('change', (event) => app.changePlanCar(event));
+
+		select.dispatchEvent(new Event('change'));
+
+		expect(app.form()['carId']).toBe('car-2');
+		http.expectOne('/api/v1/cars/car-2/components').flush({ components: [] });
+	});
+
+	it('loads service components from the selected car event value', () => {
+		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		app.openServiceCreate();
+		http.expectOne('/api/v1/cars/car-1/components').flush({ components: [] });
+		const select = document.createElement('select');
+		select.add(new Option('Blue Buggy', 'car-2'));
+		select.value = 'car-2';
+		select.addEventListener('change', (event) => app.changeServiceCar(event));
+
+		select.dispatchEvent(new Event('change'));
+
+		expect(app.serviceForm()['carId']).toBe('car-2');
+		http.expectOne('/api/v1/cars/car-2/components').flush({ components: [] });
 	});
 
 	afterEach(() => http.verify());
@@ -174,7 +208,7 @@ describe('MaintenanceCockpit', () => {
 		expect(fixture.nativeElement.textContent).toContain('Clean bearings');
 	});
 
-	it('creates a plan through the existing relative maintenance endpoint', async () => {
+	it('creates a plan with only a calendar interval', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.openCreate();
 		http
@@ -186,7 +220,7 @@ describe('MaintenanceCockpit', () => {
 			name: 'Clean bearings',
 			calendarValue: '2',
 			calendarUnit: 'weeks',
-			runInterval: '5',
+			runInterval: '',
 			baselineAt: '2026-08-01T10:00',
 			baselineRuns: '3',
 		});
@@ -199,9 +233,9 @@ describe('MaintenanceCockpit', () => {
 			componentId: 'component-1',
 			intervalUnit: 'weeks',
 			intervalValue: 2,
-			intervalSessions: 5,
 			baselineSessionCount: 3,
 		});
+		expect(request.request.body.intervalSessions).toBeUndefined();
 		request.flush({
 			maintenancePlan: { ...plan, name: 'Clean bearings', intervalDays: 14 },
 		});

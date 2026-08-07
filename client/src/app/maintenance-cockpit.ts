@@ -7,63 +7,28 @@ import {
 	linkedSignal,
 	signal,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import {
+	FormField,
+	maxLength,
+	required,
+	form as signalForm,
+	validate,
+} from '@angular/forms/signals';
 import { ConsumableMaintenance } from './consumable-maintenance';
+import type {
+	MaintenanceActivity,
+	MaintenanceComponent,
+	MaintenancePlan,
+	PlanState,
+	ServiceRecord,
+} from './maintenance/maintenance.models';
+import { MaintenanceLookups } from './maintenance/maintenance-lookups';
 import { MaintenanceStore } from './maintenance/maintenance-store';
 
-export type MaintenanceCar = {
-	id: string;
-	name: string;
-	archivedAt?: string | null;
-};
-export type MaintenanceComponent = {
-	id: string;
-	carId: string;
-	slot: string;
-	name: string;
-	removedAt?: string | null;
-};
-export type MaintenancePlan = {
-	id: string;
-	carId: string;
-	componentId: string | null;
-	name: string;
-	intervalDays?: number | null;
-	intervalUnit?: 'none' | 'days' | 'weeks' | 'months' | null;
-	intervalValue?: number | null;
-	intervalSessions?: number | null;
-	baselineAt?: string | null;
-	baselineSessionCount?: number | null;
-	status: 'active' | 'paused' | 'archived' | string;
-	pausedAt?: string | null;
-	nextDueAt?: string | null;
-	dateDueAt?: string | null;
-	nextDueSessionCount?: number | null;
-	completedAt?: string | null;
-	updatedAt?: string | null;
-	dueStatus?: PlanState;
-};
-
-export type MaintenanceActivity = {
-	id: string;
-	planId?: string;
-	action: string;
-	occurredAt: string;
-	note?: string | null;
-};
-export type ServiceRecord = {
-	id: string;
-	carId: string;
-	componentId?: string | null;
-	planId?: string | null;
-	performedAt: string;
-	description: string;
-	notes?: string | null;
-	cost?: number | null;
-	currency?: string | null;
-	deletedAt?: string | null;
-};
-export type PlanState = 'upcoming' | 'due' | 'overdue' | 'paused' | 'archived';
+export type {
+	MaintenancePlan,
+	ServiceRecord,
+} from './maintenance/maintenance.models';
 
 export type MaintenanceForm = {
 	carId: string;
@@ -86,7 +51,6 @@ export type ServiceForm = {
 	currency: string;
 };
 
-type ComponentsResponse = { components: MaintenanceComponent[] };
 type PlanResponse = { maintenancePlan: MaintenancePlan };
 
 const emptyForm = (): MaintenanceForm => ({
@@ -144,12 +108,13 @@ export const calculatePlanState = (
 
 @Component({
 	selector: 'app-maintenance-cockpit',
-	imports: [CommonModule, DatePipe, FormsModule, ConsumableMaintenance],
+	imports: [CommonModule, ConsumableMaintenance, DatePipe, FormField],
 	templateUrl: './maintenance-cockpit.html',
 	styleUrl: './maintenance-cockpit.css',
 })
 export class MaintenanceCockpit {
 	private readonly http = inject(HttpClient);
+	private readonly lookups = inject(MaintenanceLookups);
 	private readonly store = inject(MaintenanceStore);
 	protected readonly garage = linkedSignal(() => this.store.cars());
 	protected readonly plans = linkedSignal(() => this.store.plans());
@@ -177,6 +142,77 @@ export class MaintenanceCockpit {
 	protected readonly formError = signal('');
 	protected readonly form = signal<MaintenanceForm>(emptyForm());
 	protected readonly serviceForm = signal<ServiceForm>(emptyServiceForm());
+	protected readonly planFields = signalForm(this.form, (path) => {
+		required(path.carId, { message: 'Choose a car.' });
+		required(path.name, { message: 'Name the care rule.' });
+		validate(path.name, ({ value }) =>
+			!value() || value().trim()
+				? undefined
+				: { kind: 'blankName', message: 'Name the care rule.' },
+		);
+		maxLength(path.name, 160, {
+			message: 'Use 160 characters or fewer for the plan name.',
+		});
+		for (const interval of [path.calendarValue, path.runInterval])
+			validate(interval, ({ value }) => {
+				const intervalValue = value().trim();
+				if (!intervalValue) return undefined;
+				if (!/^\d+$/.test(intervalValue))
+					return {
+						kind: 'wholeNumber',
+						message: 'Intervals must be whole numbers.',
+					};
+				return Number(intervalValue) >= 1
+					? undefined
+					: { kind: 'minimum', message: 'Intervals must be at least one.' };
+			});
+		validate(path.baselineRuns, ({ value }) =>
+			!value().trim() || /^\d+$/.test(value().trim())
+				? undefined
+				: {
+						kind: 'wholeNumber',
+						message: 'Prior runs must be a whole number.',
+					},
+		);
+	});
+	protected readonly serviceFields = signalForm(this.serviceForm, (path) => {
+		required(path.carId, { message: 'Choose a car.' });
+		required(path.performedAt, { message: 'Add the completion date.' });
+		required(path.description, {
+			message: 'Describe the completed work.',
+		});
+		validate(path.description, ({ value }) =>
+			!value() || value().trim()
+				? undefined
+				: {
+						kind: 'blankDescription',
+						message: 'Describe the completed work.',
+					},
+		);
+		maxLength(path.description, 4000, {
+			message: 'Use 4,000 characters or fewer for completed work.',
+		});
+		maxLength(path.notes, 4000, {
+			message: 'Use 4,000 characters or fewer for notes.',
+		});
+		maxLength(path.currency, 3, {
+			message: 'Use a three-letter currency code.',
+		});
+		validate(path.cost, ({ value }) =>
+			!value().trim() ||
+			(Number.isFinite(Number(value())) && Number(value()) >= 0)
+				? undefined
+				: { kind: 'cost', message: 'Cost must be zero or greater.' },
+		);
+		validate(path.currency, ({ value }) =>
+			!value().trim() || /^[A-Za-z]{3}$/.test(value().trim())
+				? undefined
+				: {
+						kind: 'currency',
+						message: 'Use a three-letter currency code.',
+					},
+		);
+	});
 	protected readonly serviceError = signal('');
 	protected readonly serviceAction = signal<string | null>(null);
 	protected readonly historyFilter = signal<'active' | 'deleted'>('active');
@@ -246,7 +282,7 @@ export class MaintenanceCockpit {
 	protected openCreate(): void {
 		if (!this.hasActiveCars()) return;
 		const firstCar = this.garage().find((car) => !car.archivedAt);
-		this.form.set({
+		this.planFields().reset({
 			...emptyForm(),
 			carId: firstCar?.id ?? '',
 			baselineAt: this.localDateTime(new Date()),
@@ -259,7 +295,7 @@ export class MaintenanceCockpit {
 
 	protected openEdit(plan: MaintenancePlan): void {
 		if (this.isReadOnly(plan)) return;
-		this.form.set({
+		this.planFields().reset({
 			...emptyForm(),
 			carId: plan.carId,
 			componentId: plan.componentId ?? '',
@@ -292,10 +328,11 @@ export class MaintenanceCockpit {
 		this.editing.set(false);
 		this.editingId.set(null);
 		this.formError.set('');
+		this.planFields().reset();
 	}
 	protected openServiceCreate(): void {
 		const firstCar = this.garage().find((car) => !car.archivedAt);
-		this.serviceForm.set({
+		this.serviceFields().reset({
 			...emptyServiceForm(),
 			carId: firstCar?.id ?? '',
 			performedAt: this.localDateTime(new Date()),
@@ -309,7 +346,7 @@ export class MaintenanceCockpit {
 
 	protected openServiceEdit(record: ServiceRecord): void {
 		if (this.isRecordReadOnly(record)) return;
-		this.serviceForm.set({
+		this.serviceFields().reset({
 			carId: record.carId,
 			componentId: record.componentId ?? '',
 			performedAt: this.localDateTime(new Date(record.performedAt)),
@@ -327,7 +364,7 @@ export class MaintenanceCockpit {
 
 	protected openCompletion(plan: MaintenancePlan): void {
 		if (this.isReadOnly(plan)) return;
-		this.serviceForm.set({
+		this.serviceFields().reset({
 			...emptyServiceForm(),
 			carId: plan.carId,
 			componentId: plan.componentId ?? '',
@@ -346,20 +383,41 @@ export class MaintenanceCockpit {
 		this.serviceEditingId.set(null);
 		this.servicePlanId.set(null);
 		this.serviceError.set('');
+		this.serviceFields().reset();
 	}
 	protected updateService(field: keyof ServiceForm, value: string): void {
 		this.serviceForm.update((current) => ({ ...current, [field]: value }));
 		if (field === 'carId') this.loadComponents(value);
 	}
+	protected changeServiceCar(event: Event): void {
+		const carId = this.selectedValue(event);
+		if (carId !== null) this.updateService('carId', carId);
+	}
 	protected setHistoryFilter(value: 'active' | 'deleted'): void {
 		this.historyFilter.set(value);
 	}
 
-	protected saveService(): void {
+	protected saveService(event?: Event): void {
+		event?.preventDefault();
+		this.serviceFields().markAsTouched();
 		const form = this.serviceForm();
 		const cost = form.cost.trim() ? Number(form.cost) : null;
-		if (!form.carId || !form.description.trim() || !form.performedAt) {
-			this.serviceError.set('Choose a car, date, and a short description.');
+		if (this.serviceFields().invalid()) {
+			this.serviceError.set(
+				this.serviceFields().errorSummary()[0]?.message ??
+					'Review the service record fields.',
+			);
+			if (this.serviceFields.carId().invalid())
+				this.serviceFields.carId().focusBoundControl();
+			else if (this.serviceFields.performedAt().invalid())
+				this.serviceFields.performedAt().focusBoundControl();
+			else if (this.serviceFields.description().invalid())
+				this.serviceFields.description().focusBoundControl();
+			else if (this.serviceFields.cost().invalid())
+				this.serviceFields.cost().focusBoundControl();
+			else if (this.serviceFields.currency().invalid())
+				this.serviceFields.currency().focusBoundControl();
+			else this.serviceFields.notes().focusBoundControl();
 			return;
 		}
 		if (cost !== null && (!Number.isFinite(cost) || cost < 0)) {
@@ -421,18 +479,36 @@ export class MaintenanceCockpit {
 		this.form.update((current) => ({ ...current, [field]: value }));
 		if (field === 'carId') this.loadComponents(value);
 	}
+	protected changePlanCar(event: Event): void {
+		const carId = this.selectedValue(event);
+		if (carId !== null) this.update('carId', carId);
+	}
 	protected setFilter(value: 'all' | PlanState): void {
 		this.selectedFilter.set(value);
 	}
 
-	protected save(): void {
+	protected save(event?: Event): void {
+		event?.preventDefault();
+		this.planFields().markAsTouched();
 		const form = this.form();
 		const calendar = form.calendarValue.trim()
 			? Number(form.calendarValue)
 			: null;
 		const runs = form.runInterval.trim() ? Number(form.runInterval) : null;
-		if (!form.carId || !form.name.trim()) {
-			this.formError.set('Choose a car and name the care rule.');
+		if (this.planFields().invalid()) {
+			this.formError.set(
+				this.planFields().errorSummary()[0]?.message ??
+					'Review the maintenance plan fields.',
+			);
+			if (this.planFields.carId().invalid())
+				this.planFields.carId().focusBoundControl();
+			else if (this.planFields.name().invalid())
+				this.planFields.name().focusBoundControl();
+			else if (this.planFields.calendarValue().invalid())
+				this.planFields.calendarValue().focusBoundControl();
+			else if (this.planFields.runInterval().invalid())
+				this.planFields.runInterval().focusBoundControl();
+			else this.planFields.baselineRuns().focusBoundControl();
 			return;
 		}
 		if (
@@ -678,21 +754,20 @@ export class MaintenanceCockpit {
 			) - asUtc;
 		return new Date(asUtc - offset).toISOString();
 	}
-	private loadComponents(carId: string): void {
+	protected loadComponents(carId: string): void {
 		if (!carId) {
 			this.components.set([]);
 			return;
 		}
-		this.http
-			.get<ComponentsResponse>(`/api/v1/cars/${carId}/components`, {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: ({ components }) =>
-					this.components.set(
-						components.filter((component) => !component.removedAt),
-					),
-				error: () => this.components.set([]),
-			});
+		this.lookups.components(carId).subscribe({
+			next: (components) => this.components.set(components),
+			error: () => this.components.set([]),
+		});
+	}
+
+	private selectedValue(event: Event): string | null {
+		return event.target instanceof HTMLSelectElement
+			? event.target.value
+			: null;
 	}
 }

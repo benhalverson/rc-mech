@@ -14,6 +14,7 @@ import {
 	SoDialedImporterClient,
 	SoDialedImportPreview,
 } from './setup-snapshot';
+import { SetupSnapshotStore } from './setup-snapshot-store';
 import { SetupSnapshots } from './setup-snapshots';
 
 type Harness = {
@@ -74,6 +75,7 @@ describe('SetupSnapshots', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideNoopAnimations(),
+				SetupSnapshotStore,
 				{ provide: SoDialedImporterClient, useClass: MockImporter },
 			],
 		}).compileComponents();
@@ -97,6 +99,15 @@ describe('SetupSnapshots', () => {
 		await fixture.whenStable();
 		fixture.detectChanges();
 	};
+
+	it('waits for the car input before loading setup history', async () => {
+		await flushSetups();
+		fixture.destroy();
+		fixture = TestBed.createComponent(SetupSnapshots);
+
+		expect(() => fixture.detectChanges()).not.toThrow();
+		http.expectNone((request) => request.url.includes('/setups'));
+	});
 
 	const currentSetup = {
 		id: 'setup-1',

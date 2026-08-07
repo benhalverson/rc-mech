@@ -30,6 +30,7 @@ if curl -fsS "$base/api/v1/health" >/dev/null 2>&1; then
   exit 1
 fi
 
+pnpm exec wrangler d1 migrations apply DB --local --env local --persist-to "$state_dir" >/dev/null
 setsid pnpm exec wrangler dev --env local --local --port "$port" --persist-to "$state_dir" --var "APP_URL:${base}" --var "OWNER_EMAIL:owner@example.com" --var "MAGIC_LINK_TEST_TOKEN:${token}" >"$log_file" 2>&1 &
 worker_pid=$!
 

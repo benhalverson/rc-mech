@@ -6,7 +6,9 @@ import {
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import { type CarPhoto, CarPhotoGallery } from './car-photo-gallery';
+import type { CarPhoto } from './car/car.models';
+import { CarPhotoGallery } from './car-photo-gallery';
+import { CarPhotoStore } from './car-photo-store';
 
 type TestMember = {
 	set(value: unknown): void;
@@ -18,6 +20,7 @@ type GalleryTestHarness = {
 	action: TestSignal<string | null>;
 	designatePrimary: (...args: unknown[]) => unknown;
 	move: (...args: unknown[]) => unknown;
+	retry(): void;
 };
 
 describe('CarPhotoGallery', () => {
@@ -27,7 +30,11 @@ describe('CarPhotoGallery', () => {
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
 			imports: [CarPhotoGallery],
-			providers: [provideHttpClient(), provideHttpClientTesting()],
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				CarPhotoStore,
+			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
 		fixture = TestBed.createComponent(CarPhotoGallery);
@@ -39,6 +46,17 @@ describe('CarPhotoGallery', () => {
 	});
 
 	afterEach(() => http.verify());
+
+	it('waits for the car input and encodes it before loading the gallery', () => {
+		fixture.destroy();
+		fixture = TestBed.createComponent(CarPhotoGallery);
+
+		expect(() => fixture.detectChanges()).not.toThrow();
+		http.expectNone((request) => request.url.includes('/photos'));
+		fixture.componentRef.setInput('carId', 'car/one');
+		fixture.detectChanges();
+		http.expectOne('/api/v1/cars/car%2Fone/photos').flush({ photos: [] });
+	});
 
 	it('loads an owner-scoped gallery with credentials and renders the primary photo', () => {
 		const app = fixture.componentInstance as unknown as GalleryTestHarness;
@@ -75,6 +93,22 @@ describe('CarPhotoGallery', () => {
 			'/api/v1/cars/car-1/photos',
 			'invalid files never reach the Worker',
 		);
+	});
+
+	it('explains an expired session without retrying the protected read', async () => {
+		const app = fixture.componentInstance as unknown as GalleryTestHarness;
+		app.retry();
+		let request: TestRequest | undefined;
+		await vi.waitFor(() => {
+			request = http.expectOne('/api/v1/cars/car-1/photos');
+		});
+		request?.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const alert = fixture.nativeElement.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Your garage session has expired');
+		expect(alert?.querySelector('button')).toBeNull();
 	});
 
 	it('uploads a supported photo as multipart form data with credentials', async () => {

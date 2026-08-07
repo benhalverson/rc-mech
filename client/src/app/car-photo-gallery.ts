@@ -1,8 +1,4 @@
-import {
-	HttpClient,
-	HttpErrorResponse,
-	httpResource,
-} from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
 import {
 	Component,
 	computed,
@@ -13,30 +9,14 @@ import {
 	signal,
 } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-
-export type CarPhoto = {
-	id: string;
-	carId: string;
-	objectKey?: string;
-	contentType: string;
-	createdAt: string;
-	sortOrder?: number;
-	position?: number;
-	isPrimary?: boolean;
-	primary?: boolean;
-	url?: string;
-};
+import type { CarPhoto } from './car/car.models';
+import { CarPhotoStore } from './car-photo-store';
 
 type PhotosResponse = { photos: CarPhoto[] };
 type PhotoResponse = { photo: CarPhoto };
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-
-const photoReadError = (error: unknown): string =>
-	error instanceof HttpErrorResponse && error.status === 401
-		? 'Your garage session has expired. Sign in again to continue.'
-		: 'The photo gallery could not be loaded.';
 
 @Component({
 	selector: 'app-car-photo-gallery',
@@ -46,33 +26,19 @@ const photoReadError = (error: unknown): string =>
 })
 export class CarPhotoGallery {
 	private readonly http = inject(HttpClient);
-	readonly carId = input.required<string>();
+	private readonly store = inject(CarPhotoStore);
+	readonly carId = input('');
 	readonly archived = input(false);
 
-	private readonly resource = httpResource<PhotosResponse>(() => {
-		const carId = this.carId();
-		return carId
-			? {
-					url: `/api/v1/cars/${encodeURIComponent(carId)}/photos`,
-					withCredentials: true,
-				}
-			: undefined;
-	});
 	protected readonly photos = linkedSignal(() =>
-		this.resource.hasValue() ? this.ordered(this.resource.value().photos) : [],
+		this.ordered(this.store.photos()),
 	);
 	protected readonly state = computed(() =>
-		this.resource.isLoading()
-			? 'loading'
-			: this.resource.error()
-				? 'error'
-				: 'ready',
+		this.store.loading() ? 'loading' : this.store.failure() ? 'error' : 'ready',
 	);
+	protected readonly readFailure = this.store.failure;
 	private readonly mutationError = signal('');
-	protected readonly error = computed(() => {
-		const error = this.resource.error();
-		return error ? photoReadError(error) : this.mutationError();
-	});
+	protected readonly error = computed(() => this.mutationError());
 	protected readonly action = signal<string | null>(null);
 	protected readonly validationError = signal('');
 
@@ -86,6 +52,7 @@ export class CarPhotoGallery {
 				this.validationError.set('');
 			}
 			previousCarId = carId;
+			if (carId) this.store.selectCar(carId);
 		});
 	}
 
@@ -163,7 +130,7 @@ export class CarPhotoGallery {
 								: { ...item, isPrimary: false, primary: false },
 						),
 					);
-					this.resource.reload();
+					this.store.refresh();
 					this.action.set(null);
 				},
 				error: (error: { status?: number }) => {
@@ -201,7 +168,7 @@ export class CarPhotoGallery {
 								primary: item.id === primaryPhotoId,
 							})),
 					);
-					this.resource.reload();
+					this.store.refresh();
 					this.action.set(null);
 				},
 				error: (error: { status?: number }) => {
@@ -213,7 +180,7 @@ export class CarPhotoGallery {
 
 	protected retry(): void {
 		this.mutationError.set('');
-		this.resource.reload();
+		this.store.retry();
 	}
 
 	private upload(file: File): void {
@@ -267,7 +234,7 @@ export class CarPhotoGallery {
 									),
 						),
 					);
-					this.resource.reload();
+					this.store.refresh();
 					this.action.set(null);
 				},
 				error: (error: { status?: number }) => {
@@ -306,7 +273,7 @@ export class CarPhotoGallery {
 			.then(({ photos: saved }) => {
 				if (this.carId() !== carId) return;
 				this.photos.set(saved?.length ? this.ordered(saved) : optimistic);
-				this.resource.reload();
+				this.store.refresh();
 				this.action.set(null);
 			})
 			.catch((error: { status?: number }) => {
