@@ -159,9 +159,11 @@ export class CarRuns {
 		() => this.sessions().filter((session) => !session.deletedAt).length,
 	);
 	protected readonly timezone = computed(() =>
-		this.timezoneResource.hasValue()
-			? (this.timezoneResource.value().timezone ?? browserTimezone())
-			: browserTimezone(),
+		safeTimezone(
+			this.timezoneResource.hasValue()
+				? (this.timezoneResource.value().timezone ?? browserTimezone())
+				: browserTimezone(),
+		),
 	);
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);

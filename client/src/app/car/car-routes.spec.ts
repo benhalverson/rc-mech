@@ -929,4 +929,33 @@ describe('Car section routes', () => {
 		});
 		refresh?.flush({ driveSessions: [] });
 	});
+
+	it('falls back to UTC before rendering a run with an invalid stored timezone', async () => {
+		await harness.navigateByUrl('/garage/car-1/runs');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
+			.flush({
+				driveSessions: [
+					{
+						id: 'drive-1',
+						carId: 'car-1',
+						startedAt: '2026-08-07T12:00:00.000Z',
+						durationMinutes: 10,
+					},
+				],
+			});
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush({ timezone: 'Not/A-Timezone' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as { timezone(): string };
+		expect(component.timezone()).toBe('UTC');
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Conditions not recorded',
+		);
+	});
 });
