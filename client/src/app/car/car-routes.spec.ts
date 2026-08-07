@@ -254,6 +254,40 @@ describe('Car section routes', () => {
 		).toBeFalsy();
 	});
 
+	it('recognizes the backend transmitter slot as standard', async () => {
+		await harness.navigateByUrl('/garage/car-1/build');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/components')
+			.flush({
+				components: [
+					{
+						id: 'component-transmitter',
+						carId: 'car-1',
+						slot: 'transmitter',
+						slotType: null,
+						name: 'Track radio',
+					},
+				],
+			});
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		const edit = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find((button) => button.textContent?.trim() === 'Edit') as
+			| HTMLButtonElement
+			| undefined;
+		edit?.click();
+		harness.detectChanges();
+		expect(
+			harness.routeNativeElement?.querySelector('select[name="slot"]'),
+		).toBeTruthy();
+		expect(
+			harness.routeNativeElement?.querySelector('input[name="slot"]'),
+		).toBeFalsy();
+	});
+
 	it('normalizes a number input with an invalid stored timezone', async () => {
 		await harness.navigateByUrl('/garage/car-1/runs');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });

@@ -46,6 +46,7 @@ const standardSlots = [
 	'throttle-servo',
 	'receiver',
 	'gyro',
+	'transmitter',
 	'tires',
 	'wheels',
 	'shocks',
