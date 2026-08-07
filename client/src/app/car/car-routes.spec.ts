@@ -190,6 +190,34 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.textContent).toContain('Car overview');
 	});
 
+	it.each([
+		{
+			path: 'build',
+			endpoint: '/api/v1/cars/car-1/components',
+		},
+		{
+			path: 'runs',
+			endpoint: '/api/v1/cars/car-1/drives',
+		},
+	])('explains an expired session on the $path read', async ({
+		path,
+		endpoint,
+	}) => {
+		await harness.navigateByUrl(`/garage/car-1/${path}`);
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === endpoint)
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		if (path === 'runs')
+			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Your garage session has expired');
+		expect(alert?.querySelector('button')).toBeNull();
+	});
+
 	it('edits car details and refreshes the overview resource', async () => {
 		await harness.navigateByUrl('/garage/car-1/overview');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
@@ -957,5 +985,8 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Conditions not recorded',
 		);
+		expect(
+			harness.routeNativeElement?.querySelector('.session-row p'),
+		).toBeNull();
 	});
 });

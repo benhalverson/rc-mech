@@ -14,6 +14,7 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
+import { carReadFailure } from './car-read-failure';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
 
@@ -115,9 +116,9 @@ const emptyForm = (): DriveForm => ({
 					<div class="section-heading"><div><div class="eyebrow">Drive history</div><h3 id="runs-title">The run log</h3></div><span><strong>{{ activeCount() }}</strong> recorded</span>@if (!car.archivedAt && !editing()) { <button class="button" type="button" (click)="openAdd()" [disabled]="action() !== null">Record a drive</button> }</div>
 					@if (editing()) { <form (submit)="save($event)" aria-labelledby="run-form-title" [attr.aria-describedby]="formError() ? 'run-form-error' : null" novalidate><h4 id="run-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive' }}</h4>@if (formError()) { <p id="run-form-error" role="alert">{{ formError() }}</p> }<div class="form-grid"><label>Started <input type="datetime-local" [formField]="runForm.startedAt" [attr.aria-describedby]="runForm.startedAt().invalid() && formError() ? 'run-form-error' : null" /></label><label>Duration (minutes) <input type="text" inputmode="numeric" [formField]="runForm.durationMinutes" [attr.aria-describedby]="runForm.durationMinutes().invalid() && formError() ? 'run-form-error' : null" /></label><label class="wide">Conditions <input [formField]="runForm.conditions" /></label><label class="wide">Notes <textarea rows="3" [formField]="runForm.notes"></textarea></label></div><p>Saved in {{ timezone() }}.</p><div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save session</button><button type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div></form> }
 					@else if (sessionsResource.isLoading()) { <div class="state-card" role="status">Opening the run log…</div> }
-					@else if (sessionsResource.error()) { <div class="state-card" role="alert"><p>The run log could not be loaded.</p><button type="button" (click)="sessionsResource.reload()">Try again</button></div> }
+					@else if (readFailure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="sessionsResource.reload()">Try again</button> }</div> }
 					@else if (!sessions().length) { <div class="state-card"><h4>No drive sessions recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()" [disabled]="action() !== null">Record the first drive</button> }</div> }
-					@else { <div class="session-list" aria-label="Drive session history">@for (session of sessions(); track session.id) { <article class="session-row"><div><time [dateTime]="session.startedAt">{{ session.startedAt | date:'medium':timezone() }}</time></div><div><strong>{{ session.conditions || 'Conditions not recorded' }}</strong>@if (session.durationMinutes) { <span> · {{ session.durationMinutes }} min</span> }<p>{{ session.notes }}</p></div>@if (!session.deletedAt && !car.archivedAt) { <div class="form-actions"><button type="button" (click)="openEdit(session)" [disabled]="action() !== null">Edit</button><button type="button" (click)="archive(session)" [disabled]="action() !== null">Archive</button></div> }</article> }</div> }
+					@else { <div class="session-list" aria-label="Drive session history">@for (session of sessions(); track session.id) { <article class="session-row"><div><time [dateTime]="session.startedAt">{{ session.startedAt | date:'medium':timezone() }}</time></div><div><strong>{{ session.conditions || 'Conditions not recorded' }}</strong>@if (session.durationMinutes) { <span> · {{ session.durationMinutes }} min</span> }@if (session.notes) { <p>{{ session.notes }}</p> }</div>@if (!session.deletedAt && !car.archivedAt) { <div class="form-actions"><button type="button" (click)="openEdit(session)" [disabled]="action() !== null">Edit</button><button type="button" (click)="archive(session)" [disabled]="action() !== null">Archive</button></div> }</article> }</div> }
 					@if (message()) { <p role="status">{{ message() }}</p> }
 				</section>
 			</app-car-section-shell>
@@ -157,6 +158,12 @@ export class CarRuns {
 	);
 	protected readonly activeCount = computed(
 		() => this.sessions().filter((session) => !session.deletedAt).length,
+	);
+	protected readonly readFailure = computed(() =>
+		carReadFailure(
+			this.sessionsResource.error(),
+			'The run log could not be loaded.',
+		),
 	);
 	protected readonly timezone = computed(() =>
 		safeTimezone(

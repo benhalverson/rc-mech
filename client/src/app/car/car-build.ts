@@ -15,6 +15,7 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
+import { carReadFailure } from './car-read-failure';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
 
@@ -123,7 +124,7 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 							<div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save component</button><button class="button quiet" type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div>
 						</form>
 					} @else if (resource.isLoading()) { <div class="state-card" role="status">Reading the build sheet…</div> }
-					@else if (resource.error()) { <div class="state-card" role="alert"><p>The build sheet could not be loaded.</p><button type="button" (click)="resource.reload()">Try again</button></div> }
+					@else if (readFailure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="resource.reload()">Try again</button> }</div> }
 					@else if (!groups().length) { <div class="state-card"><h4>No components recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()">Add the first component</button> }</div> }
 					@else { <div class="component-groups">@for (group of groups(); track group.slot) { <article class="component-slot"><div class="section-heading"><h4>{{ group.slot }}</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd(group.slot)">{{ group.current ? 'Replace' : 'Install' }}</button> }</div>
 						@if (group.current; as current) { <p><strong>{{ current.name }}</strong> · {{ current.manufacturer || 'Manufacturer not recorded' }}@if (current.model) { · {{ current.model }} }</p>@if (!car.archivedAt) { <div class="form-actions"><button type="button" (click)="openEdit(current)">Edit</button><button type="button" (click)="openReplace(current)">Replace</button></div> } }
@@ -155,6 +156,12 @@ export class CarBuild {
 	});
 	protected readonly components = computed(() =>
 		this.resource.hasValue() ? this.resource.value().components : [],
+	);
+	protected readonly readFailure = computed(() =>
+		carReadFailure(
+			this.resource.error(),
+			'The build sheet could not be loaded.',
+		),
 	);
 	protected readonly groups = computed(() => {
 		const grouped = new Map<string, InstalledComponent[]>();
