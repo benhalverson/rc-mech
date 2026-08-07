@@ -44,9 +44,16 @@ export class CarSetups {
 	protected readonly createAction = signal(false);
 
 	constructor() {
+		let previousCarId: string | undefined;
 		effect(() => {
 			const carId = this.carId();
-			if (carId) this.carStore.selectCar(carId);
+			if (!carId) return;
+			if (previousCarId !== undefined && carId !== previousCarId) {
+				this.createAction.set(false);
+				this.createError.set('');
+			}
+			previousCarId = carId;
+			this.carStore.selectCar(carId);
 		});
 	}
 
@@ -56,6 +63,7 @@ export class CarSetups {
 		model: string;
 	}): void {
 		if (this.createAction()) return;
+		const sourceCarId = this.carId();
 		this.createAction.set(true);
 		this.createError.set('');
 		this.http
@@ -64,11 +72,13 @@ export class CarSetups {
 			})
 			.subscribe({
 				next: ({ car }) => {
+					if (this.carId() !== sourceCarId) return;
 					this.createAction.set(false);
 					this.collection.reload();
 					void this.router.navigate(['/garage', car.id, 'setups']);
 				},
 				error: () => {
+					if (this.carId() !== sourceCarId) return;
 					this.createAction.set(false);
 					this.createError.set(
 						'The new car could not be created from this reviewed import.',

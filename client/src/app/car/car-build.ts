@@ -177,10 +177,25 @@ export class CarBuild {
 	protected readonly message = signal('');
 
 	constructor() {
+		let previousCarId: string | undefined;
 		effect(() => {
 			const carId = this.carId();
-			if (carId) this.carStore.selectCar(carId);
+			if (!carId) return;
+			if (previousCarId !== undefined && carId !== previousCarId)
+				this.resetRouteState();
+			previousCarId = carId;
+			this.carStore.selectCar(carId);
 		});
+	}
+
+	private resetRouteState(): void {
+		this.editing.set(false);
+		this.editingId.set(null);
+		this.mode.set('add');
+		this.action.set(null);
+		this.form.set(emptyForm());
+		this.formError.set('');
+		this.message.set('');
 	}
 
 	protected openAdd(slot = ''): void {
@@ -276,6 +291,7 @@ export class CarBuild {
 						);
 		request.subscribe({
 			next: () => {
+				if (this.carId() !== car.id) return;
 				this.resource.reload();
 				this.action.set(null);
 				this.editing.set(false);
@@ -286,6 +302,7 @@ export class CarBuild {
 				);
 			},
 			error: (error: { status?: number }) => {
+				if (this.carId() !== car.id) return;
 				this.action.set(null);
 				this.formError.set(
 					error.status === 409

@@ -6,6 +6,7 @@ import {
 import {
 	Component,
 	computed,
+	effect,
 	inject,
 	input,
 	linkedSignal,
@@ -75,6 +76,19 @@ export class CarPhotoGallery {
 	protected readonly action = signal<string | null>(null);
 	protected readonly validationError = signal('');
 
+	constructor() {
+		let previousCarId: string | undefined;
+		effect(() => {
+			const carId = this.carId();
+			if (previousCarId !== undefined && carId !== previousCarId) {
+				this.action.set(null);
+				this.mutationError.set('');
+				this.validationError.set('');
+			}
+			previousCarId = carId;
+		});
+	}
+
 	protected photoUrl(photo: CarPhoto): string {
 		return photo.url || `/api/v1/photos/${encodeURIComponent(photo.id)}`;
 	}
@@ -123,6 +137,7 @@ export class CarPhotoGallery {
 
 	protected designatePrimary(photo: CarPhoto): void {
 		if (this.archived() || this.action() || this.isPrimary(photo)) return;
+		const carId = this.carId();
 		this.action.set(`primary:${photo.id}`);
 		this.mutationError.set('');
 		this.http
@@ -133,6 +148,7 @@ export class CarPhotoGallery {
 			)
 			.subscribe({
 				next: ({ photo: updated }) => {
+					if (this.carId() !== carId) return;
 					this.photos.update((photos) =>
 						photos.map((item) =>
 							item.id === updated.id
@@ -143,8 +159,10 @@ export class CarPhotoGallery {
 					this.resource.reload();
 					this.action.set(null);
 				},
-				error: (error: { status?: number }) =>
-					this.fail(error, 'The primary photo could not be saved.'),
+				error: (error: { status?: number }) => {
+					if (this.carId() !== carId) return;
+					this.fail(error, 'The primary photo could not be saved.');
+				},
 			});
 	}
 
@@ -155,6 +173,7 @@ export class CarPhotoGallery {
 			!window.confirm('Delete this private car photo?')
 		)
 			return;
+		const carId = this.carId();
 		this.action.set(`delete:${photo.id}`);
 		this.mutationError.set('');
 		this.http
@@ -164,6 +183,7 @@ export class CarPhotoGallery {
 			)
 			.subscribe({
 				next: ({ primaryPhotoId }) => {
+					if (this.carId() !== carId) return;
 					this.photos.update((photos) =>
 						photos
 							.filter((item) => item.id !== photo.id)
@@ -176,8 +196,10 @@ export class CarPhotoGallery {
 					this.resource.reload();
 					this.action.set(null);
 				},
-				error: (error: { status?: number }) =>
-					this.fail(error, 'The photo could not be deleted.'),
+				error: (error: { status?: number }) => {
+					if (this.carId() !== carId) return;
+					this.fail(error, 'The photo could not be deleted.');
+				},
 			});
 	}
 
@@ -205,6 +227,7 @@ export class CarPhotoGallery {
 	}
 
 	private sendFile(url: string, file: File, action: string): void {
+		const carId = this.carId();
 		const body = new FormData();
 		body.append('file', file, file.name);
 		this.action.set(action);
@@ -213,6 +236,7 @@ export class CarPhotoGallery {
 			.post<PhotoResponse>(url, body, { withCredentials: true })
 			.subscribe({
 				next: ({ photo }) => {
+					if (this.carId() !== carId) return;
 					this.photos.set(
 						this.ordered(
 							action === 'upload'
@@ -225,17 +249,20 @@ export class CarPhotoGallery {
 					this.resource.reload();
 					this.action.set(null);
 				},
-				error: (error: { status?: number }) =>
+				error: (error: { status?: number }) => {
+					if (this.carId() !== carId) return;
 					this.fail(
 						error,
 						action === 'upload'
 							? 'The photo could not be uploaded.'
 							: 'The photo could not be replaced.',
-					),
+					);
+				},
 			});
 	}
 
 	private persistOrder(photos: CarPhoto[]): void {
+		const carId = this.carId();
 		this.action.set('reorder');
 		this.mutationError.set('');
 		// Keep the new order visible immediately, then roll back if any owner-scoped update fails.
@@ -255,11 +282,13 @@ export class CarPhotoGallery {
 			),
 		)
 			.then(({ photos: saved }) => {
+				if (this.carId() !== carId) return;
 				this.photos.set(saved?.length ? this.ordered(saved) : optimistic);
 				this.resource.reload();
 				this.action.set(null);
 			})
 			.catch((error: { status?: number }) => {
+				if (this.carId() !== carId) return;
 				this.photos.set(previous);
 				this.fail(error, 'The photo order could not be saved.');
 			});

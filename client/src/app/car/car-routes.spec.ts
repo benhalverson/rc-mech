@@ -275,6 +275,104 @@ describe('Car section routes', () => {
 		).toContain('Your garage session has expired');
 	});
 
+	it('resets build editor state when a reused route changes cars', async () => {
+		await harness.navigateByUrl('/garage/car-1/build');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/components')
+			.flush({ components: [] });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			openAdd(): void;
+			formError: TestSignal<string>;
+			message: TestSignal<string>;
+		};
+		component.openAdd();
+		component.formError.set('Old build error');
+		component.message.set('Old build message');
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
+
+		await harness.navigateByUrl('/garage/car-2/build');
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
+		expect(harness.routeNativeElement?.textContent).not.toContain('Old build');
+		http
+			.expectOne('/api/v1/cars/car-2')
+			.flush({ car: { ...car, id: 'car-2' } });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-2/components')
+			.flush({ components: [] });
+	});
+
+	it('resets run editor state when a reused route changes cars', async () => {
+		await harness.navigateByUrl('/garage/car-1/runs');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
+			.flush({ driveSessions: [] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			openAdd(): void;
+			formError: TestSignal<string>;
+			message: TestSignal<string>;
+		};
+		component.openAdd();
+		component.formError.set('Old run error');
+		component.message.set('Old run message');
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
+
+		await harness.navigateByUrl('/garage/car-2/runs');
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
+		expect(harness.routeNativeElement?.textContent).not.toContain('Old run');
+		http
+			.expectOne('/api/v1/cars/car-2')
+			.flush({ car: { ...car, id: 'car-2' } });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-2/drives')
+			.flush({ driveSessions: [] });
+	});
+
+	it('resets setup creation state when a reused route changes cars', async () => {
+		await harness.navigateByUrl('/garage/car-1/setups');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http.expectOne('/api/v1/cars').flush({ cars: [car] });
+		let firstSetups: TestRequest | undefined;
+		await vi.waitFor(() => {
+			firstSetups = http.expectOne('/api/v1/cars/car-1/setups');
+		});
+		firstSetups?.flush({ setups: [] });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			createAction: TestSignal<boolean>;
+			createError: TestSignal<string>;
+		};
+		component.createAction.set(true);
+		component.createError.set('Old setup error');
+
+		await harness.navigateByUrl('/garage/car-2/setups');
+		harness.detectChanges();
+		expect(component.createAction()).toBe(false);
+		expect(component.createError()).toBe('');
+		http
+			.expectOne('/api/v1/cars/car-2')
+			.flush({ car: { ...car, id: 'car-2' } });
+		let nextSetups: TestRequest | undefined;
+		await vi.waitFor(() => {
+			nextSetups = http.expectOne('/api/v1/cars/car-2/setups');
+		});
+		nextSetups?.flush({ setups: [] });
+	});
+
 	it('shows missing-car guidance without a connection retry', async () => {
 		await harness.navigateByUrl('/garage/missing/overview');
 		http

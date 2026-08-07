@@ -15,6 +15,7 @@ type TestMember = {
 type TestSignal<T> = TestMember & (() => T);
 type GalleryTestHarness = {
 	photos: TestSignal<CarPhoto[]>;
+	action: TestSignal<string | null>;
 	designatePrimary: (...args: unknown[]) => unknown;
 	move: (...args: unknown[]) => unknown;
 };
@@ -162,6 +163,37 @@ describe('CarPhotoGallery', () => {
 		http
 			.expectOne('/api/v1/cars/car%2Fone/photos/photo%2Fone')
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
+	});
+
+	it('clears local mutation state and ignores stale results when cars change', async () => {
+		const app = fixture.componentInstance as unknown as GalleryTestHarness;
+		const photo = {
+			id: 'photo-1',
+			carId: 'car-1',
+			objectKey: 'owner/car-1/photo-1.webp',
+			contentType: 'image/webp',
+			createdAt: '2026-08-03T00:00:00Z',
+			sortOrder: 0,
+		};
+		app.photos.set([photo]);
+		app.designatePrimary(photo);
+		const oldMutation = http.expectOne('/api/v1/cars/car-1/photos/photo-1');
+		expect(app.action()).toBe('primary:photo-1');
+
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		expect(app.action()).toBeNull();
+		let nextGallery: TestRequest | undefined;
+		await vi.waitFor(() => {
+			nextGallery = http.expectOne('/api/v1/cars/car-2/photos');
+		});
+		nextGallery?.flush({ photos: [] });
+		oldMutation.flush({ photo: { ...photo, isPrimary: true } });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(app.photos()).toEqual([]);
+		http.expectNone('/api/v1/cars/car-2/photos');
 	});
 
 	it('reorders the complete gallery through one authenticated atomic request', async () => {

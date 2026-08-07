@@ -166,10 +166,24 @@ export class CarRuns {
 	protected readonly message = signal('');
 
 	constructor() {
+		let previousCarId: string | undefined;
 		effect(() => {
 			const carId = this.carId();
-			if (carId) this.carStore.selectCar(carId);
+			if (!carId) return;
+			if (previousCarId !== undefined && carId !== previousCarId)
+				this.resetRouteState();
+			previousCarId = carId;
+			this.carStore.selectCar(carId);
 		});
+	}
+
+	private resetRouteState(): void {
+		this.editing.set(false);
+		this.editingId.set(null);
+		this.action.set(null);
+		this.form.set(emptyForm());
+		this.formError.set('');
+		this.message.set('');
 	}
 
 	protected openAdd(): void {
@@ -255,6 +269,7 @@ export class CarRuns {
 				);
 		request.subscribe({
 			next: () => {
+				if (this.carId() !== car.id) return;
 				this.sessionsResource.reload();
 				this.action.set(null);
 				this.editing.set(false);
@@ -263,6 +278,7 @@ export class CarRuns {
 				);
 			},
 			error: (error: { status?: number }) => {
+				if (this.carId() !== car.id) return;
 				this.action.set(null);
 				this.formError.set(
 					error.status === 409
@@ -284,10 +300,12 @@ export class CarRuns {
 			)
 			.subscribe({
 				next: () => {
+					if (this.carId() !== car.id) return;
 					this.sessionsResource.reload();
 					this.action.set(null);
 				},
 				error: () => {
+					if (this.carId() !== car.id) return;
 					this.action.set(null);
 					this.message.set('The drive session could not be archived.');
 				},
