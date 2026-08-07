@@ -214,6 +214,7 @@ describe('SetupSnapshots', () => {
 		const editor = fixture.nativeElement.querySelector(
 			'form.setup-editor',
 		) as HTMLFormElement;
+		expect(editor.getAttribute('aria-describedby')).toBeNull();
 		editor.dispatchEvent(new Event('submit'));
 		fixture.detectChanges();
 
@@ -225,6 +226,28 @@ describe('SetupSnapshots', () => {
 			editor.querySelector('#setup-form-validation[role="alert"]')?.textContent,
 		).toContain('Name this setup before saving');
 		expect(document.activeElement).toBe(name);
+	});
+
+	it('focuses the first invalid optional field in editor order', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openAdd();
+		app.formModel.set({
+			...emptySetupForm(),
+			name: 'Valid setup',
+			track: 'x'.repeat(161),
+		});
+		fixture.detectChanges();
+		const editor = fixture.nativeElement.querySelector(
+			'form.setup-editor',
+		) as HTMLFormElement;
+		editor.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		const trackInput = [...editor.querySelectorAll('label')]
+			.find((label) => label.textContent?.trim().startsWith('Track'))
+			?.querySelector('input');
+
+		expect(document.activeElement).toBe(trackInput);
 	});
 
 	it('copies a setup and can select the copied snapshot as current', async () => {

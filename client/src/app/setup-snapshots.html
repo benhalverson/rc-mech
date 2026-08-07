@@ -16,7 +16,7 @@
         <p>Paste a supported setup URL. The importer returns a draft for you to check; it never writes a snapshot by itself.</p>
       </div>
       <div class="import-controls">
-        <label class="wide" for="sodialed-url">So Dialed setup URL <input id="sodialed-url" type="url" placeholder="https://sodialed.com/…" [formField]="importUrlForm.url" [attr.aria-describedby]="importUrlForm.url().invalid() ? 'import-url-validation' : null" /></label>
+        <label class="wide" for="sodialed-url">So Dialed setup URL <input id="sodialed-url" type="url" placeholder="https://sodialed.com/…" [formField]="importUrlForm.url" [attr.aria-describedby]="importUrlForm.url().touched() && importUrlForm.url().invalid() ? 'import-url-validation' : null" /></label>
         <button class="button" type="submit" [disabled]="importState() === 'loading'">{{ importState() === 'loading' ? 'Reading sheet…' : 'Review setup' }}</button>
       </div>
       @if (importUrlForm.url().touched() && importUrlForm.url().invalid()) { <p id="import-url-validation" class="message" role="alert">{{ importUrlForm.url().errors()[0]?.message }}</p> }
@@ -47,7 +47,7 @@
       </div>
 
       @if (editing()) {
-        <form class="setup-editor" (submit)="save($event)" aria-labelledby="setup-editor-title" [attr.aria-describedby]="setupForm().invalid() ? 'setup-form-validation' : null" novalidate>
+        <form class="setup-editor" (submit)="save($event)" aria-labelledby="setup-editor-title" [attr.aria-describedby]="formError() ? 'setup-form-validation' : null" novalidate>
           @if (importPreview(); as preview) {
             <div class="review-banner">
               <div class="eyebrow">Import review draft</div>

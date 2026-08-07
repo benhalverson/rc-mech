@@ -305,12 +305,21 @@ export class SetupSnapshots {
 		const formModel = this.formModel();
 		if (this.setupForm().invalid()) {
 			this.formError.set('Review the highlighted setup fields before saving.');
-			if (this.setupForm.name().invalid())
-				this.setupForm.name().focusBoundControl();
-			else if (this.setupForm.sourceUrl().invalid())
-				this.setupForm.sourceUrl().focusBoundControl();
-			else if (this.setupForm.pdfPage().invalid())
-				this.setupForm.pdfPage().focusBoundControl();
+			[
+				this.setupForm.name(),
+				this.setupForm.track(),
+				this.setupForm.event(),
+				this.setupForm.surface(),
+				this.setupForm.traction(),
+				this.setupForm.moisture(),
+				this.setupForm.condition(),
+				this.setupForm.temperature(),
+				this.setupForm.sourceUrl(),
+				this.setupForm.pdfTitle(),
+				this.setupForm.pdfPage(),
+			]
+				.find((field) => field.invalid())
+				?.focusBoundControl();
 			return;
 		}
 		if (this.action()) return;

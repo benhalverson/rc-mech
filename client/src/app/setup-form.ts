@@ -162,39 +162,39 @@ export const parseSetupJsonObject = (
 
 export const setupPayloadFromForm = (
 	form: SetupFormModel,
-): SetupSnapshotPayload => ({
-	name: form.name.trim(),
-	setupDate: form.recordedAt
-		? new Date(`${form.recordedAt}T00:00:00.000Z`).toISOString()
-		: null,
-	track: form.track.trim() || null,
-	event: form.event.trim() || null,
-	surface: form.surface.trim() || null,
-	traction: form.traction.trim() || null,
-	moisture: form.moisture.trim() || null,
-	condition: form.condition.trim() || null,
-	temperature: form.temperature.trim() || null,
-	vehicle: optionalRecord(form.sections.vehicle),
-	drivetrain: optionalRecord(form.sections.drivetrain),
-	electronics: optionalRecord(form.sections.electronics),
-	tires: optionalRecord(form.sections.tires),
-	shocks: optionalRecord(form.sections.shocks),
-	frontSuspension: optionalRecord(form.sections.frontSuspension),
-	rearSuspension: optionalRecord(form.sections.rearSuspension),
-	notes: optionalRecord(form.sections.notes)['setupNotes'] ?? null,
-	sourceUrl: form.sourceUrl.trim() || null,
-	sourcePdfReference: form.pdfTitle.trim() || null,
-	sourceMetadata: {
-		pdfUrl: form.pdfUrl.trim() || null,
-		pdfPage: form.pdfPage.trim() ? Number(form.pdfPage) : null,
-	},
-	unmappedValues: Object.keys(parseSetupJsonObject(form.unmappedValues)).length
-		? parseSetupJsonObject(form.unmappedValues)
-		: null,
-	rawValues: Object.keys(parseSetupJsonObject(form.rawValues)).length
-		? parseSetupJsonObject(form.rawValues)
-		: null,
-});
+): SetupSnapshotPayload => {
+	const unmappedValues = parseSetupJsonObject(form.unmappedValues);
+	const rawValues = parseSetupJsonObject(form.rawValues);
+	return {
+		name: form.name.trim(),
+		setupDate: form.recordedAt
+			? new Date(`${form.recordedAt}T00:00:00.000Z`).toISOString()
+			: null,
+		track: form.track.trim() || null,
+		event: form.event.trim() || null,
+		surface: form.surface.trim() || null,
+		traction: form.traction.trim() || null,
+		moisture: form.moisture.trim() || null,
+		condition: form.condition.trim() || null,
+		temperature: form.temperature.trim() || null,
+		vehicle: optionalRecord(form.sections.vehicle),
+		drivetrain: optionalRecord(form.sections.drivetrain),
+		electronics: optionalRecord(form.sections.electronics),
+		tires: optionalRecord(form.sections.tires),
+		shocks: optionalRecord(form.sections.shocks),
+		frontSuspension: optionalRecord(form.sections.frontSuspension),
+		rearSuspension: optionalRecord(form.sections.rearSuspension),
+		notes: optionalRecord(form.sections.notes)['setupNotes'] ?? null,
+		sourceUrl: form.sourceUrl.trim() || null,
+		sourcePdfReference: form.pdfTitle.trim() || null,
+		sourceMetadata: {
+			pdfUrl: form.pdfUrl.trim() || null,
+			pdfPage: form.pdfPage.trim() ? Number(form.pdfPage) : null,
+		},
+		unmappedValues: Object.keys(unmappedValues).length ? unmappedValues : null,
+		rawValues: Object.keys(rawValues).length ? rawValues : null,
+	};
+};
 
 export const importKnownValues = (payload: SetupSnapshotPayload) => ({
 	...payload,
