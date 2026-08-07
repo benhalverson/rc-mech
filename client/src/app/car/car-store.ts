@@ -84,9 +84,6 @@ export const CarStore = signalStore(
 		retry(): void {
 			store.carResource.reload();
 		},
-		refresh(): void {
-			store.carResource.reload();
-		},
 		clearCarMutationState(): void {
 			patchState(store, { carMutationError: '', carMessage: '' });
 		},
