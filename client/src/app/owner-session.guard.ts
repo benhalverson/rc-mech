@@ -8,7 +8,9 @@ export const ownerSessionCanMatch: CanMatchFn = async (_route, segments) => {
 	const session = await sessionStore.resolved();
 	if (session?.session) return true;
 
-	const destination = `/${segments.map((segment) => segment.path).join('/')}`;
+	const destination =
+		router.getCurrentNavigation()?.extractedUrl.toString() ??
+		`/${segments.map((segment) => segment.path).join('/')}`;
 	return router.createUrlTree(['/sign-in'], {
 		queryParams: { returnTo: destination === '/' ? '/garage' : destination },
 	});

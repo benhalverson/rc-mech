@@ -42,7 +42,7 @@ const bytesToBase64Url = (value: ArrayBuffer): string => {
 		<main class="access-shell" tabindex="-1">
 			<section class="access-card" aria-labelledby="sign-in-title">
 				<div class="eyebrow">RC Mech / Owner access</div>
-				<h1 id="sign-in-title">Back to the<br />workbench.</h1>
+				<h1 id="sign-in-title" data-route-focus tabindex="-1">Back to the<br />workbench.</h1>
 				<p class="intro">{{ registering() ? 'Use an invite code to start your own private garage.' : 'Use your email to receive a one-time link, or continue with a passkey.' }}</p>
 				<form (ngSubmit)="registering() ? register() : requestMagicLink()">
 					<label for="owner-email">Email address</label>
@@ -75,7 +75,7 @@ export class SignIn {
 	protected readonly sending = signal(false);
 	protected readonly working = signal(false);
 	protected readonly sent = signal(false);
-	protected readonly message = signal('');
+	protected readonly message = signal(this.initialMessage());
 	protected readonly webAuthnAvailable =
 		typeof window !== 'undefined' && 'PublicKeyCredential' in window;
 
@@ -84,6 +84,22 @@ export class SignIn {
 		return value?.startsWith('/') && !value.startsWith('//')
 			? value
 			: '/garage';
+	}
+
+	private initialMessage(): string {
+		if (this.route.snapshot.queryParamMap.get('reason') === 'session-expired')
+			return 'Your garage session has expired. Sign in again to continue.';
+		const errorParameters = [
+			'error',
+			'error_description',
+			'error_code',
+			'errorCode',
+		];
+		return errorParameters.some((parameter) =>
+			this.route.snapshot.queryParamMap.has(parameter),
+		)
+			? 'That recovery link could not be used. Request a new magic link and try again.'
+			: '';
 	}
 
 	protected toggleRegistration(): void {
@@ -128,8 +144,7 @@ export class SignIn {
 		if (!email || this.sending()) return;
 		this.sending.set(true);
 		this.message.set('');
-		const callbackURL = new URL(window.location.origin);
-		callbackURL.searchParams.set('returnTo', this.returnTo);
+		const callbackURL = new URL(this.returnTo, window.location.origin);
 		this.http
 			.post(
 				'/api/auth/sign-in/magic-link',
@@ -200,8 +215,7 @@ export class SignIn {
 					{ withCredentials: true },
 				),
 			);
-			this.sessionStore.refresh();
-			await this.sessionStore.resolved();
+			await this.sessionStore.refresh();
 			await this.router.navigateByUrl(this.returnTo);
 		} catch (error) {
 			this.message.set(

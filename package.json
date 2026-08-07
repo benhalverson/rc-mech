@@ -14,7 +14,7 @@
 		"db:migrate:production": "wrangler d1 migrations apply DB --remote",
 		"db:seed-invite": "tsx scripts/invite-cli.ts",
 		"test:invite:request": "bash scripts/invite-request-smoke.sh",
-		"test:invite:browser": "playwright test -c playwright.config.ts",
+		"test:invite:browser": "pnpm client:build && playwright test -c playwright.config.ts",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format --reporter=summary .",

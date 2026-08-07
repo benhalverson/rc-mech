@@ -1,4 +1,5 @@
-import { Injectable, signal } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
+import { inject, Service, signal } from '@angular/core';
 import {
 	NavigationCancel,
 	NavigationEnd,
@@ -8,15 +9,17 @@ import {
 } from '@angular/router';
 import { filter } from 'rxjs';
 
-@Injectable({ providedIn: 'root' })
+@Service()
 export class RouteTransitionAnnouncer {
+	private readonly document = inject(DOCUMENT);
+	private readonly router = inject(Router);
 	readonly loading = signal(false);
 	readonly announcement = signal('');
 	readonly error = signal('');
 	private lastUrl = '/garage';
 
-	constructor(private readonly router: Router) {
-		router.events
+	constructor() {
+		this.router.events
 			.pipe(
 				filter(
 					(event) =>
@@ -45,12 +48,7 @@ export class RouteTransitionAnnouncer {
 				this.loading.set(false);
 				this.error.set('');
 				this.announcement.set(`Opened ${this.label(event.urlAfterRedirects)}.`);
-				queueMicrotask(() => {
-					const heading = document.querySelector<HTMLElement>(
-						'main[tabindex="-1"]',
-					);
-					heading?.focus({ preventScroll: true });
-				});
+				queueMicrotask(() => this.focusRouteHeading());
 			});
 	}
 
@@ -69,5 +67,11 @@ export class RouteTransitionAnnouncer {
 		if (url.startsWith('/maintenance')) return 'Maintenance';
 		if (url.startsWith('/settings')) return 'Settings';
 		return 'workspace';
+	}
+
+	private focusRouteHeading(): void {
+		this.document
+			.querySelector<HTMLElement>('[data-route-focus]')
+			?.focus({ preventScroll: true });
 	}
 }
