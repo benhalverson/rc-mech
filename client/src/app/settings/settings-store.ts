@@ -37,6 +37,7 @@ type SettingsState = {
 	inviteMutationError: string;
 	passkeyAction: string | null;
 	passkeyMessage: string;
+	passkeyMutationError: string;
 };
 
 const initialState: SettingsState = {
@@ -48,6 +49,7 @@ const initialState: SettingsState = {
 	inviteMutationError: '',
 	passkeyAction: null,
 	passkeyMessage: '',
+	passkeyMutationError: '',
 };
 
 const apiMessage = (error: unknown, fallback: string): string => {
@@ -122,6 +124,7 @@ export const SettingsStore = signalStore(
 				? 'Passkeys could not be loaded. Try again.'
 				: '',
 		),
+		passkeyActionError: computed(() => store.passkeyMutationError()),
 		webAuthnAvailable: computed(
 			() =>
 				typeof navigator !== 'undefined' &&
@@ -139,6 +142,7 @@ export const SettingsStore = signalStore(
 			store.timezoneResource.reload();
 		},
 		async saveTimezone(value: string): Promise<boolean> {
+			if (store.timezoneSaving()) return false;
 			const timezone = value.trim();
 			if (!isValidTimezone(timezone)) {
 				patchState(store, {
@@ -183,7 +187,13 @@ export const SettingsStore = signalStore(
 		},
 		async createInviteCode(value: string): Promise<boolean> {
 			const code = value.trim();
-			if (!code || store.inviteAction()) return false;
+			if (
+				!code ||
+				store.inviteAction() ||
+				!store.inviteResource.hasValue() ||
+				store.inviteResource.value().remaining === 0
+			)
+				return false;
 			patchState(store, {
 				inviteAction: 'create',
 				inviteMessage: '',
@@ -259,13 +269,18 @@ export const SettingsStore = signalStore(
 			}
 		},
 		retryPasskeys(): void {
+			patchState(store, { passkeyMutationError: '' });
 			store.passkeyResource.reload();
 		},
 		async registerPasskey(nameValue: string): Promise<boolean> {
 			const name = nameValue.trim();
 			if (!store.webAuthnAvailable() || !name || store.passkeyAction())
 				return false;
-			patchState(store, { passkeyAction: 'register', passkeyMessage: '' });
+			patchState(store, {
+				passkeyAction: 'register',
+				passkeyMessage: '',
+				passkeyMutationError: '',
+			});
 			try {
 				const options = await firstValueFrom(
 					store.http.get<WebAuthnOptions>(
@@ -297,12 +312,14 @@ export const SettingsStore = signalStore(
 					passkeyAction: null,
 					passkeyMessage:
 						'Passkey added. Keep a second one registered for recovery from a lost device.',
+					passkeyMutationError: '',
 				});
 				return true;
 			} catch (error) {
 				patchState(store, {
 					passkeyAction: null,
-					passkeyMessage: webAuthnError(error),
+					passkeyMessage: '',
+					passkeyMutationError: webAuthnError(error),
 				});
 				return false;
 			}
@@ -313,6 +330,7 @@ export const SettingsStore = signalStore(
 			patchState(store, {
 				passkeyAction: `rename:${passkey.id}`,
 				passkeyMessage: '',
+				passkeyMutationError: '',
 			});
 			try {
 				await firstValueFrom(
@@ -326,12 +344,14 @@ export const SettingsStore = signalStore(
 				patchState(store, {
 					passkeyAction: null,
 					passkeyMessage: 'Passkey renamed.',
+					passkeyMutationError: '',
 				});
 				return true;
 			} catch (error) {
 				patchState(store, {
 					passkeyAction: null,
-					passkeyMessage: webAuthnError(error),
+					passkeyMessage: '',
+					passkeyMutationError: webAuthnError(error),
 				});
 				return false;
 			}
@@ -341,6 +361,7 @@ export const SettingsStore = signalStore(
 			patchState(store, {
 				passkeyAction: `revoke:${passkey.id}`,
 				passkeyMessage: '',
+				passkeyMutationError: '',
 			});
 			try {
 				await firstValueFrom(
@@ -355,11 +376,13 @@ export const SettingsStore = signalStore(
 					passkeyAction: null,
 					passkeyMessage:
 						'Passkey revoked. Magic-link recovery remains available.',
+					passkeyMutationError: '',
 				});
 			} catch (error) {
 				patchState(store, {
 					passkeyAction: null,
-					passkeyMessage: webAuthnError(error),
+					passkeyMessage: '',
+					passkeyMutationError: webAuthnError(error),
 				});
 			}
 		},

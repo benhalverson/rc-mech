@@ -126,9 +126,19 @@ describe('Settings workspace', () => {
 		http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
 		await fixture.whenStable();
 		fixture.detectChanges();
+		const inviteInput = fixture.nativeElement.querySelector(
+			'#new-invite-code',
+		) as HTMLInputElement;
+		inviteInput.value = 'TRACK-DAY-02';
+		inviteInput.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
 
 		expect(fixture.nativeElement.textContent).toContain(
 			'Invite codes could not be loaded',
+		);
+		expect(fixture.nativeElement.textContent).not.toContain('5 of 5 remaining');
+		expect(inviteInput.parentElement?.querySelector('button')?.disabled).toBe(
+			true,
 		);
 		const retry = [...fixture.nativeElement.querySelectorAll('button')].find(
 			(button: HTMLButtonElement) =>
@@ -184,6 +194,7 @@ describe('Settings workspace', () => {
 		input.dispatchEvent(new Event('input'));
 		fixture.detectChanges();
 		input.closest('form')?.dispatchEvent(new Event('submit'));
+		input.closest('form')?.dispatchEvent(new Event('submit'));
 
 		const mutation = http.expectOne('/api/v1/preferences/timezone');
 		expect(mutation.request.method).toBe('PATCH');
@@ -199,6 +210,41 @@ describe('Settings workspace', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Dates will now use America/New_York',
 		);
+	});
+
+	it('announces a failed passkey registration as an alert', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const input = fixture.nativeElement.querySelector(
+			'#passkey-name',
+		) as HTMLInputElement;
+		input.value = 'Track phone';
+		input.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
+		input.closest('form')?.dispatchEvent(new Event('submit'));
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/auth/passkey/generate-register-options' &&
+					request.params.get('name') === 'Track phone',
+			)
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const message =
+			'The passkey request could not be completed. Try again or use a magic link.';
+		expect(
+			[...fixture.nativeElement.querySelectorAll('[role="alert"]')].some(
+				(element: HTMLElement) => element.textContent?.includes(message),
+			),
+		).toBe(true);
+		expect(
+			[...fixture.nativeElement.querySelectorAll('[role="status"]')].some(
+				(element: HTMLElement) => element.textContent?.includes(message),
+			),
+		).toBe(false);
 	});
 
 	it('creates an invite code and refreshes the lifetime allowance', async () => {

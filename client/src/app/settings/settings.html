@@ -28,14 +28,14 @@
 
 	<div class="section-heading passkey-heading">
 		<div><div class="eyebrow">Invite access</div><h2 id="invite-codes-title">Your invite codes</h2></div>
-		<span class="security-note">{{ store.inviteAllowance().remaining }} of {{ store.inviteAllowance().allowance }} remaining</span>
+		@if (!store.inviteLoading() && !store.inviteError()) { <span class="security-note">{{ store.inviteAllowance().remaining }} of {{ store.inviteAllowance().allowance }} remaining</span> }
 	</div>
 	<p class="section-intro">Create up to five lifetime codes for people you trust. A revoked or redeemed code does not replenish the allowance.</p>
 	<form class="timezone-form" (submit)="createInviteCode($event)" aria-labelledby="invite-codes-title" novalidate>
 		<label for="new-invite-code">New invite code</label>
 		<div class="inline-form">
 			<input id="new-invite-code" type="text" autocomplete="off" placeholder="TRACK-DAY-01" [formField]="inviteForm.code" [attr.aria-describedby]="inviteForm.code().touched() && inviteForm.code().invalid() ? 'invite-validation' : null" />
-			<button class="button" type="submit" [disabled]="store.inviteAction() !== null || inviteForm().invalid() || store.inviteAllowance().remaining === 0">{{ store.inviteAction() === 'create' ? 'Creating…' : 'Create code' }}</button>
+			<button class="button" type="submit" [disabled]="store.inviteLoading() || !!store.inviteError() || store.inviteAction() !== null || inviteForm().invalid() || store.inviteAllowance().remaining === 0">{{ store.inviteAction() === 'create' ? 'Creating…' : 'Create code' }}</button>
 		</div>
 	</form>
 	@if (inviteForm.code().touched() && inviteForm.code().invalid()) { <p id="invite-validation" class="hint" role="alert">{{ inviteForm.code().errors()[0]?.message }}</p> }
@@ -73,6 +73,7 @@
 	</form>
 	@if (passkeyForm.name().touched() && passkeyForm.name().invalid()) { <p id="passkey-validation" class="hint" role="alert">{{ passkeyForm.name().errors()[0]?.message }}</p> }
 	@if (store.passkeyMessage()) { <p class="message" role="status">{{ store.passkeyMessage() }}</p> }
+	@if (store.passkeyActionError()) { <p class="message" role="alert">{{ store.passkeyActionError() }}</p> }
 	@if (store.passkeysLoading()) {
 		<p class="hint" role="status">Loading registered passkeys…</p>
 	} @else if (store.passkeyError()) {
