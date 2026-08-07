@@ -121,6 +121,7 @@ export class CarPhotoGallery {
 		const index = this.photos().findIndex((item) => item.id === photo.id);
 		const nextIndex = index + direction;
 		if (
+			photo.carId !== this.carId() ||
 			index < 0 ||
 			nextIndex < 0 ||
 			nextIndex >= this.photos().length ||
@@ -136,8 +137,14 @@ export class CarPhotoGallery {
 	}
 
 	protected designatePrimary(photo: CarPhoto): void {
-		if (this.archived() || this.action() || this.isPrimary(photo)) return;
-		const carId = this.carId();
+		if (
+			photo.carId !== this.carId() ||
+			this.archived() ||
+			this.action() ||
+			this.isPrimary(photo)
+		)
+			return;
+		const carId = photo.carId;
 		this.action.set(`primary:${photo.id}`);
 		this.mutationError.set('');
 		this.http
@@ -168,12 +175,13 @@ export class CarPhotoGallery {
 
 	protected delete(photo: CarPhoto): void {
 		if (
+			photo.carId !== this.carId() ||
 			this.archived() ||
 			this.action() ||
 			!window.confirm('Delete this private car photo?')
 		)
 			return;
-		const carId = this.carId();
+		const carId = photo.carId;
 		this.action.set(`delete:${photo.id}`);
 		this.mutationError.set('');
 		this.http
@@ -210,24 +218,37 @@ export class CarPhotoGallery {
 
 	private upload(file: File): void {
 		if (!this.validate(file) || this.archived() || this.action()) return;
+		const carId = this.carId();
 		this.sendFile(
-			`/api/v1/cars/${encodeURIComponent(this.carId())}/photos`,
+			`/api/v1/cars/${encodeURIComponent(carId)}/photos`,
 			file,
 			'upload',
+			carId,
 		);
 	}
 
 	private replace(photo: CarPhoto, file: File): void {
-		if (!this.validate(file) || this.archived() || this.action()) return;
+		if (
+			photo.carId !== this.carId() ||
+			!this.validate(file) ||
+			this.archived() ||
+			this.action()
+		)
+			return;
 		this.sendFile(
 			`${this.photoEndpoint(photo)}/replace`,
 			file,
 			`replace:${photo.id}`,
+			photo.carId,
 		);
 	}
 
-	private sendFile(url: string, file: File, action: string): void {
-		const carId = this.carId();
+	private sendFile(
+		url: string,
+		file: File,
+		action: string,
+		carId: string,
+	): void {
 		const body = new FormData();
 		body.append('file', file, file.name);
 		this.action.set(action);
@@ -263,6 +284,7 @@ export class CarPhotoGallery {
 
 	private persistOrder(photos: CarPhoto[]): void {
 		const carId = this.carId();
+		if (photos.some((photo) => photo.carId !== carId)) return;
 		this.action.set('reorder');
 		this.mutationError.set('');
 		// Keep the new order visible immediately, then roll back if any owner-scoped update fails.

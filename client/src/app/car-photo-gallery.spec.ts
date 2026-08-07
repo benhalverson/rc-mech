@@ -165,7 +165,7 @@ describe('CarPhotoGallery', () => {
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
 	});
 
-	it('anchors a stale photo mutation to the photo car identity', () => {
+	it('rejects a stale photo mutation after the route identity changes', () => {
 		const app = fixture.componentInstance as unknown as GalleryTestHarness;
 		const photo = {
 			id: 'photo/one',
@@ -178,9 +178,8 @@ describe('CarPhotoGallery', () => {
 		app.photos.set([photo]);
 		app.designatePrimary(photo);
 
-		http
-			.expectOne('/api/v1/cars/car%2Fold/photos/photo%2Fone')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		http.expectNone('/api/v1/cars/car%2Fold/photos/photo%2Fone');
+		expect(app.action()).toBeNull();
 	});
 
 	it('clears local mutation state and ignores stale results when cars change', async () => {
