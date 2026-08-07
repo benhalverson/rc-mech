@@ -190,6 +190,77 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.textContent).toContain('Car overview');
 	});
 
+	it('clears lifecycle state when selecting a different car', async () => {
+		await harness.navigateByUrl('/garage/car-1/overview');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const store = (
+			harness.routeDebugElement?.componentInstance as unknown as {
+				store: {
+					lifecycleAction(): 'archive' | 'restore' | null;
+					lifecycleError(): string;
+					changeArchiveState(action: 'archive' | 'restore'): Promise<void>;
+				};
+			}
+		).store;
+		const change = store.changeArchiveState('archive');
+		const mutation = http.expectOne('/api/v1/cars/car-1/archive');
+		expect(store.lifecycleAction()).toBe('archive');
+
+		await harness.navigateByUrl('/garage/car-2/overview');
+		expect(store.lifecycleAction()).toBeNull();
+		let nextCar: TestRequest | undefined;
+		await vi.waitFor(() => {
+			nextCar = http.expectOne('/api/v1/cars/car-2');
+		});
+		nextCar?.flush({ car: { ...car, id: 'car-2' } });
+		mutation.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await change;
+		expect(store.lifecycleAction()).toBeNull();
+		expect(store.lifecycleError()).toBe('');
+	});
+
+	it('serializes car creation from a reviewed setup import', async () => {
+		await harness.navigateByUrl('/garage/car-1/setups');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http.expectOne('/api/v1/cars').flush({ cars: [car] });
+		let setups: TestRequest | undefined;
+		await vi.waitFor(() => {
+			setups = http.expectOne('/api/v1/cars/car-1/setups');
+		});
+		setups?.flush({ setups: [] });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			createCar(identity: { name: string; make: string; model: string }): void;
+		};
+		const identity = {
+			name: 'Imported buggy',
+			make: 'Associated',
+			model: 'B7',
+		};
+		component.createCar(identity);
+		component.createCar(identity);
+		const creation = http.expectOne('/api/v1/cars');
+		expect(creation.request.method).toBe('POST');
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Creating the new car',
+		);
+		creation.flush('offline', { status: 503, statusText: 'Unavailable' });
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'The new car could not be created',
+		);
+
+		component.createCar(identity);
+		http
+			.expectOne('/api/v1/cars')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+	});
+
 	it('keeps an archived car readable while hiding build mutations', async () => {
 		await harness.navigateByUrl('/garage/car-1/build');
 		http.expectOne('/api/v1/cars/car-1').flush({

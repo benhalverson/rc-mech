@@ -28,7 +28,10 @@ export const CarStore = signalStore(
 		carResource: httpResource<{ car: GarageCar }>(() => {
 			const id = carId();
 			return id
-				? { url: `/api/v1/cars/${id}`, withCredentials: true }
+				? {
+						url: `/api/v1/cars/${encodeURIComponent(id)}`,
+						withCredentials: true,
+					}
 				: undefined;
 		}),
 	})),
@@ -42,7 +45,11 @@ export const CarStore = signalStore(
 	withMethods((store) => ({
 		selectCar(carId: string): void {
 			if (store.carId() !== carId)
-				patchState(store, { carId, lifecycleError: '' });
+				patchState(store, {
+					carId,
+					lifecycleAction: null,
+					lifecycleError: '',
+				});
 		},
 		retry(): void {
 			store.carResource.reload();
@@ -57,14 +64,16 @@ export const CarStore = signalStore(
 			try {
 				await firstValueFrom(
 					store.http.post(
-						`/api/v1/cars/${carId}/${action}`,
+						`/api/v1/cars/${encodeURIComponent(carId)}/${action}`,
 						{},
 						{ withCredentials: true },
 					),
 				);
+				if (store.carId() !== carId) return;
 				store.carResource.reload();
 				patchState(store, { lifecycleAction: null });
 			} catch {
+				if (store.carId() !== carId) return;
 				patchState(store, {
 					lifecycleAction: null,
 					lifecycleError: `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`,

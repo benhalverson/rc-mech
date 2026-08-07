@@ -22,6 +22,7 @@ import { CarStore } from './car-store';
 		@else if (carStore.car(); as car) {
 			<app-car-section-shell [car]="car" section="setups">
 				@if (createError()) { <p role="alert">{{ createError() }}</p> }
+				@if (createAction()) { <p role="status">Creating the new car…</p> }
 				<app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="availableCars()" (createCarFromImport)="createCar($event)" />
 			</app-car-section-shell>
 		}
@@ -40,6 +41,7 @@ export class CarSetups {
 		this.collection.hasValue() ? this.collection.value().cars : [],
 	);
 	protected readonly createError = signal('');
+	protected readonly createAction = signal(false);
 
 	constructor() {
 		effect(() => {
@@ -53,18 +55,24 @@ export class CarSetups {
 		make: string;
 		model: string;
 	}): void {
+		if (this.createAction()) return;
+		this.createAction.set(true);
 		this.createError.set('');
 		this.http
 			.post<{ car: GarageCar }>('/api/v1/cars', identity, {
 				withCredentials: true,
 			})
 			.subscribe({
-				next: ({ car }) =>
-					void this.router.navigate(['/garage', car.id, 'setups']),
-				error: () =>
+				next: ({ car }) => {
+					this.createAction.set(false);
+					void this.router.navigate(['/garage', car.id, 'setups']);
+				},
+				error: () => {
+					this.createAction.set(false);
 					this.createError.set(
 						'The new car could not be created from this reviewed import.',
-					),
+					);
+				},
 			});
 	}
 }
