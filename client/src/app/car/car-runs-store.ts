@@ -31,7 +31,7 @@ const browserTimezone = (): string => {
 };
 
 export const safeTimezone = (value: unknown): string =>
-	isValidTimezone(value) ? value : browserTimezone();
+	isValidTimezone(value) ? value : 'UTC';
 
 export const CarRunsStore = signalStore(
 	withState({ carId: '' }),
