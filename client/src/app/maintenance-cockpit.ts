@@ -401,7 +401,7 @@ export class MaintenanceCockpit {
 		request.subscribe({
 			next: () => {
 				this.store.refreshServiceRecords();
-				if (planId) this.store.refreshPlans();
+				this.store.refreshPlans();
 				this.cancelServiceEdit();
 				this.serviceAction.set(null);
 			},
@@ -525,9 +525,9 @@ export class MaintenanceCockpit {
 				maintenancePlan?: MaintenancePlan;
 			}>(`/api/v1/service-records/${record.id}`, { withCredentials: true })
 			.subscribe({
-				next: (response) => {
+				next: () => {
 					this.store.refreshServiceRecords();
-					if (response.maintenancePlan) this.store.refreshPlans();
+					this.store.refreshPlans();
 					this.serviceAction.set(null);
 				},
 				error: () => {
@@ -549,9 +549,9 @@ export class MaintenanceCockpit {
 				{ withCredentials: true },
 			)
 			.subscribe({
-				next: ({ maintenancePlan }) => {
+				next: () => {
 					this.store.refreshServiceRecords();
-					if (maintenancePlan) this.store.refreshPlans();
+					this.store.refreshPlans();
 					this.serviceAction.set(null);
 				},
 				error: () => {

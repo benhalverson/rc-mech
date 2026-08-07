@@ -252,8 +252,10 @@ describe('MaintenanceCockpit', () => {
 			},
 		});
 		let refresh: TestRequest | undefined;
+		let planRefresh: TestRequest | undefined;
 		await vi.waitFor(() => {
 			refresh = http.expectOne('/api/v1/service-records');
+			planRefresh = http.expectOne('/api/v1/maintenance-plans');
 		});
 		refresh?.flush({
 			serviceRecords: [
@@ -267,6 +269,7 @@ describe('MaintenanceCockpit', () => {
 				},
 			],
 		});
+		planRefresh?.flush({ maintenancePlans: [plan], activity: [] });
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(app.serviceRecords()[0].id).toBe('record-1');
@@ -335,12 +338,15 @@ describe('MaintenanceCockpit', () => {
 			serviceRecord: { ...record, deletedAt: '2026-08-03T00:00:00.000Z' },
 		});
 		let deletedRefresh: TestRequest | undefined;
+		let deletedPlanRefresh: TestRequest | undefined;
 		await vi.waitFor(() => {
 			deletedRefresh = http.expectOne('/api/v1/service-records');
+			deletedPlanRefresh = http.expectOne('/api/v1/maintenance-plans');
 		});
 		deletedRefresh?.flush({
 			serviceRecords: [{ ...record, deletedAt: '2026-08-03T00:00:00.000Z' }],
 		});
+		deletedPlanRefresh?.flush({ maintenancePlans: [plan], activity: [] });
 		await fixture.whenStable();
 		fixture.detectChanges();
 		app.restoreService({ ...record, deletedAt: '2026-08-03T00:00:00.000Z' });
@@ -348,10 +354,13 @@ describe('MaintenanceCockpit', () => {
 		expect(restore.request.method).toBe('POST');
 		restore.flush({ serviceRecord: record });
 		let restoredRefresh: TestRequest | undefined;
+		let restoredPlanRefresh: TestRequest | undefined;
 		await vi.waitFor(() => {
 			restoredRefresh = http.expectOne('/api/v1/service-records');
+			restoredPlanRefresh = http.expectOne('/api/v1/maintenance-plans');
 		});
 		restoredRefresh?.flush({ serviceRecords: [record] });
+		restoredPlanRefresh?.flush({ maintenancePlans: [plan], activity: [] });
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(app.serviceRecords()[0].deletedAt).toBeUndefined();
