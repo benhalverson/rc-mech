@@ -227,6 +227,13 @@ describe('Settings workspace', () => {
 			remaining: 3,
 			codes: [],
 		});
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(input.value).toBe('');
+		expect(input.getAttribute('aria-describedby')).toBeNull();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Enter an invite code.',
+		);
 	});
 
 	it('clears a stale invite error after copying succeeds', async () => {
@@ -285,5 +292,12 @@ describe('Settings workspace', () => {
 			refresh = http.expectOne('/api/auth/passkey/list-user-passkeys');
 		});
 		refresh?.flush([]);
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(input.value).toBe('');
+		expect(input.getAttribute('aria-describedby')).toBeNull();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Name this passkey.',
+		);
 	});
 });

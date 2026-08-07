@@ -34,7 +34,7 @@
 	<form class="timezone-form" (submit)="createInviteCode($event)" aria-labelledby="invite-codes-title" novalidate>
 		<label for="new-invite-code">New invite code</label>
 		<div class="inline-form">
-			<input id="new-invite-code" type="text" autocomplete="off" placeholder="TRACK-DAY-01" [formField]="inviteForm.code" [attr.aria-describedby]="inviteForm.code().invalid() ? 'invite-validation' : null" />
+			<input id="new-invite-code" type="text" autocomplete="off" placeholder="TRACK-DAY-01" [formField]="inviteForm.code" [attr.aria-describedby]="inviteForm.code().touched() && inviteForm.code().invalid() ? 'invite-validation' : null" />
 			<button class="button" type="submit" [disabled]="store.inviteAction() !== null || inviteForm().invalid() || store.inviteAllowance().remaining === 0">{{ store.inviteAction() === 'create' ? 'Creating…' : 'Create code' }}</button>
 		</div>
 	</form>
@@ -66,7 +66,7 @@
 	<form class="passkey-form" (submit)="registerPasskey($event)" novalidate>
 		<label for="passkey-name">Name a new passkey</label>
 		<div class="inline-form">
-			<input id="passkey-name" type="text" placeholder="Workshop laptop, phone…" [formField]="passkeyForm.name" [attr.aria-describedby]="passkeyForm.name().invalid() ? 'passkey-validation' : null" />
+			<input id="passkey-name" type="text" placeholder="Workshop laptop, phone…" [formField]="passkeyForm.name" [attr.aria-describedby]="passkeyForm.name().touched() && passkeyForm.name().invalid() ? 'passkey-validation' : null" />
 			<button class="button" type="submit" [disabled]="!store.webAuthnAvailable() || passkeyForm().invalid() || store.passkeyAction() !== null">{{ store.passkeyAction() === 'register' ? 'Waiting…' : 'Add passkey' }}</button>
 		</div>
 	</form>
@@ -85,7 +85,7 @@
 					@if (editingPasskeyId() === passkey.id) {
 						<form class="rename-form" (submit)="renamePasskey($event, passkey)" novalidate>
 							<label class="visually-hidden" [for]="'rename-' + passkey.id">Passkey name</label>
-							<input [id]="'rename-' + passkey.id" type="text" [formField]="renameForm.name" [attr.aria-describedby]="renameForm.name().invalid() ? 'rename-validation-' + passkey.id : null" />
+							<input [id]="'rename-' + passkey.id" type="text" [formField]="renameForm.name" [attr.aria-describedby]="renameForm.name().touched() && renameForm.name().invalid() ? 'rename-validation-' + passkey.id : null" />
 							<button class="text-button" type="submit" [disabled]="store.passkeyAction() !== null">Save</button>
 							<button class="text-button muted" type="button" (click)="cancelRename()">Cancel</button>
 							@if (renameForm.name().touched() && renameForm.name().invalid()) { <span [id]="'rename-validation-' + passkey.id" class="hint" role="alert">{{ renameForm.name().errors()[0]?.message }}</span> }

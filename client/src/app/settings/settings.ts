@@ -68,7 +68,7 @@ export class Settings {
 		this.inviteForm.code().markAsTouched();
 		if (this.inviteForm().invalid()) return;
 		if (await this.store.createInviteCode(this.inviteModel().code))
-			this.inviteModel.set({ code: '' });
+			this.inviteForm().reset({ code: '' });
 	}
 
 	protected async registerPasskey(event: SubmitEvent): Promise<void> {
@@ -76,7 +76,7 @@ export class Settings {
 		this.passkeyForm.name().markAsTouched();
 		if (this.passkeyForm().invalid()) return;
 		if (await this.store.registerPasskey(this.passkeyModel().name))
-			this.passkeyModel.set({ name: '' });
+			this.passkeyForm().reset({ name: '' });
 	}
 
 	protected beginRename(passkey: Passkey): void {
