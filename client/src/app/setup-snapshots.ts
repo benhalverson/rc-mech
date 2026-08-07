@@ -429,12 +429,12 @@ export class SetupSnapshots {
 								carId: targetCarId,
 								knownValues: importKnownValues(payloadFrom(form)),
 								uncertainValues:
-									(reviewValues['uncertain'] as
+									(reviewValues.uncertain as
 										| Record<string, unknown>
 										| undefined) ?? importDraft.uncertainValues,
 								rawValues: parseJsonObject(form.rawValues),
 								unmappedValues:
-									(reviewValues['unmapped'] as
+									(reviewValues.unmapped as
 										| Record<string, unknown>
 										| undefined) ?? {},
 								sourceMetadata: payloadFrom(form).sourceMetadata ?? {},
