@@ -1,4 +1,8 @@
-import { HttpClient, httpResource } from '@angular/common/http';
+import {
+	HttpClient,
+	HttpErrorResponse,
+	httpResource,
+} from '@angular/common/http';
 import { computed, inject } from '@angular/core';
 import {
 	patchState,
@@ -31,6 +35,19 @@ type GarageState = {
 	lifecycleError: string;
 };
 
+const readErrorMessage = (
+	error: unknown,
+	fallback: string,
+	notFound?: string,
+): string => {
+	if (error instanceof HttpErrorResponse) {
+		if (error.status === 401)
+			return 'Your garage session has expired. Sign in again to continue.';
+		if (error.status === 404 && notFound) return notFound;
+	}
+	return fallback;
+};
+
 export const GarageStore = signalStore(
 	withState<GarageState>({
 		activeCarId: null,
@@ -47,7 +64,10 @@ export const GarageStore = signalStore(
 		const overview = httpResource<{ car: GarageCar }>(() => {
 			const carId = activeCarId();
 			return carId
-				? { url: `/api/v1/cars/${carId}`, withCredentials: true }
+				? {
+						url: `/api/v1/cars/${encodeURIComponent(carId)}`,
+						withCredentials: true,
+					}
 				: undefined;
 		});
 		return { collection, overview, http: inject(HttpClient) };
@@ -65,9 +85,30 @@ export const GarageStore = signalStore(
 						null),
 			),
 			collectionLoading: computed(() => store.collection.isLoading()),
-			collectionError: computed(() => store.collection.error()),
+			collectionError: computed(() => {
+				const error = store.collection.error();
+				return error
+					? readErrorMessage(
+							error,
+							'The garage could not be loaded. Check the connection and try again.',
+						)
+					: '';
+			}),
 			overviewLoading: computed(() => store.overview.isLoading()),
-			overviewError: computed(() => store.overview.error()),
+			overviewError: computed(() => {
+				const error = store.overview.error();
+				return error
+					? readErrorMessage(
+							error,
+							'The car overview could not be loaded. Check the connection and try again.',
+							'Car not found. Return to the Garage collection and choose another car.',
+						)
+					: '';
+			}),
+			overviewNotFound: computed(() => {
+				const error = store.overview.error();
+				return error instanceof HttpErrorResponse && error.status === 404;
+			}),
 		};
 	}),
 	withMethods((store) => ({
@@ -107,15 +148,17 @@ export const GarageStore = signalStore(
 			try {
 				await firstValueFrom(
 					store.http.post(
-						`/api/v1/cars/${carId}/${action}`,
+						`/api/v1/cars/${encodeURIComponent(carId)}/${action}`,
 						{},
 						{ withCredentials: true },
 					),
 				);
+				if (store.activeCarId() !== carId) return;
 				store.collection.reload();
 				store.overview.reload();
 				patchState(store, { lifecycleAction: null });
 			} catch {
+				if (store.activeCarId() !== carId) return;
 				patchState(store, {
 					lifecycleAction: null,
 					lifecycleError: `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`,

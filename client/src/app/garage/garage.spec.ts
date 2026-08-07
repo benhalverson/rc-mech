@@ -50,13 +50,16 @@ describe('Garage', () => {
 		);
 	});
 
-	it('renders a collection error with a retry action', async () => {
+	it('renders a session-expired collection error with a retry action', async () => {
 		http
 			.expectOne('/api/v1/cars')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.querySelector('[role="alert"]')).toBeTruthy();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Your garage session has expired',
+		);
 		expect(fixture.nativeElement.textContent).toContain('Try again');
 		const retry = fixture.nativeElement.querySelector(
 			'[role="alert"] button',
@@ -195,6 +198,21 @@ describe('Garage overview', () => {
 			request = http.expectOne('/api/v1/cars/car-1');
 		});
 		request?.flush({ car: { id: 'car-1', name: 'Red Runner' } });
+	});
+
+	it('renders missing-car guidance for an overview 404', async () => {
+		http
+			.expectOne('/api/v1/cars/car-1')
+			.flush('missing', { status: 404, statusText: 'Not Found' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const alert = fixture.nativeElement.querySelector(
+			'[role="alert"]',
+		) as HTMLElement;
+		expect(alert.textContent).toContain('Car not found');
+		expect(alert.textContent).not.toContain('Check the connection');
+		expect(alert.querySelector('button')).toBeNull();
 	});
 
 	it('archives a car and refreshes collection and overview resources', async () => {
