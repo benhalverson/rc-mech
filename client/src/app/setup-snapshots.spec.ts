@@ -7,7 +7,7 @@ import {
 import { Injectable } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, of, Subject, throwError } from 'rxjs';
 import { vi } from 'vitest';
 import { emptySetupForm } from './setup-form';
 import {
@@ -85,10 +85,13 @@ describe('SetupSnapshots', () => {
 
 	afterEach(() => http.verify());
 
-	const flushSetups = async (setups: unknown[] = []): Promise<void> => {
+	const flushSetups = async (
+		setups: unknown[] = [],
+		carId = 'car-1',
+	): Promise<void> => {
 		let request: TestRequest | undefined;
 		await vi.waitFor(() => {
-			request = http.expectOne('/api/v1/cars/car-1/setups');
+			request = http.expectOne(`/api/v1/cars/${carId}/setups`);
 		});
 		request?.flush({ setups });
 		await fixture.whenStable();
@@ -229,6 +232,68 @@ describe('SetupSnapshots', () => {
 		await flushSetups([
 			{ ...currentSetup, id: 'setup-2', name: 'Trackside baseline' },
 		]);
+	});
+
+	it('resets local state and ignores a stale import preview after route reuse', async () => {
+		await flushSetups();
+		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const pendingPreview = new Subject<SoDialedImportPreview>();
+		importer.result = pendingPreview;
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		await flushSetups([], 'car-2');
+		pendingPreview.next(preview);
+		pendingPreview.complete();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'No setup snapshots yet',
+		);
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Import review draft',
+		);
+		expect(fixture.nativeElement.querySelector('form.setup-editor')).toBeNull();
+		expect(
+			(fixture.nativeElement.querySelector('#sodialed-url') as HTMLInputElement)
+				.value,
+		).toBe('');
+	});
+
+	it('ignores a stale save response after route reuse', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openAdd();
+		app.formModel.set({
+			...emptySetupForm(),
+			name: 'Old car baseline',
+		});
+		fixture.detectChanges();
+		app.save();
+		const save = http.expectOne(
+			(item) =>
+				item.url === '/api/v1/cars/car-1/setups' && item.method === 'POST',
+		);
+
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		await flushSetups([], 'car-2');
+		save.flush({
+			setup: {
+				...currentSetup,
+				name: 'Old car baseline',
+			},
+		});
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'No setup snapshots yet',
+		);
+		expect(fixture.nativeElement.textContent).not.toContain('Old car baseline');
+		expect(fixture.nativeElement.querySelector('form.setup-editor')).toBeNull();
 	});
 
 	it('announces review validation and focuses the first invalid typed field', async () => {
@@ -554,6 +619,20 @@ describe('SetupSnapshots', () => {
 		);
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Import review draft',
+		);
+	});
+
+	it('explains when the garage session expires during source review', async () => {
+		await flushSetups();
+		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		importer.result = throwError(() => ({ status: 401 }));
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/expired');
+		app.previewImport();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'Your garage session has expired. Sign in again to continue.',
 		);
 	});
 });

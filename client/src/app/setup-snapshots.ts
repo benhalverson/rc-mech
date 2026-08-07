@@ -65,6 +65,12 @@ const isValidOptionalUrl = (value: string): boolean => {
 	}
 };
 
+const isSessionExpired = (error: unknown): boolean =>
+	typeof error === 'object' &&
+	error !== null &&
+	'status' in error &&
+	error.status === 401;
+
 @Component({
 	selector: 'app-setup-snapshots',
 	imports: [DatePipe, DecimalPipe, FormField, JsonPipe, KeyValuePipe],
@@ -206,6 +212,13 @@ export class SetupSnapshots {
 	);
 
 	constructor() {
+		let previousCarId: string | undefined;
+		effect(() => {
+			const carId = this.carId();
+			if (previousCarId !== undefined && carId !== previousCarId)
+				this.resetRouteState();
+			previousCarId = carId;
+		});
 		effect(() => {
 			const setups = this.setups();
 			if (!setups.some((setup) => setup.id === this.selectedId()))
@@ -220,6 +233,22 @@ export class SetupSnapshots {
 			)
 				this.formError.set('');
 		});
+	}
+
+	private resetRouteState(): void {
+		this.selectedId.set(null);
+		this.mode.set('add');
+		this.editing.set(false);
+		this.action.set(null);
+		this.setupForm().reset(emptySetupForm());
+		this.formError.set('');
+		this.actionError.set('');
+		this.actionMessage.set('');
+		this.importState.set('idle');
+		this.importError.set('');
+		this.importPreview.set(null);
+		this.importUrlForm().reset({ url: '' });
+		this.importCarForm().reset({ carId: '' });
 	}
 
 	protected retry(): void {
@@ -257,11 +286,13 @@ export class SetupSnapshots {
 			return;
 		}
 		if (this.archived()) return;
+		const carId = this.carId();
 		this.importState.set('loading');
-		this.importer.preview(url, this.carId()).subscribe({
+		this.importer.preview(url, carId).subscribe({
 			next: (preview) => {
+				if (this.carId() !== carId) return;
 				this.importPreview.set(preview);
-				this.importCarModel.set({ carId: this.carId() });
+				this.importCarModel.set({ carId });
 				this.mode.set('add');
 				this.setupForm().reset(setupFormFromImport(preview, url));
 				this.formError.set('');
@@ -269,11 +300,14 @@ export class SetupSnapshots {
 				this.importState.set('review');
 			},
 			error: (error: unknown) => {
+				if (this.carId() !== carId) return;
 				this.importState.set('error');
 				this.importError.set(
-					error instanceof Error && error.message
-						? error.message
-						: 'That source could not be read. Check the link and try again.',
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: error instanceof Error && error.message
+							? error.message
+							: 'That source could not be read. Check the link and try again.',
 				);
 			},
 		});
@@ -345,16 +379,17 @@ export class SetupSnapshots {
 		this.actionError.set('');
 		this.actionMessage.set('');
 		this.formError.set('');
+		const sourceCarId = this.carId();
 		const setup = this.importPreview() ? null : this.selected();
 		const importDraft = this.importPreview();
 		const reviewValues = parseSetupJsonObject(formModel.unmappedValues);
 		const targetCarId = importDraft
-			? this.importCarModel().carId || this.carId()
-			: this.carId();
+			? this.importCarModel().carId || sourceCarId
+			: sourceCarId;
 		const payload = setupPayloadFromForm(formModel);
 		const request =
 			this.mode() === 'edit' && setup
-				? this.service.update(this.carId(), setup.id, payload)
+				? this.service.update(sourceCarId, setup.id, payload)
 				: importDraft
 					? this.importer
 							.update(importDraft.draftId, {
@@ -383,12 +418,13 @@ export class SetupSnapshots {
 					: this.service.create(targetCarId, payload);
 		request.subscribe({
 			next: ({ setup: saved }) => {
+				if (this.carId() !== sourceCarId) return;
 				this.editing.set(false);
 				this.action.set(null);
 				this.importPreview.set(null);
 				this.importState.set('idle');
 				this.importUrlForm().reset({ url: '' });
-				if (targetCarId === this.carId()) {
+				if (targetCarId === sourceCarId) {
 					this.replaceSetup(saved);
 					this.selectedId.set(saved.id);
 					this.setupsResource.reload();
@@ -396,10 +432,13 @@ export class SetupSnapshots {
 					this.actionMessage.set('Imported setup saved to the selected car.');
 				}
 			},
-			error: () => {
+			error: (error: unknown) => {
+				if (this.carId() !== sourceCarId) return;
 				this.action.set(null);
 				this.formError.set(
-					'The setup could not be saved. Check the details and try again.',
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: 'The setup could not be saved. Check the details and try again.',
 				);
 			},
 		});
@@ -412,11 +451,13 @@ export class SetupSnapshots {
 
 	private copySetup(setup: SetupSnapshot): void {
 		if (!setup || this.archived() || this.action()) return;
+		const carId = this.carId();
 		this.action.set('copy');
 		this.actionError.set('');
 		this.actionMessage.set('');
-		this.service.copy(this.carId(), setup.id).subscribe({
+		this.service.copy(carId, setup.id).subscribe({
 			next: ({ setup: copied }) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
 				this.replaceSetup(copied);
 				this.selectedId.set(copied.id);
@@ -425,9 +466,14 @@ export class SetupSnapshots {
 				this.editing.set(true);
 				this.setupsResource.reload();
 			},
-			error: () => {
+			error: (error: unknown) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
-				this.actionError.set('The setup could not be copied.');
+				this.actionError.set(
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: 'The setup could not be copied.',
+				);
 			},
 		});
 	}
@@ -435,20 +481,27 @@ export class SetupSnapshots {
 	protected makeCurrent(): void {
 		const setup = this.selected();
 		if (!setup || setup.current || this.archived() || this.action()) return;
+		const carId = this.carId();
 		this.action.set('current');
 		this.actionError.set('');
 		this.actionMessage.set('');
-		this.service.selectCurrent(this.carId(), setup.id).subscribe({
+		this.service.selectCurrent(carId, setup.id).subscribe({
 			next: ({ setup: current }) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
 				this.setups.update((setups) =>
 					setups.map((item) => ({ ...item, current: item.id === current.id })),
 				);
 				this.setupsResource.reload();
 			},
-			error: () => {
+			error: (error: unknown) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
-				this.actionError.set('The current setup could not be changed.');
+				this.actionError.set(
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: 'The current setup could not be changed.',
+				);
 			},
 		});
 	}
