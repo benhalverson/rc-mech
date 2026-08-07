@@ -274,7 +274,7 @@ export class CarPhotoGallery {
 		this.photos.set(optimistic);
 		firstValueFrom(
 			this.http.patch<PhotosResponse>(
-				`/api/v1/cars/${encodeURIComponent(this.carId())}/photos/reorder`,
+				`/api/v1/cars/${encodeURIComponent(carId)}/photos/reorder`,
 				{
 					photoIds: photos.map((photo) => photo.id),
 				},
@@ -321,7 +321,7 @@ export class CarPhotoGallery {
 	}
 
 	private photoEndpoint(photo: CarPhoto): string {
-		return `/api/v1/cars/${encodeURIComponent(this.carId())}/photos/${encodeURIComponent(photo.id)}`;
+		return `/api/v1/cars/${encodeURIComponent(photo.carId)}/photos/${encodeURIComponent(photo.id)}`;
 	}
 
 	private fail(error: { status?: number }, fallback: string): void {
