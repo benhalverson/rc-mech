@@ -225,3 +225,27 @@ export const passkey = sqliteTable('passkey', {
 	createdAt: integer('created_at', { mode: 'timestamp_ms' }),
 	aaguid: text('aaguid'),
 });
+
+export const inviteCode = sqliteTable('invite_code', {
+	id: id('id'),
+	code: text('code').notNull().unique(),
+	creatorId: text('creator_id')
+		.notNull()
+		.references(() => owner.id),
+	slot: integer('slot'),
+	status: text('status').notNull().default('available'),
+	reservedEmail: text('reserved_email'),
+	reservedUntil: text('reserved_until'),
+	redeemedEmail: text('redeemed_email'),
+	redeemedUserId: text('redeemed_user_id').references(() => owner.id),
+	reservedAt: text('reserved_at'),
+	redeemedAt: text('redeemed_at'),
+	revokedAt: text('revoked_at'),
+	createdAt: text('created_at').notNull(),
+	updatedAt: text('updated_at').notNull(),
+});
+export const authRateLimit = sqliteTable('auth_rate_limit', {
+	key: id('key'),
+	windowStartedAt: integer('window_started_at').notNull(),
+	count: integer('count').notNull().default(0),
+});

@@ -1,5 +1,5 @@
 import { Scalar } from '@scalar/hono-api-reference';
-import { and, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, lte, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createAuth } from './auth';
@@ -39,6 +39,11 @@ import {
 	presentDateTime,
 } from './drive-session-policy';
 import {
+	INVITE_LIFETIME_LIMIT,
+	inviteReservationExpiry,
+	validateInviteCode,
+} from './invite-policy';
+import {
 	calculateMaintenanceDue,
 	canTransitionMaintenance,
 	type MaintenanceIntervalUnit,
@@ -57,6 +62,7 @@ import {
 	component,
 	consumableMaintenanceEntry,
 	driveSession,
+	inviteCode,
 	maintenancePlan,
 	owner,
 	photo,
@@ -119,6 +125,32 @@ const required = <T>(value: T | null | undefined, message: string): T => {
 	return value;
 };
 
+const neutralAuthResponse = { status: true } as const;
+const authRateLimited = async (
+	c: AppContext,
+	bucket: string,
+): Promise<boolean> => {
+	try {
+		const key = `${bucket}:${c.req.header('CF-Connecting-IP') ?? 'unknown'}`;
+		const now = Date.now();
+		const row = await c.env.DB.prepare(
+			`INSERT INTO auth_rate_limit (key, window_started_at, count)
+			 VALUES (?, ?, 1)
+			 ON CONFLICT(key) DO UPDATE SET
+			 window_started_at = CASE WHEN auth_rate_limit.window_started_at <= ? THEN excluded.window_started_at ELSE auth_rate_limit.window_started_at END,
+			 count = CASE WHEN auth_rate_limit.window_started_at <= ? THEN 1 ELSE auth_rate_limit.count + 1 END
+			 RETURNING count`,
+		)
+			.bind(key, now, now - 60_000, now - 60_000)
+			.first<{ count: number }>();
+		return (row?.count ?? 1) > 8;
+	} catch {
+		// A database still completing migration 0014 remains usable; deployed
+		// databases persist the bucket once the migration is present.
+	}
+	return false;
+};
+
 app.use('/api/*', async (c, next) =>
 	cors({
 		origin: (origin) => (isAllowedOrigin(origin, c.env) ? (origin ?? '') : ''),
@@ -133,6 +165,114 @@ app.get(
 );
 app.get('/docs', (c) => c.redirect('/api/docs'));
 
+app.post('/api/auth/register', async (c) => {
+	if (await authRateLimited(c, 'registration'))
+		return c.json(neutralAuthResponse);
+	const body = (await c.req.json().catch(() => null)) as {
+		email?: unknown;
+		inviteCode?: unknown;
+		callbackURL?: unknown;
+	} | null;
+	if (typeof body?.email !== 'string' || typeof body.inviteCode !== 'string')
+		return c.json(neutralAuthResponse);
+	const email = normalizeEmail(body.email);
+	const code = validateInviteCode(body.inviteCode);
+	if (code.ok === false) return c.json(neutralAuthResponse);
+	if (
+		await db(c.env)
+			.select({ id: owner.id })
+			.from(owner)
+			.where(eq(owner.email, email))
+			.get()
+	)
+		return c.json(neutralAuthResponse);
+	const now = new Date().toISOString();
+	await db(c.env)
+		.update(inviteCode)
+		.set({
+			status: 'available',
+			reservedEmail: null,
+			reservedUntil: null,
+			updatedAt: now,
+		})
+		.where(
+			and(
+				eq(inviteCode.code, code.code),
+				eq(inviteCode.status, 'reserved'),
+				lte(inviteCode.reservedUntil, now),
+			),
+		)
+		.run();
+	const candidate = await db(c.env)
+		.select()
+		.from(inviteCode)
+		.where(
+			and(eq(inviteCode.code, code.code), eq(inviteCode.status, 'available')),
+		)
+		.get();
+	if (!candidate) return c.json(neutralAuthResponse);
+	const reserved = await db(c.env)
+		.update(inviteCode)
+		.set({
+			status: 'reserved',
+			reservedEmail: email,
+			reservedUntil: inviteReservationExpiry(),
+			reservedAt: now,
+			updatedAt: now,
+		})
+		.where(
+			and(eq(inviteCode.id, candidate.id), eq(inviteCode.status, 'available')),
+		)
+		.returning({ id: inviteCode.id })
+		.all();
+	if (reserved.length !== 1) return c.json(neutralAuthResponse);
+	const headers = new Headers(c.req.raw.headers);
+	headers.set('content-type', 'application/json');
+	const target = new URL('/api/auth/sign-in/magic-link', c.req.url);
+	try {
+		const response = await createAuth(c.env).handler(
+			new Request(target, {
+				method: 'POST',
+				body: JSON.stringify({
+					email,
+					callbackURL: body.callbackURL ?? '/sign-in',
+				}),
+				headers,
+			}),
+		);
+		if (response.ok) return response;
+		await db(c.env)
+			.update(inviteCode)
+			.set({
+				status: 'available',
+				reservedEmail: null,
+				reservedUntil: null,
+				reservedAt: null,
+				updatedAt: new Date().toISOString(),
+			})
+			.where(
+				and(eq(inviteCode.id, candidate.id), eq(inviteCode.status, 'reserved')),
+			)
+			.run();
+		return c.json(neutralAuthResponse);
+	} catch {
+		await db(c.env)
+			.update(inviteCode)
+			.set({
+				status: 'available',
+				reservedEmail: null,
+				reservedUntil: null,
+				reservedAt: null,
+				updatedAt: new Date().toISOString(),
+			})
+			.where(
+				and(eq(inviteCode.id, candidate.id), eq(inviteCode.status, 'reserved')),
+			)
+			.run();
+		return c.json(neutralAuthResponse);
+	}
+});
+
 app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 	if (
 		c.req.path === '/api/auth/sign-in/magic-link' &&
@@ -142,6 +282,8 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 			.clone()
 			.json()
 			.catch(() => null)) as { email?: unknown } | null;
+		if (await authRateLimited(c, 'magic-link'))
+			return c.json(neutralAuthResponse);
 		if (
 			!isLocalDevelopment(c.env) &&
 			(!hasMagicLinkConfiguration(c.env) || !hasEmailDelivery(c.env))
@@ -150,6 +292,11 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 		}
 		if (
 			typeof body?.email === 'string' &&
+			!(await db(c.env)
+				.select({ id: owner.id })
+				.from(owner)
+				.where(eq(owner.email, normalizeEmail(body.email)))
+				.get()) &&
 			!isConfiguredOwner(normalizeEmail(body.email), c.env)
 		) {
 			return c.json({ status: true });
@@ -179,6 +326,99 @@ app.use('/api/v1/*', async (c, next) => {
 });
 
 app.get('/api/v1/health', (c) => c.json({ ok: true, service: 'rc-mech' }));
+
+const releaseExpiredInvites = async (c: AppContext, creatorId: string) => {
+	const now = new Date().toISOString();
+	await db(c.env)
+		.update(inviteCode)
+		.set({
+			status: 'available',
+			reservedEmail: null,
+			reservedUntil: null,
+			reservedAt: null,
+			updatedAt: now,
+		})
+		.where(
+			and(
+				eq(inviteCode.creatorId, creatorId),
+				eq(inviteCode.status, 'reserved'),
+				lte(inviteCode.reservedUntil, now),
+			),
+		)
+		.run();
+};
+app.get('/api/v1/invite-codes', async (c) => {
+	const creatorId = c.get('userId');
+	await releaseExpiredInvites(c, creatorId);
+	const codes = await db(c.env)
+		.select()
+		.from(inviteCode)
+		.where(eq(inviteCode.creatorId, creatorId))
+		.orderBy(desc(inviteCode.createdAt))
+		.all();
+	return c.json({
+		allowance: INVITE_LIFETIME_LIMIT,
+		used: codes.length,
+		remaining: Math.max(0, INVITE_LIFETIME_LIMIT - codes.length),
+		codes,
+	});
+});
+app.post('/api/v1/invite-codes', async (c) => {
+	const creatorId = c.get('userId');
+	await releaseExpiredInvites(c, creatorId);
+	const body = (await c.req.json().catch(() => null)) as {
+		code?: unknown;
+	} | null;
+	if (typeof body?.code !== 'string')
+		return c.json({ error: 'A code is required' }, 400);
+	const parsed = validateInviteCode(body.code);
+	if (parsed.ok === false) return c.json({ error: parsed.reason }, 400);
+	const now = new Date().toISOString();
+	try {
+		const created = await c.env.DB.prepare(`
+			WITH next_slot(slot) AS (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5),
+			available AS (SELECT slot FROM next_slot WHERE NOT EXISTS (SELECT 1 FROM invite_code WHERE creator_id = ? AND slot = next_slot.slot) LIMIT 1)
+			INSERT INTO invite_code (id, code, creator_id, slot, status, created_at, updated_at)
+			SELECT ?, ?, ?, slot, 'available', ?, ? FROM available
+			RETURNING *
+		`)
+			.bind(creatorId, crypto.randomUUID(), parsed.code, creatorId, now, now)
+			.first();
+		if (!created)
+			return c.json({ error: 'Invite-code allowance exhausted' }, 409);
+		return c.json({ code: created }, 201);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (!/unique constraint failed: invite_code\.code/i.test(message))
+			throw error;
+		return c.json({ error: 'That invite code is already in use' }, 409);
+	}
+});
+app.post('/api/v1/invite-codes/:id/revoke', async (c) => {
+	await releaseExpiredInvites(c, c.get('userId'));
+	const now = new Date().toISOString();
+	const result = await db(c.env)
+		.update(inviteCode)
+		.set({
+			status: 'revoked',
+			revokedAt: now,
+			reservedEmail: null,
+			reservedUntil: null,
+			updatedAt: now,
+		})
+		.where(
+			and(
+				eq(inviteCode.id, c.req.param('id')),
+				eq(inviteCode.creatorId, c.get('userId')),
+				eq(inviteCode.status, 'available'),
+			),
+		)
+		.returning()
+		.all();
+	if (result.length !== 1)
+		return c.json({ error: 'Invite code not found or cannot be revoked' }, 404);
+	return c.json({ code: result[0] });
+});
 
 const ownedCar = async (c: AppContext, carId: string) => {
 	const value = await db(c.env)
@@ -4596,4 +4836,73 @@ serviceRecordPaths[
 	'/api/v1/maintenance-plans/{planId}/complete'
 ].post.requestBody = {
 	content: { 'application/json': { schema: serviceCompletionSchema } },
+};
+
+const invitePaths = openApi.paths as Record<string, unknown>;
+invitePaths['/api/auth/register'] = {
+	post: {
+		summary: 'Reserve an invite code and send a first-registration magic link',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['email', 'inviteCode'],
+						properties: {
+							email: { type: 'string', format: 'email' },
+							inviteCode: { type: 'string', minLength: 6, maxLength: 32 },
+							callbackURL: { type: 'string' },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			200: { description: 'Neutral response whether registration is accepted' },
+		},
+	},
+};
+invitePaths['/api/v1/invite-codes'] = {
+	get: {
+		summary: 'List the authenticated user invite-code history and allowance',
+		responses: {
+			200: { description: 'Invite-code history and remaining allowance' },
+			401: { description: 'Authentication required' },
+		},
+	},
+	post: {
+		summary: 'Create an invite code for the authenticated user',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['code'],
+						properties: {
+							code: { type: 'string', minLength: 6, maxLength: 32 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Invite code created' },
+			400: { description: 'Invalid invite code' },
+			409: { description: 'Code collision or lifetime allowance exhausted' },
+		},
+	},
+};
+invitePaths['/api/v1/invite-codes/{id}/revoke'] = {
+	parameters: [
+		{ name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+	],
+	post: {
+		summary: 'Permanently revoke an unused owned invite code',
+		responses: {
+			200: { description: 'Invite code revoked' },
+			404: { description: 'Invite code not found or cannot be revoked' },
+		},
+	},
 };

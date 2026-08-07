@@ -48,7 +48,7 @@ test('deployed magic-link configuration fails closed when delivery is unavailabl
 	);
 });
 
-test('local configuration permits the deliberate no-op seam even with a simulated binding', async () => {
+test('local configuration forwards mail through the configured binding', async () => {
 	let attempted = false;
 	const local = {
 		APP_URL: 'http://localhost:8787',
@@ -62,14 +62,14 @@ test('local configuration permits the deliberate no-op seam even with a simulate
 	};
 	assert.equal(isLocalDevelopment(local), true);
 	const sender = createEmailSender(local as unknown as Env);
-	assert.equal(sender.available, false);
+	assert.equal(sender.available, true);
 	await sender.send({
 		from: 'from@example.com',
 		to: 'to@example.com',
 		subject: 'Subject',
 		text: 'Body',
 	});
-	assert.equal(attempted, false);
+	assert.equal(attempted, true);
 });
 
 test('credentialed CORS accepts only the Angular dev server matching the WebAuthn RP host', () => {
