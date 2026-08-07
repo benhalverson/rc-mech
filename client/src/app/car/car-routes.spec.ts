@@ -229,6 +229,52 @@ describe('Car section routes', () => {
 		);
 	});
 
+	it('closes an open editor when a reused overview route changes cars', async () => {
+		await harness.navigateByUrl('/garage/car-1/overview');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const edit = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find((button) => button.textContent?.trim() === 'Edit details') as
+			| HTMLButtonElement
+			| undefined;
+		edit?.click();
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeTruthy();
+
+		await harness.navigateByUrl('/garage/car-2/overview');
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeNull();
+		let nextCar: TestRequest | undefined;
+		await vi.waitFor(() => {
+			nextCar = http.expectOne('/api/v1/cars/car-2');
+		});
+		nextCar?.flush({ car: { ...car, id: 'car-2', name: 'Blue Runner' } });
+	});
+
+	it('identifies an expired session when archiving a car', async () => {
+		await harness.navigateByUrl('/garage/car-1/overview');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const archive = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find((button) => button.textContent?.trim() === 'Archive car') as
+			| HTMLButtonElement
+			| undefined;
+		archive?.click();
+		http
+			.expectOne('/api/v1/cars/car-1/archive')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		expect(
+			harness.routeNativeElement?.querySelector('[role="alert"]')?.textContent,
+		).toContain('Your garage session has expired');
+	});
+
 	it('shows missing-car guidance without a connection retry', async () => {
 		await harness.navigateByUrl('/garage/missing/overview');
 		http

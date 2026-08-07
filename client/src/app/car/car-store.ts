@@ -138,11 +138,14 @@ export const CarStore = signalStore(
 				if (store.carId() !== carId) return;
 				store.carResource.reload();
 				patchState(store, { lifecycleAction: null });
-			} catch {
+			} catch (error) {
 				if (store.carId() !== carId) return;
 				patchState(store, {
 					lifecycleAction: null,
-					lifecycleError: `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`,
+					lifecycleError:
+						error instanceof HttpErrorResponse && error.status === 401
+							? 'Your garage session has expired. Sign in again to continue.'
+							: `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`,
 				});
 			}
 		},

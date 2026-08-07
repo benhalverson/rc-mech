@@ -130,9 +130,18 @@ export class CarOverview {
 	);
 
 	constructor() {
+		let previousCarId = this.carId();
 		effect(() => {
 			const carId = this.carId();
-			if (carId) this.store.selectCar(carId);
+			if (!carId) return;
+			if (carId !== previousCarId) {
+				previousCarId = carId;
+				this.editing.set(false);
+				this.formValidationError.set('');
+				this.store.clearCarMutationState();
+				this.carFields().reset(emptyCarForm());
+			}
+			this.store.selectCar(carId);
 		});
 	}
 
