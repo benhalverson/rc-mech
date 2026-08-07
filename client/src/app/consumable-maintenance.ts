@@ -319,6 +319,7 @@ export class ConsumableMaintenance {
 			return;
 		}
 		if (this.action()) return;
+		this.mutationError.set('');
 		const payload =
 			form.kind === 'tires'
 				? {
@@ -377,6 +378,7 @@ export class ConsumableMaintenance {
 	}
 	protected archive(entry: ConsumableEntry): void {
 		if (this.isReadOnly(entry) || this.action()) return;
+		this.mutationError.set('');
 		this.action.set(`archive:${entry.id}`);
 		this.http
 			.delete<EntryResponse>(`${this.path(entry.carId)}/${entry.id}`, {
@@ -397,6 +399,7 @@ export class ConsumableMaintenance {
 	}
 	protected restore(entry: ConsumableEntry): void {
 		if (this.action()) return;
+		this.mutationError.set('');
 		this.action.set(`restore:${entry.id}`);
 		this.http
 			.post<EntryResponse>(

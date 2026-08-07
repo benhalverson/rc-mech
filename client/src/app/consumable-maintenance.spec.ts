@@ -238,7 +238,7 @@ describe('ConsumableMaintenance', () => {
 		http.expectNone('/api/v1/service-records');
 	});
 
-	it('shows archive failures without hiding consumable history', () => {
+	it('clears an archive failure when the owner retries', async () => {
 		const app = fixture.componentInstance as unknown as Harness;
 		const entry: ConsumableEntry = {
 			id: 'entry-1',
@@ -259,6 +259,26 @@ describe('ConsumableMaintenance', () => {
 			'That consumable entry could not be archived.',
 		);
 		expect(fixture.nativeElement.textContent).toContain('Fresh oil');
+
+		app.archive(entry);
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'That consumable entry could not be archived.',
+		);
+		http.expectOne('/api/v1/cars/car-1/consumable-maintenance/entry-1').flush({
+			consumableMaintenance: {
+				...entry,
+				deletedAt: '2026-08-07T00:00:00.000Z',
+			},
+		});
+		let entries: TestRequest | undefined;
+		let report: TestRequest | undefined;
+		await vi.waitFor(() => {
+			entries = http.expectOne('/api/v1/consumable-maintenance');
+			report = http.expectOne('/api/v1/consumables/report');
+		});
+		entries?.flush({ consumableMaintenance: [] });
+		report?.flush({ report: {} });
 	});
 
 	it('records both axle tire snapshots with distinct details and costs', async () => {

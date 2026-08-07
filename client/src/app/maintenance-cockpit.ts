@@ -447,6 +447,7 @@ export class MaintenanceCockpit {
 			return;
 		}
 		if (this.action()) return;
+		this.mutationError.set('');
 		const payload = {
 			carId: form.carId,
 			componentId: form.componentId || undefined,
@@ -496,6 +497,7 @@ export class MaintenanceCockpit {
 		action: 'pause' | 'resume' | 'archive',
 	): void {
 		if (this.isReadOnly(plan)) return;
+		this.mutationError.set('');
 		this.action.set(`${action}:${plan.id}`);
 		const request = this.http.post<PlanResponse>(
 			`/api/v1/maintenance-plans/${plan.id}/${action}`,
@@ -560,6 +562,7 @@ export class MaintenanceCockpit {
 	}
 
 	protected undoActivity(item: MaintenanceActivity): void {
+		this.mutationError.set('');
 		this.http
 			.delete(`/api/v1/service-records/${item.id}`, { withCredentials: true })
 			.subscribe({

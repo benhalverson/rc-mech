@@ -124,7 +124,7 @@ describe('MaintenanceCockpit', () => {
 		).toBeTruthy();
 	});
 
-	it('shows plan mutation failures without hiding the ledger', () => {
+	it('clears a plan mutation failure when the owner retries', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.transition(plan, 'pause');
 		http
@@ -136,6 +136,23 @@ describe('MaintenanceCockpit', () => {
 			'That maintenance update could not be saved.',
 		);
 		expect(fixture.nativeElement.textContent).toContain('Clean bearings');
+
+		app.transition(plan, 'pause');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'That maintenance update could not be saved.',
+		);
+		http
+			.expectOne('/api/v1/maintenance-plans/plan-1/pause')
+			.flush({ maintenancePlan: { ...plan, status: 'paused' } });
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/v1/maintenance-plans');
+		});
+		refresh?.flush({
+			maintenancePlans: [{ ...plan, status: 'paused' }],
+			activity: [],
+		});
 	});
 
 	it('keeps cockpit data visible when only the consumable report fails', async () => {
