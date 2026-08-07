@@ -88,6 +88,16 @@ describe('RouteTransitionAnnouncer', () => {
 		expect(document.activeElement).toBe(focusable);
 	});
 
+	it('disconnects a pending heading observer when the service is destroyed', async () => {
+		const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
+		events.next(new NavigationEnd(4, '/garage', '/garage'));
+		await Promise.resolve();
+
+		TestBed.resetTestingModule();
+
+		expect(disconnect).toHaveBeenCalled();
+	});
+
 	it('exposes a retry state for a failed lazy navigation', () => {
 		events.next(new NavigationStart(3, '/settings'));
 		events.next(

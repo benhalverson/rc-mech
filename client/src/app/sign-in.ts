@@ -1,6 +1,12 @@
 import { HttpClient } from '@angular/common/http';
 import { Component, inject, signal } from '@angular/core';
-import { FormField, form, required, validate } from '@angular/forms/signals';
+import {
+	disabled,
+	FormField,
+	form,
+	required,
+	validate,
+} from '@angular/forms/signals';
 import { ActivatedRoute, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { OwnerSessionStore } from './owner-session-store';
@@ -71,8 +77,14 @@ export class SignIn {
 	private readonly route = inject(ActivatedRoute);
 	private readonly router = inject(Router);
 	private readonly sessionStore = inject(OwnerSessionStore);
+	protected readonly registering = signal(false);
+	protected readonly sending = signal(false);
+	protected readonly working = signal(false);
+	protected readonly sent = signal(false);
 	protected readonly credentialsModel = signal({ email: '', inviteCode: '' });
 	protected readonly credentialsForm = form(this.credentialsModel, (path) => {
+		disabled(path.email, { when: () => this.sending() });
+		disabled(path.inviteCode, { when: () => this.sending() });
 		required(path.email, { message: 'Enter your email address.' });
 		validate(path.email, ({ value }) =>
 			/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value().trim())
@@ -94,10 +106,6 @@ export class SignIn {
 					};
 		});
 	});
-	protected readonly registering = signal(false);
-	protected readonly sending = signal(false);
-	protected readonly working = signal(false);
-	protected readonly sent = signal(false);
 	protected readonly message = signal(this.initialMessage());
 	protected readonly webAuthnAvailable =
 		typeof window !== 'undefined' && 'PublicKeyCredential' in window;

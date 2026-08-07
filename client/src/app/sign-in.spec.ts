@@ -96,6 +96,8 @@ describe('SignIn', () => {
 			'/garage/car-42/photos',
 		);
 		expect(new URL(request.request.body.callbackURL).search).toBe('');
+		fixture.detectChanges();
+		expect(email.disabled).toBe(true);
 		request.flush({});
 	});
 
@@ -167,6 +169,9 @@ describe('SignIn', () => {
 			email: 'User@Example.Test',
 			inviteCode: 'track-01',
 		});
+		fixture.detectChanges();
+		expect(email.disabled).toBe(true);
+		expect(invite.disabled).toBe(true);
 		request.flush({ status: true });
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
