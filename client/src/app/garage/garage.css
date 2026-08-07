@@ -23,7 +23,8 @@
 	margin-right: 7px;
 }
 .garage-toolbar button,
-.state-card button {
+.state-card button,
+.car-overview button {
 	background: transparent;
 	border: 1px solid var(--accent);
 	color: var(--accent);
@@ -63,4 +64,85 @@
 .car-row:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 3px;
+}
+.back-link {
+	display: inline-block;
+	margin: 18px 0;
+	color: var(--accent);
+}
+.car-overview {
+	display: grid;
+	gap: 22px;
+	padding: 28px 0;
+}
+.overview-heading {
+	display: flex;
+	align-items: start;
+	justify-content: space-between;
+	gap: 20px;
+}
+.overview-heading h3,
+.overview-identity,
+.overview-notes p {
+	margin: 6px 0 0;
+}
+.status-pill {
+	color: var(--accent);
+	font-size: 0.75rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+.overview-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1px;
+	margin: 0;
+	background: var(--line);
+	border: 1px solid var(--line);
+}
+.overview-grid div {
+	background: var(--paper);
+	padding: 18px;
+}
+.overview-grid dt {
+	color: var(--muted);
+	font-size: 0.75rem;
+}
+.overview-grid dd {
+	margin: 6px 0 0;
+}
+.car-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	border-top: 1px solid var(--line);
+	padding-top: 18px;
+}
+.car-tabs a {
+	color: var(--muted);
+	padding: 8px 10px;
+	text-decoration: none;
+}
+.car-tabs a[aria-current='page'] {
+	color: var(--accent);
+	border-bottom: 2px solid var(--accent);
+}
+.car-tabs a:focus-visible,
+.back-link:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+}
+.car-overview button.danger {
+	border-color: var(--danger, #a33);
+	color: var(--danger, #a33);
+}
+@media (max-width: 650px) {
+	.overview-grid {
+		grid-template-columns: 1fr;
+	}
+	.overview-heading,
+	.car-row {
+		align-items: start;
+		flex-direction: column;
+	}
 }

@@ -5,7 +5,6 @@ import { GarageStore } from './garage-store';
 @Component({
 	selector: 'app-garage',
 	imports: [RouterLink],
-	providers: [GarageStore],
 	templateUrl: './garage.html',
 	styleUrl: './garage.css',
 })

@@ -1,31 +1,62 @@
-<section class="garage-collection" aria-labelledby="garage-collection-title" tabindex="-1">
+<section class="garage-collection" aria-labelledby="garage-collection-title">
 	<div class="eyebrow">Today’s workbench</div>
 	<h2 id="garage-collection-title" data-route-focus tabindex="-1">The garage</h2>
 	<p class="section-intro">Keep the cars you actually drive close at hand. Their build sheets, sessions, and service history will follow.</p>
-	<div class="garage-toolbar">
-		<span><strong>{{ store.cars().length }}</strong> {{ store.showArchived() ? 'archived' : 'active' }} cars</span>
-		<button type="button" (click)="store.toggleArchived()">{{ store.showArchived() ? 'Show active cars' : 'Inspect archived cars' }}</button>
-	</div>
-	@if (store.collectionLoading()) {
-		<div class="state-card" aria-live="polite"><span aria-hidden="true">•••</span><p>Opening the garage ledger…</p></div>
-	} @else if (store.collectionError()) {
-		<div class="state-card" role="alert"><p>The garage could not be loaded. Check the connection and try again.</p><button type="button" (click)="store.retryCollection()">Try again</button></div>
-	} @else if (!store.cars().length) {
-		<div class="state-card"><span aria-hidden="true">＋</span><h3>{{ store.showArchived() ? 'No archived cars' : 'The garage is waiting' }}</h3><p>{{ store.showArchived() ? 'Archived cars will stay here with their history.' : 'Add the first car to start a build sheet.' }}</p></div>
+
+	@if (store.activeCarId()) {
+		<a class="back-link" routerLink="/garage">← Garage collection</a>
+		@if (store.overviewLoading()) {
+			<div class="state-card" role="status"><span aria-hidden="true">•••</span><p>Opening the car overview…</p></div>
+		} @else if (store.overviewError()) {
+			<div class="state-card" role="alert"><p>The car overview could not be loaded. Check the connection and try again.</p><button type="button" (click)="store.retryOverview()">Try again</button></div>
+		} @else if (store.activeCar(); as car) {
+			<article class="car-overview" aria-labelledby="active-car-title">
+				<div class="overview-heading">
+					<div><span class="status-pill">{{ car.archivedAt ? 'Archived' : 'Active car' }}</span><h3 id="active-car-title">{{ car.name }}</h3></div>
+					@if (car.archivedAt) {
+						<button type="button" (click)="store.changeArchiveState('restore')" [disabled]="store.lifecycleAction() !== null">{{ store.lifecycleAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button>
+					} @else {
+						<button type="button" class="danger" (click)="store.changeArchiveState('archive')" [disabled]="store.lifecycleAction() !== null">{{ store.lifecycleAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button>
+					}
+				</div>
+				@if (store.lifecycleError()) { <p role="alert">{{ store.lifecycleError() }}</p> }
+				<p class="overview-identity">{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</p>
+				<dl class="overview-grid">
+					<div><dt>Scale</dt><dd>{{ car.scale || 'Not recorded' }}</dd></div>
+					<div><dt>Vehicle type</dt><dd>{{ car.vehicleType || 'Not recorded' }}</dd></div>
+					<div><dt>Power type</dt><dd>{{ car.powerType || 'Not recorded' }}</dd></div>
+				</dl>
+				<div class="overview-notes"><strong>Workshop notes</strong><p>{{ car.notes || 'No notes recorded yet.' }}</p></div>
+				<nav class="car-tabs" aria-label="Car detail sections">
+					<a [routerLink]="['/garage', car.id, 'overview']" aria-current="page">Overview</a>
+					<a [routerLink]="['/garage', car.id, 'build']">Build</a>
+					<a [routerLink]="['/garage', car.id, 'setups']">Setups</a>
+					<a [routerLink]="['/garage', car.id, 'photos']">Photos</a>
+					<a [routerLink]="['/garage', car.id, 'runs']">Runs</a>
+				</nav>
+			</article>
+		} @else {
+			<div class="state-card"><h3>Car not found</h3><p>Return to the Garage collection and choose another car.</p></div>
+		}
 	} @else {
-		<nav class="car-list" aria-label="Cars">
-			@for (car of store.cars(); track car.id) {
-				<a class="car-row" [routerLink]="['/garage', car.id, 'overview']" (click)="store.selectCar(car.id)">
-					<strong>{{ car.name }}</strong><span>{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</span>
-				</a>
-			}
-		</nav>
-	}
-	@if (store.activeCar(); as car) {
-		<article class="state-card" aria-labelledby="active-car-title">
-			<h3 id="active-car-title">{{ car.name }}</h3>
-			<p>{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</p>
-			<p>This overview is ready for the car’s build, setup, photo, and drive sections.</p>
-		</article>
+		<div class="garage-toolbar">
+			<span><strong>{{ store.cars().length }}</strong> {{ store.showArchived() ? 'active and archived' : 'active' }} cars</span>
+			<button type="button" (click)="store.toggleArchived()">{{ store.showArchived() ? 'Show active cars' : 'Inspect archived cars' }}</button>
+		</div>
+		@if (store.collectionLoading()) {
+			<div class="state-card" role="status"><span aria-hidden="true">•••</span><p>Opening the garage ledger…</p></div>
+		} @else if (store.collectionError()) {
+			<div class="state-card" role="alert"><p>The garage could not be loaded. Check the connection and try again.</p><button type="button" (click)="store.retryCollection()">Try again</button></div>
+		} @else if (!store.cars().length) {
+			<div class="state-card"><span aria-hidden="true">＋</span><h3>{{ store.showArchived() ? 'No archived cars' : 'The garage is waiting' }}</h3><p>{{ store.showArchived() ? 'Archived cars will stay here with their history.' : 'Add the first car to start a build sheet.' }}</p></div>
+		} @else {
+			<nav class="car-list" aria-label="Cars">
+				@for (car of store.cars(); track car.id) {
+					<a class="car-row" [routerLink]="['/garage', car.id, 'overview']" (click)="store.selectCar(car.id)">
+						<strong>{{ car.name }}</strong><span>{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</span>
+					</a>
+				}
+			</nav>
+		}
 	}
 </section>
