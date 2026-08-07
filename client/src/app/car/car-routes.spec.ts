@@ -19,6 +19,8 @@ import { CarRuns } from './car-runs';
 import { CarSetups } from './car-setups';
 import { CarStore } from './car-store';
 
+type TestSignal<T> = (() => T) & { set(value: T): void };
+
 const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/overview',
@@ -286,6 +288,97 @@ describe('Car section routes', () => {
 		expect(
 			harness.routeNativeElement?.querySelector('input[name="slot"]'),
 		).toBeFalsy();
+	});
+
+	it('keeps the build editor open while a save is in flight', async () => {
+		await harness.navigateByUrl('/garage/car-1/build');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/components')
+			.flush({ components: [] });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		(
+			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
+				(button) => button.textContent?.includes('Add the first component'),
+			) as HTMLButtonElement
+		).click();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			action: TestSignal<string | null>;
+			cancel(): void;
+			save(): void;
+		};
+		component.action.set('save');
+		harness.detectChanges();
+		const cancel = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find(
+			(button) => button.textContent?.trim() === 'Cancel',
+		) as HTMLButtonElement;
+
+		expect(cancel.disabled).toBe(true);
+		component.cancel();
+		component.save();
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
+		http.expectNone(
+			(request) =>
+				request.method !== 'GET' &&
+				request.url === '/api/v1/cars/car-1/components',
+		);
+	});
+
+	it('blocks run editor actions while a mutation is in flight', async () => {
+		await harness.navigateByUrl('/garage/car-1/runs');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
+			.flush({ driveSessions: [] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			action: TestSignal<string | null>;
+			openAdd(): void;
+			cancel(): void;
+			save(): void;
+		};
+		component.action.set('archive:drive-1');
+		component.openAdd();
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeFalsy();
+		expect(
+			(
+				[
+					...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+				].find((button) =>
+					button.textContent?.includes('Record the first drive'),
+				) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+
+		component.action.set(null);
+		component.openAdd();
+		harness.detectChanges();
+		component.action.set('save');
+		harness.detectChanges();
+		const cancel = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find(
+			(button) => button.textContent?.trim() === 'Cancel',
+		) as HTMLButtonElement;
+		expect(cancel.disabled).toBe(true);
+		component.cancel();
+		component.save();
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
+		http.expectNone(
+			(request) =>
+				request.method !== 'GET' && request.url === '/api/v1/cars/car-1/drives',
+		);
 	});
 
 	it('normalizes a number input with an invalid stored timezone', async () => {

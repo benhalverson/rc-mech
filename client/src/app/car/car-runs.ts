@@ -107,12 +107,12 @@ const emptyForm = (): DriveForm => ({
 		@else if (carStore.car(); as car) {
 			<app-car-section-shell [car]="car" section="runs">
 				<section class="session-log" aria-labelledby="runs-title">
-					<div class="section-heading"><div><div class="eyebrow">Drive history</div><h3 id="runs-title">The run log</h3></div><span><strong>{{ activeCount() }}</strong> recorded</span>@if (!car.archivedAt && !editing()) { <button class="button" type="button" (click)="openAdd()">Record a drive</button> }</div>
-					@if (editing()) { <form (ngSubmit)="save()" aria-labelledby="run-form-title"><h4 id="run-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive' }}</h4>@if (formError()) { <p role="alert">{{ formError() }}</p> }<div class="form-grid"><label>Started <input name="started" type="datetime-local" required [ngModel]="form().startedAt" (ngModelChange)="update('startedAt', $event)" /></label><label>Duration (minutes) <input name="duration" type="number" min="1" max="1440" [ngModel]="form().durationMinutes" (ngModelChange)="update('durationMinutes', $event)" /></label><label class="wide">Conditions <input name="conditions" [ngModel]="form().conditions" (ngModelChange)="update('conditions', $event)" /></label><label class="wide">Notes <textarea name="notes" rows="3" [ngModel]="form().notes" (ngModelChange)="update('notes', $event)"></textarea></label></div><p>Saved in {{ timezone() }}.</p><div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save session</button><button type="button" (click)="cancel()">Cancel</button></div></form> }
+					<div class="section-heading"><div><div class="eyebrow">Drive history</div><h3 id="runs-title">The run log</h3></div><span><strong>{{ activeCount() }}</strong> recorded</span>@if (!car.archivedAt && !editing()) { <button class="button" type="button" (click)="openAdd()" [disabled]="action() !== null">Record a drive</button> }</div>
+					@if (editing()) { <form (ngSubmit)="save()" aria-labelledby="run-form-title"><h4 id="run-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive' }}</h4>@if (formError()) { <p role="alert">{{ formError() }}</p> }<div class="form-grid"><label>Started <input name="started" type="datetime-local" required [ngModel]="form().startedAt" (ngModelChange)="update('startedAt', $event)" /></label><label>Duration (minutes) <input name="duration" type="number" min="1" max="1440" [ngModel]="form().durationMinutes" (ngModelChange)="update('durationMinutes', $event)" /></label><label class="wide">Conditions <input name="conditions" [ngModel]="form().conditions" (ngModelChange)="update('conditions', $event)" /></label><label class="wide">Notes <textarea name="notes" rows="3" [ngModel]="form().notes" (ngModelChange)="update('notes', $event)"></textarea></label></div><p>Saved in {{ timezone() }}.</p><div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save session</button><button type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div></form> }
 					@else if (sessionsResource.isLoading()) { <div class="state-card" role="status">Opening the run log…</div> }
 					@else if (sessionsResource.error()) { <div class="state-card" role="alert"><p>The run log could not be loaded.</p><button type="button" (click)="sessionsResource.reload()">Try again</button></div> }
-					@else if (!sessions().length) { <div class="state-card"><h4>No drive sessions recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()">Record the first drive</button> }</div> }
-					@else { <div class="session-list" aria-label="Drive session history">@for (session of sessions(); track session.id) { <article class="session-row"><div><time [dateTime]="session.startedAt">{{ session.startedAt | date:'medium':timezone() }}</time></div><div><strong>{{ session.conditions || 'Conditions not recorded' }}</strong>@if (session.durationMinutes) { <span> · {{ session.durationMinutes }} min</span> }<p>{{ session.notes }}</p></div>@if (!session.deletedAt && !car.archivedAt) { <div class="form-actions"><button type="button" (click)="openEdit(session)">Edit</button><button type="button" (click)="archive(session)" [disabled]="action() !== null">Archive</button></div> }</article> }</div> }
+					@else if (!sessions().length) { <div class="state-card"><h4>No drive sessions recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()" [disabled]="action() !== null">Record the first drive</button> }</div> }
+					@else { <div class="session-list" aria-label="Drive session history">@for (session of sessions(); track session.id) { <article class="session-row"><div><time [dateTime]="session.startedAt">{{ session.startedAt | date:'medium':timezone() }}</time></div><div><strong>{{ session.conditions || 'Conditions not recorded' }}</strong>@if (session.durationMinutes) { <span> · {{ session.durationMinutes }} min</span> }<p>{{ session.notes }}</p></div>@if (!session.deletedAt && !car.archivedAt) { <div class="form-actions"><button type="button" (click)="openEdit(session)" [disabled]="action() !== null">Edit</button><button type="button" (click)="archive(session)" [disabled]="action() !== null">Archive</button></div> }</article> }</div> }
 					@if (message()) { <p role="status">{{ message() }}</p> }
 				</section>
 			</app-car-section-shell>
@@ -173,7 +173,7 @@ export class CarRuns {
 	}
 
 	protected openAdd(): void {
-		if (this.carStore.car()?.archivedAt) return;
+		if (this.carStore.car()?.archivedAt || this.action()) return;
 		this.editingId.set(null);
 		this.form.set({
 			...emptyForm(),
@@ -183,7 +183,8 @@ export class CarRuns {
 	}
 
 	protected openEdit(session: DriveSession): void {
-		if (this.carStore.car()?.archivedAt || session.deletedAt) return;
+		if (this.carStore.car()?.archivedAt || session.deletedAt || this.action())
+			return;
 		this.editingId.set(session.id);
 		this.form.set({
 			startedAt: localDateTime(session.startedAt, this.timezone()),
@@ -204,11 +205,13 @@ export class CarRuns {
 	}
 
 	protected cancel(): void {
+		if (this.action()) return;
 		this.editing.set(false);
 		this.formError.set('');
 	}
 
 	protected save(): void {
+		if (this.action()) return;
 		const car = this.carStore.car();
 		const form = this.form();
 		if (!car || car.archivedAt) {

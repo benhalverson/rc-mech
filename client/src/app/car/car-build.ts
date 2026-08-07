@@ -114,7 +114,7 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 							@if (form().slotType === 'standard') { <label>Slot <select name="slot" [disabled]="mode() === 'edit'" [ngModel]="form().slot" (ngModelChange)="update('slot', $event)">@for (slot of standardSlots; track slot) { <option [value]="slot">{{ slot }}</option> }</select></label> }
 							@else { <label>Custom slot <input name="slot" required [disabled]="mode() === 'edit'" [ngModel]="form().slot" (ngModelChange)="update('slot', $event)" /></label> }
 							<label>Name <input name="name" required maxlength="160" [ngModel]="form().name" (ngModelChange)="update('name', $event)" /></label><label>Manufacturer <input name="manufacturer" [ngModel]="form().manufacturer" (ngModelChange)="update('manufacturer', $event)" /></label><label>Model <input name="model" [ngModel]="form().model" (ngModelChange)="update('model', $event)" /></label><label>Serial number <input name="serial" [ngModel]="form().serialNumber" (ngModelChange)="update('serialNumber', $event)" /></label><label class="wide">Notes <textarea name="notes" rows="3" [ngModel]="form().notes" (ngModelChange)="update('notes', $event)"></textarea></label></div>
-							<div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save component</button><button class="button quiet" type="button" (click)="cancel()">Cancel</button></div>
+							<div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save component</button><button class="button quiet" type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div>
 						</form>
 					} @else if (resource.isLoading()) { <div class="state-card" role="status">Reading the build sheet…</div> }
 					@else if (resource.error()) { <div class="state-card" role="alert"><p>The build sheet could not be loaded.</p><button type="button" (click)="resource.reload()">Try again</button></div> }
@@ -236,11 +236,13 @@ export class CarBuild {
 	}
 
 	protected cancel(): void {
+		if (this.action()) return;
 		this.editing.set(false);
 		this.formError.set('');
 	}
 
 	protected save(): void {
+		if (this.action()) return;
 		const car = this.carStore.car();
 		const form = this.form();
 		if (!car || car.archivedAt) {
