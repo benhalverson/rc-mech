@@ -5,7 +5,6 @@ import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { filter } from 'rxjs';
 import { CarPhotoGallery } from './car-photo-gallery';
-import { MaintenanceCockpit } from './maintenance-cockpit';
 import { SetupSnapshots } from './setup-snapshots';
 
 type Car = {
@@ -308,14 +307,7 @@ const carPayload = (form: CarForm): Record<string, string> => {
 
 @Component({
 	selector: 'app-garage-pages',
-	imports: [
-		DatePipe,
-		FormsModule,
-		MaintenanceCockpit,
-		CarPhotoGallery,
-		SetupSnapshots,
-		RouterLink,
-	],
+	imports: [DatePipe, FormsModule, CarPhotoGallery, SetupSnapshots, RouterLink],
 	templateUrl: './garage-pages.html',
 	styleUrl: './garage-pages.css',
 })

@@ -1,14 +1,17 @@
+import { provideHttpClient } from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
+	type TestRequest,
 } from '@angular/common/http/testing';
-import { provideHttpClient } from '@angular/common/http';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import {
-	ConsumableMaintenance,
-	ConsumableEntry,
 	buildTireReport,
+	ConsumableEntry,
+	ConsumableMaintenance,
 } from './consumable-maintenance';
+import { MaintenanceStore } from './maintenance/maintenance-store';
 
 type Harness = {
 	openCreate: () => void;
@@ -140,21 +143,37 @@ describe('ConsumableMaintenance', () => {
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
 			imports: [ConsumableMaintenance],
-			providers: [provideHttpClient(), provideHttpClientTesting()],
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				MaintenanceStore,
+			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
 		fixture = TestBed.createComponent(ConsumableMaintenance);
-		fixture.componentRef.setInput('enabled', true);
-		fixture.componentRef.setInput('cars', [car]);
+		fixture.detectChanges();
 		http
-			.expectOne('/api/v1/cars/car-1/consumable-maintenance?history=true')
-			.flush({ entries: [] });
+			.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			)
+			.flush({ cars: [car] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http
+			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlans: [], activity: [] });
+		http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+		http
+			.expectOne('/api/v1/consumable-maintenance')
+			.flush({ consumableMaintenance: [] });
+		http.expectOne('/api/v1/consumables/report').flush({ report: {} });
 		fixture.detectChanges();
 	});
 
 	afterEach(() => http.verify());
 
-	it('records both axle tire snapshots with distinct details and costs', () => {
+	it('records both axle tire snapshots with distinct details and costs', async () => {
 		const app = fixture.componentInstance as unknown as Harness;
 		app.openCreate();
 		app.form.set({
@@ -195,6 +214,30 @@ describe('ConsumableMaintenance', () => {
 				rearCost: 35,
 			},
 		});
+		let entryRefresh: TestRequest | undefined;
+		let reportRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			entryRefresh = http.expectOne('/api/v1/consumable-maintenance');
+			reportRefresh = http.expectOne('/api/v1/consumables/report');
+		});
+		entryRefresh?.flush({
+			consumableMaintenance: [
+				{
+					id: 'entry-1',
+					carId: 'car-1',
+					kind: 'tires',
+					performedAt: '2026-08-05T17:00:00.000Z',
+					axle: 'both',
+					frontDetails: 'Pink compound / front insert',
+					rearDetails: 'Green compound / rear insert',
+					frontCost: 32.5,
+					rearCost: 35,
+				},
+			],
+		});
+		reportRefresh?.flush({ report: {} });
+		await fixture.whenStable();
+		fixture.detectChanges();
 		expect(app.entries()[0].frontDetails).toContain('Pink');
 		expect(app.entries()[0].rearCost).toBe(35);
 	});
@@ -284,7 +327,7 @@ describe('ConsumableMaintenance', () => {
 		});
 	});
 
-	it('archives and restores an entry without removing its history', () => {
+	it('archives and restores an entry without removing its history', async () => {
 		const app = fixture.componentInstance as unknown as Harness;
 		const entry: ConsumableEntry = {
 			id: 'entry-1',
@@ -301,12 +344,32 @@ describe('ConsumableMaintenance', () => {
 		expect(deletion.request.method).toBe('DELETE');
 		const archived = { ...entry, deletedAt: '2026-08-05T00:00:00.000Z' };
 		deletion.flush({ consumableMaintenance: archived });
+		let archivedEntries: TestRequest | undefined;
+		let archivedReport: TestRequest | undefined;
+		await vi.waitFor(() => {
+			archivedEntries = http.expectOne('/api/v1/consumable-maintenance');
+			archivedReport = http.expectOne('/api/v1/consumables/report');
+		});
+		archivedEntries?.flush({ consumableMaintenance: [archived] });
+		archivedReport?.flush({ report: {} });
+		await fixture.whenStable();
+		fixture.detectChanges();
 		app.restore(archived);
 		const restore = http.expectOne(
 			'/api/v1/cars/car-1/consumable-maintenance/entry-1/restore',
 		);
 		expect(restore.request.method).toBe('POST');
 		restore.flush({ consumableMaintenance: entry });
+		let restoredEntries: TestRequest | undefined;
+		let restoredReport: TestRequest | undefined;
+		await vi.waitFor(() => {
+			restoredEntries = http.expectOne('/api/v1/consumable-maintenance');
+			restoredReport = http.expectOne('/api/v1/consumables/report');
+		});
+		restoredEntries?.flush({ consumableMaintenance: [entry] });
+		restoredReport?.flush({ report: {} });
+		await fixture.whenStable();
+		fixture.detectChanges();
 		expect(app.entries()[0].deletedAt).toBeUndefined();
 	});
 });

@@ -2,8 +2,11 @@ import { provideHttpClient } from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
+	type TestRequest,
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
+import { MaintenanceStore } from './maintenance/maintenance-store';
 import {
 	calculatePlanState,
 	calendarDays,
@@ -57,22 +60,31 @@ describe('MaintenanceCockpit', () => {
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
 			imports: [MaintenanceCockpit],
-			providers: [provideHttpClient(), provideHttpClientTesting()],
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				MaintenanceStore,
+			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
 		fixture = TestBed.createComponent(MaintenanceCockpit);
-		fixture.componentRef.setInput('cars', [car]);
-		fixture.componentRef.setInput('timezone', undefined as unknown as string);
-		http
-			.expectOne('/api/v1/maintenance-plans')
-			.flush({ maintenancePlans: [plan], activity: [] });
+		fixture.detectChanges();
 		http
 			.expectOne(
 				(request) =>
-					request.url === '/api/v1/cars/car-1/service-records' &&
-					request.params.get('history') === 'true',
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
 			)
-			.flush({ serviceRecords: [] });
+			.flush({ cars: [car] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http
+			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlans: [plan], activity: [] });
+		http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+		http
+			.expectOne('/api/v1/consumable-maintenance')
+			.flush({ consumableMaintenance: [] });
+		http.expectOne('/api/v1/consumables/report').flush({ report: {} });
 		fixture.detectChanges();
 	});
 
@@ -108,7 +120,7 @@ describe('MaintenanceCockpit', () => {
 		).toBeTruthy();
 	});
 
-	it('creates a plan through the existing relative maintenance endpoint', () => {
+	it('creates a plan through the existing relative maintenance endpoint', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.openCreate();
 		http
@@ -139,11 +151,20 @@ describe('MaintenanceCockpit', () => {
 		request.flush({
 			maintenancePlan: { ...plan, name: 'Clean bearings', intervalDays: 14 },
 		});
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/v1/maintenance-plans');
+		});
+		refresh?.flush({
+			maintenancePlans: [{ ...plan, name: 'Clean bearings', intervalDays: 14 }],
+			activity: [],
+		});
+		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Clean bearings');
 	});
 
-	it('records ad hoc service with cost data through the car-scoped route', () => {
+	it('records ad hoc service with cost data through the car-scoped route', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.openServiceCreate();
 		http
@@ -176,10 +197,28 @@ describe('MaintenanceCockpit', () => {
 				currency: 'USD',
 			},
 		});
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/v1/service-records');
+		});
+		refresh?.flush({
+			serviceRecords: [
+				{
+					id: 'record-1',
+					carId: 'car-1',
+					performedAt: '2026-08-02T17:00:00.000Z',
+					description: 'Rebuilt the front diff',
+					cost: 24.5,
+					currency: 'USD',
+				},
+			],
+		});
+		await fixture.whenStable();
+		fixture.detectChanges();
 		expect(app.serviceRecords()[0].id).toBe('record-1');
 	});
 
-	it('completes a plan from the service form and sends notes and cost', () => {
+	it('completes a plan from the service form and sends notes and cost', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.openCompletion(plan);
 		http
@@ -210,10 +249,23 @@ describe('MaintenanceCockpit', () => {
 			},
 			maintenancePlan: { ...plan, baselineAt: '2026-08-02T17:00:00.000Z' },
 		});
+		let serviceRefresh: TestRequest | undefined;
+		let planRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			serviceRefresh = http.expectOne('/api/v1/service-records');
+			planRefresh = http.expectOne('/api/v1/maintenance-plans');
+		});
+		serviceRefresh?.flush({ serviceRecords: [] });
+		planRefresh?.flush({
+			maintenancePlans: [{ ...plan, baselineAt: '2026-08-02T17:00:00.000Z' }],
+			activity: [],
+		});
+		await fixture.whenStable();
+		fixture.detectChanges();
 		expect(app.plans()[0].baselineAt).toBe('2026-08-02T17:00:00.000Z');
 	});
 
-	it('soft-deletes a record and can undo the correction', () => {
+	it('soft-deletes a record and can undo the correction', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		const record = {
 			id: 'record-3',
@@ -228,10 +280,26 @@ describe('MaintenanceCockpit', () => {
 		deletion.flush({
 			serviceRecord: { ...record, deletedAt: '2026-08-03T00:00:00.000Z' },
 		});
+		let deletedRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			deletedRefresh = http.expectOne('/api/v1/service-records');
+		});
+		deletedRefresh?.flush({
+			serviceRecords: [{ ...record, deletedAt: '2026-08-03T00:00:00.000Z' }],
+		});
+		await fixture.whenStable();
+		fixture.detectChanges();
 		app.restoreService({ ...record, deletedAt: '2026-08-03T00:00:00.000Z' });
 		const restore = http.expectOne('/api/v1/service-records/record-3/restore');
 		expect(restore.request.method).toBe('POST');
 		restore.flush({ serviceRecord: record });
+		let restoredRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			restoredRefresh = http.expectOne('/api/v1/service-records');
+		});
+		restoredRefresh?.flush({ serviceRecords: [record] });
+		await fixture.whenStable();
+		fixture.detectChanges();
 		expect(app.serviceRecords()[0].deletedAt).toBeUndefined();
 	});
 

@@ -1,16 +1,15 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import {
-	ChangeDetectionStrategy,
 	Component,
-	Input,
 	computed,
 	inject,
+	linkedSignal,
 	signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { forkJoin } from 'rxjs';
 import { ConsumableMaintenance } from './consumable-maintenance';
+import { MaintenanceStore } from './maintenance/maintenance-store';
 
 export type MaintenanceCar = {
 	id: string;
@@ -87,14 +86,8 @@ export type ServiceForm = {
 	currency: string;
 };
 
-type PlansResponse = {
-	maintenancePlans?: MaintenancePlan[];
-	plans?: MaintenancePlan[];
-	activity?: MaintenanceActivity[];
-};
 type ComponentsResponse = { components: MaintenanceComponent[] };
 type PlanResponse = { maintenancePlan: MaintenancePlan };
-type ServiceRecordsResponse = { serviceRecords?: ServiceRecord[] };
 
 const emptyForm = (): MaintenanceForm => ({
 	carId: '',
@@ -151,33 +144,28 @@ export const calculatePlanState = (
 
 @Component({
 	selector: 'app-maintenance-cockpit',
-	standalone: true,
 	imports: [CommonModule, DatePipe, FormsModule, ConsumableMaintenance],
 	templateUrl: './maintenance-cockpit.html',
 	styleUrl: './maintenance-cockpit.css',
-	changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MaintenanceCockpit {
 	private readonly http = inject(HttpClient);
-	@Input() consumablesEnabled = false;
-	@Input() set cars(value: MaintenanceCar[]) {
-		const wasEmpty = this.garage().length === 0;
-		this.garage.set(value);
-		if (!value.length) return;
-		if (!this.loaded() || (wasEmpty && value.length > 0)) this.load();
-	}
-	@Input() timezone = 'UTC';
-
-	protected readonly garage = signal<MaintenanceCar[]>([]);
-	protected readonly plans = signal<MaintenancePlan[]>([]);
-	protected readonly activity = signal<MaintenanceActivity[]>([]);
-	protected readonly serviceRecords = signal<ServiceRecord[]>([]);
+	private readonly store = inject(MaintenanceStore);
+	protected readonly garage = linkedSignal(() => this.store.cars());
+	protected readonly plans = linkedSignal(() => this.store.plans());
+	protected readonly activity = this.store.activity;
+	protected readonly serviceRecords = linkedSignal(() =>
+		this.store.serviceRecords(),
+	);
+	protected readonly timezone = this.store.timezone;
 	protected readonly components = signal<MaintenanceComponent[]>([]);
-	protected readonly state = signal<
-		'idle' | 'loading' | 'ready' | 'unavailable' | 'error'
-	>('idle');
-	protected readonly error = signal('');
-	protected readonly loaded = signal(false);
+	private readonly mutationError = signal('');
+	protected readonly state = computed(() =>
+		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
+	);
+	protected readonly error = computed(
+		() => this.mutationError() || this.store.error(),
+	);
 	protected readonly editing = signal(false);
 	protected readonly serviceEditing = signal(false);
 	protected readonly serviceEditingId = signal<string | null>(null);
@@ -246,68 +234,8 @@ export class MaintenanceCockpit {
 	});
 
 	protected load(): void {
-		if (!this.garage().length) {
-			this.state.set('ready');
-			this.loaded.set(true);
-			return;
-		}
-		this.state.set('loading');
-		this.error.set('');
-		this.http
-			.get<PlansResponse>('/api/v1/maintenance-plans', {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: (response) => {
-					this.plans.set(response.maintenancePlans ?? response.plans ?? []);
-					this.activity.set(response.activity ?? []);
-					const requests = this.garage().map((car) =>
-						this.http.get<ServiceRecordsResponse>(
-							`/api/v1/cars/${car.id}/service-records`,
-							{ withCredentials: true, params: { history: 'true' } },
-						),
-					);
-					if (!requests.length) {
-						this.finishLoad([]);
-						return;
-					}
-					forkJoin(requests).subscribe({
-						next: (responses) =>
-							this.finishLoad(
-								responses.flatMap((item) => item.serviceRecords ?? []),
-							),
-						error: () => this.finishLoad([]),
-					});
-				},
-				error: (error: { status?: number }) => {
-					this.loaded.set(true);
-					this.state.set(error.status === 404 ? 'unavailable' : 'error');
-					this.error.set(
-						error.status === 401
-							? 'Your garage session has expired. Sign in again to continue.'
-							: 'Maintenance plans could not be loaded.',
-					);
-				},
-			});
-	}
-
-	private finishLoad(records: ServiceRecord[]): void {
-		this.serviceRecords.set(records);
-		this.activity.update((items) =>
-			items.length
-				? items
-				: records
-						.filter((record) => !record.deletedAt)
-						.map((record) => ({
-							id: record.id,
-							planId: record.planId ?? undefined,
-							action: record.planId ? 'Scheduled service' : 'Ad hoc service',
-							occurredAt: record.performedAt,
-							note: record.description,
-						})),
-		);
-		this.state.set('ready');
-		this.loaded.set(true);
+		this.mutationError.set('');
+		this.store.retryAll();
 	}
 
 	protected openCreate(): void {
@@ -465,19 +393,9 @@ export class MaintenanceCockpit {
 						{ withCredentials: true },
 					);
 		request.subscribe({
-			next: (response) => {
-				const record = response.serviceRecord;
-				const updatedPlan = (response as { maintenancePlan?: MaintenancePlan })
-					.maintenancePlan;
-				this.serviceRecords.update((records) =>
-					recordId
-						? records.map((item) => (item.id === recordId ? record : item))
-						: [record, ...records],
-				);
-				if (planId && updatedPlan)
-					this.plans.update((plans) =>
-						plans.map((item) => (item.id === planId ? updatedPlan : item)),
-					);
+			next: () => {
+				this.store.refreshServiceRecords();
+				if (planId) this.store.refreshPlans();
 				this.cancelServiceEdit();
 				this.serviceAction.set(null);
 			},
@@ -549,12 +467,8 @@ export class MaintenanceCockpit {
 					withCredentials: true,
 				});
 		request.subscribe({
-			next: ({ maintenancePlan }) => {
-				this.plans.update((plans) =>
-					id
-						? plans.map((plan) => (plan.id === id ? maintenancePlan : plan))
-						: [maintenancePlan, ...plans],
-				);
+			next: () => {
+				this.store.refreshPlans();
 				this.cancelEdit();
 				this.action.set(null);
 			},
@@ -583,15 +497,13 @@ export class MaintenanceCockpit {
 			{ withCredentials: true },
 		);
 		request.subscribe({
-			next: ({ maintenancePlan }) => {
-				this.plans.update((plans) =>
-					plans.map((item) => (item.id === plan.id ? maintenancePlan : item)),
-				);
+			next: () => {
+				this.store.refreshPlans();
 				this.action.set(null);
 			},
 			error: () => {
 				this.action.set(null);
-				this.error.set('That maintenance update could not be saved.');
+				this.mutationError.set('That maintenance update could not be saved.');
 			},
 		});
 	}
@@ -606,18 +518,8 @@ export class MaintenanceCockpit {
 			}>(`/api/v1/service-records/${record.id}`, { withCredentials: true })
 			.subscribe({
 				next: (response) => {
-					const deleted = response.serviceRecord;
-					this.serviceRecords.update((records) =>
-						records.map((item) => (item.id === record.id ? deleted : item)),
-					);
-					const maintenancePlan = response.maintenancePlan;
-					if (maintenancePlan) {
-						this.plans.update((plans) =>
-							plans.map((item) =>
-								item.id === maintenancePlan.id ? maintenancePlan : item,
-							),
-						);
-					}
+					this.store.refreshServiceRecords();
+					if (response.maintenancePlan) this.store.refreshPlans();
 					this.serviceAction.set(null);
 				},
 				error: () => {
@@ -639,16 +541,9 @@ export class MaintenanceCockpit {
 				{ withCredentials: true },
 			)
 			.subscribe({
-				next: ({ serviceRecord: restored, maintenancePlan }) => {
-					this.serviceRecords.update((records) =>
-						records.map((item) => (item.id === record.id ? restored : item)),
-					);
-					if (maintenancePlan)
-						this.plans.update((plans) =>
-							plans.map((item) =>
-								item.id === maintenancePlan.id ? maintenancePlan : item,
-							),
-						);
+				next: ({ maintenancePlan }) => {
+					this.store.refreshServiceRecords();
+					if (maintenancePlan) this.store.refreshPlans();
 					this.serviceAction.set(null);
 				},
 				error: () => {
@@ -662,8 +557,12 @@ export class MaintenanceCockpit {
 		this.http
 			.delete(`/api/v1/service-records/${item.id}`, { withCredentials: true })
 			.subscribe({
-				next: () => this.load(),
-				error: () => this.error.set('That completion could not be undone.'),
+				next: () => {
+					this.store.refreshServiceRecords();
+					this.store.refreshPlans();
+				},
+				error: () =>
+					this.mutationError.set('That completion could not be undone.'),
 			});
 	}
 
@@ -726,12 +625,12 @@ export class MaintenanceCockpit {
 					: state === 'archived'
 						? 'Archived'
 						: dueAt
-							? `Due ${new Date(dueAt).toLocaleDateString('en-US', { timeZone: this.timezone, month: 'short', day: 'numeric' })}`
+							? `Due ${new Date(dueAt).toLocaleDateString('en-US', { timeZone: this.timezone(), month: 'short', day: 'numeric' })}`
 							: 'Baseline set';
 	}
 	protected localDateTime(date: Date): string {
 		const parts = new Intl.DateTimeFormat('en-CA', {
-			timeZone: this.timezone,
+			timeZone: this.timezone(),
 			year: 'numeric',
 			month: '2-digit',
 			day: '2-digit',
@@ -750,7 +649,7 @@ export class MaintenanceCockpit {
 		const [hour, minute] = time.split(':').map(Number);
 		const asUtc = Date.UTC(year, month - 1, day, hour, minute);
 		const parts = new Intl.DateTimeFormat('en-US', {
-			timeZone: this.timezone,
+			timeZone: this.timezone(),
 			year: 'numeric',
 			month: '2-digit',
 			day: '2-digit',

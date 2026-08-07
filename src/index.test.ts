@@ -114,8 +114,13 @@ test.each([
 	expect(await response.text()).toBe('Not found');
 });
 
-test('protected routes require authentication using the configured D1 binding', async () => {
-	const response = await request('/api/v1/cars');
+test.each([
+	'/api/v1/cars',
+	'/api/v1/service-records',
+	'/api/v1/consumable-maintenance',
+	'/api/v1/consumables/report',
+])('protected route %s requires authentication using the configured D1 binding', async (path) => {
+	const response = await request(path);
 
 	expect(response.status).toBe(401);
 	expect(await response.json()).toEqual({ error: 'Authentication required' });

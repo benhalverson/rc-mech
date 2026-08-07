@@ -31,4 +31,12 @@ describe('protected workspace routes', () => {
 		expect(settings?.loadChildren).toBeTypeOf('function');
 		expect(settings?.loadComponent).toBeUndefined();
 	});
+
+	it('loads Maintenance through its own lazy route file', () => {
+		const maintenance = routes.find((route) => route.path === 'maintenance');
+
+		expect(maintenance?.canMatch).toHaveLength(1);
+		expect(maintenance?.loadChildren).toBeTypeOf('function');
+		expect(maintenance?.loadComponent).toBeUndefined();
+	});
 });
