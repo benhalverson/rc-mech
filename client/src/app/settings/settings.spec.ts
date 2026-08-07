@@ -250,6 +250,7 @@ describe('Settings workspace', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'The invite code could not be copied.',
 		);
+		expect(fixture.nativeElement.textContent).toContain('OWNER-01');
 
 		await store.copyInviteCode('OWNER-01');
 		fixture.detectChanges();
@@ -257,6 +258,44 @@ describe('Settings workspace', () => {
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'The invite code could not be copied.',
 		);
+	});
+
+	it('resets rename validation between passkey edit sessions', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const rename = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.trim() === 'Rename',
+		) as HTMLButtonElement;
+		rename.click();
+		fixture.detectChanges();
+		let input = fixture.nativeElement.querySelector(
+			'#rename-passkey-1',
+		) as HTMLInputElement;
+		input.value = '';
+		input.dispatchEvent(new Event('input'));
+		input.closest('form')?.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		expect(input.getAttribute('aria-describedby')).toBe(
+			'rename-validation-passkey-1',
+		);
+
+		const cancel = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.trim() === 'Cancel',
+		) as HTMLButtonElement;
+		cancel.click();
+		fixture.detectChanges();
+		(
+			[...fixture.nativeElement.querySelectorAll('button')].find(
+				(button: HTMLButtonElement) => button.textContent?.trim() === 'Rename',
+			) as HTMLButtonElement
+		).click();
+		fixture.detectChanges();
+		input = fixture.nativeElement.querySelector(
+			'#rename-passkey-1',
+		) as HTMLInputElement;
+		expect(input.value).toBe('Workshop laptop');
+		expect(input.getAttribute('aria-describedby')).toBeNull();
 	});
 
 	it('registers a passkey and refreshes the credential list', async () => {

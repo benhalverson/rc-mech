@@ -40,6 +40,7 @@
 	</form>
 	@if (inviteForm.code().touched() && inviteForm.code().invalid()) { <p id="invite-validation" class="hint" role="alert">{{ inviteForm.code().errors()[0]?.message }}</p> }
 	@if (store.inviteMessage()) { <p class="message" role="status">{{ store.inviteMessage() }}</p> }
+	@if (store.inviteActionError()) { <p class="hint" role="alert">{{ store.inviteActionError() }}</p> }
 	@if (store.inviteLoading()) {
 		<p class="hint" role="status">Loading invite history…</p>
 	} @else if (store.inviteError()) {

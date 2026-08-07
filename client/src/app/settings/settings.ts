@@ -80,13 +80,13 @@ export class Settings {
 	}
 
 	protected beginRename(passkey: Passkey): void {
+		this.renameForm().reset({ name: passkey.name?.trim() || 'Passkey' });
 		this.editingPasskeyId.set(passkey.id);
-		this.renameModel.set({ name: passkey.name?.trim() || 'Passkey' });
 	}
 
 	protected cancelRename(): void {
 		this.editingPasskeyId.set(null);
-		this.renameModel.set({ name: '' });
+		this.renameForm().reset({ name: '' });
 	}
 
 	protected async renamePasskey(

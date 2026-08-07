@@ -110,12 +110,9 @@ export const SettingsStore = signalStore(
 		})),
 		inviteLoading: computed(() => store.inviteResource.isLoading()),
 		inviteError: computed(() =>
-			store.inviteMutationError()
-				? store.inviteMutationError()
-				: store.inviteResource.error()
-					? 'Invite codes could not be loaded.'
-					: '',
+			store.inviteResource.error() ? 'Invite codes could not be loaded.' : '',
 		),
+		inviteActionError: computed(() => store.inviteMutationError()),
 		passkeys: computed(() =>
 			store.passkeyResource.hasValue() ? store.passkeyResource.value() : [],
 		),
