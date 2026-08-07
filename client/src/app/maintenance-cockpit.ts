@@ -206,6 +206,9 @@ export class MaintenanceCockpit {
 	protected readonly activeCount = computed(
 		() => this.plans().filter((plan) => plan.status === 'active').length,
 	);
+	protected readonly hasActiveCars = computed(() =>
+		this.garage().some((car) => !car.archivedAt),
+	);
 	protected readonly visibleServiceRecords = computed(() =>
 		this.serviceRecords().filter((record) =>
 			this.historyFilter() === 'deleted'
@@ -239,6 +242,7 @@ export class MaintenanceCockpit {
 	}
 
 	protected openCreate(): void {
+		if (!this.hasActiveCars()) return;
 		const firstCar = this.garage().find((car) => !car.archivedAt);
 		this.form.set({
 			...emptyForm(),

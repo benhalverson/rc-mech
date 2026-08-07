@@ -340,4 +340,22 @@ describe('MaintenanceCockpit', () => {
 				?.disabled,
 		).toBe(true);
 	});
+
+	it('disables plan creation when every car is archived', () => {
+		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		app.garage.set([{ ...car, archivedAt: '2026-08-01T00:00:00.000Z' }]);
+		app.plans.set([]);
+		fixture.detectChanges();
+		const creationButtons = [
+			...fixture.nativeElement.querySelectorAll('button'),
+		].filter((button: HTMLButtonElement) =>
+			['New plan', 'Create a plan'].includes(button.textContent?.trim() ?? ''),
+		) as HTMLButtonElement[];
+
+		expect(creationButtons).toHaveLength(2);
+		expect(creationButtons.every((button) => button.disabled)).toBe(true);
+		app.openCreate();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.maintenance-form')).toBeNull();
+	});
 });

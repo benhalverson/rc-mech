@@ -182,6 +182,9 @@ export class ConsumableMaintenance {
 	protected readonly editingId = signal<string | null>(null);
 	protected readonly action = signal<string | null>(null);
 	protected readonly historyFilter = signal<'active' | 'archived'>('active');
+	protected readonly hasActiveCars = computed(() =>
+		this.garage().some((car) => !car.archivedAt),
+	);
 	protected readonly form = signal<EntryForm>(emptyForm());
 	protected readonly report = computed(() => {
 		const local = buildTireReport(this.entries());
@@ -227,6 +230,7 @@ export class ConsumableMaintenance {
 		);
 	}
 	protected openCreate(): void {
+		if (!this.hasActiveCars()) return;
 		const car = this.garage().find((item) => !item.archivedAt);
 		this.form.set({
 			...emptyForm(),

@@ -28,6 +28,7 @@ type Harness = {
 		set(value: Record<string, string>): void;
 	};
 	entries: (() => ConsumableEntry[]) & { set(value: ConsumableEntry[]): void };
+	garage: (() => unknown[]) & { set(value: unknown[]): void };
 };
 
 describe('ConsumableMaintenance', () => {
@@ -172,6 +173,24 @@ describe('ConsumableMaintenance', () => {
 	});
 
 	afterEach(() => http.verify());
+
+	it('disables history creation when every car is archived', () => {
+		const app = fixture.componentInstance as unknown as Harness;
+		app.garage.set([{ ...car, archivedAt: '2026-08-01T00:00:00.000Z' }]);
+		fixture.detectChanges();
+		const creationButtons = [
+			...fixture.nativeElement.querySelectorAll('button'),
+		].filter(
+			(button: HTMLButtonElement) =>
+				button.textContent?.trim() === 'Record change',
+		) as HTMLButtonElement[];
+
+		expect(creationButtons).toHaveLength(2);
+		expect(creationButtons.every((button) => button.disabled)).toBe(true);
+		app.openCreate();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.consumable-form')).toBeNull();
+	});
 
 	it('records both axle tire snapshots with distinct details and costs', async () => {
 		const app = fixture.componentInstance as unknown as Harness;
