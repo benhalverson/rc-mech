@@ -3,12 +3,10 @@ import { HttpClient } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
-import { filter, firstValueFrom } from 'rxjs';
+import { filter } from 'rxjs';
 import { CarPhotoGallery } from './car-photo-gallery';
 import { MaintenanceCockpit } from './maintenance-cockpit';
 import { SetupSnapshots } from './setup-snapshots';
-import { RouteTransitionAnnouncer } from './route-transition-announcer';
-import { OwnerSessionStore } from './owner-session-store';
 
 type Car = {
 	id: string;
@@ -37,20 +35,10 @@ type CarForm = {
 
 type CarsResponse = { cars: Car[] };
 type CarResponse = { car: Car };
-type SessionResponse = { session?: unknown; user?: { email?: string } } | null;
-type ViewState = 'checking' | 'signed-out' | 'signed-in';
-type PasskeyState = 'loading' | 'ready' | 'error';
 type CarState = 'loading' | 'ready' | 'error';
 type CarView = 'list' | 'detail';
 type ComponentState = 'idle' | 'loading' | 'ready' | 'error';
 type ComponentMode = 'add' | 'edit' | 'replace';
-
-type Passkey = {
-	id: string;
-	name?: string | null;
-	createdAt?: string;
-	aaguid?: string | null;
-};
 
 type InstalledComponent = {
 	id: string;
@@ -95,20 +83,6 @@ type DriveSessionsResponse = {
 };
 type DriveSessionResponse = { driveSession: DriveSession };
 type TimezoneResponse = { timezone?: string };
-type InviteCode = {
-	id: string;
-	code: string;
-	status: string;
-	createdAt: string;
-	reservedEmail?: string | null;
-	reservedUntil?: string | null;
-};
-type InviteCodesResponse = {
-	allowance: number;
-	used: number;
-	remaining: number;
-	codes: InviteCode[];
-};
 type SessionState = 'idle' | 'loading' | 'ready' | 'error';
 type SessionMode = 'add' | 'edit';
 
@@ -296,53 +270,6 @@ const driveSessionPayload = (
 	return payload;
 };
 
-type WebAuthnOptions = {
-	challenge: string;
-	user?: { id: string; name: string; displayName: string };
-	excludeCredentials?: Array<{
-		id: string;
-		type: 'public-key';
-		transports?: AuthenticatorTransport[];
-	}>;
-	allowCredentials?: Array<{
-		id: string;
-		type: 'public-key';
-		transports?: AuthenticatorTransport[];
-	}>;
-	[key: string]: unknown;
-};
-
-const base64UrlToBytes = (value: string): Uint8Array => {
-	const normalized = value
-		.replace(/-/g, '+')
-		.replace(/_/g, '/')
-		.padEnd(Math.ceil(value.length / 4) * 4, '=');
-	const binary = window.atob(normalized);
-	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-};
-
-const bytesToBase64Url = (value: ArrayBuffer): string => {
-	const bytes = new Uint8Array(value);
-	let binary = '';
-	bytes.forEach((byte) => {
-		binary += String.fromCharCode(byte);
-	});
-	return window
-		.btoa(binary)
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
-};
-
-const webAuthnError = (error: unknown): string => {
-	if (error instanceof DOMException && error.name === 'NotAllowedError')
-		return 'The passkey ceremony was cancelled or timed out.';
-	if (error instanceof Error && 'status' in error)
-		return 'The passkey request could not be completed. Try again or use a magic link.';
-	if (error instanceof Error && error.message) return error.message;
-	return 'The passkey request could not be completed. Try again or use a magic link.';
-};
-
 const emptyCarForm = (): CarForm => ({
 	name: '',
 	make: '',
@@ -393,26 +320,10 @@ const carPayload = (form: CarForm): Record<string, string> => {
 	styleUrl: './garage-pages.css',
 })
 export class GaragePages {
-	private readonly sessionStore = inject(OwnerSessionStore, { optional: true });
 	private readonly http = inject(HttpClient);
-	private readonly routeTransition = inject(RouteTransitionAnnouncer);
 	private readonly router = inject(Router, { optional: true });
 
-	protected readonly state = signal<ViewState>('checking');
-	protected readonly email = signal('');
-	protected readonly requestState = signal<'idle' | 'sending' | 'sent'>('idle');
 	protected readonly message = signal('');
-	private readonly returnTo =
-		typeof window === 'undefined'
-			? '/garage'
-			: (() => {
-					const value = new URL(window.location.href).searchParams.get(
-						'returnTo',
-					);
-					return value?.startsWith('/') && !value.startsWith('//')
-						? value
-						: '/garage';
-				})();
 	protected readonly activeCars = signal('—');
 	protected readonly cars = signal<Car[]>([]);
 	protected readonly carState = signal<CarState>('loading');
@@ -448,23 +359,6 @@ export class GaragePages {
 	protected readonly sessionFormError = signal('');
 	protected readonly editingSessionId = signal<string | null>(null);
 	protected readonly timezone = signal(defaultTimezone());
-	protected readonly timezoneForm = signal(defaultTimezone());
-	protected readonly timezoneState = signal<
-		'loading' | 'ready' | 'saving' | 'error'
-	>('loading');
-	protected readonly timezoneError = signal('');
-	protected readonly inviteCodes = signal<InviteCode[]>([]);
-	protected readonly inviteAllowance = signal({
-		allowance: 5,
-		used: 0,
-		remaining: 5,
-	});
-	protected readonly inviteState = signal<'loading' | 'ready' | 'error'>(
-		'loading',
-	);
-	protected readonly inviteError = signal('');
-	protected readonly inviteForm = signal('');
-	protected readonly inviteAction = signal<string | null>(null);
 	protected readonly sessionCount = computed(
 		() => this.driveSessions().filter((session) => !session.deletedAt).length,
 	);
@@ -502,31 +396,12 @@ export class GaragePages {
 	protected readonly selectedCar = computed(
 		() => this.cars().find((car) => car.id === this.selectedCarId()) ?? null,
 	);
-	protected readonly ownerEmail = signal('');
-	protected readonly passkeys = signal<Passkey[]>([]);
-	protected readonly passkeyState = signal<PasskeyState>('loading');
-	protected readonly passkeyMessage = signal('');
-	protected readonly newPasskeyName = signal('');
-	protected readonly passkeyAction = signal<string | null>(null);
-	protected readonly editingPasskey = signal<string | null>(null);
-	protected readonly editedPasskeyName = signal('');
-	protected readonly webAuthnAvailable = signal(
-		typeof navigator !== 'undefined' &&
-			'credentials' in navigator &&
-			typeof PublicKeyCredential !== 'undefined' &&
-			(window.isSecureContext ||
-				window.location.hostname === 'localhost' ||
-				window.location.hostname === '127.0.0.1'),
-	);
 	protected readonly currentUrl = signal(
 		typeof window === 'undefined' ? '/garage' : window.location.pathname,
 	);
-	protected readonly routeLoading = this.routeTransition.loading;
-	protected readonly routeAnnouncement = this.routeTransition.announcement;
 	protected readonly workspace = computed(() => {
 		const url = this.currentUrl();
 		if (url.startsWith('/maintenance')) return 'maintenance';
-		if (url.startsWith('/settings')) return 'settings';
 		return 'garage';
 	});
 	protected readonly carSection = computed(() => {
@@ -553,348 +428,9 @@ export class GaragePages {
 					this.carView.set('detail');
 					this.loadCarSection(carId);
 				}
-				if (
-					event.urlAfterRedirects.startsWith('/settings') &&
-					this.state() === 'signed-in'
-				)
-					this.loadInviteCodes();
 			});
-		this.consumeMagicLinkError();
-		const hasSharedSession = this.sessionStore?.hasResolvedSession ?? false;
-		const sharedSession = hasSharedSession
-			? this.sessionStore?.session.value()
-			: null;
-		if (hasSharedSession && sharedSession?.session)
-			this.applySession(sharedSession);
-		else this.loadSession();
-	}
-
-	protected requestMagicLink(): void {
-		const email = this.email().trim();
-		if (!email || this.requestState() === 'sending') return;
-
-		this.requestState.set('sending');
-		this.message.set('');
-		this.http
-			.post(
-				'/api/auth/sign-in/magic-link',
-				{
-					email,
-					callbackURL: window.location.origin,
-				},
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: () => {
-					this.requestState.set('sent');
-					this.message.set(
-						'If that address is allowed, a sign-in link is on its way.',
-					);
-				},
-				error: () => {
-					this.requestState.set('idle');
-					this.message.set(
-						'That request could not be completed. Check the address and try again.',
-					);
-				},
-			});
-	}
-
-	protected async signInWithPasskey(): Promise<void> {
-		if (!this.webAuthnAvailable() || this.passkeyAction()) return;
-		this.passkeyAction.set('sign-in');
-		this.message.set('');
-		try {
-			const options = await firstValueFrom(
-				this.http.get<WebAuthnOptions>(
-					'/api/auth/passkey/generate-authenticate-options',
-				),
-			);
-			const credential = await navigator.credentials.get({
-				publicKey: this.authenticationOptions(options),
-			});
-			if (
-				!credential ||
-				typeof credential !== 'object' ||
-				!('response' in credential)
-			)
-				throw new Error('No passkey was returned by the browser.');
-			await firstValueFrom(
-				this.http.post(
-					'/api/auth/passkey/verify-authentication',
-					{
-						response: this.authenticationResponse(
-							credential as PublicKeyCredential,
-						),
-					},
-					{ withCredentials: true },
-				),
-			);
-			this.loadSession();
-		} catch (error) {
-			this.message.set(webAuthnError(error));
-		} finally {
-			this.passkeyAction.set(null);
-		}
-	}
-
-	protected async registerPasskey(): Promise<void> {
-		const name = this.newPasskeyName().trim();
-		if (!this.webAuthnAvailable() || !name || this.passkeyAction()) return;
-		this.passkeyAction.set('register');
-		this.passkeyMessage.set('');
-		try {
-			const options = await firstValueFrom(
-				this.http.get<WebAuthnOptions>(
-					'/api/auth/passkey/generate-register-options',
-					{
-						params: { name },
-						withCredentials: true,
-					},
-				),
-			);
-			const credential = await navigator.credentials.create({
-				publicKey: this.registrationOptions(options),
-			});
-			if (
-				!credential ||
-				typeof credential !== 'object' ||
-				!('response' in credential)
-			)
-				throw new Error('No passkey was returned by the browser.');
-			await firstValueFrom(
-				this.http.post(
-					'/api/auth/passkey/verify-registration',
-					{
-						response: this.registrationResponse(
-							credential as PublicKeyCredential,
-						),
-						name,
-					},
-					{ withCredentials: true },
-				),
-			);
-			this.newPasskeyName.set('');
-			this.passkeyMessage.set(
-				'Passkey added. Keep a second one registered for recovery from a lost device.',
-			);
-			this.loadPasskeys();
-		} catch (error) {
-			this.passkeyMessage.set(webAuthnError(error));
-		} finally {
-			this.passkeyAction.set(null);
-		}
-	}
-
-	protected beginRename(passkey: Passkey): void {
-		this.editingPasskey.set(passkey.id);
-		this.editedPasskeyName.set(passkey.name?.trim() || 'Passkey');
-	}
-
-	protected cancelRename(): void {
-		this.editingPasskey.set(null);
-		this.editedPasskeyName.set('');
-	}
-
-	protected async renamePasskey(passkey: Passkey): Promise<void> {
-		const name = this.editedPasskeyName().trim();
-		if (!name || this.passkeyAction()) return;
-		this.passkeyAction.set(`rename:${passkey.id}`);
-		this.passkeyMessage.set('');
-		try {
-			await firstValueFrom(
-				this.http.post(
-					'/api/auth/passkey/update-passkey',
-					{ id: passkey.id, name },
-					{ withCredentials: true },
-				),
-			);
-			this.cancelRename();
-			this.passkeyMessage.set('Passkey renamed.');
-			this.loadPasskeys();
-		} catch (error) {
-			this.passkeyMessage.set(webAuthnError(error));
-		} finally {
-			this.passkeyAction.set(null);
-		}
-	}
-
-	protected async revokePasskey(passkey: Passkey): Promise<void> {
-		if (this.passkeyAction()) return;
-		this.passkeyAction.set(`revoke:${passkey.id}`);
-		this.passkeyMessage.set('');
-		try {
-			await firstValueFrom(
-				this.http.post(
-					'/api/auth/passkey/delete-passkey',
-					{ id: passkey.id },
-					{ withCredentials: true },
-				),
-			);
-			this.passkeyMessage.set(
-				'Passkey revoked. Magic-link recovery remains available.',
-			);
-			this.loadPasskeys();
-		} catch (error) {
-			this.passkeyMessage.set(webAuthnError(error));
-		} finally {
-			this.passkeyAction.set(null);
-		}
-	}
-
-	protected signOut(): void {
-		this.message.set('');
-		this.http
-			.post('/api/auth/sign-out', {}, { withCredentials: true })
-			.subscribe({
-				next: () => {
-					this.state.set('signed-out');
-					this.ownerEmail.set('');
-				},
-				error: () => this.message.set('We could not sign you out. Try again.'),
-			});
-	}
-
-	protected retrySession(): void {
-		this.loadSession();
-	}
-
-	private loadSession(): void {
-		this.state.set('checking');
-		this.http
-			.get<SessionResponse>('/api/auth/get-session', { withCredentials: true })
-			.subscribe({
-				next: (response) => this.applySession(response),
-				error: () => {
-					this.state.set('signed-out');
-					if (!this.message())
-						this.message.set(
-							'We could not check the garage session. Try again.',
-						);
-				},
-			});
-	}
-
-	private applySession(response: SessionResponse): void {
-		if (!response?.session) {
-			this.state.set('signed-out');
-			return;
-		}
-		this.state.set('signed-in');
-		this.ownerEmail.set(response.user?.email ?? 'Owner');
 		this.loadCars();
-		this.loadPasskeys();
 		this.loadTimezone();
-		if (this.currentUrl().startsWith('/sign-in'))
-			void this.router?.navigateByUrl(this.returnTo);
-	}
-
-	protected loadInviteCodes(): void {
-		this.inviteState.set('loading');
-		this.http
-			.get<InviteCodesResponse>('/api/v1/invite-codes', {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: (response) => {
-					this.inviteCodes.set(response.codes);
-					this.inviteAllowance.set({
-						allowance: response.allowance,
-						used: response.used,
-						remaining: response.remaining,
-					});
-					this.inviteState.set('ready');
-				},
-				error: () => {
-					this.inviteState.set('error');
-					this.inviteError.set('Invite codes could not be loaded.');
-				},
-			});
-	}
-
-	protected createInviteCode(): void {
-		const code = this.inviteForm().trim();
-		if (!code || this.inviteAction()) return;
-		this.inviteAction.set('create');
-		this.inviteError.set('');
-		this.http
-			.post<{ code: InviteCode }>(
-				'/api/v1/invite-codes',
-				{ code },
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: (response) => {
-					this.inviteForm.set('');
-					this.inviteAction.set(null);
-					this.inviteCodes.update((codes) => [response.code, ...codes]);
-					this.inviteAllowance.update((value) => ({
-						...value,
-						used: value.used + 1,
-						remaining: Math.max(0, value.remaining - 1),
-					}));
-				},
-				error: (error: { error?: { error?: string } }) => {
-					this.inviteAction.set(null);
-					this.inviteError.set(
-						error.error?.error ?? 'Invite code could not be created.',
-					);
-				},
-			});
-	}
-
-	protected async copyInviteCode(code: string): Promise<void> {
-		await navigator.clipboard.writeText(code);
-		this.inviteError.set(`Copied ${code}.`);
-	}
-
-	protected revokeInviteCode(code: InviteCode): void {
-		if (this.inviteAction() || code.status !== 'available') return;
-		this.inviteAction.set(`revoke:${code.id}`);
-		this.inviteError.set('');
-		this.http
-			.post<{ code: InviteCode }>(
-				`/api/v1/invite-codes/${code.id}/revoke`,
-				{},
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: (response) => {
-					this.inviteAction.set(null);
-					this.inviteCodes.update((codes) =>
-						codes.map((item) => (item.id === code.id ? response.code : item)),
-					);
-				},
-				error: () => {
-					this.inviteAction.set(null);
-					this.inviteError.set('Invite code could not be revoked.');
-				},
-			});
-	}
-
-	private consumeMagicLinkError(): void {
-		const url = new URL(window.location.href);
-		const errorParameters = [
-			'error',
-			'error_description',
-			'error_code',
-			'errorCode',
-		];
-		if (!errorParameters.some((parameter) => url.searchParams.has(parameter)))
-			return;
-
-		this.message.set(
-			'That recovery link could not be used. Request a new magic link and try again.',
-		);
-		errorParameters.forEach((parameter) => {
-			url.searchParams.delete(parameter);
-		});
-		const query = url.searchParams.toString();
-		window.history.replaceState(
-			window.history.state,
-			document.title,
-			`${url.pathname}${query ? `?${query}` : ''}${url.hash}`,
-		);
 	}
 
 	private loadCars(): void {
@@ -919,7 +455,6 @@ export class GaragePages {
 						? 'Your garage session has expired. Sign in again to continue.'
 						: 'The garage could not be loaded. Check the connection and try again.',
 				);
-				if (error.status === 401) this.state.set('signed-out');
 			},
 		});
 	}
@@ -1102,7 +637,6 @@ export class GaragePages {
 							? 'This car is archived. Restore it before recording a drive session.'
 							: 'The drive session could not be saved. Check the details and try again.',
 				);
-				if (error.status === 401) this.state.set('signed-out');
 			},
 		});
 	}
@@ -1249,7 +783,6 @@ export class GaragePages {
 							? 'This car is archived. Restore it before recording component work.'
 							: 'The component could not be saved. Check the details and try again.',
 				);
-				if (error.status === 401) this.state.set('signed-out');
 			},
 		});
 	}
@@ -1278,7 +811,6 @@ export class GaragePages {
 							? 'Your garage session has expired. Sign in again to continue.'
 							: 'The build sheet could not be loaded. Check the connection and try again.',
 					);
-					if (error.status === 401) this.state.set('signed-out');
 				},
 			});
 	}
@@ -1305,13 +837,11 @@ export class GaragePages {
 							? 'Your garage session has expired. Sign in again to continue.'
 							: 'The run log could not be loaded. Check the connection and try again.',
 					);
-					if (error.status === 401) this.state.set('signed-out');
 				},
 			});
 	}
 
 	private loadTimezone(): void {
-		this.timezoneState.set('loading');
 		this.http
 			.get<TimezoneResponse>('/api/v1/preferences/timezone', {
 				withCredentials: true,
@@ -1323,52 +853,8 @@ export class GaragePages {
 							? response.timezone
 							: defaultTimezone();
 					this.timezone.set(value);
-					this.timezoneForm.set(value);
-					this.timezoneState.set('ready');
 				},
-				error: () => {
-					this.timezoneState.set('error');
-					this.timezoneError.set(
-						'The timezone setting could not be loaded. Dates are shown in your browser timezone.',
-					);
-				},
-			});
-	}
-
-	protected updateTimezone(value: string): void {
-		this.timezoneForm.set(value);
-	}
-
-	protected saveTimezone(): void {
-		const value = this.timezoneForm().trim();
-		if (!this.isValidTimezone(value)) {
-			this.timezoneError.set(
-				'Use a valid IANA timezone, such as America/Los_Angeles.',
-			);
-			return;
-		}
-		this.timezoneState.set('saving');
-		this.timezoneError.set('');
-		this.http
-			.patch<TimezoneResponse>(
-				'/api/v1/preferences/timezone',
-				{ timezone: value },
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: (response) => {
-					const saved = response.timezone ?? value;
-					this.timezone.set(saved);
-					this.timezoneForm.set(saved);
-					this.timezoneState.set('ready');
-					this.message.set(`Dates will now use ${saved}.`);
-				},
-				error: () => {
-					this.timezoneState.set('error');
-					this.timezoneError.set(
-						'The timezone could not be saved. Check the name and try again.',
-					);
-				},
+				error: () => this.timezone.set(defaultTimezone()),
 			});
 	}
 
@@ -1416,7 +902,6 @@ export class GaragePages {
 						? 'Your garage session has expired. Sign in again to continue.'
 						: 'The car could not be saved. Check the details and try again.',
 				);
-				if (error.status === 401) this.state.set('signed-out');
 			},
 		});
 	}
@@ -1462,92 +947,7 @@ export class GaragePages {
 							? 'That car is no longer available.'
 							: 'The car lifecycle change could not be saved. Try again.',
 					);
-					if (error.status === 401) this.state.set('signed-out');
 				},
 			});
-	}
-
-	private loadPasskeys(): void {
-		this.passkeyState.set('loading');
-		this.http
-			.get<Passkey[]>('/api/auth/passkey/list-user-passkeys', {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: (passkeys) => {
-					this.passkeys.set(passkeys);
-					this.passkeyState.set('ready');
-				},
-				error: () => {
-					this.passkeyState.set('error');
-					this.passkeyMessage.set('Passkeys could not be loaded. Try again.');
-				},
-			});
-	}
-
-	private registrationOptions(
-		options: WebAuthnOptions,
-	): PublicKeyCredentialCreationOptions {
-		return {
-			...options,
-			challenge: base64UrlToBytes(options.challenge),
-			user: options.user
-				? { ...options.user, id: base64UrlToBytes(options.user.id) }
-				: undefined,
-			excludeCredentials: options.excludeCredentials?.map((item) => ({
-				...item,
-				id: base64UrlToBytes(item.id),
-			})),
-		} as unknown as PublicKeyCredentialCreationOptions;
-	}
-
-	private authenticationOptions(
-		options: WebAuthnOptions,
-	): PublicKeyCredentialRequestOptions {
-		return {
-			...options,
-			challenge: base64UrlToBytes(options.challenge),
-			allowCredentials: options.allowCredentials?.map((item) => ({
-				...item,
-				id: base64UrlToBytes(item.id),
-			})),
-		} as unknown as PublicKeyCredentialRequestOptions;
-	}
-
-	private registrationResponse(
-		credential: PublicKeyCredential,
-	): Record<string, unknown> {
-		const response = credential.response as AuthenticatorAttestationResponse;
-		return {
-			id: credential.id,
-			rawId: bytesToBase64Url(credential.rawId),
-			response: {
-				clientDataJSON: bytesToBase64Url(response.clientDataJSON),
-				attestationObject: bytesToBase64Url(response.attestationObject),
-				transports: response.getTransports?.(),
-			},
-			type: credential.type,
-			clientExtensionResults: credential.getClientExtensionResults(),
-		};
-	}
-
-	private authenticationResponse(
-		credential: PublicKeyCredential,
-	): Record<string, unknown> {
-		const response = credential.response as AuthenticatorAssertionResponse;
-		return {
-			id: credential.id,
-			rawId: bytesToBase64Url(credential.rawId),
-			response: {
-				clientDataJSON: bytesToBase64Url(response.clientDataJSON),
-				authenticatorData: bytesToBase64Url(response.authenticatorData),
-				signature: bytesToBase64Url(response.signature),
-				userHandle: response.userHandle
-					? bytesToBase64Url(response.userHandle)
-					: undefined,
-			},
-			type: credential.type,
-			clientExtensionResults: credential.getClientExtensionResults(),
-		};
 	}
 }

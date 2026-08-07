@@ -20,7 +20,15 @@ describe('protected workspace routes', () => {
 			['garage', 'maintenance', 'settings'].includes(candidate.path ?? ''),
 		)) {
 			expect(route.canMatch).toHaveLength(1);
-			expect(route.loadComponent).toBeTypeOf('function');
+			expect(route.loadComponent ?? route.loadChildren).toBeTypeOf('function');
 		}
+	});
+
+	it('loads Settings through its own lazy route file', () => {
+		const settings = routes.find((route) => route.path === 'settings');
+
+		expect(settings?.canMatch).toHaveLength(1);
+		expect(settings?.loadChildren).toBeTypeOf('function');
+		expect(settings?.loadComponent).toBeUndefined();
 	});
 });

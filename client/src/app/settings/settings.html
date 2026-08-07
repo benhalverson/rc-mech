@@ -1,0 +1,109 @@
+<section class="security-panel" aria-labelledby="timezone-title">
+	<div class="section-heading">
+		<div>
+			<div class="eyebrow">Display settings</div>
+			<h2 id="timezone-title" data-route-focus tabindex="-1">Garage timezone</h2>
+		</div>
+		<span class="security-note">Used for every run date</span>
+	</div>
+	<p class="section-intro">Choose the IANA timezone where you keep this garage. Dates stay consistent when you open RC Mech on another device.</p>
+	<form class="timezone-form" (submit)="saveTimezone($event)" novalidate>
+		<label for="garage-timezone">IANA timezone</label>
+		<div class="inline-form">
+			<input id="garage-timezone" type="text" autocomplete="off" placeholder="America/Los_Angeles" [formField]="timezoneForm.timezone" [attr.aria-describedby]="(timezoneForm.timezone().touched() && timezoneForm.timezone().invalid()) || store.timezoneError() ? 'timezone-validation' : 'timezone-status'" />
+			<button class="button" type="submit" [disabled]="store.timezoneLoading() || store.timezoneSaving()">{{ store.timezoneSaving() ? 'Saving…' : 'Save timezone' }}</button>
+		</div>
+	</form>
+	@if (timezoneForm.timezone().touched() && timezoneForm.timezone().invalid()) {
+		<p id="timezone-validation" class="hint" role="alert">{{ timezoneForm.timezone().errors()[0]?.message }}</p>
+	} @else if (store.timezoneError()) {
+		<p id="timezone-validation" class="hint" role="alert">{{ store.timezoneError() }}</p>
+		<button class="text-button" type="button" (click)="store.retryTimezone()">Try again</button>
+	} @else if (store.timezoneLoading()) {
+		<p id="timezone-status" class="hint" role="status">Loading the garage timezone…</p>
+	} @else {
+		<p id="timezone-status" class="hint" role="status">Currently displaying dates in <strong>{{ store.timezone() }}</strong>.</p>
+	}
+	@if (store.timezoneMessage()) { <p class="message" role="status">{{ store.timezoneMessage() }}</p> }
+
+	<div class="section-heading passkey-heading">
+		<div><div class="eyebrow">Invite access</div><h2 id="invite-codes-title">Your invite codes</h2></div>
+		@if (!store.inviteLoading() && !store.inviteError()) { <span class="security-note">{{ store.inviteAllowance().remaining }} of {{ store.inviteAllowance().allowance }} remaining</span> }
+	</div>
+	<p class="section-intro">Create up to five lifetime codes for people you trust. A revoked or redeemed code does not replenish the allowance.</p>
+	<form class="timezone-form" (submit)="createInviteCode($event)" aria-labelledby="invite-codes-title" novalidate>
+		<label for="new-invite-code">New invite code</label>
+		<div class="inline-form">
+			<input id="new-invite-code" type="text" autocomplete="off" placeholder="TRACK-DAY-01" [formField]="inviteForm.code" [attr.aria-describedby]="inviteForm.code().touched() && inviteForm.code().invalid() ? 'invite-validation' : null" />
+			<button class="button" type="submit" [disabled]="store.inviteLoading() || !!store.inviteError() || store.inviteAction() !== null || inviteForm().invalid() || store.inviteAllowance().remaining === 0">{{ store.inviteAction() === 'create' ? 'Creating…' : 'Create code' }}</button>
+		</div>
+	</form>
+	@if (inviteForm.code().touched() && inviteForm.code().invalid()) { <p id="invite-validation" class="hint" role="alert">{{ inviteForm.code().errors()[0]?.message }}</p> }
+	@if (store.inviteMessage()) { <p class="message" role="status">{{ store.inviteMessage() }}</p> }
+	@if (store.inviteActionError()) { <p class="hint" role="alert">{{ store.inviteActionError() }}</p> }
+	@if (store.inviteLoading()) {
+		<p class="hint" role="status">Loading invite history…</p>
+	} @else if (store.inviteError()) {
+		<p class="hint" role="alert">{{ store.inviteError() }}</p><button class="text-button" type="button" (click)="store.retryInvites()">Try again</button>
+	} @else if (!store.inviteCodes().length) {
+		<p class="empty-state">No invite codes yet.</p>
+	} @else {
+		<ul class="passkey-list" aria-label="Invite code history">
+			@for (code of store.inviteCodes(); track code.id) {
+				<li class="passkey-row"><span><strong>{{ code.code }}</strong><small>{{ code.status }}</small></span><span class="row-actions"><button class="text-button" type="button" (click)="store.copyInviteCode(code.code)">Copy</button>@if (code.status === 'available') { <button class="text-button danger" type="button" (click)="store.revokeInviteCode(code)" [disabled]="store.inviteAction() !== null">{{ store.inviteAction() === 'revoke:' + code.id ? 'Revoking…' : 'Revoke' }}</button> }</span></li>
+			}
+		</ul>
+	}
+
+	<div class="section-heading passkey-heading">
+		<div>
+			<div class="eyebrow">Owner access</div>
+			<h2 id="passkeys-title">Passkeys</h2>
+		</div>
+		<span class="security-note">Magic link recovery stays on</span>
+	</div>
+	<p class="section-intro">Register the devices you trust. Your browser handles platform prompts and cross-device handoff, including QR where supported.</p>
+
+	<form class="passkey-form" (submit)="registerPasskey($event)" novalidate>
+		<label for="passkey-name">Name a new passkey</label>
+		<div class="inline-form">
+			<input id="passkey-name" type="text" placeholder="Workshop laptop, phone…" [formField]="passkeyForm.name" [attr.aria-describedby]="passkeyForm.name().touched() && passkeyForm.name().invalid() ? 'passkey-validation' : null" />
+			<button class="button" type="submit" [disabled]="!store.webAuthnAvailable() || passkeyForm().invalid() || store.passkeyAction() !== null">{{ store.passkeyAction() === 'register' ? 'Waiting…' : 'Add passkey' }}</button>
+		</div>
+	</form>
+	@if (passkeyForm.name().touched() && passkeyForm.name().invalid()) { <p id="passkey-validation" class="hint" role="alert">{{ passkeyForm.name().errors()[0]?.message }}</p> }
+	@if (store.passkeyMessage()) { <p class="message" role="status">{{ store.passkeyMessage() }}</p> }
+	@if (store.passkeyActionError()) { <p class="message" role="alert">{{ store.passkeyActionError() }}</p> }
+	@if (store.passkeysLoading()) {
+		<p class="hint" role="status">Loading registered passkeys…</p>
+	} @else if (store.passkeyError()) {
+		<p class="hint" role="alert">{{ store.passkeyError() }}</p><button class="text-button" type="button" (click)="store.retryPasskeys()">Try again</button>
+	} @else if (!store.passkeys().length) {
+		<p class="empty-state">No passkeys yet. Add the first one after this magic-link session.</p>
+	} @else {
+		<ul class="passkey-list">
+			@for (passkey of store.passkeys(); track passkey.id) {
+				<li class="passkey-row">
+					@if (editingPasskeyId() === passkey.id) {
+						<form class="rename-form" (submit)="renamePasskey($event, passkey)" novalidate>
+							<label class="visually-hidden" [for]="'rename-' + passkey.id">Passkey name</label>
+							<input [id]="'rename-' + passkey.id" type="text" [formField]="renameForm.name" [attr.aria-describedby]="renameForm.name().touched() && renameForm.name().invalid() ? 'rename-validation-' + passkey.id : null" />
+							<button class="text-button" type="submit" [disabled]="store.passkeyAction() !== null">Save</button>
+							<button class="text-button muted" type="button" (click)="cancelRename()">Cancel</button>
+							@if (renameForm.name().touched() && renameForm.name().invalid()) { <span [id]="'rename-validation-' + passkey.id" class="hint" role="alert">{{ renameForm.name().errors()[0]?.message }}</span> }
+						</form>
+					} @else {
+						<div>
+							<strong>{{ passkey.name || 'Unnamed passkey' }}</strong>
+							<span class="passkey-meta">Added {{ passkey.createdAt ? (passkey.createdAt | date:'mediumDate') : 'recently' }}</span>
+						</div>
+						<div class="row-actions">
+							<button class="text-button" type="button" (click)="beginRename(passkey)">Rename</button>
+							<button class="text-button danger" type="button" (click)="store.revokePasskey(passkey)" [disabled]="store.passkeyAction() !== null">{{ store.passkeyAction() === 'revoke:' + passkey.id ? 'Revoking…' : 'Revoke' }}</button>
+						</div>
+					}
+				</li>
+			}
+		</ul>
+	}
+</section>
