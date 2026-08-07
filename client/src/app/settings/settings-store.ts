@@ -220,9 +220,13 @@ export const SettingsStore = signalStore(
 		async copyInviteCode(code: string): Promise<void> {
 			try {
 				await navigator.clipboard.writeText(code);
-				patchState(store, { inviteMessage: `Copied ${code}.` });
+				patchState(store, {
+					inviteMessage: `Copied ${code}.`,
+					inviteMutationError: '',
+				});
 			} catch {
 				patchState(store, {
+					inviteMessage: '',
 					inviteMutationError: 'The invite code could not be copied.',
 				});
 			}

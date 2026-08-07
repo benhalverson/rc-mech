@@ -10,7 +10,7 @@
 	<form class="timezone-form" (submit)="saveTimezone($event)" novalidate>
 		<label for="garage-timezone">IANA timezone</label>
 		<div class="inline-form">
-			<input id="garage-timezone" type="text" autocomplete="off" placeholder="America/Los_Angeles" [formField]="timezoneForm.timezone" [attr.aria-describedby]="timezoneForm.timezone().invalid() ? 'timezone-validation' : 'timezone-status'" />
+			<input id="garage-timezone" type="text" autocomplete="off" placeholder="America/Los_Angeles" [formField]="timezoneForm.timezone" [attr.aria-describedby]="(timezoneForm.timezone().touched() && timezoneForm.timezone().invalid()) || store.timezoneError() ? 'timezone-validation' : 'timezone-status'" />
 			<button class="button" type="submit" [disabled]="store.timezoneLoading() || store.timezoneSaving()">{{ store.timezoneSaving() ? 'Saving…' : 'Save timezone' }}</button>
 		</div>
 	</form>

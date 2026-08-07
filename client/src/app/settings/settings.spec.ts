@@ -29,17 +29,27 @@ describe('Settings workspace', () => {
 	let fixture: ComponentFixture<Settings>;
 	let http: HttpTestingController;
 	const createCredential = vi.fn();
+	const writeClipboardText = vi.fn();
 	const credentialsDescriptor = Object.getOwnPropertyDescriptor(
 		navigator,
 		'credentials',
+	);
+	const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+		navigator,
+		'clipboard',
 	);
 
 	beforeEach(async () => {
 		vi.stubGlobal('PublicKeyCredential', FakeRegistrationCredential);
 		createCredential.mockReset();
+		writeClipboardText.mockReset();
 		Object.defineProperty(navigator, 'credentials', {
 			configurable: true,
 			value: { create: createCredential },
+		});
+		Object.defineProperty(navigator, 'clipboard', {
+			configurable: true,
+			value: { writeText: writeClipboardText },
 		});
 		await TestBed.configureTestingModule({
 			imports: [Settings],
@@ -61,6 +71,9 @@ describe('Settings workspace', () => {
 		if (credentialsDescriptor)
 			Object.defineProperty(navigator, 'credentials', credentialsDescriptor);
 		else Reflect.deleteProperty(navigator, 'credentials');
+		if (clipboardDescriptor)
+			Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+		else Reflect.deleteProperty(navigator, 'clipboard');
 	});
 
 	const flushInitialReads = (): void => {
@@ -136,6 +149,30 @@ describe('Settings workspace', () => {
 		});
 	});
 
+	it('associates a timezone read error with its input', async () => {
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		http.expectOne('/api/v1/invite-codes').flush({
+			allowance: 5,
+			used: 0,
+			remaining: 5,
+			codes: [],
+		});
+		http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const input = fixture.nativeElement.querySelector(
+			'#garage-timezone',
+		) as HTMLInputElement;
+		const descriptionId = input.getAttribute('aria-describedby');
+		expect(descriptionId).toBe('timezone-validation');
+		expect(
+			fixture.nativeElement.querySelector(`#${descriptionId}`),
+		).toBeTruthy();
+	});
+
 	it('validates and saves a timezone before refreshing its read model', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
@@ -190,6 +227,29 @@ describe('Settings workspace', () => {
 			remaining: 3,
 			codes: [],
 		});
+	});
+
+	it('clears a stale invite error after copying succeeds', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const store = TestBed.inject(SettingsStore);
+		writeClipboardText
+			.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+			.mockResolvedValueOnce(undefined);
+
+		await store.copyInviteCode('OWNER-01');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'The invite code could not be copied.',
+		);
+
+		await store.copyInviteCode('OWNER-01');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Copied OWNER-01.');
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'The invite code could not be copied.',
+		);
 	});
 
 	it('registers a passkey and refreshes the credential list', async () => {
