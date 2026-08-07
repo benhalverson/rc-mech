@@ -34,11 +34,11 @@ Each car deep link must move focus to its `data-route-focus` heading and publish
 
 | Measurement | Issue baseline | 2026-08-07 result |
 | --- | ---: | ---: |
-| Initial raw bundle | 648.75 kB | 211.90 kB |
-| Initial transfer estimate | not recorded | 53.41 kB |
+| Initial raw bundle | 648.75 kB | 212.02 kB |
+| Initial transfer estimate | not recorded | 53.48 kB |
 | Warning budget | 600 kB | 600 kB |
 
-The initial raw bundle is 436.85 kB (67.3%) smaller than the baseline and is 388.10 kB below the warning budget. No budget exception is required.
+The initial raw bundle is 436.73 kB (67.3%) smaller than the baseline and is 387.98 kB below the warning budget. No budget exception is required.
 
 The production build reports named lazy chunks for `maintenance`, `settings`, `sign-in`, `garage`, `car-overview`, `car-build`, `car-setups`, `car-photos`, and `car-runs`, plus their shared dependencies.
 
