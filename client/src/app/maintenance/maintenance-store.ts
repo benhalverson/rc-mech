@@ -40,13 +40,27 @@ export type MaintenanceReport = {
 };
 type ReportResponse = { report: MaintenanceReport };
 
+const isValidTimezone = (value: unknown): value is string => {
+	if (typeof value !== 'string' || !value.trim()) return false;
+	try {
+		new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+		return true;
+	} catch {
+		return false;
+	}
+};
+
 const browserTimezone = (): string => {
 	try {
-		return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+		const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		return isValidTimezone(timezone) ? timezone : 'UTC';
 	} catch {
 		return 'UTC';
 	}
 };
+
+const displayTimezone = (value: unknown): string =>
+	isValidTimezone(value) ? value : browserTimezone();
 
 const resourceMessage = (errors: unknown[]): string => {
 	if (
@@ -118,7 +132,7 @@ export const MaintenanceStore = signalStore(
 			),
 			timezone: computed(() =>
 				store.timezoneResource.hasValue()
-					? (store.timezoneResource.value().timezone ?? browserTimezone())
+					? displayTimezone(store.timezoneResource.value().timezone)
 					: browserTimezone(),
 			),
 			plans: computed(() =>

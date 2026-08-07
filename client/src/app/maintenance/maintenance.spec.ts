@@ -70,6 +70,35 @@ describe('Maintenance workspace', () => {
 		).toBeTruthy();
 	});
 
+	it('falls back from an invalid stored timezone', async () => {
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			)
+			.flush({ cars: [] });
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush({ timezone: 'Not/A-Timezone' });
+		http
+			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlans: [], activity: [] });
+		http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+		http
+			.expectOne('/api/v1/consumable-maintenance')
+			.flush({ consumableMaintenance: [] });
+		http.expectOne('/api/v1/consumables/report').flush({ report: {} });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const timezone = TestBed.inject(MaintenanceStore).timezone();
+		expect(timezone).not.toBe('Not/A-Timezone');
+		expect(() =>
+			new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(),
+		).not.toThrow();
+	});
+
 	it('renders an unauthorized state and retries all idempotent reads', async () => {
 		flushInitialReads({ status: 401, statusText: 'Unauthorized' });
 		await fixture.whenStable();

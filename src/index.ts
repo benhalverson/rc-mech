@@ -4300,6 +4300,15 @@ const openApi = {
 				},
 			},
 		},
+		'/api/v1/service-records': {
+			get: {
+				summary: "List service records across the authenticated owner's cars",
+				responses: {
+					200: { description: 'Owner-scoped service history' },
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
 		'/api/v1/service-records/{recordId}': {
 			patch: {
 				summary: 'Edit an active service record',
@@ -4847,6 +4856,26 @@ const consumableUpdateSchema = {
 	},
 };
 Object.assign(consumablePaths, {
+	'/api/v1/consumable-maintenance': {
+		get: {
+			summary:
+				"List consumable maintenance history across the authenticated owner's cars",
+			responses: {
+				200: { description: 'Owner-scoped consumable maintenance history' },
+				401: { description: 'Authentication required' },
+			},
+		},
+	},
+	'/api/v1/consumables/report': {
+		get: {
+			summary:
+				"Report consumable history and spend across the authenticated owner's cars",
+			responses: {
+				200: { description: 'Owner-scoped consumable report' },
+				401: { description: 'Authentication required' },
+			},
+		},
+	},
 	'/api/v1/cars/{carId}/consumables': {
 		parameters: [carIdParameter],
 		get: {
