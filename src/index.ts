@@ -126,6 +126,15 @@ const required = <T>(value: T | null | undefined, message: string): T => {
 };
 
 const neutralAuthResponse = { status: true } as const;
+const authRateLimitResponse = (c: AppContext) =>
+	c.json(
+		{
+			error: 'Too many requests. Please wait a moment and try again.',
+			guidance: 'Please wait a moment before requesting another link.',
+		},
+		429,
+		{ 'Retry-After': '60' },
+	);
 const authRateLimited = async (
 	c: AppContext,
 	bucket: string,
@@ -166,8 +175,7 @@ app.get(
 app.get('/docs', (c) => c.redirect('/api/docs'));
 
 app.post('/api/auth/register', async (c) => {
-	if (await authRateLimited(c, 'registration'))
-		return c.json(neutralAuthResponse);
+	if (await authRateLimited(c, 'registration')) return authRateLimitResponse(c);
 	const body = (await c.req.json().catch(() => null)) as {
 		email?: unknown;
 		inviteCode?: unknown;
@@ -282,8 +290,7 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 			.clone()
 			.json()
 			.catch(() => null)) as { email?: unknown } | null;
-		if (await authRateLimited(c, 'magic-link'))
-			return c.json(neutralAuthResponse);
+		if (await authRateLimited(c, 'magic-link')) return authRateLimitResponse(c);
 		if (
 			!isLocalDevelopment(c.env) &&
 			(!hasMagicLinkConfiguration(c.env) || !hasEmailDelivery(c.env))
@@ -375,15 +382,28 @@ app.post('/api/v1/invite-codes', async (c) => {
 	if (parsed.ok === false) return c.json({ error: parsed.reason }, 400);
 	const now = new Date().toISOString();
 	try {
-		const created = await c.env.DB.prepare(`
-			WITH next_slot(slot) AS (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5),
-			available AS (SELECT slot FROM next_slot WHERE NOT EXISTS (SELECT 1 FROM invite_code WHERE creator_id = ? AND slot = next_slot.slot) LIMIT 1)
-			INSERT INTO invite_code (id, code, creator_id, slot, status, created_at, updated_at)
-			SELECT ?, ?, ?, slot, 'available', ?, ? FROM available
-			RETURNING *
-		`)
-			.bind(creatorId, crypto.randomUUID(), parsed.code, creatorId, now, now)
-			.first();
+		const existing = await db(c.env)
+			.select({ slot: inviteCode.slot })
+			.from(inviteCode)
+			.where(eq(inviteCode.creatorId, creatorId))
+			.all();
+		const slot = [1, 2, 3, 4, 5].find(
+			(candidate) => !existing.some((item) => item.slot === candidate),
+		);
+		if (!slot) return c.json({ error: 'Invite-code allowance exhausted' }, 409);
+		const created = await db(c.env)
+			.insert(inviteCode)
+			.values({
+				id: crypto.randomUUID(),
+				code: parsed.code,
+				creatorId,
+				slot,
+				status: 'available',
+				createdAt: now,
+				updatedAt: now,
+			})
+			.returning()
+			.get();
 		if (!created)
 			return c.json({ error: 'Invite-code allowance exhausted' }, 409);
 		return c.json({ code: created }, 201);
@@ -4879,6 +4899,15 @@ invitePaths['/api/auth/register'] = {
 		},
 		responses: {
 			200: { description: 'Neutral response whether registration is accepted' },
+			429: {
+				description: 'Too many registration attempts; retry after one minute',
+				headers: {
+					'Retry-After': {
+						description: 'Seconds before retrying',
+						schema: { type: 'integer' },
+					},
+				},
+			},
 		},
 	},
 };

@@ -46,7 +46,7 @@
       <a class="nav-docs" href="/api/docs">API notes ↗</a>
     </mat-sidenav>
     <mat-sidenav-content>
-  <main tabindex="-1" [attr.aria-busy]="routeLoading()">
+  <div class="workspace-frame" role="region" aria-label="Current workspace" tabindex="-1" [attr.aria-busy]="routeLoading()">
     <header>
       <button class="nav-toggle" type="button" (click)="navOpen.set(true)" aria-label="Open workspace navigation">☰</button>
       <div>
@@ -372,7 +372,7 @@
       }
     </section>
     }
-  </main>
+  </div>
     </mat-sidenav-content>
   </mat-sidenav-container>
 }

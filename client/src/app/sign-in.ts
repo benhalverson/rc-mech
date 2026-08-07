@@ -112,10 +112,12 @@ export class SignIn {
 						'If the email and invite code are valid, a registration link is on its way.',
 					);
 				},
-				error: () => {
+				error: (error: { status?: number }) => {
 					this.sending.set(false);
 					this.message.set(
-						'That request could not be completed. Check the details and try again.',
+						error.status === 429
+							? 'Too many requests. Please wait a moment before trying again.'
+							: 'That request could not be completed. Check the details and try again.',
 					);
 				},
 			});
@@ -142,10 +144,12 @@ export class SignIn {
 						'If that address is allowed, a sign-in link is on its way.',
 					);
 				},
-				error: () => {
+				error: (error: { status?: number }) => {
 					this.sending.set(false);
 					this.message.set(
-						'That request could not be completed. Check the address and try again.',
+						error.status === 429
+							? 'Too many requests. Please wait a moment before trying again.'
+							: 'That request could not be completed. Check the address and try again.',
 					);
 				},
 			});
