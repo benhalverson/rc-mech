@@ -2,9 +2,11 @@ import { provideHttpClient } from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
+	type TestRequest,
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { CarPhotoGallery, type CarPhoto } from './car-photo-gallery';
+import { vi } from 'vitest';
+import { type CarPhoto, CarPhotoGallery } from './car-photo-gallery';
 
 type TestMember = {
 	set(value: unknown): void;
@@ -31,6 +33,7 @@ describe('CarPhotoGallery', () => {
 		fixture.componentRef.setInput('carId', 'car-1');
 		fixture.detectChanges();
 		http.expectOne('/api/v1/cars/car-1/photos').flush({ photos: [] });
+		await fixture.whenStable();
 		fixture.detectChanges();
 	});
 
@@ -73,7 +76,7 @@ describe('CarPhotoGallery', () => {
 		);
 	});
 
-	it('uploads a supported photo as multipart form data with credentials', () => {
+	it('uploads a supported photo as multipart form data with credentials', async () => {
 		const input = fixture.nativeElement.querySelector(
 			'input[type=file]',
 		) as HTMLInputElement;
@@ -95,6 +98,22 @@ describe('CarPhotoGallery', () => {
 				createdAt: '2026-08-03T00:00:00Z',
 				sortOrder: 0,
 			},
+		});
+		let reload: TestRequest | undefined;
+		await vi.waitFor(() => {
+			reload = http.expectOne('/api/v1/cars/car-1/photos');
+		});
+		reload?.flush({
+			photos: [
+				{
+					id: 'photo-1',
+					carId: 'car-1',
+					objectKey: 'photo-1.webp',
+					contentType: 'image/webp',
+					createdAt: '2026-08-03T00:00:00Z',
+					sortOrder: 0,
+				},
+			],
 		});
 	});
 
@@ -151,7 +170,16 @@ describe('CarPhotoGallery', () => {
 				{ ...first, sortOrder: 1 },
 			],
 		});
-		await Promise.resolve();
+		let reload: TestRequest | undefined;
+		await vi.waitFor(() => {
+			reload = http.expectOne('/api/v1/cars/car-1/photos');
+		});
+		reload?.flush({
+			photos: [
+				{ ...second, sortOrder: 0 },
+				{ ...first, sortOrder: 1 },
+			],
+		});
 		expect(app.photos()[0].id).toBe('photo-2');
 	});
 });

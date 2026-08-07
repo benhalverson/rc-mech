@@ -1,12 +1,12 @@
+import { HttpClient, httpResource } from '@angular/common/http';
 import {
-	ChangeDetectionStrategy,
 	Component,
-	effect,
+	computed,
 	inject,
 	input,
+	linkedSignal,
 	signal,
 } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 export type CarPhoto = {
@@ -24,7 +24,6 @@ export type CarPhoto = {
 
 type PhotosResponse = { photos: CarPhoto[] };
 type PhotoResponse = { photo: CarPhoto };
-type PhotoState = 'loading' | 'ready' | 'error';
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -34,22 +33,36 @@ const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 	imports: [],
 	templateUrl: './car-photo-gallery.html',
 	styleUrl: './car-photo-gallery.css',
-	changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CarPhotoGallery {
 	private readonly http = inject(HttpClient);
 	readonly carId = input.required<string>();
 	readonly archived = input(false);
 
-	protected readonly photos = signal<CarPhoto[]>([]);
-	protected readonly state = signal<PhotoState>('loading');
-	protected readonly error = signal('');
+	private readonly resource = httpResource<PhotosResponse>(() => {
+		const carId = this.carId();
+		return carId
+			? { url: `/api/v1/cars/${carId}/photos`, withCredentials: true }
+			: undefined;
+	});
+	protected readonly photos = linkedSignal(() =>
+		this.resource.hasValue() ? this.ordered(this.resource.value().photos) : [],
+	);
+	protected readonly state = computed(() =>
+		this.resource.isLoading()
+			? 'loading'
+			: this.resource.error()
+				? 'error'
+				: 'ready',
+	);
+	private readonly mutationError = signal('');
+	protected readonly error = computed(() =>
+		this.resource.error()
+			? 'The photo gallery could not be loaded.'
+			: this.mutationError(),
+	);
 	protected readonly action = signal<string | null>(null);
 	protected readonly validationError = signal('');
-
-	constructor() {
-		effect(() => this.load(this.carId()));
-	}
 
 	protected photoUrl(photo: CarPhoto): string {
 		return photo.url || `/api/v1/photos/${encodeURIComponent(photo.id)}`;
@@ -100,7 +113,7 @@ export class CarPhotoGallery {
 	protected designatePrimary(photo: CarPhoto): void {
 		if (this.archived() || this.action() || this.isPrimary(photo)) return;
 		this.action.set(`primary:${photo.id}`);
-		this.error.set('');
+		this.mutationError.set('');
 		this.http
 			.patch<PhotoResponse>(
 				this.photoEndpoint(photo),
@@ -116,6 +129,7 @@ export class CarPhotoGallery {
 								: { ...item, isPrimary: false, primary: false },
 						),
 					);
+					this.resource.reload();
 					this.action.set(null);
 				},
 				error: (error: { status?: number }) =>
@@ -131,7 +145,7 @@ export class CarPhotoGallery {
 		)
 			return;
 		this.action.set(`delete:${photo.id}`);
-		this.error.set('');
+		this.mutationError.set('');
 		this.http
 			.delete<{ deleted: boolean; primaryPhotoId?: string | null }>(
 				this.photoEndpoint(photo),
@@ -148,6 +162,7 @@ export class CarPhotoGallery {
 								primary: item.id === primaryPhotoId,
 							})),
 					);
+					this.resource.reload();
 					this.action.set(null);
 				},
 				error: (error: { status?: number }) =>
@@ -156,26 +171,8 @@ export class CarPhotoGallery {
 	}
 
 	protected retry(): void {
-		this.load(this.carId());
-	}
-
-	private load(carId: string): void {
-		this.state.set('loading');
-		this.error.set('');
-		this.http
-			.get<PhotosResponse>(`/api/v1/cars/${carId}/photos`, {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: ({ photos }) => {
-					this.photos.set(this.ordered(photos));
-					this.state.set('ready');
-				},
-				error: (error: { status?: number }) => {
-					this.state.set('error');
-					this.fail(error, 'The photo gallery could not be loaded.');
-				},
-			});
+		this.mutationError.set('');
+		this.resource.reload();
 	}
 
 	private upload(file: File): void {
@@ -196,7 +193,7 @@ export class CarPhotoGallery {
 		const body = new FormData();
 		body.append('file', file, file.name);
 		this.action.set(action);
-		this.error.set('');
+		this.mutationError.set('');
 		this.http
 			.post<PhotoResponse>(url, body, { withCredentials: true })
 			.subscribe({
@@ -210,6 +207,7 @@ export class CarPhotoGallery {
 									),
 						),
 					);
+					this.resource.reload();
 					this.action.set(null);
 				},
 				error: (error: { status?: number }) =>
@@ -224,7 +222,7 @@ export class CarPhotoGallery {
 
 	private persistOrder(photos: CarPhoto[]): void {
 		this.action.set('reorder');
-		this.error.set('');
+		this.mutationError.set('');
 		// Keep the new order visible immediately, then roll back if any owner-scoped update fails.
 		const previous = this.photos();
 		const optimistic = photos.map((photo, position) => ({
@@ -243,6 +241,7 @@ export class CarPhotoGallery {
 		)
 			.then(({ photos: saved }) => {
 				this.photos.set(saved?.length ? this.ordered(saved) : optimistic);
+				this.resource.reload();
 				this.action.set(null);
 			})
 			.catch((error: { status?: number }) => {
@@ -283,7 +282,7 @@ export class CarPhotoGallery {
 
 	private fail(error: { status?: number }, fallback: string): void {
 		this.action.set(null);
-		this.error.set(
+		this.mutationError.set(
 			error.status === 401
 				? 'Your garage session has expired. Sign in again to continue.'
 				: error.status === 403 || error.status === 404

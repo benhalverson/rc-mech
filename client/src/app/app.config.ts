@@ -4,7 +4,7 @@ import {
 	provideBrowserGlobalErrorListeners,
 } from '@angular/core';
 import { provideAnimations } from '@angular/platform-browser/animations';
-import { provideRouter } from '@angular/router';
+import { provideRouter, withComponentInputBinding } from '@angular/router';
 
 import { routes } from './app.routes';
 import { ownerSessionExpiryInterceptor } from './owner-session-expiry.interceptor';
@@ -13,7 +13,7 @@ export const appConfig: ApplicationConfig = {
 	providers: [
 		provideBrowserGlobalErrorListeners(),
 		provideHttpClient(withInterceptors([ownerSessionExpiryInterceptor])),
-		provideRouter(routes),
+		provideRouter(routes, withComponentInputBinding()),
 		provideAnimations(),
 	],
 };

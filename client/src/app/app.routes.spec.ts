@@ -11,15 +11,34 @@ describe('protected workspace routes', () => {
 		expect(garage?.providers).toBeDefined();
 	});
 
-	it('keeps collection and overview on the same route-scoped Garage feature', () => {
+	it('keeps collection and overview independently route scoped', () => {
 		const collection = routes.find((route) => route.path === 'garage');
 		const overview = routes.find(
 			(route) => route.path === 'garage/:carId/overview',
 		);
 
-		expect(overview?.loadComponent).toBe(collection?.loadComponent);
+		expect(overview?.loadComponent).not.toBe(collection?.loadComponent);
 		expect(overview?.providers).toBeDefined();
 		expect(overview?.canMatch).toHaveLength(1);
+	});
+
+	it('gives every car leaf its own protected lazy component and route store', () => {
+		const carRoutes = routes.filter((route) =>
+			route.path?.startsWith('garage/:carId/'),
+		);
+
+		expect(carRoutes.map((route) => route.path)).toEqual([
+			'garage/:carId/overview',
+			'garage/:carId/setups',
+			'garage/:carId/build',
+			'garage/:carId/photos',
+			'garage/:carId/runs',
+		]);
+		expect(new Set(carRoutes.map((route) => route.loadComponent)).size).toBe(5);
+		for (const route of carRoutes) {
+			expect(route.canMatch).toHaveLength(1);
+			expect(route.providers).toBeDefined();
+		}
 	});
 
 	it('keeps a public sign-in route available for rejected navigation', () => {
@@ -27,8 +46,10 @@ describe('protected workspace routes', () => {
 	});
 
 	it('keeps every protected workspace behind the session gate', () => {
-		for (const route of routes.filter((candidate) =>
-			['garage', 'maintenance', 'settings'].includes(candidate.path ?? ''),
+		for (const route of routes.filter(
+			(candidate) =>
+				candidate.path?.startsWith('garage') ||
+				['maintenance', 'settings'].includes(candidate.path ?? ''),
 		)) {
 			expect(route.canMatch).toHaveLength(1);
 			expect(route.loadComponent ?? route.loadChildren).toBeTypeOf('function');
