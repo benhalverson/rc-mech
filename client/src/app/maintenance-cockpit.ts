@@ -389,6 +389,10 @@ export class MaintenanceCockpit {
 		this.serviceForm.update((current) => ({ ...current, [field]: value }));
 		if (field === 'carId') this.loadComponents(value);
 	}
+	protected changeServiceCar(event: Event): void {
+		const carId = this.selectedValue(event);
+		if (carId !== null) this.updateService('carId', carId);
+	}
 	protected setHistoryFilter(value: 'active' | 'deleted'): void {
 		this.historyFilter.set(value);
 	}
@@ -474,6 +478,10 @@ export class MaintenanceCockpit {
 	protected update(field: keyof MaintenanceForm, value: string): void {
 		this.form.update((current) => ({ ...current, [field]: value }));
 		if (field === 'carId') this.loadComponents(value);
+	}
+	protected changePlanCar(event: Event): void {
+		const carId = this.selectedValue(event);
+		if (carId !== null) this.update('carId', carId);
 	}
 	protected setFilter(value: 'all' | PlanState): void {
 		this.selectedFilter.set(value);
@@ -755,5 +763,11 @@ export class MaintenanceCockpit {
 			next: (components) => this.components.set(components),
 			error: () => this.components.set([]),
 		});
+	}
+
+	private selectedValue(event: Event): string | null {
+		return event.target instanceof HTMLSelectElement
+			? event.target.value
+			: null;
 	}
 }

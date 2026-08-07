@@ -21,6 +21,7 @@ type Harness = {
 	openCreate: () => void;
 	openEdit: (entry: ConsumableEntry) => void;
 	update: (field: string, value: string) => void;
+	changeKind: (event: Event) => void;
 	save: () => void;
 	archive: (entry: ConsumableEntry) => void;
 	restore: (entry: ConsumableEntry) => void;
@@ -428,6 +429,31 @@ describe('ConsumableMaintenance', () => {
 		});
 
 		app.update('kind', 'shock-fluid');
+
+		expect(app.form()).toMatchObject({
+			kind: 'shock-fluid',
+			axle: 'front',
+			rearDetails: '',
+			rearCost: '',
+		});
+	});
+
+	it('applies kind cleanup from the selected event value', () => {
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openCreate();
+		app.form.set({
+			...app.form(),
+			kind: 'tires',
+			axle: 'both',
+			rearDetails: 'Rear set',
+			rearCost: '25',
+		});
+		const select = document.createElement('select');
+		select.add(new Option('Shock fluid', 'shock-fluid'));
+		select.value = 'shock-fluid';
+		select.addEventListener('change', (event) => app.changeKind(event));
+
+		select.dispatchEvent(new Event('change'));
 
 		expect(app.form()).toMatchObject({
 			kind: 'shock-fluid',

@@ -291,9 +291,13 @@ export class ConsumableMaintenance {
 	}
 	protected update(field: keyof EntryForm, value: string): void {
 		this.form.update((current) => ({ ...current, [field]: value }));
-		if (field === 'kind') this.changeKind();
+		if (field === 'kind') this.applyKindChange();
 	}
-	protected changeKind(): void {
+	protected changeKind(event: Event): void {
+		const target = event.target;
+		if (target instanceof HTMLSelectElement) this.update('kind', target.value);
+	}
+	private applyKindChange(): void {
 		const kind = this.form().kind;
 		if (kind !== 'tires')
 			this.form.update((current) => ({

@@ -23,9 +23,11 @@ type TestMember = {
 type TestSignal<T> = TestMember & (() => T);
 type MaintenanceTestHarness = {
 	openCreate: (...args: unknown[]) => unknown;
+	changePlanCar: (event: Event) => void;
 	form: TestSignal<Record<string, string>>;
 	save: (...args: unknown[]) => unknown;
 	openServiceCreate: (...args: unknown[]) => unknown;
+	changeServiceCar: (event: Event) => void;
 	serviceForm: TestSignal<Record<string, string>>;
 	saveService: (...args: unknown[]) => unknown;
 	openCompletion: (...args: unknown[]) => unknown;
@@ -92,6 +94,36 @@ describe('MaintenanceCockpit', () => {
 			.flush({ consumableMaintenance: [] });
 		http.expectOne('/api/v1/consumables/report').flush({ report: {} });
 		fixture.detectChanges();
+	});
+
+	it('loads plan components from the selected car event value', () => {
+		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		app.openCreate();
+		http.expectOne('/api/v1/cars/car-1/components').flush({ components: [] });
+		const select = document.createElement('select');
+		select.add(new Option('Blue Buggy', 'car-2'));
+		select.value = 'car-2';
+		select.addEventListener('change', (event) => app.changePlanCar(event));
+
+		select.dispatchEvent(new Event('change'));
+
+		expect(app.form()['carId']).toBe('car-2');
+		http.expectOne('/api/v1/cars/car-2/components').flush({ components: [] });
+	});
+
+	it('loads service components from the selected car event value', () => {
+		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		app.openServiceCreate();
+		http.expectOne('/api/v1/cars/car-1/components').flush({ components: [] });
+		const select = document.createElement('select');
+		select.add(new Option('Blue Buggy', 'car-2'));
+		select.value = 'car-2';
+		select.addEventListener('change', (event) => app.changeServiceCar(event));
+
+		select.dispatchEvent(new Event('change'));
+
+		expect(app.serviceForm()['carId']).toBe('car-2');
+		http.expectOne('/api/v1/cars/car-2/components').flush({ components: [] });
 	});
 
 	afterEach(() => http.verify());
