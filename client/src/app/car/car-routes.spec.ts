@@ -194,9 +194,7 @@ describe('Car section routes', () => {
 			car: { ...car, archivedAt: '2026-08-07T00:00:00.000Z' },
 		});
 		http
-			.expectOne(
-				(request) => request.url === '/api/v1/cars/car-1/components',
-			)
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/components')
 			.flush({ components: [] });
 		await harness.fixture.whenStable();
 		harness.detectChanges();
