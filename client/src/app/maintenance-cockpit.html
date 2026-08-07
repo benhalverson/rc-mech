@@ -1,6 +1,6 @@
 <section class="maintenance-cockpit" aria-labelledby="maintenance-title">
   <div class="maintenance-heading section-heading">
-    <div><div class="eyebrow">Care ledger</div><h2 id="maintenance-title">Maintenance cockpit</h2><p class="section-intro">A quiet view of what the garage needs next. Calendar and run thresholds share one baseline, so either one can call a plan due.</p></div>
+    <div><div class="eyebrow">Care ledger</div><h2 id="maintenance-title" data-route-focus tabindex="-1">Maintenance cockpit</h2><p class="section-intro">A quiet view of what the garage needs next. Calendar and run thresholds share one baseline, so either one can call a plan due.</p></div>
     @if (state() === 'ready' && !editing()) { <button class="button" type="button" (click)="openCreate()" [disabled]="!garage().length">New plan</button> }
   </div>
   @if (state() === 'loading') { <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Reading the care ledger…</p></div> }
