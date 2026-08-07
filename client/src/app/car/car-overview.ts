@@ -47,19 +47,15 @@ const carFormFrom = (car: GarageCar): CarForm => ({
 	notes: car.notes ?? '',
 });
 
-const carPayload = (form: CarForm): GarageCarInput => {
-	const payload: GarageCarInput = { name: form.name.trim() };
-	for (const [field, value] of [
-		['make', form.make],
-		['model', form.model],
-		['scale', form.scale],
-		['vehicleType', form.vehicleType],
-		['powerType', form.powerType],
-		['notes', form.notes],
-	] as const)
-		if (value.trim()) payload[field] = value.trim();
-	return payload;
-};
+const carPayload = (form: CarForm): GarageCarInput => ({
+	name: form.name.trim(),
+	make: form.make.trim(),
+	model: form.model.trim(),
+	scale: form.scale.trim(),
+	vehicleType: form.vehicleType.trim(),
+	powerType: form.powerType.trim(),
+	notes: form.notes.trim(),
+});
 
 @Component({
 	selector: 'app-car-overview',

@@ -236,13 +236,23 @@ describe('Car section routes', () => {
 		const name = form.querySelector('input') as HTMLInputElement;
 		name.value = 'Red Runner Evo';
 		name.dispatchEvent(new Event('input'));
+		const make = [...form.querySelectorAll('label')]
+			.find((label) => label.textContent?.trim().startsWith('Make'))
+			?.querySelector('input') as HTMLInputElement;
+		make.value = '';
+		make.dispatchEvent(new Event('input'));
 		form.dispatchEvent(new Event('submit'));
 
 		const mutation = http.expectOne('/api/v1/cars/car-1');
 		expect(mutation.request.method).toBe('PATCH');
 		expect(mutation.request.body).toMatchObject({
 			name: 'Red Runner Evo',
-			make: 'Associated',
+			make: '',
+			model: 'B7',
+			scale: '',
+			vehicleType: '',
+			powerType: '',
+			notes: '',
 		});
 		mutation.flush({ car: { ...car, name: 'Red Runner Evo' } });
 		let refresh: TestRequest | undefined;
