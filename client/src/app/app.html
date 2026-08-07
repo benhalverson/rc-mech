@@ -2,7 +2,7 @@
 	{{ transition.announcement() }}
 </div>
 @if (transition.loading()) {
-	<div class="route-state" role="status" aria-live="polite">Loading page…</div>
+	<div class="route-state" aria-hidden="true">Loading page…</div>
 }
 @if (transition.error()) {
 	<div class="route-state error-state" role="alert">

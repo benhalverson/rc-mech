@@ -81,9 +81,10 @@ describe('App workspace shell', () => {
 		expect(navigation.classList.contains('nav-open')).toBe(true);
 		TestBed.inject(RouteTransitionAnnouncer).start();
 		fixture.detectChanges();
-		expect(
-			fixture.nativeElement.querySelector('.route-state').textContent,
-		).toContain('Loading page');
+		const loadingState = fixture.nativeElement.querySelector('.route-state');
+		expect(loadingState.textContent).toContain('Loading page');
+		expect(loadingState.getAttribute('aria-hidden')).toBe('true');
+		expect(loadingState.hasAttribute('role')).toBe(false);
 	});
 
 	it('signs out through the shared session store and returns to public routing', async () => {
