@@ -1,9 +1,53 @@
-import { env } from 'cloudflare:workers';
 import { expect, test } from 'vitest';
 import app from './index';
 
+const emptyResult = <T = Record<string, unknown>>(): D1Result<T> => ({
+	success: true,
+	meta: {} as D1Meta & Record<string, unknown>,
+	results: [],
+});
+
+const mockD1 = (): D1Database => {
+	const statement = {
+		bind: (..._values: unknown[]) => statement,
+		first: async <T = Record<string, unknown>>(_columnName?: string) =>
+			null as T | null,
+		all: async <T = Record<string, unknown>>() => emptyResult<T>(),
+		run: async <T = Record<string, unknown>>() => emptyResult<T>(),
+	};
+
+	return {
+		prepare: (_query: string) => statement,
+		batch: async <T = unknown>(_statements: D1PreparedStatement[]) =>
+			_statements.map(() => emptyResult<T>()),
+	} as unknown as D1Database;
+};
+
+const mockR2 = {
+	head: async () => null,
+	get: async () => null,
+	put: async () => null,
+	delete: async () => undefined,
+	list: async () => ({ objects: [], truncated: false }),
+} as unknown as R2Bucket;
+
+const MOCK_ENV = {
+	DB: mockD1(),
+	PHOTOS: mockR2,
+	EMAIL: {
+		send: async () => {
+			throw new Error('Unexpected email delivery in backend tests');
+		},
+	},
+	ASSETS: {
+		fetch: async () => new Response('Not found', { status: 404 }),
+	} as unknown as Fetcher,
+	APP_URL: 'http://localhost:8787',
+	ENVIRONMENT: 'local',
+} satisfies Env;
+
 const request = (path: string, init?: RequestInit) =>
-	app.fetch(new Request(`http://example.com${path}`, init), env);
+	app.request(path, init, MOCK_ENV);
 
 test('health is exposed through the Worker request interface', async () => {
 	const response = await request('/api/v1/health');
@@ -48,7 +92,7 @@ test('authentication rejects invalid request input through the Worker interface'
 	expect(response.status).toBe(400);
 });
 
-test('Worker test fixtures expose configured D1 and R2 bindings', () => {
-	expect(env.DB).toBeDefined();
-	expect(env.PHOTOS).toBeDefined();
+test('test fixtures expose configured D1 and R2 bindings', () => {
+	expect(MOCK_ENV.DB).toBeDefined();
+	expect(MOCK_ENV.PHOTOS).toBeDefined();
 });

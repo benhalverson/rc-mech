@@ -23,8 +23,7 @@
 		"types": [
 			"./worker-configuration.d.ts",
 			"@types/node",
-			"@types/service-worker-mock",
-			"@cloudflare/vitest-pool-workers/types"
+			"@types/service-worker-mock"
 		]
 	},
 	"exclude": ["node_modules", "dist", "tests", "client"],
