@@ -72,15 +72,26 @@ export const GarageStore = signalStore(
 	}),
 	withMethods((store) => ({
 		selectCar(activeCarId: string | null): void {
-			patchState(store, { activeCarId, lifecycleError: '' });
+			patchState(store, {
+				activeCarId,
+				lifecycleAction: null,
+				lifecycleError: '',
+			});
 		},
 		setArchivedFilter(showArchived: boolean): void {
-			patchState(store, { showArchived, activeCarId: null });
+			patchState(store, {
+				showArchived,
+				activeCarId: null,
+				lifecycleAction: null,
+				lifecycleError: '',
+			});
 		},
 		toggleArchived(): void {
 			patchState(store, {
 				showArchived: !store.showArchived(),
 				activeCarId: null,
+				lifecycleAction: null,
+				lifecycleError: '',
 			});
 		},
 		retryCollection(): void {
