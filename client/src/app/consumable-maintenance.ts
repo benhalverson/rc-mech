@@ -8,7 +8,10 @@ import {
 	signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { MaintenanceStore } from './maintenance/maintenance-store';
+import {
+	type MaintenanceReport,
+	MaintenanceStore,
+} from './maintenance/maintenance-store';
 
 export type ConsumableCar = {
 	id: string;
@@ -43,9 +46,9 @@ export type TireReport = {
 	front: TireReportAxle;
 	rear: TireReportAxle;
 	spend: {
-		front: number;
-		rear: number;
-		combined: number;
+		front: number | null;
+		rear: number | null;
+		combined: number | null;
 		missingCostEntries: number;
 	};
 	fluidEntries: ConsumableEntry[];
@@ -156,6 +159,42 @@ export const buildTireReport = (entries: ConsumableEntry[]): TireReport => {
 	};
 };
 
+export const mergeTireReport = (
+	local: TireReport,
+	server: MaintenanceReport | null | undefined,
+): TireReport => {
+	if (
+		!server?.tires?.frequency?.front ||
+		!server.tires.frequency.rear ||
+		!server.tires.spend?.front ||
+		!server.tires.spend.rear ||
+		!server.tires.spend.combined
+	)
+		return local;
+	return {
+		...local,
+		front: {
+			...local.front,
+			eventCount: server.tires.frequency.front.eventCount,
+			averageDays: server.tires.frequency.front.averageIntervalDays,
+		},
+		rear: {
+			...local.rear,
+			eventCount: server.tires.frequency.rear.eventCount,
+			averageDays: server.tires.frequency.rear.averageIntervalDays,
+		},
+		spend: {
+			...local.spend,
+			front: server.tires.spend.front.total,
+			rear: server.tires.spend.rear.total,
+			combined: server.tires.spend.combined.total,
+		},
+	};
+};
+
+export const spendLabel = (value: number | null): string =>
+	value === null ? 'Multiple currencies' : `$${value.toFixed(2)}`;
+
 @Component({
 	selector: 'app-consumable-maintenance',
 	imports: [CommonModule, DatePipe, FormsModule],
@@ -170,13 +209,11 @@ export class ConsumableMaintenance {
 		this.store.consumableEntries(),
 	);
 	protected readonly timezone = this.store.timezone;
-	private readonly mutationError = signal('');
+	protected readonly mutationError = signal('');
 	protected readonly state = computed(() =>
 		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
 	);
-	protected readonly error = computed(
-		() => this.mutationError() || this.store.error(),
-	);
+	protected readonly error = this.store.error;
 	protected readonly formError = signal('');
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
@@ -186,37 +223,10 @@ export class ConsumableMaintenance {
 		this.garage().some((car) => !car.archivedAt),
 	);
 	protected readonly form = signal<EntryForm>(emptyForm());
-	protected readonly report = computed(() => {
-		const local = buildTireReport(this.entries());
-		const server = this.store.report();
-		if (
-			!server?.tires?.frequency?.front ||
-			!server.tires.frequency.rear ||
-			!server.tires.spend?.front ||
-			!server.tires.spend.rear ||
-			!server.tires.spend.combined
-		)
-			return local;
-		return {
-			...local,
-			front: {
-				...local.front,
-				eventCount: server.tires.frequency.front.eventCount,
-				averageDays: server.tires.frequency.front.averageIntervalDays,
-			},
-			rear: {
-				...local.rear,
-				eventCount: server.tires.frequency.rear.eventCount,
-				averageDays: server.tires.frequency.rear.averageIntervalDays,
-			},
-			spend: {
-				...local.spend,
-				front: server.tires.spend.front.total ?? local.spend.front,
-				rear: server.tires.spend.rear.total ?? local.spend.rear,
-				combined: server.tires.spend.combined.total ?? local.spend.combined,
-			},
-		};
-	});
+	protected readonly report = computed(() =>
+		mergeTireReport(buildTireReport(this.entries()), this.store.report()),
+	);
+	protected readonly spendLabel = spendLabel;
 
 	protected load(): void {
 		this.mutationError.set('');

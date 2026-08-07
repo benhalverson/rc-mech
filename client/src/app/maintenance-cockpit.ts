@@ -159,13 +159,11 @@ export class MaintenanceCockpit {
 	);
 	protected readonly timezone = this.store.timezone;
 	protected readonly components = signal<MaintenanceComponent[]>([]);
-	private readonly mutationError = signal('');
+	protected readonly mutationError = signal('');
 	protected readonly state = computed(() =>
 		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
 	);
-	protected readonly error = computed(
-		() => this.mutationError() || this.store.error(),
-	);
+	protected readonly error = this.store.error;
 	protected readonly editing = signal(false);
 	protected readonly serviceEditing = signal(false);
 	protected readonly serviceEditingId = signal<string | null>(null);

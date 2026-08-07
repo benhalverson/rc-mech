@@ -3,6 +3,7 @@
     <div><div class="eyebrow">Care ledger</div><h2 id="maintenance-title" data-route-focus tabindex="-1">Maintenance cockpit</h2><p class="section-intro">A quiet view of what the garage needs next. Calendar and run thresholds share one baseline, so either one can call a plan due.</p></div>
     @if (state() === 'ready' && !editing()) { <button class="button" type="button" (click)="openCreate()" [disabled]="!hasActiveCars()">New plan</button> }
   </div>
+  @if (mutationError()) { <p class="message" role="alert">{{ mutationError() }}</p> }
   @if (state() === 'loading') { <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Reading the care ledger…</p></div> }
   @else if (state() === 'error') { <div class="state-card error-state" role="alert"><span class="state-mark">!</span><p>{{ error() }}</p><button class="text-button" type="button" (click)="load()">Try again</button></div> }
   @else if (editing()) {

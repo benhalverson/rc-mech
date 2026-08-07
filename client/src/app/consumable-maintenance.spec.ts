@@ -10,6 +10,8 @@ import {
 	buildTireReport,
 	ConsumableEntry,
 	ConsumableMaintenance,
+	mergeTireReport,
+	spendLabel,
 } from './consumable-maintenance';
 import { MaintenanceStore } from './maintenance/maintenance-store';
 
@@ -38,6 +40,28 @@ describe('ConsumableMaintenance', () => {
 		expect(report.front.averageDays).toBeNull();
 		expect(report.spend.combined).toBe(0);
 		expect(report.fluidEntries).toEqual([]);
+	});
+
+	it('preserves the server multi-currency spend state', () => {
+		const report = mergeTireReport(buildTireReport([]), {
+			tires: {
+				frequency: {
+					front: { eventCount: 2, averageIntervalDays: 10 },
+					rear: { eventCount: 2, averageIntervalDays: 12 },
+				},
+				spend: {
+					front: { total: null },
+					rear: { total: 40 },
+					combined: { total: null },
+				},
+			},
+			fluidHistory: [],
+		});
+
+		expect(report.spend.front).toBeNull();
+		expect(report.spend.combined).toBeNull();
+		expect(spendLabel(report.spend.combined)).toBe('Multiple currencies');
+		expect(spendLabel(report.spend.rear)).toBe('$40.00');
 	});
 
 	it('reports one front event without inventing a frequency', () => {
@@ -190,6 +214,29 @@ describe('ConsumableMaintenance', () => {
 		app.openCreate();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.querySelector('.consumable-form')).toBeNull();
+	});
+
+	it('shows archive failures without hiding consumable history', () => {
+		const app = fixture.componentInstance as unknown as Harness;
+		const entry: ConsumableEntry = {
+			id: 'entry-1',
+			carId: 'car-1',
+			kind: 'shock-fluid',
+			performedAt: '2026-08-01T00:00:00.000Z',
+			fluidArea: 'front-shocks',
+			notes: 'Fresh oil',
+		};
+		app.entries.set([entry]);
+		app.archive(entry);
+		http
+			.expectOne('/api/v1/cars/car-1/consumable-maintenance/entry-1')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'That consumable entry could not be archived.',
+		);
+		expect(fixture.nativeElement.textContent).toContain('Fresh oil');
 	});
 
 	it('records both axle tire snapshots with distinct details and costs', async () => {

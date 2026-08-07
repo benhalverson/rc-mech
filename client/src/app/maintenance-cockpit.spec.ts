@@ -32,6 +32,10 @@ type MaintenanceTestHarness = {
 	plans: TestSignal<MaintenancePlan[]>;
 	deleteService: (...args: unknown[]) => unknown;
 	restoreService: (...args: unknown[]) => unknown;
+	transition: (
+		plan: MaintenancePlan,
+		action: 'pause' | 'resume' | 'archive',
+	) => void;
 	garage: TestSignal<unknown[]>;
 };
 
@@ -118,6 +122,20 @@ describe('MaintenanceCockpit', () => {
 				'#maintenance-title[data-route-focus][tabindex="-1"]',
 			),
 		).toBeTruthy();
+	});
+
+	it('shows plan mutation failures without hiding the ledger', () => {
+		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		app.transition(plan, 'pause');
+		http
+			.expectOne('/api/v1/maintenance-plans/plan-1/pause')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'That maintenance update could not be saved.',
+		);
+		expect(fixture.nativeElement.textContent).toContain('Clean bearings');
 	});
 
 	it('creates a plan through the existing relative maintenance endpoint', async () => {
