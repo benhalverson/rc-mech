@@ -237,11 +237,14 @@ export const GarageStore = signalStore(
 				store.collection.reload();
 				store.overview.reload();
 				patchState(store, { lifecycleAction: null });
-			} catch {
+			} catch (error) {
 				if (store.activeCarId() !== carId) return;
 				patchState(store, {
 					lifecycleAction: null,
-					lifecycleError: `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`,
+					lifecycleError: readErrorMessage(
+						error,
+						`The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`,
+					),
 				});
 			}
 		},

@@ -100,7 +100,18 @@ export class Garage {
 	);
 
 	constructor() {
-		effect(() => this.store.selectCar(this.routeCarId()));
+		let previousCarId = this.routeCarId();
+		effect(() => {
+			const carId = this.routeCarId();
+			if (carId !== previousCarId) {
+				previousCarId = carId;
+				this.editing.set(null);
+				this.formValidationError.set('');
+				this.store.clearCarMutationState();
+				this.carFields().reset(emptyCarForm());
+			}
+			this.store.selectCar(carId);
+		});
 	}
 
 	protected openCreate(): void {

@@ -248,9 +248,18 @@ describe('Garage overview', () => {
 			.expectOne('/api/v1/cars/car-1')
 			.flush({ car: { id: 'car-1', name: 'Red Runner' } });
 		await fixture.whenStable();
+		fixture.detectChanges();
+		const edit = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) =>
+				button.textContent?.trim() === 'Edit details',
+		) as HTMLButtonElement;
+		edit.click();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.car-form')).toBeTruthy();
 
 		routeParams.next(convertToParamMap({ carId: 'car-2' }));
 		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.car-form')).toBeNull();
 		let nextOverview: TestRequest | undefined;
 		await vi.waitFor(() => {
 			nextOverview = http.expectOne('/api/v1/cars/car-2');
@@ -329,5 +338,27 @@ describe('Garage overview', () => {
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Restore car');
+	});
+
+	it('identifies an expired session when archiving a car', async () => {
+		http
+			.expectOne('/api/v1/cars/car-1')
+			.flush({ car: { id: 'car-1', name: 'Red Runner', archivedAt: null } });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const archive = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) =>
+				button.textContent?.trim() === 'Archive car',
+		) as HTMLButtonElement;
+		archive.click();
+		http
+			.expectOne('/api/v1/cars/car-1/archive')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(
+			fixture.nativeElement.querySelector('[role="alert"]')?.textContent,
+		).toContain('Your garage session has expired');
 	});
 });
