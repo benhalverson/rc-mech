@@ -9,25 +9,27 @@
   <p class="section-intro">Keep each baseline intact. Copy the setup you are starting from, then change only what the next run needs.</p>
   @if (archived()) { <p class="archive-note">This car is archived. Setup history remains available, but snapshots cannot be changed.</p> }
   @if (!archived()) {
-    <form class="import-strip" (ngSubmit)="previewImport()" aria-labelledby="import-setup-title">
+    <form class="import-strip" (submit)="previewImport($event)" aria-labelledby="import-setup-title" novalidate>
       <div>
         <div class="eyebrow">Reviewed source import</div>
         <h5 id="import-setup-title">Bring a So Dialed sheet to the bench.</h5>
         <p>Paste a supported setup URL. The importer returns a draft for you to check; it never writes a snapshot by itself.</p>
       </div>
       <div class="import-controls">
-        <label class="wide">So Dialed setup URL <input name="sodialed-url" type="url" required placeholder="https://sodialed.com/…" [ngModel]="importUrl()" (ngModelChange)="updateImportUrl($event)" /></label>
+        <label class="wide" for="sodialed-url">So Dialed setup URL <input id="sodialed-url" type="url" placeholder="https://sodialed.com/…" [formField]="importUrlForm.url" [attr.aria-describedby]="importUrlForm.url().touched() && importUrlForm.url().invalid() ? 'import-url-validation' : null" /></label>
         <button class="button" type="submit" [disabled]="importState() === 'loading'">{{ importState() === 'loading' ? 'Reading sheet…' : 'Review setup' }}</button>
       </div>
+      @if (importUrlForm.url().touched() && importUrlForm.url().invalid()) { <p id="import-url-validation" class="message" role="alert">{{ importUrlForm.url().errors()[0]?.message }}</p> }
       @if (importError()) { <p class="message" role="alert">{{ importError() }}</p> }
     </form>
   }
-  @if (error()) { <p class="message" role="alert">{{ error() }} <button class="text-button" type="button" (click)="retry()">Try again</button></p> }
+  @if (actionError()) { <p class="message" role="alert">{{ actionError() }}</p> }
+  @if (actionMessage()) { <p class="message" role="status">{{ actionMessage() }}</p> }
 
   @if (state() === 'loading') {
     <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Reading setup history…</p></div>
   } @else if (state() === 'error') {
-    <div class="state-card error-state"><span class="state-mark">!</span><p>Setup history is unavailable.</p></div>
+    <div class="state-card error-state" role="alert"><span class="state-mark" aria-hidden="true">!</span><p>{{ readFailure()?.message }}</p>@if (readFailure()?.retryable) { <button class="text-button" type="button" (click)="retry()">Try again</button> }</div>
   } @else if (!setups().length && !editing()) {
     <div class="state-card empty-state"><span class="state-mark">＋</span><h5>No setup snapshots yet</h5><p>Save a baseline now, even if the sheet is only partly filled in.</p>@if (!archived()) { <button class="button" type="button" (click)="openAdd()">Record the first setup</button> }</div>
   } @else {
@@ -44,7 +46,7 @@
       </div>
 
       @if (editing()) {
-        <form class="setup-editor" (ngSubmit)="save()" aria-labelledby="setup-editor-title">
+        <form class="setup-editor" (submit)="save($event)" aria-labelledby="setup-editor-title" [attr.aria-describedby]="formError() ? 'setup-form-validation' : null" novalidate>
           @if (importPreview(); as preview) {
             <div class="review-banner">
               <div class="eyebrow">Import review draft</div>
@@ -53,7 +55,7 @@
               @if (preview.duplicate; as duplicate) { <p class="duplicate-notice">This source was already imported as “{{ duplicate.name }}”. Saving will create another snapshot and will not change that record.</p> }
               <div class="import-car-choice">
                 <label>Save to car
-                  <select name="import-car" [ngModel]="importCarId()" (ngModelChange)="selectImportCar($event)">
+                  <select [formField]="importCarForm.carId">
                     @for (car of availableCars(); track car.id) { <option [value]="car.id">{{ car.name }}{{ car.make || car.model ? ' · ' + (car.make || '') + ' ' + (car.model || '') : '' }}</option> }
                   </select>
                 </label>
@@ -65,33 +67,33 @@
             <div class="eyebrow">{{ mode() === 'edit' ? 'Edit snapshot' : 'New snapshot' }}</div>
             <h5 id="setup-editor-title">{{ mode() === 'edit' ? 'Tune the setup record.' : 'Put a baseline on the bench.' }}</h5>
           }
-          @if (formError()) { <p class="message" role="alert">{{ formError() }}</p> }
+          @if (formError()) { <div id="setup-form-validation" class="message" role="alert"><p>{{ formError() }}</p>@if (setupForm().invalid()) { <ul>@for (validationError of setupForm().errorSummary(); track $index) { <li>{{ validationError.message }}</li> }</ul> }</div> }
           <div class="form-grid">
-            <label class="wide">Setup name <input name="setup-name" required maxlength="160" placeholder="Outdoor clay baseline" [ngModel]="form().name" (ngModelChange)="updateField('name', $event)" /></label>
-            <label>Date <input name="setup-date" type="date" [ngModel]="form().recordedAt" (ngModelChange)="updateField('recordedAt', $event)" /></label>
-            <label>Track <input name="setup-track" maxlength="160" placeholder="The home track" [ngModel]="form().track" (ngModelChange)="updateField('track', $event)" /></label>
-            <label>Event <input name="setup-event" maxlength="160" placeholder="Club race" [ngModel]="form().event" (ngModelChange)="updateField('event', $event)" /></label>
-            <label>Surface <input name="setup-surface" maxlength="120" placeholder="Dry clay" [ngModel]="form().surface" (ngModelChange)="updateField('surface', $event)" /></label>
-            <label>Traction / grip <input name="setup-traction" maxlength="120" placeholder="Medium" [ngModel]="form().traction" (ngModelChange)="updateField('traction', $event)" /></label>
-            <label>Moisture <input name="setup-moisture" maxlength="120" placeholder="Damp" [ngModel]="form().moisture" (ngModelChange)="updateField('moisture', $event)" /></label>
-            <label>Condition <input name="setup-condition" maxlength="120" placeholder="Qualifying" [ngModel]="form().condition" (ngModelChange)="updateField('condition', $event)" /></label>
-            <label>Temperature <input name="setup-temperature" maxlength="80" placeholder="72°F" [ngModel]="form().temperature" (ngModelChange)="updateField('temperature', $event)" /></label>
+			<label class="wide">Setup name <input placeholder="Outdoor clay baseline" [formField]="setupForm.name" [attr.aria-describedby]="formError() && setupForm.name().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Date <input type="date" [formField]="setupForm.recordedAt" [attr.aria-describedby]="formError() && setupForm.recordedAt().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Track <input placeholder="The home track" [formField]="setupForm.track" [attr.aria-describedby]="formError() && setupForm.track().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Event <input placeholder="Club race" [formField]="setupForm.event" [attr.aria-describedby]="formError() && setupForm.event().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Surface <input placeholder="Dry clay" [formField]="setupForm.surface" [attr.aria-describedby]="formError() && setupForm.surface().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Traction / grip <input placeholder="Medium" [formField]="setupForm.traction" [attr.aria-describedby]="formError() && setupForm.traction().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Moisture <input placeholder="Damp" [formField]="setupForm.moisture" [attr.aria-describedby]="formError() && setupForm.moisture().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Condition <input placeholder="Qualifying" [formField]="setupForm.condition" [attr.aria-describedby]="formError() && setupForm.condition().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Temperature <input placeholder="72°F" [formField]="setupForm.temperature" [attr.aria-describedby]="formError() && setupForm.temperature().invalid() ? 'setup-form-validation' : null" /></label>
           </div>
 
           <div class="setup-sections">
             @for (section of sectionKeys; track section) {
               <fieldset class="setup-section"><legend>{{ sectionLabels[section] }}</legend><div class="form-grid">
-                @for (field of sectionFields[section]; track field) { <label>{{ displayName(field) }} <input [name]="section + '-' + field" [placeholder]="'Optional ' + displayName(field).toLowerCase()" [ngModel]="form().sections[section][field]" (ngModelChange)="updateSectionField(section, field, $event)" /></label> }
+				@for (field of sectionFields[section]; track field) { <label>{{ displayName(field) }} <input [placeholder]="'Optional ' + displayName(field).toLowerCase()" [formField]="setupForm.sections[section][field]" [attr.aria-describedby]="formError() && setupForm.sections[section][field]().invalid() ? 'setup-form-validation' : null" /></label> }
               </div></fieldset>
             }
           </div>
 
           <fieldset class="source-fields"><legend>Source and provenance</legend><p class="hint">Keep the source link and retained PDF reference when this setup came from an external sheet. Nothing here is required for a manual baseline.</p><div class="form-grid">
-            <label class="wide">Source URL <input name="setup-source-url" type="url" placeholder="https://…" [ngModel]="form().sourceUrl" (ngModelChange)="updateField('sourceUrl', $event)" /></label>
-            <label>PDF title / reference <input name="setup-pdf-title" maxlength="240" placeholder="Setup sheet, page 2" [ngModel]="form().pdfTitle" (ngModelChange)="updateField('pdfTitle', $event)" /></label>
-            <label>PDF page <input name="setup-pdf-page" type="number" min="1" step="1" placeholder="Optional" [ngModel]="form().pdfPage" (ngModelChange)="updateField('pdfPage', $event)" /></label>
-            <label class="wide">Uncertain or unmapped values <textarea name="setup-unmapped" rows="5" placeholder="Values that still need review…" [ngModel]="form().unmappedValues" (ngModelChange)="updateField('unmappedValues', $event)"></textarea></label>
-            <label class="wide">Raw source values <textarea name="setup-raw" rows="5" placeholder="The original extracted values are retained here…" [ngModel]="form().rawValues" (ngModelChange)="updateField('rawValues', $event)"></textarea></label>
+			<label class="wide">Source URL <input type="url" placeholder="https://…" [formField]="setupForm.sourceUrl" [attr.aria-describedby]="formError() && setupForm.sourceUrl().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>PDF title / reference <input placeholder="Setup sheet, page 2" [formField]="setupForm.pdfTitle" [attr.aria-describedby]="formError() && setupForm.pdfTitle().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>PDF page <input type="text" inputmode="numeric" placeholder="Optional" [formField]="setupForm.pdfPage" [attr.aria-describedby]="formError() && setupForm.pdfPage().invalid() ? 'setup-form-validation' : null" /></label>
+			<label class="wide">Uncertain or unmapped values <textarea rows="5" placeholder="Values that still need review…" [formField]="setupForm.unmappedValues" [attr.aria-describedby]="formError() && setupForm.unmappedValues().invalid() ? 'setup-form-validation' : null"></textarea></label>
+			<label class="wide">Raw source values <textarea rows="5" placeholder="The original extracted values are retained here…" [formField]="setupForm.rawValues" [attr.aria-describedby]="formError() && setupForm.rawValues().invalid() ? 'setup-form-validation' : null"></textarea></label>
           </div></fieldset>
           <div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">{{ action() === 'save' ? 'Saving…' : importPreview() ? 'Save as new snapshot' : 'Save snapshot' }}</button><button class="button quiet" type="button" (click)="importPreview() ? cancelImport() : cancelEdit()" [disabled]="action() !== null">Cancel</button></div>
         </form>

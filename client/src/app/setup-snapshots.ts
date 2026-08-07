@@ -1,51 +1,50 @@
 import { DatePipe, DecimalPipe, JsonPipe, KeyValuePipe } from '@angular/common';
+import { httpResource } from '@angular/common/http';
 import {
-	ChangeDetectionStrategy,
 	Component,
+	computed,
 	effect,
 	inject,
 	input,
+	linkedSignal,
 	output,
 	signal,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { switchMap } from 'rxjs';
 import {
-	ImportCarOption,
-	SetupSectionKey,
-	SetupSections,
-	SetupSectionValues,
-	SetupSnapshot,
-	SetupSnapshotPayload,
+	FormField,
+	form,
+	maxLength,
+	required,
+	validate,
+} from '@angular/forms/signals';
+import { switchMap } from 'rxjs';
+import { carReadFailure } from './car/car-read-failure';
+import {
+	emptySetupForm,
+	importKnownValues,
+	parseSetupJsonObject,
+	setupFormFromImport,
+	setupFormFromSnapshot,
+	setupPayloadFromForm,
+	setupSectionFields,
+} from './setup-form';
+import {
+	type ImportCarOption,
+	type SetupSectionKey,
+	type SetupSectionValues,
+	type SetupSnapshot,
 	SetupSnapshotService,
 	SoDialedImporterClient,
-	SoDialedImportPreview,
+	type SoDialedImportPreview,
 	setupSectionKeys,
 } from './setup-snapshot';
 
-type SetupState = 'loading' | 'ready' | 'error';
 type SetupMode = 'add' | 'edit';
 type SetupAction = 'save' | 'copy' | 'current' | null;
 type ImportState = 'idle' | 'loading' | 'review' | 'error';
 
-type SetupForm = {
-	name: string;
-	recordedAt: string;
-	track: string;
-	event: string;
-	surface: string;
-	traction: string;
-	moisture: string;
-	condition: string;
-	temperature: string;
-	sourceUrl: string;
-	pdfUrl: string;
-	pdfTitle: string;
-	pdfPage: string;
-	sections: SetupSections;
-	unmappedValues: string;
-	rawValues: string;
-};
+const SETUP_VALIDATION_MESSAGE =
+	'Review the highlighted setup fields before saving.';
 
 const sectionLabels: Record<SetupSectionKey, string> = {
 	vehicle: 'Vehicle',
@@ -58,180 +57,26 @@ const sectionLabels: Record<SetupSectionKey, string> = {
 	notes: 'Notes',
 };
 
-const sectionFields: Record<SetupSectionKey, string[]> = {
-	vehicle: ['rideHeight', 'weight', 'wheelbase'],
-	drivetrain: ['motor', 'pinion', 'spur', 'diffOil'],
-	electronics: ['esc', 'escSettings', 'servo', 'battery'],
-	tires: ['front', 'rear', 'insert', 'wheels'],
-	shocks: ['frontOil', 'rearOil', 'frontSpring', 'rearSpring'],
-	frontSuspension: ['camber', 'caster', 'toe', 'swayBar'],
-	rearSuspension: ['camber', 'toe', 'swayBar', 'antiSquat'],
-	notes: ['setupNotes'],
-};
-
-const emptySections = (): SetupSections =>
-	Object.fromEntries(
-		setupSectionKeys.map((key) => [
-			key,
-			Object.fromEntries(sectionFields[key].map((field) => [field, ''])),
-		]),
-	) as SetupSections;
-
-const emptyForm = (): SetupForm => ({
-	name: '',
-	recordedAt: '',
-	track: '',
-	event: '',
-	surface: '',
-	traction: '',
-	moisture: '',
-	condition: '',
-	temperature: '',
-	sourceUrl: '',
-	pdfUrl: '',
-	pdfTitle: '',
-	pdfPage: '',
-	sections: emptySections(),
-	unmappedValues: '',
-	rawValues: '',
-});
-
-const formFrom = (setup: SetupSnapshot): SetupForm => ({
-	...emptyForm(),
-	name: setup.name,
-	recordedAt: setup.context?.recordedAt?.slice(0, 10) ?? '',
-	track: setup.context?.track ?? '',
-	event: setup.context?.event ?? '',
-	surface: setup.context?.surface ?? '',
-	traction: setup.context?.traction ?? '',
-	moisture: setup.context?.moisture ?? '',
-	condition: setup.context?.condition ?? '',
-	temperature: setup.context?.temperature ?? '',
-	sourceUrl: setup.source?.url ?? '',
-	pdfUrl: setup.source?.pdfUrl ?? '',
-	pdfTitle: setup.source?.pdfTitle ?? '',
-	pdfPage: setup.source?.pdfPage == null ? '' : String(setup.source.pdfPage),
-	sections: setup.sections ?? emptySections(),
-	unmappedValues: setup.unmappedValues
-		? JSON.stringify(setup.unmappedValues, null, 2)
-		: '',
-	rawValues: setup.rawValues ? JSON.stringify(setup.rawValues, null, 2) : '',
-});
-
-const formFromImport = (
-	preview: SoDialedImportPreview,
-	url: string,
-): SetupForm => ({
-	...emptyForm(),
-	name:
-		preview.source.title?.trim() ||
-		[preview.carIdentity.make, preview.carIdentity.model]
-			.filter(Boolean)
-			.join(' ') ||
-		'Imported setup',
-	recordedAt: preview.context.recordedAt?.slice(0, 10) ?? '',
-	track: preview.context.track ?? '',
-	event: preview.context.event ?? '',
-	surface: preview.context.surface ?? '',
-	traction: preview.context.traction ?? '',
-	moisture: preview.context.moisture ?? '',
-	condition: preview.context.condition ?? '',
-	temperature: preview.context.temperature ?? '',
-	sourceUrl: preview.source.url ?? url,
-	pdfUrl: preview.source.pdfUrl ?? '',
-	pdfTitle: preview.source.pdfTitle ?? preview.source.title ?? '',
-	pdfPage: preview.source.pdfPage == null ? '' : String(preview.source.pdfPage),
-	sections: preview.sections,
-	unmappedValues: JSON.stringify(
-		{ uncertain: preview.uncertainValues, unmapped: preview.unmappedValues },
-		null,
-		2,
-	),
-	rawValues: JSON.stringify(preview.rawValues, null, 2),
-});
-
-const optionalRecord = (values: Record<string, string | null>) =>
-	Object.fromEntries(
-		Object.entries(values)
-			.map(([key, value]) => [key, value?.trim() ?? ''])
-			.filter(([, value]) => value),
-	);
-
-const payloadFrom = (form: SetupForm): SetupSnapshotPayload => {
-	const sourceMetadata = {
-		pdfUrl: form.pdfUrl.trim() || null,
-		pdfPage: form.pdfPage.trim() ? Number(form.pdfPage) : null,
-	};
-	let unmappedValues: Record<string, unknown> | null = null;
-	if (form.unmappedValues.trim()) {
-		try {
-			const parsed: unknown = JSON.parse(form.unmappedValues);
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-				unmappedValues = parsed as Record<string, unknown>;
-		} catch {
-			unmappedValues = { raw: form.unmappedValues.trim() };
-		}
-	}
-	let rawValues: Record<string, unknown> | null = null;
-	if (form.rawValues?.trim()) {
-		try {
-			const parsed: unknown = JSON.parse(form.rawValues);
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-				rawValues = parsed as Record<string, unknown>;
-		} catch {
-			rawValues = { raw: form.rawValues.trim() };
-		}
-	}
-	return {
-		name: form.name.trim(),
-		setupDate: form.recordedAt
-			? new Date(`${form.recordedAt}T00:00:00.000Z`).toISOString()
-			: null,
-		track: form.track.trim() || null,
-		event: form.event.trim() || null,
-		surface: form.surface.trim() || null,
-		traction: form.traction.trim() || null,
-		moisture: form.moisture.trim() || null,
-		condition: form.condition.trim() || null,
-		temperature: form.temperature.trim() || null,
-		vehicle: optionalRecord(form.sections.vehicle),
-		drivetrain: optionalRecord(form.sections.drivetrain),
-		electronics: optionalRecord(form.sections.electronics),
-		tires: optionalRecord(form.sections.tires),
-		shocks: optionalRecord(form.sections.shocks),
-		frontSuspension: optionalRecord(form.sections.frontSuspension),
-		rearSuspension: optionalRecord(form.sections.rearSuspension),
-		notes: optionalRecord(form.sections.notes).setupNotes ?? null,
-		sourceUrl: form.sourceUrl.trim() || null,
-		sourcePdfReference: form.pdfTitle.trim() || null,
-		sourceMetadata,
-		unmappedValues,
-		rawValues,
-	};
-};
-
-const parseJsonObject = (value: string): Record<string, unknown> => {
+const isValidOptionalUrl = (value: string): boolean => {
+	if (!value.trim()) return true;
 	try {
-		const parsed: unknown = JSON.parse(value);
-		return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>)
-			: {};
+		return ['http:', 'https:'].includes(new URL(value.trim()).protocol);
 	} catch {
-		return value.trim() ? { raw: value.trim() } : {};
+		return false;
 	}
 };
 
-const importKnownValues = (payload: SetupSnapshotPayload) => ({
-	...payload,
-	makeCurrent: undefined,
-});
+const isSessionExpired = (error: unknown): boolean =>
+	typeof error === 'object' &&
+	error !== null &&
+	'status' in error &&
+	error.status === 401;
 
 @Component({
 	selector: 'app-setup-snapshots',
-	imports: [DatePipe, DecimalPipe, JsonPipe, KeyValuePipe, FormsModule],
+	imports: [DatePipe, DecimalPipe, FormField, JsonPipe, KeyValuePipe],
 	templateUrl: './setup-snapshots.html',
 	styleUrl: './setup-snapshots.css',
-	changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SetupSnapshots {
 	private readonly service = inject(SetupSnapshotService);
@@ -244,55 +89,172 @@ export class SetupSnapshots {
 		make: string;
 		model: string;
 	}>();
-	protected readonly setups = signal<SetupSnapshot[]>([]);
+	private readonly setupsResource = httpResource<{ setups: SetupSnapshot[] }>(
+		() => {
+			const carId = this.carId();
+			return carId
+				? {
+						url: `/api/v1/cars/${encodeURIComponent(carId)}/setups`,
+						withCredentials: true,
+					}
+				: undefined;
+		},
+	);
+	protected readonly setups = linkedSignal(() =>
+		this.setupsResource.hasValue() ? this.setupsResource.value().setups : [],
+	);
 	protected readonly selectedId = signal<string | null>(null);
-	protected readonly state = signal<SetupState>('loading');
-	protected readonly error = signal('');
+	protected readonly state = computed(() =>
+		this.setupsResource.isLoading()
+			? 'loading'
+			: this.setupsResource.error()
+				? 'error'
+				: 'ready',
+	);
+	protected readonly actionError = signal('');
+	protected readonly actionMessage = signal('');
+	protected readonly readFailure = computed(() =>
+		carReadFailure(
+			this.setupsResource.error(),
+			'Setup history could not be loaded. Check the connection and try again.',
+		),
+	);
 	protected readonly mode = signal<SetupMode>('add');
 	protected readonly editing = signal(false);
 	protected readonly action = signal<SetupAction>(null);
-	protected readonly form = signal<SetupForm>(emptyForm());
+	protected readonly formModel = signal(emptySetupForm());
+	protected readonly setupForm = form(this.formModel, (path) => {
+		required(path.name, { message: 'Name this setup before saving.' });
+		validate(path.name, ({ value }) =>
+			!value() || value().trim()
+				? undefined
+				: {
+						kind: 'blankName',
+						message: 'Name this setup before saving.',
+					},
+		);
+		maxLength(path.name, 160, { message: 'Use 160 characters or fewer.' });
+		maxLength(path.track, 160, {
+			message: 'Use 160 characters or fewer for the track.',
+		});
+		maxLength(path.event, 160, {
+			message: 'Use 160 characters or fewer for the event.',
+		});
+		maxLength(path.surface, 120, {
+			message: 'Use 120 characters or fewer for the surface.',
+		});
+		maxLength(path.traction, 120, {
+			message: 'Use 120 characters or fewer for traction.',
+		});
+		maxLength(path.moisture, 120, {
+			message: 'Use 120 characters or fewer for moisture.',
+		});
+		maxLength(path.condition, 120, {
+			message: 'Use 120 characters or fewer for the condition.',
+		});
+		maxLength(path.temperature, 80, {
+			message: 'Use 80 characters or fewer for temperature.',
+		});
+		maxLength(path.pdfTitle, 240, {
+			message: 'Use 240 characters or fewer for the PDF reference.',
+		});
+		validate(path.sourceUrl, ({ value }) =>
+			isValidOptionalUrl(value())
+				? undefined
+				: {
+						kind: 'sourceUrl',
+						message: 'Use a complete HTTP or HTTPS source URL.',
+					},
+		);
+		validate(path.pdfPage, ({ value }) =>
+			!value().trim() || /^[1-9]\d*$/.test(value().trim())
+				? undefined
+				: {
+						kind: 'pdfPage',
+						message: 'PDF page must be a positive whole number.',
+					},
+		);
+	});
 	protected readonly formError = signal('');
-	protected readonly importUrl = signal('');
+	protected readonly importUrlModel = signal({ url: '' });
+	protected readonly importUrlForm = form(this.importUrlModel, (path) => {
+		required(path.url, { message: 'Paste a So Dialed setup URL.' });
+		validate(path.url, ({ value }) => {
+			const input = value();
+			if (!input) return undefined;
+			const url = input.trim();
+			if (!url)
+				return {
+					kind: 'blankUrl',
+					message: 'Paste a So Dialed setup URL.',
+				};
+			return SoDialedImporterClient.isSupportedUrl(url)
+				? undefined
+				: {
+						kind: 'supportedUrl',
+						message: 'Paste a supported So Dialed URL, including https://.',
+					};
+		});
+	});
 	protected readonly importState = signal<ImportState>('idle');
 	protected readonly importError = signal('');
 	protected readonly importPreview = signal<SoDialedImportPreview | null>(null);
-	protected readonly importCarId = signal('');
+	protected readonly importCarModel = signal({ carId: '' });
+	protected readonly importCarForm = form(this.importCarModel);
 	protected readonly sectionKeys = setupSectionKeys;
 	protected readonly sectionLabels = sectionLabels;
-	protected readonly sectionFields = sectionFields;
+	protected readonly sectionFields = setupSectionFields;
 
-	protected readonly selected = () =>
-		this.setups().find((setup) => setup.id === this.selectedId()) ?? null;
-	protected readonly copySource = () =>
-		this.setups().find((setup) => setup.current) ?? this.setups()[0] ?? null;
+	protected readonly selected = computed(
+		() => this.setups().find((setup) => setup.id === this.selectedId()) ?? null,
+	);
+	protected readonly copySource = computed(
+		() =>
+			this.setups().find((setup) => setup.current) ?? this.setups()[0] ?? null,
+	);
 
 	constructor() {
-		effect(() => this.load(this.carId()));
-	}
-
-	protected load(carId: string): void {
-		this.state.set('loading');
-		this.error.set('');
-		this.service.list(carId).subscribe({
-			next: ({ setups }) => {
-				this.setups.set(setups);
+		let previousCarId: string | undefined;
+		effect(() => {
+			const carId = this.carId();
+			if (previousCarId !== undefined && carId !== previousCarId)
+				this.resetRouteState();
+			previousCarId = carId;
+		});
+		effect(() => {
+			const setups = this.setups();
+			if (!setups.some((setup) => setup.id === this.selectedId()))
 				this.selectedId.set(
 					setups.find((setup) => setup.current)?.id ?? setups[0]?.id ?? null,
 				);
-				this.state.set('ready');
-			},
-			error: () => {
-				this.state.set('error');
-				this.error.set(
-					'Setup history could not be loaded. Check the connection and try again.',
-				);
-			},
+		});
+		effect(() => {
+			if (
+				!this.setupForm().invalid() &&
+				this.formError() === SETUP_VALIDATION_MESSAGE
+			)
+				this.formError.set('');
 		});
 	}
 
+	private resetRouteState(): void {
+		this.selectedId.set(null);
+		this.mode.set('add');
+		this.editing.set(false);
+		this.action.set(null);
+		this.setupForm().reset(emptySetupForm());
+		this.formError.set('');
+		this.actionError.set('');
+		this.actionMessage.set('');
+		this.importState.set('idle');
+		this.importError.set('');
+		this.importPreview.set(null);
+		this.importUrlForm().reset({ url: '' });
+		this.importCarForm().reset({ carId: '' });
+	}
+
 	protected retry(): void {
-		this.load(this.carId());
+		this.setupsResource.reload();
 	}
 
 	protected select(setup: SetupSnapshot): void {
@@ -301,7 +263,7 @@ export class SetupSnapshots {
 
 	protected openAdd(): void {
 		this.mode.set('add');
-		this.form.set(emptyForm());
+		this.setupForm().reset(emptySetupForm());
 		this.formError.set('');
 		this.editing.set(true);
 	}
@@ -312,37 +274,42 @@ export class SetupSnapshots {
 	}
 
 	protected updateImportUrl(value: string): void {
-		this.importUrl.set(value);
+		this.importUrlModel.set({ url: value });
 	}
 
-	protected previewImport(): void {
-		const url = this.importUrl().trim();
+	protected previewImport(event?: Event): void {
+		event?.preventDefault();
+		this.importUrlForm.url().markAsTouched();
+		const url = this.importUrlModel().url.trim();
 		this.importError.set('');
-		if (!SoDialedImporterClient.isSupportedUrl(url)) {
+		if (this.importUrlForm().invalid()) {
 			this.importState.set('error');
-			this.importError.set(
-				'Paste a supported So Dialed URL, including https://.',
-			);
+			this.importUrlForm.url().focusBoundControl();
 			return;
 		}
 		if (this.archived()) return;
+		const carId = this.carId();
 		this.importState.set('loading');
-		this.importer.preview(url, this.carId()).subscribe({
+		this.importer.preview(url, carId).subscribe({
 			next: (preview) => {
+				if (this.carId() !== carId) return;
 				this.importPreview.set(preview);
-				this.importCarId.set(this.carId());
+				this.importCarModel.set({ carId });
 				this.mode.set('add');
-				this.form.set(formFromImport(preview, url));
+				this.setupForm().reset(setupFormFromImport(preview, url));
 				this.formError.set('');
 				this.editing.set(true);
 				this.importState.set('review');
 			},
 			error: (error: unknown) => {
+				if (this.carId() !== carId) return;
 				this.importState.set('error');
 				this.importError.set(
-					error instanceof Error && error.message
-						? error.message
-						: 'That source could not be read. Check the link and try again.',
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: error instanceof Error && error.message
+							? error.message
+							: 'That source could not be read. Check the link and try again.',
 				);
 			},
 		});
@@ -354,12 +321,8 @@ export class SetupSnapshots {
 		this.importPreview.set(null);
 		this.importState.set('idle');
 		this.importError.set('');
-		this.importUrl.set('');
+		this.importUrlForm().reset({ url: '' });
 		this.cancelEdit();
-	}
-
-	protected selectImportCar(carId: string): void {
-		this.importCarId.set(carId);
 	}
 
 	protected requestCreateCar(): void {
@@ -379,7 +342,7 @@ export class SetupSnapshots {
 		const setup = this.selected();
 		if (!setup || this.archived()) return;
 		this.mode.set('edit');
-		this.form.set(formFrom(setup));
+		this.setupForm().reset(setupFormFromSnapshot(setup));
 		this.formError.set('');
 		this.editing.set(true);
 	}
@@ -387,86 +350,97 @@ export class SetupSnapshots {
 	protected cancelEdit(): void {
 		this.editing.set(false);
 		this.formError.set('');
+		this.setupForm().reset();
 	}
 
-	protected updateField(field: keyof SetupForm, value: string): void {
-		this.form.update((form) => ({ ...form, [field]: value }));
-	}
-
-	protected updateSectionField(
-		section: SetupSectionKey,
-		field: string,
-		value: string,
-	): void {
-		this.form.update((form) => ({
-			...form,
-			sections: {
-				...form.sections,
-				[section]: { ...form.sections[section], [field]: value },
-			},
-		}));
-	}
-
-	protected save(): void {
-		const form = this.form();
-		if (!form.name.trim()) {
-			this.formError.set('Name this setup before saving.');
+	protected save(event?: Event): void {
+		event?.preventDefault();
+		this.setupForm().markAsTouched();
+		const formModel = this.formModel();
+		if (this.setupForm().invalid()) {
+			this.formError.set(SETUP_VALIDATION_MESSAGE);
+			[
+				this.setupForm.name(),
+				this.setupForm.track(),
+				this.setupForm.event(),
+				this.setupForm.surface(),
+				this.setupForm.traction(),
+				this.setupForm.moisture(),
+				this.setupForm.condition(),
+				this.setupForm.temperature(),
+				this.setupForm.sourceUrl(),
+				this.setupForm.pdfTitle(),
+				this.setupForm.pdfPage(),
+			]
+				.find((field) => field.invalid())
+				?.focusBoundControl();
 			return;
 		}
 		if (this.action()) return;
 		this.action.set('save');
+		this.actionError.set('');
+		this.actionMessage.set('');
 		this.formError.set('');
+		const sourceCarId = this.carId();
 		const setup = this.importPreview() ? null : this.selected();
 		const importDraft = this.importPreview();
-		const reviewValues = parseJsonObject(form.unmappedValues);
-		const targetCarId = this.importCarId() || this.carId();
+		const reviewValues = parseSetupJsonObject(formModel.unmappedValues);
+		const targetCarId = importDraft
+			? this.importCarModel().carId || sourceCarId
+			: sourceCarId;
+		const payload = setupPayloadFromForm(formModel);
 		const request =
 			this.mode() === 'edit' && setup
-				? this.service.update(this.carId(), setup.id, payloadFrom(form))
+				? this.service.update(sourceCarId, setup.id, payload)
 				: importDraft
 					? this.importer
 							.update(importDraft.draftId, {
 								carId: targetCarId,
-								knownValues: importKnownValues(payloadFrom(form)),
+								knownValues: importKnownValues(payload),
 								uncertainValues:
 									(reviewValues['uncertain'] as
 										| Record<string, unknown>
 										| undefined) ?? importDraft.uncertainValues,
-								rawValues: parseJsonObject(form.rawValues),
+								rawValues: parseSetupJsonObject(formModel.rawValues),
 								unmappedValues:
 									(reviewValues['unmapped'] as
 										| Record<string, unknown>
 										| undefined) ?? {},
-								sourceMetadata: payloadFrom(form).sourceMetadata ?? {},
+								sourceMetadata: payload.sourceMetadata ?? {},
 							})
 							.pipe(
 								switchMap(() =>
 									this.importer.accept(
 										importDraft.draftId,
 										targetCarId,
-										form.name.trim(),
+										formModel.name.trim(),
 									),
 								),
 							)
-					: this.service.create(targetCarId, payloadFrom(form));
+					: this.service.create(targetCarId, payload);
 		request.subscribe({
 			next: ({ setup: saved }) => {
+				if (this.carId() !== sourceCarId) return;
 				this.editing.set(false);
 				this.action.set(null);
 				this.importPreview.set(null);
 				this.importState.set('idle');
-				this.importUrl.set('');
-				if (targetCarId === this.carId()) {
+				this.importUrlForm().reset({ url: '' });
+				if (targetCarId === sourceCarId) {
 					this.replaceSetup(saved);
 					this.selectedId.set(saved.id);
+					this.setupsResource.reload();
 				} else {
-					this.error.set('Imported setup saved to the selected car.');
+					this.actionMessage.set('Imported setup saved to the selected car.');
 				}
 			},
-			error: () => {
+			error: (error: unknown) => {
+				if (this.carId() !== sourceCarId) return;
 				this.action.set(null);
 				this.formError.set(
-					'The setup could not be saved. Check the details and try again.',
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: 'The setup could not be saved. Check the details and try again.',
 				);
 			},
 		});
@@ -479,19 +453,29 @@ export class SetupSnapshots {
 
 	private copySetup(setup: SetupSnapshot): void {
 		if (!setup || this.archived() || this.action()) return;
+		const carId = this.carId();
 		this.action.set('copy');
-		this.service.copy(this.carId(), setup.id).subscribe({
+		this.actionError.set('');
+		this.actionMessage.set('');
+		this.service.copy(carId, setup.id).subscribe({
 			next: ({ setup: copied }) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
 				this.replaceSetup(copied);
 				this.selectedId.set(copied.id);
 				this.mode.set('edit');
-				this.form.set(formFrom(copied));
+				this.setupForm().reset(setupFormFromSnapshot(copied));
 				this.editing.set(true);
+				this.setupsResource.reload();
 			},
-			error: () => {
+			error: (error: unknown) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
-				this.error.set('The setup could not be copied.');
+				this.actionError.set(
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: 'The setup could not be copied.',
+				);
 			},
 		});
 	}
@@ -499,17 +483,27 @@ export class SetupSnapshots {
 	protected makeCurrent(): void {
 		const setup = this.selected();
 		if (!setup || setup.current || this.archived() || this.action()) return;
+		const carId = this.carId();
 		this.action.set('current');
-		this.service.selectCurrent(this.carId(), setup.id).subscribe({
+		this.actionError.set('');
+		this.actionMessage.set('');
+		this.service.selectCurrent(carId, setup.id).subscribe({
 			next: ({ setup: current }) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
 				this.setups.update((setups) =>
 					setups.map((item) => ({ ...item, current: item.id === current.id })),
 				);
+				this.setupsResource.reload();
 			},
-			error: () => {
+			error: (error: unknown) => {
+				if (this.carId() !== carId) return;
 				this.action.set(null);
-				this.error.set('The current setup could not be changed.');
+				this.actionError.set(
+					isSessionExpired(error)
+						? 'Your garage session has expired. Sign in again to continue.'
+						: 'The current setup could not be changed.',
+				);
 			},
 		});
 	}

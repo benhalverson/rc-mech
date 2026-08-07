@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, inject } from '@angular/core';
-import { Observable, map, throwError } from 'rxjs';
+import { inject, Service } from '@angular/core';
+import { map, Observable, throwError } from 'rxjs';
 
 export const setupSectionKeys = [
 	'vehicle',
@@ -105,7 +105,7 @@ export type SoDialedImportPreview = {
 	} | null;
 };
 
-@Injectable({ providedIn: 'root' })
+@Service()
 export class SoDialedImporterClient {
 	private readonly http = inject(HttpClient);
 
@@ -231,25 +231,11 @@ const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => ({
 const emptyImportSections = (): SetupSections =>
 	Object.fromEntries(setupSectionKeys.map((key) => [key, {}])) as SetupSections;
 
-type SetupsResponse = { setups: SetupSnapshot[] };
 type SetupResponse = { setup: SetupSnapshot };
 
-@Injectable({ providedIn: 'root' })
+@Service()
 export class SetupSnapshotService {
 	private readonly http = inject(HttpClient);
-
-	list(carId: string): Observable<SetupsResponse> {
-		return this.http.get<SetupsResponse>(
-			`/api/v1/cars/${encodeURIComponent(carId)}/setups`,
-			{ withCredentials: true },
-		);
-	}
-
-	get(carId: string, setupId: string): Observable<SetupResponse> {
-		return this.http.get<SetupResponse>(this.endpoint(carId, setupId), {
-			withCredentials: true,
-		});
-	}
 
 	create(
 		carId: string,
