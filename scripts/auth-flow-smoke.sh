@@ -9,6 +9,7 @@ cookie_file="$(mktemp)"
 response_file="$(mktemp)"
 headers_file="$(mktemp)"
 photo_file="$(mktemp --suffix=.png)"
+state_dir="$(mktemp -d -t rc-mech-auth.XXXXXX)"
 printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d >"$photo_file"
 
 cleanup() {
@@ -20,6 +21,7 @@ cleanup() {
     wait "$worker_pid" 2>/dev/null || true
   fi
   rm -f "$log_file" "$cookie_file" "$response_file" "$headers_file" "$photo_file"
+  rm -rf "$state_dir"
 }
 trap cleanup EXIT
 
@@ -28,7 +30,7 @@ if curl -fsS "$base/api/v1/health" >/dev/null 2>&1; then
   exit 1
 fi
 
-setsid pnpm exec wrangler dev --env local --port "$port" --var "APP_URL:${base}" --var "OWNER_EMAIL:owner@example.com" --var "MAGIC_LINK_TEST_TOKEN:${token}" >"$log_file" 2>&1 &
+setsid pnpm exec wrangler dev --env local --local --port "$port" --persist-to "$state_dir" --var "APP_URL:${base}" --var "OWNER_EMAIL:owner@example.com" --var "MAGIC_LINK_TEST_TOKEN:${token}" >"$log_file" 2>&1 &
 worker_pid=$!
 
 for _ in {1..40}; do

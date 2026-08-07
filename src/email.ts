@@ -30,6 +30,7 @@ const platformEmailSender = (binding: SendEmail): EmailSender => ({
 });
 
 export const createEmailSender = (env: Env & AuthEnvironment): EmailSender => {
+	if (env.ENVIRONMENT === 'local') return noopEmailSender;
 	const binding = (env as Env & { EMAIL?: SendEmail }).EMAIL;
 	return binding ? platformEmailSender(binding) : noopEmailSender;
 };

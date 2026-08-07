@@ -38,6 +38,7 @@ export const createAuth = (env: AuthEnv) => {
 		expiresIn: 60 * 15,
 		storeToken: 'hashed' as const,
 		sendMagicLink: async ({ email, url }: { email: string; url: string }) => {
+			if (isLocalDevelopment(env)) return;
 			const from = env.EMAIL_FROM;
 			const sender = createEmailSender(env);
 			if (!from || !sender.available) {
@@ -52,9 +53,9 @@ export const createAuth = (env: AuthEnv) => {
 			});
 		},
 	};
-	if (isLocalDevelopment(env) && env.MAGIC_LINK_TEST_TOKEN) {
+	if (isLocalDevelopment(env)) {
 		Object.assign(magicLinkOptions, {
-			generateToken: async () => env.MAGIC_LINK_TEST_TOKEN,
+			generateToken: async () => env.MAGIC_LINK_TEST_TOKEN ?? 'local-test-token',
 		});
 	}
 	return betterAuth({

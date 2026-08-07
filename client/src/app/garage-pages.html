@@ -1,67 +1,5 @@
-<div class="route-announcement" aria-live="polite" aria-atomic="true">{{ routeAnnouncement() }}</div>
-@if (state() === 'checking') {
-  <main class="access-shell" aria-live="polite">
-    <div class="eyebrow">RC Mech / Field notebook</div>
-    <p class="checking">Checking the garage latch…</p>
-  </main>
-} @else if (state() === 'signed-out') {
-  <main class="access-shell">
-    <section class="access-card" aria-labelledby="access-title">
-      <div class="eyebrow">RC Mech / Owner access</div>
-      <h1 id="access-title">Back to the<br />workbench.</h1>
-      <p class="intro">Use the owner email to receive a one-time link. It works for first setup and recovery.</p>
 
-      <form (ngSubmit)="requestMagicLink()">
-        <label for="owner-email">Owner email</label>
-        <input id="owner-email" name="email" type="email" autocomplete="email" required
-          [ngModel]="email()" (ngModelChange)="email.set($event)"
-          [disabled]="requestState() === 'sending'" />
-        <button class="button" type="submit" [disabled]="requestState() === 'sending'">
-          {{ requestState() === 'sending' ? 'Sending link…' : 'Send magic link' }}
-        </button>
-      </form>
-
-      <div class="divider"><span>or</span></div>
-      <button class="button passkey-button" type="button" (click)="signInWithPasskey()"
-        [disabled]="!webAuthnAvailable() || passkeyAction() !== null">
-        {{ passkeyAction() === 'sign-in' ? 'Waiting for passkey…' : 'Sign in with a passkey' }}
-      </button>
-      @if (!webAuthnAvailable()) { <p class="hint">Passkeys are unavailable in this browser. Use a magic link instead.</p> }
-
-      @if (message()) { <p class="message" role="status">{{ message() }}</p> }
-      @if (requestState() === 'sent') {
-        <p class="hint">Open the link from this device. The link expires soon and can only be used once.</p>
-      }
-    </section>
-  </main>
-} @else {
-  <mat-sidenav-container class="workspace-shell bg-graphite text-bone">
-    <mat-sidenav #drawer class="workspace-nav bg-graphite" [mode]="navMode()" [opened]="navOpen()" (closedStart)="navOpen.set(false)" aria-label="Workspace navigation">
-      <div class="nav-brand"><span class="eyebrow">RC Mech</span><strong>Field notebook</strong></div>
-      <nav aria-label="Primary workspace">
-        <a routerLink="/garage" [class.active-nav]="workspace() === 'garage'" [attr.aria-current]="workspace() === 'garage' ? 'page' : null" aria-label="Garage workspace"><span class="nav-number">01</span>Garage</a>
-        <a routerLink="/maintenance" [class.active-nav]="workspace() === 'maintenance'" [attr.aria-current]="workspace() === 'maintenance' ? 'page' : null" aria-label="Maintenance workspace"><span class="nav-number">02</span>Maintenance</a>
-        <a routerLink="/settings" [class.active-nav]="workspace() === 'settings'" [attr.aria-current]="workspace() === 'settings' ? 'page' : null" aria-label="Settings workspace"><span class="nav-number">03</span>Settings</a>
-      </nav>
-      <a class="nav-docs" href="/api/docs">API notes ↗</a>
-    </mat-sidenav>
-    <mat-sidenav-content>
-  <div class="workspace-frame" role="region" aria-label="Current workspace" tabindex="-1" [attr.aria-busy]="routeLoading()">
-    <header>
-      <button class="nav-toggle" type="button" (click)="navOpen.set(true)" aria-label="Open workspace navigation">☰</button>
-      <div>
-        <div class="eyebrow">RC Mech / Field notebook</div>
-        <h1>Garage control<br />for the next run.</h1>
-        <p class="stamp">OWNER ACCESS · {{ ownerEmail() }} · PRIVATE BY DEFAULT</p>
-      </div>
-      <div class="actions">
-        <span class="workspace-label">{{ workspace() | titlecase }} / {{ ownerEmail() }}</span>
-        <button class="button quiet" type="button" (click)="signOut()">Sign out</button>
-      </div>
-    </header>
-
-    @if (message()) { <p class="message" role="alert">{{ message() }}</p> }
-    @if (workspace() === 'garage' || workspace() === 'legacy') {
+@if (workspace() === 'garage') {
     <section class="garage-panel" aria-labelledby="garage-title">
       <div class="section-heading garage-heading">
         <div>
@@ -142,7 +80,7 @@
             <a class="car-tab" [routerLink]="['/garage', car.id, 'runs']" [class.active-tab]="carSection() === 'runs'" [attr.aria-current]="carSection() === 'runs' ? 'page' : null">Runs</a>
           </nav>
 
-          @if (carSection() === 'overview' || carSection() === 'all') {
+        @if (carSection() === 'overview') {
           <section class="overview-panel" aria-label="Car overview">
             <p class="section-intro">The inspection plate is the quick reference for this car. Use the tabs to open its build sheet, private photos, or run log.</p>
           </section>
@@ -150,7 +88,7 @@
           @if (carSection() === 'setups') {
           <app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="cars()" (createCarFromImport)="openCreateCarFromImport($event)"></app-setup-snapshots>
           }
-          @if (carSection() === 'build' || carSection() === 'all') {
+          @if (carSection() === 'build') {
           <section class="build-sheet" aria-labelledby="build-sheet-title">
             <div class="section-heading">
               <div>
@@ -210,11 +148,11 @@
           </section>
           }
 
-          @if (carSection() === 'photos' || carSection() === 'all') {
+          @if (carSection() === 'photos') {
           <app-car-photo-gallery [carId]="car.id" [archived]="!!car.archivedAt"></app-car-photo-gallery>
           }
 
-          @if (carSection() === 'runs' || carSection() === 'all') {
+          @if (carSection() === 'runs') {
           <section class="session-log" aria-labelledby="session-log-title">
             <div class="section-heading">
               <div>
@@ -266,11 +204,11 @@
     </section>
     }
 
-    @if (workspace() === 'maintenance' || workspace() === 'legacy') {
+    @if (workspace() === 'maintenance') {
     <app-maintenance-cockpit [cars]="cars()" [timezone]="timezone()" [consumablesEnabled]="workspace() === 'maintenance'"></app-maintenance-cockpit>
     }
 
-    @if (workspace() === 'settings' || workspace() === 'legacy') {
+    @if (workspace() === 'settings') {
     <section class="security-panel" aria-label="Garage settings">
       <div class="section-heading">
         <div>
@@ -372,7 +310,3 @@
       }
     </section>
     }
-  </div>
-    </mat-sidenav-content>
-  </mat-sidenav-container>
-}

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { writeFile } from 'node:fs/promises';
 import { validateInviteCode } from '../src/invite-policy';
 
 const program = new Command()
@@ -14,6 +15,7 @@ const program = new Command()
 		'Deterministic local magic-link token',
 		'local-test-token',
 	)
+	.option('--cookie-file <path>', 'Write the session cookie to this file')
 	.parse();
 
 const options = program.opts<{
@@ -21,10 +23,17 @@ const options = program.opts<{
 	ownerEmail: string;
 	code: string;
 	token: string;
+	cookieFile?: string;
 }>();
 const parsed = validateInviteCode(options.code);
 if (!parsed.ok) throw new Error(parsed.reason);
 const base = options.url.replace(/\/$/, '');
+const origin = new URL(base);
+if (
+	origin.protocol !== 'http:' ||
+	!['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)
+)
+	throw new Error('The invite CLI only accepts loopback HTTP URLs');
 
 const cookieFrom = (response: Response): string => {
 	const cookies = response.headers.getSetCookie?.() ?? [];
@@ -62,4 +71,6 @@ if (!create.ok)
 	throw new Error(
 		`Invite creation failed (${create.status}): ${await create.text()}`,
 	);
-console.log(JSON.stringify({ invite: await create.json(), cookie }));
+const invite = await create.json();
+if (options.cookieFile) await writeFile(options.cookieFile, `${cookie}\n`, { mode: 0o600 });
+console.log(JSON.stringify({ invite, ...(options.cookieFile ? { cookieFile: options.cookieFile } : {}) }));

@@ -48,7 +48,7 @@ test('deployed magic-link configuration fails closed when delivery is unavailabl
 	);
 });
 
-test('local configuration forwards mail through the configured binding', async () => {
+test('local configuration never calls a configured email binding', async () => {
 	let attempted = false;
 	const local = {
 		APP_URL: 'http://localhost:8787',
@@ -62,14 +62,14 @@ test('local configuration forwards mail through the configured binding', async (
 	};
 	assert.equal(isLocalDevelopment(local), true);
 	const sender = createEmailSender(local as unknown as Env);
-	assert.equal(sender.available, true);
+	assert.equal(sender.available, false);
 	await sender.send({
 		from: 'from@example.com',
 		to: 'to@example.com',
 		subject: 'Subject',
 		text: 'Body',
 	});
-	assert.equal(attempted, true);
+	assert.equal(attempted, false);
 });
 
 test('credentialed CORS accepts only the Angular dev server matching the WebAuthn RP host', () => {

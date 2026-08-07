@@ -75,7 +75,9 @@ It checks remote migration status, the R2 bucket,
 the deployed passkey RP host, authenticated owner reads, and cross-owner
 record/photo isolation. Email delivery still requires the operator to send and
 redeem a real magic link; the release script deliberately does not send mail.
-Do not put those cookie values in source, logs, or pull requests.
+Do not put those cookie values in source, logs, or pull requests. Email delivery
+is operator-only: the release script deliberately does not send mail, and
+automated local tests always use a no-op sender.
 
 ## Local browser integration
 

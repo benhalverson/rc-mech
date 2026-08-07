@@ -5,17 +5,7 @@ import { getViolations, injectAxe } from 'axe-playwright';
 const scan = async (page: import('@playwright/test').Page) => {
 	await injectAxe(page);
 	const violations = await getViolations(page);
-	// Angular's legacy shell can be rendered around the lazy workspace during
-	// dev-server HMR, producing duplicate landmark nodes. Keep the full axe
-	// run, while excluding only those three structural shell findings.
-	return violations.filter(
-		({ id }) =>
-			![
-				'landmark-main-is-top-level',
-				'landmark-no-duplicate-main',
-				'landmark-unique',
-			].includes(id),
-	);
+	return violations;
 };
 
 const verify = async (
@@ -25,6 +15,14 @@ const verify = async (
 	await page.goto(
 		`/api/auth/magic-link/verify?token=local-test-token&callbackURL=${encodeURIComponent(returnTo)}`,
 	);
+};
+
+const expectSingleShell = async (page: import('@playwright/test').Page) => {
+	await expect(page.locator('.workspace-shell')).toHaveCount(1);
+	await expect(page.getByRole('button', { name: 'Open workspace navigation' })).toHaveCount(1);
+	await page.getByRole('button', { name: 'Open workspace navigation' }).click();
+	await expect(page.getByRole('navigation', { name: 'Primary workspace' })).toHaveCount(1);
+	await expect(page.locator('main')).toHaveCount(1);
 };
 
 test('invite registration, management, isolation, and accessible states', async ({
@@ -54,6 +52,18 @@ test('invite registration, management, isolation, and accessible states', async 
 	await expect(
 		page.getByRole('heading', { name: 'Your invite codes' }),
 	).toBeVisible();
+	await expectSingleShell(page);
+	for (const destination of [
+		['Garage', '/garage'],
+		['Maintenance', '/maintenance'],
+		['Settings', '/settings'],
+	] as const) {
+		await page.getByRole('link', { name: destination[0] }).click();
+		await expect(page).toHaveURL(new RegExp(`${destination[1]}$`));
+		await expectSingleShell(page);
+		violations = await scan(page);
+		expect(violations).toEqual([]);
+	}
 	await expect(page.getByText('OWNER-01')).toBeVisible();
 	violations = await scan(page);
 	expect(violations).toEqual([]);
@@ -74,6 +84,7 @@ test('invite registration, management, isolation, and accessible states', async 
 	);
 	await verify(userPage, '/garage');
 	await expect(userPage.getByText('The garage is waiting')).toBeVisible();
+	await expectSingleShell(userPage);
 	violations = await scan(userPage);
 	expect(violations).toEqual([]);
 
@@ -98,6 +109,9 @@ test('invite registration, management, isolation, and accessible states', async 
 	await userBPage.getByRole('button', { name: 'Start registration' }).click();
 	await verify(userBPage, '/garage');
 	await expect(userBPage.getByText('The garage is waiting')).toBeVisible();
+	await userBPage.goto('/settings');
+	await expect(userBPage.getByText('USER-A1')).toHaveCount(0);
+	await expectSingleShell(userBPage);
 	await expect(userBPage.getByText('USER-A1')).toHaveCount(0);
 	violations = await scan(userBPage);
 	expect(violations).toEqual([]);

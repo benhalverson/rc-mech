@@ -37,7 +37,7 @@ const bytesToBase64Url = (value: ArrayBuffer): string => {
 @Component({
 	selector: 'app-sign-in',
 	imports: [FormsModule],
-	styleUrl: './garage-workspace.css',
+	styleUrl: './garage-pages.css',
 	template: `
 		<main class="access-shell" tabindex="-1">
 			<section class="access-card" aria-labelledby="sign-in-title">

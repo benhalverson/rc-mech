@@ -28,7 +28,7 @@ Worker routing owns `/api/docs`, `/api/openapi.json`, `/api/auth/*`, and `/api/v
 
 After the first magic-link sign-in, add one or more named passkeys from the dashboard. The browser owns the WebAuthn ceremony, including its standard cross-device or QR handoff where supported. Passkeys can be renamed or revoked; magic-link sign-in remains the recovery path. Verify this manually in a WebAuthn-capable browser: sign in by magic link, add a passkey, sign out, sign in with the passkey, rename and revoke it, confirm it disappears from the list, and confirm a new magic link still signs you in.
 
-The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). It is intentionally a no-op in local development when the binding is unavailable, while deployed magic-link requests fail closed unless `EMAIL_FROM` and the binding are configured. Do not commit sender or owner addresses.
+The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](./src/email.ts). Local authentication always uses the deterministic test token and a no-op sender, even if email variables are accidentally present; deployed magic-link requests fail closed unless `EMAIL_FROM` and the binding are configured. Do not commit sender or owner addresses.
 
 For local database work, use `pnpm db:migrate:local`. To inspect or reset local D1, use Wrangler's local commands, for example `pnpm exec wrangler d1 migrations list DB --local`.
 
@@ -70,7 +70,7 @@ pnpm exec wrangler secret put EMAIL_FROM
 pnpm exec wrangler secret put APP_URL
 ```
 
-These secrets belong to the production `rc-mech` Worker. `OWNER_EMAIL` and `EMAIL_FROM` must be real addresses accepted by the configured Email Service sender. Do not commit any of these values.
+These secrets belong to the production `rc-mech` Worker. `OWNER_EMAIL` and `EMAIL_FROM` must be real addresses accepted by the configured Email Service sender. Do not commit any of these values. The seeded `OWNER-01` code appears in the Owner's invite history.
 
 Attach the Worker to the chosen HTTPS domain through the Cloudflare Workers custom-domain or route configuration, then deploy with `pnpm run deploy`. Validate the configuration without changing Cloudflare state with `pnpm test:production`; set `RC_MECH_DEPLOYED_URL=https://your-domain.example pnpm test:production` to also check health, docs, unauthenticated API rejection, private-photo rejection, and JSON API 404 behavior. For a release check, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1` plus the deployed URL, owner session cookie/car/photo IDs, a second-owner session cookie, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after verifying the bucket has no public r2.dev or custom-domain access; this mode fails closed on missing production secret names, remote migration/R2 checks, deployed passkey RP host, authenticated owner reads, and cross-owner record/photo isolation. Email delivery and a real passkey ceremony remain operator checks because automation would send real mail or require a browser credential. The full local authenticated lifecycle smoke remains `pnpm test:auth:e2e`; it creates only local D1/R2 test data.
 

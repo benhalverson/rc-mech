@@ -1,7 +1,7 @@
 :host {
 	display: block;
 }
-.garage-workspace {
+.garage-collection {
 	border-top: 1px solid var(--line);
 	padding-top: 28px;
 	outline: none;

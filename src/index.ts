@@ -382,30 +382,38 @@ app.post('/api/v1/invite-codes', async (c) => {
 	if (parsed.ok === false) return c.json({ error: parsed.reason }, 400);
 	const now = new Date().toISOString();
 	try {
-		const existing = await db(c.env)
-			.select({ slot: inviteCode.slot })
-			.from(inviteCode)
-			.where(eq(inviteCode.creatorId, creatorId))
-			.all();
-		const slot = [1, 2, 3, 4, 5].find(
-			(candidate) => !existing.some((item) => item.slot === candidate),
+		const database = db(c.env);
+		const attemptedIds = [1, 2, 3, 4, 5].map(() => crypto.randomUUID());
+		const inserts = [1, 2, 3, 4, 5].map((slot, index) =>
+			database
+				.insert(inviteCode)
+				.values({
+					id: attemptedIds[index],
+					code: parsed.code,
+					creatorId,
+					slot,
+					status: 'available',
+					createdAt: now,
+					updatedAt: now,
+				})
+				.onConflictDoNothing(),
 		);
-		if (!slot) return c.json({ error: 'Invite-code allowance exhausted' }, 409);
-		const created = await db(c.env)
-			.insert(inviteCode)
-			.values({
-				id: crypto.randomUUID(),
-				code: parsed.code,
-				creatorId,
-				slot,
-				status: 'available',
-				createdAt: now,
-				updatedAt: now,
-			})
-			.returning()
+		await database.batch(inserts as [typeof inserts[number], ...typeof inserts]);
+		const existing = await database
+			.select({ id: inviteCode.id })
+			.from(inviteCode)
+			.where(eq(inviteCode.code, parsed.code))
 			.get();
-		if (!created)
+		if (!existing)
 			return c.json({ error: 'Invite-code allowance exhausted' }, 409);
+		if (!attemptedIds.includes(existing.id))
+			return c.json({ error: 'That invite code is already in use' }, 409);
+		const created = await database
+			.select()
+			.from(inviteCode)
+			.where(eq(inviteCode.id, existing.id))
+			.get();
+		if (!created) return c.json({ error: 'Invite-code allowance exhausted' }, 409);
 		return c.json({ code: created }, 201);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

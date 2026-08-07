@@ -2,8 +2,8 @@ import { Routes } from '@angular/router';
 import { GarageStore } from './garage/garage-store';
 import { ownerSessionCanMatch } from './owner-session.guard';
 
-const loadWorkspace = () =>
-	import('./garage-workspace').then(({ GarageWorkspace }) => GarageWorkspace);
+const loadGaragePages = () =>
+	import('./garage-pages').then(({ GaragePages }) => GaragePages);
 const loadGarage = () => import('./garage/garage').then(({ Garage }) => Garage);
 
 export const signInRoute = {
@@ -24,42 +24,42 @@ export const routes: Routes = [
 	{
 		path: 'garage/:carId/overview',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadWorkspace,
+		loadComponent: loadGaragePages,
 		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/setups',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadWorkspace,
+		loadComponent: loadGaragePages,
 		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/build',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadWorkspace,
+		loadComponent: loadGaragePages,
 		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/photos',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadWorkspace,
+		loadComponent: loadGaragePages,
 		providers: [GarageStore],
 	},
 	{
 		path: 'garage/:carId/runs',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadWorkspace,
+		loadComponent: loadGaragePages,
 		providers: [GarageStore],
 	},
 	{
 		path: 'maintenance',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadWorkspace,
+		loadComponent: loadGaragePages,
 	},
 	{
 		path: 'settings',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadWorkspace,
+		loadComponent: loadGaragePages,
 	},
 	{ path: '**', redirectTo: 'garage' },
 ];

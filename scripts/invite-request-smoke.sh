@@ -37,8 +37,8 @@ for _ in {1..60}; do
 	sleep 0.25
 done
 curl -fsS "$base/api/v1/health" >/dev/null
-seed_output="$(pnpm exec tsx scripts/invite-cli.ts --url "$base" --owner-email owner@example.com --code owner-01)"
-printf '%s' "$seed_output" | jq -r '.cookie' >"$owner_cookie"
+pnpm exec tsx scripts/invite-cli.ts --url "$base" --owner-email owner@example.com \
+	--code owner-01 --cookie-file "$owner_cookie" >/dev/null
 owner_header="$(cat "$owner_cookie")"
 
 status="$(curl -sS -o "$response_file" -w '%{http_code}' "$base/api/auth/register" \
