@@ -63,7 +63,7 @@ describe('RouteTransitionAnnouncer', () => {
 		expect(transition.error()).toBe(
 			'This page could not be loaded. Try again.',
 		);
-		expect(transition.announcement()).toBe('Page loading failed.');
+		expect(transition.announcement()).toBe('');
 
 		transition.retry();
 		expect(navigateByUrl).toHaveBeenCalledWith('/settings');

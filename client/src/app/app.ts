@@ -66,7 +66,7 @@ export class App {
 			.post('/api/auth/sign-out', {}, { withCredentials: true })
 			.subscribe({
 				next: () => {
-					void this.sessionStore.refresh();
+					this.sessionStore.expire();
 					void this.router.navigate(['/sign-in']);
 				},
 				error: () =>

@@ -106,6 +106,9 @@ describe('App workspace shell', () => {
 		expect(signOut).toBeTruthy();
 		signOut?.click();
 		http.expectOne('/api/auth/sign-out').flush({ status: true });
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.workspace-shell')).toBeFalsy();
+		expect(fixture.nativeElement.querySelector('router-outlet')).toBeTruthy();
 
 		let sessionRequest: TestRequest | undefined;
 		await vi.waitFor(() => {

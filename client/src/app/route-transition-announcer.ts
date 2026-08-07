@@ -38,7 +38,7 @@ export class RouteTransitionAnnouncer {
 				if (event instanceof NavigationError) {
 					this.loading.set(false);
 					this.error.set('This page could not be loaded. Try again.');
-					this.announcement.set('Page loading failed.');
+					this.announcement.set('');
 					return;
 				}
 				if (event instanceof NavigationCancel) {
