@@ -114,7 +114,6 @@ export const MaintenanceStore = signalStore(
 				store.carsResource.error(),
 				store.timezoneResource.error(),
 				store.consumableResource.error(),
-				store.reportResource.error(),
 			].filter((error) => error !== undefined),
 		);
 		const errors = computed(() =>
@@ -150,7 +149,6 @@ export const MaintenanceStore = signalStore(
 				store.carsResource,
 				store.timezoneResource,
 				store.consumableResource,
-				store.reportResource,
 			].some((resource) => resource.isLoading()),
 		);
 		const serviceRecords = computed(() =>

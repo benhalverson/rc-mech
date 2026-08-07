@@ -70,6 +70,63 @@ describe('Maintenance workspace', () => {
 		).toBeTruthy();
 	});
 
+	it('renders local consumable history while the optional report is loading', async () => {
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			)
+			.flush({ cars: [] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http
+			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlans: [], activity: [] });
+		http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+		http
+			.expectOne('/api/v1/consumable-maintenance')
+			.flush({ consumableMaintenance: [] });
+		const report = http.expectOne('/api/v1/consumables/report');
+		const consumables = fixture.nativeElement.querySelector(
+			'.consumable-ledger',
+		) as HTMLElement;
+		await vi.waitFor(() => {
+			fixture.detectChanges();
+			expect(consumables.textContent).toContain('No consumable changes yet');
+		});
+		expect(consumables.textContent).not.toContain('Reading consumable history');
+		report.flush({ report: {} });
+	});
+
+	it('falls back to local consumable reporting when the aggregate read fails', async () => {
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			)
+			.flush({ cars: [] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http
+			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlans: [], activity: [] });
+		http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+		http
+			.expectOne('/api/v1/consumable-maintenance')
+			.flush({ consumableMaintenance: [] });
+		http
+			.expectOne('/api/v1/consumables/report')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const consumables = fixture.nativeElement.querySelector(
+			'.consumable-ledger',
+		) as HTMLElement;
+		expect(consumables.textContent).toContain('No consumable changes yet');
+		expect(consumables.querySelector('[role="alert"]')).toBeNull();
+	});
+
 	it('falls back from an invalid stored timezone', async () => {
 		http
 			.expectOne(
