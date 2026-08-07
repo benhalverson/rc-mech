@@ -18,6 +18,7 @@ import {
 	validate,
 } from '@angular/forms/signals';
 import { switchMap } from 'rxjs';
+import { carReadFailure } from './car/car-read-failure';
 import {
 	emptySetupForm,
 	importKnownValues,
@@ -112,10 +113,11 @@ export class SetupSnapshots {
 	);
 	protected readonly actionError = signal('');
 	protected readonly actionMessage = signal('');
-	protected readonly error = computed(() =>
-		this.setupsResource.error()
-			? 'Setup history could not be loaded. Check the connection and try again.'
-			: '',
+	protected readonly readFailure = computed(() =>
+		carReadFailure(
+			this.setupsResource.error(),
+			'Setup history could not be loaded. Check the connection and try again.',
+		),
 	);
 	protected readonly mode = signal<SetupMode>('add');
 	protected readonly editing = signal(false);

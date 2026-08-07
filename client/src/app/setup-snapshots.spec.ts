@@ -162,6 +162,18 @@ describe('SetupSnapshots', () => {
 		);
 	});
 
+	it('explains an expired session without retrying the protected read', async () => {
+		http
+			.expectOne('/api/v1/cars/car-1/setups')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const alert = fixture.nativeElement.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Your garage session has expired');
+		expect(alert?.querySelector('button')).toBeNull();
+	});
+
 	it('guides an owner to record the first baseline when history is empty', async () => {
 		await flushSetups();
 

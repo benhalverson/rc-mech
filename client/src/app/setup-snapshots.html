@@ -23,14 +23,13 @@
       @if (importError()) { <p class="message" role="alert">{{ importError() }}</p> }
     </form>
   }
-  @if (error()) { <p class="message" role="alert">{{ error() }} <button class="text-button" type="button" (click)="retry()">Try again</button></p> }
   @if (actionError()) { <p class="message" role="alert">{{ actionError() }}</p> }
   @if (actionMessage()) { <p class="message" role="status">{{ actionMessage() }}</p> }
 
   @if (state() === 'loading') {
     <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Reading setup history…</p></div>
   } @else if (state() === 'error') {
-    <div class="state-card error-state"><span class="state-mark">!</span><p>Setup history is unavailable.</p></div>
+    <div class="state-card error-state" role="alert"><span class="state-mark" aria-hidden="true">!</span><p>{{ readFailure()?.message }}</p>@if (readFailure()?.retryable) { <button class="text-button" type="button" (click)="retry()">Try again</button> }</div>
   } @else if (!setups().length && !editing()) {
     <div class="state-card empty-state"><span class="state-mark">＋</span><h5>No setup snapshots yet</h5><p>Save a baseline now, even if the sheet is only partly filled in.</p>@if (!archived()) { <button class="button" type="button" (click)="openAdd()">Record the first setup</button> }</div>
   } @else {
