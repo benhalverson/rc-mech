@@ -208,4 +208,88 @@ describe('Car section routes', () => {
 			),
 		).toBe(false);
 	});
+
+	it('selects the newest installation and preserves a legacy custom slot', async () => {
+		await harness.navigateByUrl('/garage/car-1/build');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/components')
+			.flush({
+				components: [
+					{
+						id: 'component-old',
+						carId: 'car-1',
+						slot: 'transponder-mount',
+						slotType: null,
+						name: 'Old mount',
+						installedAt: '2026-01-01T00:00:00.000Z',
+					},
+					{
+						id: 'component-new',
+						carId: 'car-1',
+						slot: 'transponder-mount',
+						slotType: null,
+						name: 'New mount',
+						installedAt: '2026-02-01T00:00:00.000Z',
+					},
+				],
+			});
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		expect(harness.routeNativeElement?.textContent).toContain('New mount');
+		expect(harness.routeNativeElement?.textContent).not.toContain('Old mount');
+		const edit = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find((button) => button.textContent?.trim() === 'Edit') as
+			| HTMLButtonElement
+			| undefined;
+		edit?.click();
+		harness.detectChanges();
+		expect(
+			harness.routeNativeElement?.querySelector('input[name="slot"]'),
+		).toBeTruthy();
+		expect(
+			harness.routeNativeElement?.querySelector('select[name="slot"]'),
+		).toBeFalsy();
+	});
+
+	it('normalizes the number input before saving a drive', async () => {
+		await harness.navigateByUrl('/garage/car-1/runs');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
+			.flush({ driveSessions: [] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const add = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find((button) =>
+			button.textContent?.includes('Record the first drive'),
+		) as HTMLButtonElement | undefined;
+		add?.click();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			update(field: 'durationMinutes', value: unknown): void;
+		};
+		component.update('durationMinutes', 30);
+		harness.detectChanges();
+		harness.routeNativeElement
+			?.querySelector('form')
+			?.dispatchEvent(new Event('submit'));
+
+		const mutation = http.expectOne('/api/v1/cars/car-1/drives');
+		expect(mutation.request.method).toBe('POST');
+		expect(mutation.request.body.durationMinutes).toBe(30);
+		mutation.flush({ driveSession: { id: 'drive-1' } });
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne(
+				(request) => request.url === '/api/v1/cars/car-1/drives',
+			);
+		});
+		refresh?.flush({ driveSessions: [] });
+	});
 });

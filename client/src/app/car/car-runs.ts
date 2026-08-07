@@ -180,8 +180,11 @@ export class CarRuns {
 		this.editing.set(true);
 	}
 
-	protected update(field: keyof DriveForm, value: string): void {
-		this.form.update((form) => ({ ...form, [field]: value }));
+	protected update(field: keyof DriveForm, value: unknown): void {
+		this.form.update((form) => ({
+			...form,
+			[field]: value == null ? '' : String(value),
+		}));
 	}
 
 	protected cancel(): void {

@@ -59,6 +59,19 @@ const standardSlots = [
 	'wing',
 ];
 
+const componentSlotType = (
+	component: InstalledComponent,
+): ComponentForm['slotType'] =>
+	component.slotType ??
+	(standardSlots.includes(component.slot) ? 'standard' : 'custom');
+
+const installationTime = (component: InstalledComponent): number => {
+	const timestamp = component.installedAt
+		? Date.parse(component.installedAt)
+		: Number.NaN;
+	return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
 const emptyForm = (): ComponentForm => ({
 	slotType: 'standard',
 	slot: 'motor',
@@ -143,11 +156,16 @@ export class CarBuild {
 				...(grouped.get(component.slot) ?? []),
 				component,
 			]);
-		return [...grouped.entries()].map(([slot, items]) => ({
-			slot,
-			current: items.find((item) => !item.removedAt) ?? null,
-			history: items.filter((item) => item.removedAt),
-		}));
+		return [...grouped.entries()].map(([slot, items]) => {
+			const newestFirst = [...items].sort(
+				(left, right) => installationTime(right) - installationTime(left),
+			);
+			return {
+				slot,
+				current: newestFirst.find((item) => !item.removedAt) ?? null,
+				history: newestFirst.filter((item) => item.removedAt),
+			};
+		});
 	});
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
@@ -188,7 +206,7 @@ export class CarBuild {
 		this.mode.set('edit');
 		this.editingId.set(component.id);
 		this.form.set({
-			slotType: component.slotType ?? 'standard',
+			slotType: componentSlotType(component),
 			slot: component.slot,
 			name: component.name,
 			manufacturer: component.manufacturer ?? '',
@@ -205,7 +223,7 @@ export class CarBuild {
 		this.editingId.set(component.id);
 		this.form.set({
 			...emptyForm(),
-			slotType: component.slotType ?? 'standard',
+			slotType: componentSlotType(component),
 			slot: component.slot,
 		});
 		this.editing.set(true);
