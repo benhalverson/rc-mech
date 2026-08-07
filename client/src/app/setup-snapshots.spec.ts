@@ -203,6 +203,34 @@ describe('SetupSnapshots', () => {
 		]);
 	});
 
+	it('ignores a stale import destination when recording a normal setup', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.importCarModel.set({ carId: 'car-2' });
+		app.openAdd();
+		app.formModel.set({
+			...emptySetupForm(),
+			name: 'Trackside baseline',
+		});
+		fixture.detectChanges();
+		app.save();
+		const request = http.expectOne(
+			(item) =>
+				item.url === '/api/v1/cars/car-1/setups' && item.method === 'POST',
+		);
+		request.flush({
+			setup: {
+				...currentSetup,
+				id: 'setup-2',
+				name: 'Trackside baseline',
+				current: false,
+			},
+		});
+		await flushSetups([
+			{ ...currentSetup, id: 'setup-2', name: 'Trackside baseline' },
+		]);
+	});
+
 	it('announces review validation and focuses the first invalid typed field', async () => {
 		await flushSetups();
 		const open = [...fixture.nativeElement.querySelectorAll('button')].find(
@@ -358,6 +386,20 @@ describe('SetupSnapshots', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'supported So Dialed URL',
 		);
+	});
+
+	it('reports a blank import URL as required without a format error', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('   ');
+		app.previewImport();
+		fixture.detectChanges();
+
+		const validation = fixture.nativeElement.querySelector(
+			'#import-url-validation[role="alert"]',
+		);
+		expect(validation?.textContent).toContain('Paste a So Dialed setup URL.');
+		expect(validation?.textContent).not.toContain('supported So Dialed URL');
 	});
 
 	it('associates Signal Form validation with the import field and restores focus', async () => {

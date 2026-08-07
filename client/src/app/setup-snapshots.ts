@@ -171,14 +171,22 @@ export class SetupSnapshots {
 	protected readonly importUrlModel = signal({ url: '' });
 	protected readonly importUrlForm = form(this.importUrlModel, (path) => {
 		required(path.url, { message: 'Paste a So Dialed setup URL.' });
-		validate(path.url, ({ value }) =>
-			SoDialedImporterClient.isSupportedUrl(value())
+		validate(path.url, ({ value }) => {
+			const input = value();
+			if (!input) return undefined;
+			const url = input.trim();
+			if (!url)
+				return {
+					kind: 'blankUrl',
+					message: 'Paste a So Dialed setup URL.',
+				};
+			return SoDialedImporterClient.isSupportedUrl(url)
 				? undefined
 				: {
 						kind: 'supportedUrl',
 						message: 'Paste a supported So Dialed URL, including https://.',
-					},
-		);
+					};
+		});
 	});
 	protected readonly importState = signal<ImportState>('idle');
 	protected readonly importError = signal('');
@@ -340,7 +348,9 @@ export class SetupSnapshots {
 		const setup = this.importPreview() ? null : this.selected();
 		const importDraft = this.importPreview();
 		const reviewValues = parseSetupJsonObject(formModel.unmappedValues);
-		const targetCarId = this.importCarModel().carId || this.carId();
+		const targetCarId = importDraft
+			? this.importCarModel().carId || this.carId()
+			: this.carId();
 		const payload = setupPayloadFromForm(formModel);
 		const request =
 			this.mode() === 'edit' && setup
