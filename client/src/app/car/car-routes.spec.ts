@@ -373,6 +373,143 @@ describe('Car section routes', () => {
 		nextSetups?.flush({ setups: [] });
 	});
 
+	it('clears stale build feedback and identifies an expired save', async () => {
+		await harness.navigateByUrl('/garage/car-1/build');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/components')
+			.flush({ components: [] });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			openAdd(): void;
+			save(): void;
+			form: TestSignal<{
+				slotType: 'standard' | 'custom';
+				slot: string;
+				name: string;
+				manufacturer: string;
+				model: string;
+				serialNumber: string;
+				notes: string;
+			}>;
+			formError: TestSignal<string>;
+			message: TestSignal<string>;
+		};
+		component.openAdd();
+		component.form.set({
+			slotType: 'standard',
+			slot: 'motor',
+			name: 'Race motor',
+			manufacturer: '',
+			model: '',
+			serialNumber: '',
+			notes: '',
+		});
+		component.formError.set('Old build error');
+		component.message.set('Old build success');
+		await harness.fixture.whenStable();
+		component.save();
+		harness.detectChanges();
+
+		expect(harness.routeNativeElement?.textContent).not.toContain('Old build');
+		http
+			.expectOne('/api/v1/cars/car-1/components')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Your garage session has expired',
+		);
+	});
+
+	it('clears stale run feedback and identifies expired mutations', async () => {
+		const drive = {
+			id: 'drive-1',
+			carId: 'car-1',
+			startedAt: '2026-08-07T10:00:00.000Z',
+		};
+		await harness.navigateByUrl('/garage/car-1/runs');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
+			.flush({ driveSessions: [drive] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			openAdd(): void;
+			save(): void;
+			archive(value: typeof drive): void;
+			form: TestSignal<{
+				startedAt: string;
+				durationMinutes: string;
+				conditions: string;
+				notes: string;
+			}>;
+			formError: TestSignal<string>;
+			message: TestSignal<string>;
+		};
+		component.openAdd();
+		component.form.set({
+			startedAt: '2026-08-07T10:00',
+			durationMinutes: '15',
+			conditions: '',
+			notes: '',
+		});
+		component.formError.set('Old run error');
+		component.message.set('Old run success');
+		await harness.fixture.whenStable();
+		component.save();
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).not.toContain('Old run');
+		http
+			.expectOne('/api/v1/cars/car-1/drives')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Your garage session has expired',
+		);
+
+		component.message.set('Old archive error');
+		component.archive(drive);
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).not.toContain(
+			'Old archive error',
+		);
+		http
+			.expectOne('/api/v1/cars/car-1/drives/drive-1')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Your garage session has expired',
+		);
+	});
+
+	it('identifies an expired setup-import car creation', async () => {
+		await harness.navigateByUrl('/garage/car-1/setups');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http.expectOne('/api/v1/cars').flush({ cars: [car] });
+		let setups: TestRequest | undefined;
+		await vi.waitFor(() => {
+			setups = http.expectOne('/api/v1/cars/car-1/setups');
+		});
+		setups?.flush({ setups: [] });
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			createCar(identity: { name: string; make: string; model: string }): void;
+		};
+		component.createCar({ name: 'Imported car', make: '', model: '' });
+		http
+			.expectOne('/api/v1/cars')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Your garage session has expired',
+		);
+	});
+
 	it('shows missing-car guidance without a connection retry', async () => {
 		await harness.navigateByUrl('/garage/missing/overview');
 		http
@@ -609,19 +746,17 @@ describe('Car section routes', () => {
 
 		expect(harness.routeNativeElement?.textContent).toContain('New mount');
 		expect(harness.routeNativeElement?.textContent).not.toContain('Old mount');
-		const edit = [
+		const replace = [
 			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find((button) => button.textContent?.trim() === 'Edit') as
+		].find((button) => button.textContent?.trim() === 'Replace') as
 			| HTMLButtonElement
 			| undefined;
-		edit?.click();
+		replace?.click();
 		harness.detectChanges();
-		expect(
-			harness.routeNativeElement?.querySelector('input[name="slot"]'),
-		).toBeTruthy();
-		expect(
-			harness.routeNativeElement?.querySelector('select[name="slot"]'),
-		).toBeFalsy();
+		const customSlot = [
+			...(harness.routeNativeElement?.querySelectorAll('label') ?? []),
+		].find((label) => label.textContent?.includes('Custom slot'));
+		expect(customSlot?.querySelector('input')).toBeTruthy();
 	});
 
 	it('recognizes the backend transmitter slot as standard', async () => {
@@ -643,19 +778,21 @@ describe('Car section routes', () => {
 		await harness.fixture.whenStable();
 		harness.detectChanges();
 
-		const edit = [
+		const replace = [
 			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find((button) => button.textContent?.trim() === 'Edit') as
+		].find((button) => button.textContent?.trim() === 'Replace') as
 			| HTMLButtonElement
 			| undefined;
-		edit?.click();
+		replace?.click();
 		harness.detectChanges();
-		expect(
-			harness.routeNativeElement?.querySelector('select[name="slot"]'),
-		).toBeTruthy();
-		expect(
-			harness.routeNativeElement?.querySelector('input[name="slot"]'),
-		).toBeFalsy();
+		const slot = [
+			...(harness.routeNativeElement?.querySelectorAll('label') ?? []),
+		].find((label) => label.textContent?.trim().startsWith('Slot'));
+		const customSlot = [
+			...(harness.routeNativeElement?.querySelectorAll('label') ?? []),
+		].find((label) => label.textContent?.includes('Custom slot'));
+		expect(slot?.querySelector('select')).toBeTruthy();
+		expect(customSlot).toBeUndefined();
 	});
 
 	it('keeps the build editor open while a save is in flight', async () => {
@@ -767,12 +904,14 @@ describe('Car section routes', () => {
 		) as HTMLButtonElement | undefined;
 		add?.click();
 		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			update(field: 'durationMinutes', value: unknown): void;
-		};
-		component.update('durationMinutes', 30);
+		const durationLabel = [
+			...(harness.routeNativeElement?.querySelectorAll('label') ?? []),
+		].find((label) => label.textContent?.includes('Duration'));
+		const duration = durationLabel?.querySelector('input') as HTMLInputElement;
+		duration.value = '30';
+		duration.dispatchEvent(new Event('input', { bubbles: true }));
 		harness.detectChanges();
+		await harness.fixture.whenStable();
 		harness.routeNativeElement
 			?.querySelector('form')
 			?.dispatchEvent(new Event('submit'));

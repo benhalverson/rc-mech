@@ -8,7 +8,13 @@ import {
 	input,
 	signal,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import {
+	FormField,
+	maxLength,
+	required,
+	form as signalForm,
+	validate,
+} from '@angular/forms/signals';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
 
@@ -98,7 +104,7 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 
 @Component({
 	selector: 'app-car-build',
-	imports: [CarSectionShell, DatePipe, FormsModule],
+	imports: [CarSectionShell, DatePipe, FormField],
 	template: `
 		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
 		@else if (carStore.error()) { <div class="state-card" role="alert"><p>{{ carStore.error() }}</p>@if (!carStore.notFound()) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
@@ -108,12 +114,12 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 					<div class="section-heading"><div><div class="eyebrow">Installed components</div><h3 id="build-title">Build sheet</h3></div>@if (!car.archivedAt && !editing()) { <button class="button" type="button" (click)="openAdd()">Add component</button> }</div>
 					<p class="section-intro">One current installation per slot. Replacements retain the previous installation as immutable history.</p>
 					@if (editing()) {
-						<form (ngSubmit)="save()" aria-labelledby="component-form-title"><h4 id="component-form-title">{{ mode() === 'replace' ? 'Fit the replacement' : mode() === 'edit' ? 'Edit installation' : 'Add component' }}</h4>
-							@if (formError()) { <p role="alert">{{ formError() }}</p> }
-							<div class="form-grid"><label>Slot type <select name="slot-type" [disabled]="mode() === 'edit'" [ngModel]="form().slotType" (ngModelChange)="update('slotType', $event)"><option value="standard">Standard</option><option value="custom">Custom</option></select></label>
-							@if (form().slotType === 'standard') { <label>Slot <select name="slot" [disabled]="mode() === 'edit'" [ngModel]="form().slot" (ngModelChange)="update('slot', $event)">@for (slot of standardSlots; track slot) { <option [value]="slot">{{ slot }}</option> }</select></label> }
-							@else { <label>Custom slot <input name="slot" required [disabled]="mode() === 'edit'" [ngModel]="form().slot" (ngModelChange)="update('slot', $event)" /></label> }
-							<label>Name <input name="name" required maxlength="160" [ngModel]="form().name" (ngModelChange)="update('name', $event)" /></label><label>Manufacturer <input name="manufacturer" [ngModel]="form().manufacturer" (ngModelChange)="update('manufacturer', $event)" /></label><label>Model <input name="model" [ngModel]="form().model" (ngModelChange)="update('model', $event)" /></label><label>Serial number <input name="serial" [ngModel]="form().serialNumber" (ngModelChange)="update('serialNumber', $event)" /></label><label class="wide">Notes <textarea name="notes" rows="3" [ngModel]="form().notes" (ngModelChange)="update('notes', $event)"></textarea></label></div>
+						<form (submit)="save($event)" aria-labelledby="component-form-title" [attr.aria-describedby]="formError() ? 'component-form-error' : null" novalidate><h4 id="component-form-title">{{ mode() === 'replace' ? 'Fit the replacement' : mode() === 'edit' ? 'Edit installation' : 'Add component' }}</h4>
+							@if (formError()) { <p id="component-form-error" role="alert">{{ formError() }}</p> }
+							<div class="form-grid">@if (mode() === 'edit') { <p><strong>Slot</strong><br />{{ form().slot }}</p> } @else { <label>Slot type <select [formField]="componentForm.slotType"><option value="standard">Standard</option><option value="custom">Custom</option></select></label>
+							@if (form().slotType === 'standard') { <label>Slot <select [formField]="componentForm.slot">@for (slot of standardSlots; track slot) { <option [value]="slot">{{ slot }}</option> }</select></label> }
+							@else { <label>Custom slot <input [formField]="componentForm.slot" [attr.aria-describedby]="componentForm.slot().invalid() && formError() ? 'component-form-error' : null" /></label> } }
+							<label>Name <input [formField]="componentForm.name" [attr.aria-describedby]="componentForm.name().invalid() && formError() ? 'component-form-error' : null" /></label><label>Manufacturer <input [formField]="componentForm.manufacturer" /></label><label>Model <input [formField]="componentForm.model" /></label><label>Serial number <input [formField]="componentForm.serialNumber" /></label><label class="wide">Notes <textarea rows="3" [formField]="componentForm.notes"></textarea></label></div>
 							<div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save component</button><button class="button quiet" type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div>
 						</form>
 					} @else if (resource.isLoading()) { <div class="state-card" role="status">Reading the build sheet…</div> }
@@ -173,6 +179,23 @@ export class CarBuild {
 	protected readonly mode = signal<ComponentMode>('add');
 	protected readonly action = signal<ComponentMode | null>(null);
 	protected readonly form = signal(emptyForm());
+	protected readonly componentForm = signalForm(this.form, (path) => {
+		required(path.slot, { message: 'Choose a component slot.' });
+		required(path.name, { message: 'Name the component.' });
+		validate(path.slot, ({ value }) =>
+			!value() || value().trim()
+				? undefined
+				: { kind: 'blankSlot', message: 'Choose a component slot.' },
+		);
+		validate(path.name, ({ value }) =>
+			!value() || value().trim()
+				? undefined
+				: { kind: 'blankName', message: 'Name the component.' },
+		);
+		maxLength(path.name, 160, {
+			message: 'Use 160 characters or fewer for the component name.',
+		});
+	});
 	protected readonly formError = signal('');
 	protected readonly message = signal('');
 
@@ -193,7 +216,7 @@ export class CarBuild {
 		this.editingId.set(null);
 		this.mode.set('add');
 		this.action.set(null);
-		this.form.set(emptyForm());
+		this.componentForm().reset(emptyForm());
 		this.formError.set('');
 		this.message.set('');
 	}
@@ -210,7 +233,7 @@ export class CarBuild {
 		}
 		this.mode.set('add');
 		this.editingId.set(null);
-		this.form.set({
+		this.componentForm().reset({
 			...emptyForm(),
 			slot: slot || 'motor',
 			slotType: slot && !standardSlots.includes(slot) ? 'custom' : 'standard',
@@ -222,7 +245,7 @@ export class CarBuild {
 		if (this.carStore.car()?.archivedAt || this.action()) return;
 		this.mode.set('edit');
 		this.editingId.set(component.id);
-		this.form.set({
+		this.componentForm().reset({
 			slotType: componentSlotType(component),
 			slot: component.slot,
 			name: component.name,
@@ -238,7 +261,7 @@ export class CarBuild {
 		if (this.carStore.car()?.archivedAt || this.action()) return;
 		this.mode.set('replace');
 		this.editingId.set(component.id);
-		this.form.set({
+		this.componentForm().reset({
 			...emptyForm(),
 			slotType: componentSlotType(component),
 			slot: component.slot,
@@ -246,26 +269,33 @@ export class CarBuild {
 		this.editing.set(true);
 	}
 
-	protected update(field: keyof ComponentForm, value: string): void {
-		this.form.update((form) => ({ ...form, [field]: value }));
-	}
-
 	protected cancel(): void {
 		if (this.action()) return;
 		this.editing.set(false);
 		this.formError.set('');
+		this.componentForm().reset();
 	}
 
-	protected save(): void {
+	protected save(event?: Event): void {
+		event?.preventDefault();
 		if (this.action()) return;
+		this.formError.set('');
+		this.message.set('');
+		this.componentForm().markAsTouched();
 		const car = this.carStore.car();
 		const form = this.form();
 		if (!car || car.archivedAt) {
 			this.formError.set('Restore this car before changing its build.');
 			return;
 		}
-		if (!form.slot.trim() || !form.name.trim()) {
-			this.formError.set('Choose a slot and name the component.');
+		if (this.componentForm().invalid()) {
+			this.formError.set(
+				this.componentForm().errorSummary()[0]?.message ??
+					'Review the component fields.',
+			);
+			if (this.componentForm.slot().invalid())
+				this.componentForm.slot().focusBoundControl();
+			else this.componentForm.name().focusBoundControl();
 			return;
 		}
 		const mode = this.mode();
@@ -305,9 +335,11 @@ export class CarBuild {
 				if (this.carId() !== car.id) return;
 				this.action.set(null);
 				this.formError.set(
-					error.status === 409
-						? 'Restore this car before changing its build.'
-						: 'The component could not be saved.',
+					error.status === 401
+						? 'Your garage session has expired. Sign in again to continue.'
+						: error.status === 409
+							? 'Restore this car before changing its build.'
+							: 'The component could not be saved.',
 				);
 			},
 		});

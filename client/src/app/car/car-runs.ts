@@ -8,7 +8,12 @@ import {
 	input,
 	signal,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import {
+	FormField,
+	required,
+	form as signalForm,
+	validate,
+} from '@angular/forms/signals';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
 
@@ -100,7 +105,7 @@ const emptyForm = (): DriveForm => ({
 
 @Component({
 	selector: 'app-car-runs',
-	imports: [CarSectionShell, DatePipe, FormsModule],
+	imports: [CarSectionShell, DatePipe, FormField],
 	template: `
 		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
 		@else if (carStore.error()) { <div class="state-card" role="alert"><p>{{ carStore.error() }}</p>@if (!carStore.notFound()) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
@@ -108,7 +113,7 @@ const emptyForm = (): DriveForm => ({
 			<app-car-section-shell [car]="car" section="runs">
 				<section class="session-log" aria-labelledby="runs-title">
 					<div class="section-heading"><div><div class="eyebrow">Drive history</div><h3 id="runs-title">The run log</h3></div><span><strong>{{ activeCount() }}</strong> recorded</span>@if (!car.archivedAt && !editing()) { <button class="button" type="button" (click)="openAdd()" [disabled]="action() !== null">Record a drive</button> }</div>
-					@if (editing()) { <form (ngSubmit)="save()" aria-labelledby="run-form-title"><h4 id="run-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive' }}</h4>@if (formError()) { <p role="alert">{{ formError() }}</p> }<div class="form-grid"><label>Started <input name="started" type="datetime-local" required [ngModel]="form().startedAt" (ngModelChange)="update('startedAt', $event)" /></label><label>Duration (minutes) <input name="duration" type="number" min="1" max="1440" [ngModel]="form().durationMinutes" (ngModelChange)="update('durationMinutes', $event)" /></label><label class="wide">Conditions <input name="conditions" [ngModel]="form().conditions" (ngModelChange)="update('conditions', $event)" /></label><label class="wide">Notes <textarea name="notes" rows="3" [ngModel]="form().notes" (ngModelChange)="update('notes', $event)"></textarea></label></div><p>Saved in {{ timezone() }}.</p><div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save session</button><button type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div></form> }
+					@if (editing()) { <form (submit)="save($event)" aria-labelledby="run-form-title" [attr.aria-describedby]="formError() ? 'run-form-error' : null" novalidate><h4 id="run-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive' }}</h4>@if (formError()) { <p id="run-form-error" role="alert">{{ formError() }}</p> }<div class="form-grid"><label>Started <input type="datetime-local" [formField]="runForm.startedAt" [attr.aria-describedby]="runForm.startedAt().invalid() && formError() ? 'run-form-error' : null" /></label><label>Duration (minutes) <input type="text" inputmode="numeric" [formField]="runForm.durationMinutes" [attr.aria-describedby]="runForm.durationMinutes().invalid() && formError() ? 'run-form-error' : null" /></label><label class="wide">Conditions <input [formField]="runForm.conditions" /></label><label class="wide">Notes <textarea rows="3" [formField]="runForm.notes"></textarea></label></div><p>Saved in {{ timezone() }}.</p><div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save session</button><button type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div></form> }
 					@else if (sessionsResource.isLoading()) { <div class="state-card" role="status">Opening the run log…</div> }
 					@else if (sessionsResource.error()) { <div class="state-card" role="alert"><p>The run log could not be loaded.</p><button type="button" (click)="sessionsResource.reload()">Try again</button></div> }
 					@else if (!sessions().length) { <div class="state-card"><h4>No drive sessions recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()" [disabled]="action() !== null">Record the first drive</button> }</div> }
@@ -162,6 +167,19 @@ export class CarRuns {
 	protected readonly editingId = signal<string | null>(null);
 	protected readonly action = signal<string | null>(null);
 	protected readonly form = signal(emptyForm());
+	protected readonly runForm = signalForm(this.form, (path) => {
+		required(path.startedAt, { message: 'Add when this drive started.' });
+		validate(path.durationMinutes, ({ value }) => {
+			if (!value().trim()) return undefined;
+			const duration = Number(value());
+			return Number.isInteger(duration) && duration >= 1 && duration <= 1440
+				? undefined
+				: {
+						kind: 'duration',
+						message: 'Duration must be between 1 and 1,440 minutes.',
+					};
+		});
+	});
 	protected readonly formError = signal('');
 	protected readonly message = signal('');
 
@@ -181,7 +199,7 @@ export class CarRuns {
 		this.editing.set(false);
 		this.editingId.set(null);
 		this.action.set(null);
-		this.form.set(emptyForm());
+		this.runForm().reset(emptyForm());
 		this.formError.set('');
 		this.message.set('');
 	}
@@ -189,7 +207,7 @@ export class CarRuns {
 	protected openAdd(): void {
 		if (this.carStore.car()?.archivedAt || this.action()) return;
 		this.editingId.set(null);
-		this.form.set({
+		this.runForm().reset({
 			...emptyForm(),
 			startedAt: localDateTime(new Date().toISOString(), this.timezone()),
 		});
@@ -200,7 +218,7 @@ export class CarRuns {
 		if (this.carStore.car()?.archivedAt || session.deletedAt || this.action())
 			return;
 		this.editingId.set(session.id);
-		this.form.set({
+		this.runForm().reset({
 			startedAt: localDateTime(session.startedAt, this.timezone()),
 			durationMinutes: session.durationMinutes
 				? String(session.durationMinutes)
@@ -211,21 +229,19 @@ export class CarRuns {
 		this.editing.set(true);
 	}
 
-	protected update(field: keyof DriveForm, value: unknown): void {
-		this.form.update((form) => ({
-			...form,
-			[field]: value == null ? '' : String(value),
-		}));
-	}
-
 	protected cancel(): void {
 		if (this.action()) return;
 		this.editing.set(false);
 		this.formError.set('');
+		this.runForm().reset();
 	}
 
-	protected save(): void {
+	protected save(event?: Event): void {
+		event?.preventDefault();
 		if (this.action()) return;
+		this.formError.set('');
+		this.message.set('');
+		this.runForm().markAsTouched();
 		const car = this.carStore.car();
 		const form = this.form();
 		if (!car || car.archivedAt) {
@@ -235,15 +251,14 @@ export class CarRuns {
 		const duration = form.durationMinutes.trim()
 			? Number(form.durationMinutes)
 			: null;
-		if (!form.startedAt) {
-			this.formError.set('Add when this drive started.');
-			return;
-		}
-		if (
-			duration !== null &&
-			(!Number.isInteger(duration) || duration < 1 || duration > 1440)
-		) {
-			this.formError.set('Duration must be between 1 and 1,440 minutes.');
+		if (this.runForm().invalid()) {
+			this.formError.set(
+				this.runForm().errorSummary()[0]?.message ??
+					'Review the drive session fields.',
+			);
+			if (this.runForm.startedAt().invalid())
+				this.runForm.startedAt().focusBoundControl();
+			else this.runForm.durationMinutes().focusBoundControl();
 			return;
 		}
 		const id = this.editingId();
@@ -281,9 +296,11 @@ export class CarRuns {
 				if (this.carId() !== car.id) return;
 				this.action.set(null);
 				this.formError.set(
-					error.status === 409
-						? 'Restore this car before recording a drive.'
-						: 'The drive session could not be saved.',
+					error.status === 401
+						? 'Your garage session has expired. Sign in again to continue.'
+						: error.status === 409
+							? 'Restore this car before recording a drive.'
+							: 'The drive session could not be saved.',
 				);
 			},
 		});
@@ -292,6 +309,7 @@ export class CarRuns {
 	protected archive(session: DriveSession): void {
 		const car = this.carStore.car();
 		if (!car || car.archivedAt || this.action()) return;
+		this.message.set('');
 		this.action.set(`delete:${session.id}`);
 		this.http
 			.delete(
@@ -304,10 +322,14 @@ export class CarRuns {
 					this.sessionsResource.reload();
 					this.action.set(null);
 				},
-				error: () => {
+				error: (error: { status?: number }) => {
 					if (this.carId() !== car.id) return;
 					this.action.set(null);
-					this.message.set('The drive session could not be archived.');
+					this.message.set(
+						error.status === 401
+							? 'Your garage session has expired. Sign in again to continue.'
+							: 'The drive session could not be archived.',
+					);
 				},
 			});
 	}

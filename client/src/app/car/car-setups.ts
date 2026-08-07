@@ -77,11 +77,13 @@ export class CarSetups {
 					this.collection.reload();
 					void this.router.navigate(['/garage', car.id, 'setups']);
 				},
-				error: () => {
+				error: (error: { status?: number }) => {
 					if (this.carId() !== sourceCarId) return;
 					this.createAction.set(false);
 					this.createError.set(
-						'The new car could not be created from this reviewed import.',
+						error.status === 401
+							? 'Your garage session has expired. Sign in again to continue.'
+							: 'The new car could not be created from this reviewed import.',
 					);
 				},
 			});
