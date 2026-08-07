@@ -254,13 +254,15 @@ describe('Car section routes', () => {
 		).toBeFalsy();
 	});
 
-	it('normalizes the number input before saving a drive', async () => {
+	it('normalizes a number input with an invalid stored timezone', async () => {
 		await harness.navigateByUrl('/garage/car-1/runs');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
 			.flush({ driveSessions: [] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush({ timezone: 'Not/A-Timezone' });
 		await harness.fixture.whenStable();
 		harness.detectChanges();
 		const add = [
@@ -283,6 +285,7 @@ describe('Car section routes', () => {
 		const mutation = http.expectOne('/api/v1/cars/car-1/drives');
 		expect(mutation.request.method).toBe('POST');
 		expect(mutation.request.body.durationMinutes).toBe(30);
+		expect(mutation.request.body.startedAt).toMatch(/Z$/);
 		mutation.flush({ driveSession: { id: 'drive-1' } });
 		let refresh: TestRequest | undefined;
 		await vi.waitFor(() => {

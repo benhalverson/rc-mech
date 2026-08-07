@@ -29,12 +29,28 @@ type DriveForm = {
 	notes: string;
 };
 
-const browserTimezone = (): string =>
-	Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const safeTimezone = (timezone: string): string => {
+	try {
+		new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+		return timezone;
+	} catch {
+		return 'UTC';
+	}
+};
+
+const browserTimezone = (): string => {
+	try {
+		return safeTimezone(
+			Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+		);
+	} catch {
+		return 'UTC';
+	}
+};
 
 const localDateTime = (iso: string, timezone: string): string => {
 	const parts = new Intl.DateTimeFormat('en-CA', {
-		timeZone: timezone,
+		timeZone: safeTimezone(timezone),
 		year: 'numeric',
 		month: '2-digit',
 		day: '2-digit',
@@ -54,7 +70,7 @@ const toIso = (value: string, timezone: string): string => {
 	const [hour, minute] = time.split(':').map(Number);
 	const asUtc = Date.UTC(year, month - 1, day, hour, minute);
 	const parts = new Intl.DateTimeFormat('en-US', {
-		timeZone: timezone,
+		timeZone: safeTimezone(timezone),
 		year: 'numeric',
 		month: '2-digit',
 		day: '2-digit',

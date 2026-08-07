@@ -185,7 +185,8 @@ export class CarBuild {
 	protected openAdd(slot = ''): void {
 		if (this.carStore.car()?.archivedAt) return;
 		const current = slot
-			? this.components().find((item) => item.slot === slot && !item.removedAt)
+			? (this.groups().find((group) => group.slot === slot)?.current ??
+				undefined)
 			: undefined;
 		if (current) {
 			this.openReplace(current);
