@@ -30,8 +30,7 @@ const platformEmailSender = (binding: SendEmail): EmailSender => ({
 });
 
 export const createEmailSender = (env: Env & AuthEnvironment): EmailSender => {
-	if (isLocalDevelopment(env)) return noopEmailSender;
 	const binding = (env as Env & { EMAIL?: SendEmail }).EMAIL;
 	return binding ? platformEmailSender(binding) : noopEmailSender;
 };
-import { isLocalDevelopment, type AuthEnvironment } from './auth-policy.ts';
+import type { AuthEnvironment } from './auth-policy.ts';

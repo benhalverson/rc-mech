@@ -12,6 +12,18 @@ test('health is exposed through the Worker request interface', async () => {
 	expect(await response.json()).toEqual({ ok: true, service: 'rc-mech' });
 });
 
+test('OpenAPI documents invite registration and management endpoints', async () => {
+	const response = await request('/api/openapi.json');
+	const document = (await response.json()) as {
+		paths: Record<string, unknown>;
+	};
+
+	expect(response.status).toBe(200);
+	expect(document.paths['/api/auth/register']).toBeDefined();
+	expect(document.paths['/api/v1/invite-codes']).toBeDefined();
+	expect(document.paths['/api/v1/invite-codes/{id}/revoke']).toBeDefined();
+});
+
 test('unknown API routes return the JSON API 404 contract', async () => {
 	const response = await request('/api/does-not-exist');
 

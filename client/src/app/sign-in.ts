@@ -43,14 +43,21 @@ const bytesToBase64Url = (value: ArrayBuffer): string => {
 			<section class="access-card" aria-labelledby="sign-in-title">
 				<div class="eyebrow">RC Mech / Owner access</div>
 				<h1 id="sign-in-title">Back to the<br />workbench.</h1>
-				<p class="intro">Use the owner email to receive a one-time link, or continue with a passkey.</p>
-				<form (ngSubmit)="requestMagicLink()">
-					<label for="owner-email">Owner email</label>
+				<p class="intro">{{ registering() ? 'Use an invite code to start your own private garage.' : 'Use your email to receive a one-time link, or continue with a passkey.' }}</p>
+				<form (ngSubmit)="registering() ? register() : requestMagicLink()">
+					<label for="owner-email">Email address</label>
 					<input id="owner-email" name="email" type="email" autocomplete="email" required [ngModel]="email()" (ngModelChange)="email.set($event)" [disabled]="sending()" />
-					<button class="button" type="submit" [disabled]="sending()">{{ sending() ? 'Sending link…' : 'Send magic link' }}</button>
+					@if (registering()) {
+						<label for="invite-code">Invite code</label>
+						<input id="invite-code" name="inviteCode" autocomplete="off" minlength="6" maxlength="32" required [ngModel]="inviteCode()" (ngModelChange)="inviteCode.set($event)" [disabled]="sending()" />
+					}
+					<button class="button" type="submit" [disabled]="sending()">{{ sending() ? 'Sending link…' : registering() ? 'Start registration' : 'Send magic link' }}</button>
 				</form>
-				<div class="divider"><span>or</span></div>
-				<button class="button passkey-button" type="button" (click)="signInWithPasskey()" [disabled]="!webAuthnAvailable || working()">{{ working() ? 'Waiting for passkey…' : 'Sign in with a passkey' }}</button>
+				@if (!registering()) {
+					<div class="divider"><span>or</span></div>
+					<button class="button passkey-button" type="button" (click)="signInWithPasskey()" [disabled]="!webAuthnAvailable || working()">{{ working() ? 'Waiting for passkey…' : 'Sign in with a passkey' }}</button>
+				}
+				<button class="text-button" type="button" (click)="toggleRegistration()" [disabled]="sending()">{{ registering() ? 'Already have an account? Sign in' : 'Have an invite code? Register' }}</button>
 				@if (message()) { <p class="message" role="status">{{ message() }}</p> }
 				@if (sent()) { <p class="hint">Open the link from this device. The link expires soon and can only be used once.</p> }
 			</section>
@@ -63,6 +70,8 @@ export class SignIn {
 	private readonly router = inject(Router);
 	private readonly sessionStore = inject(OwnerSessionStore);
 	protected readonly email = signal('');
+	protected readonly inviteCode = signal('');
+	protected readonly registering = signal(false);
 	protected readonly sending = signal(false);
 	protected readonly working = signal(false);
 	protected readonly sent = signal(false);
@@ -75,6 +84,41 @@ export class SignIn {
 		return value?.startsWith('/') && !value.startsWith('//')
 			? value
 			: '/garage';
+	}
+
+	protected toggleRegistration(): void {
+		this.registering.update((value) => !value);
+		this.message.set('');
+		this.sent.set(false);
+	}
+
+	protected register(): void {
+		const email = this.email().trim();
+		const inviteCode = this.inviteCode().trim();
+		if (!email || inviteCode.length < 6 || this.sending()) return;
+		this.sending.set(true);
+		this.message.set('');
+		this.http
+			.post(
+				'/api/auth/register',
+				{ email, inviteCode, callbackURL: this.returnTo },
+				{ withCredentials: true },
+			)
+			.subscribe({
+				next: () => {
+					this.sent.set(true);
+					this.sending.set(false);
+					this.message.set(
+						'If the email and invite code are valid, a registration link is on its way.',
+					);
+				},
+				error: () => {
+					this.sending.set(false);
+					this.message.set(
+						'That request could not be completed. Check the details and try again.',
+					);
+				},
+			});
 	}
 
 	protected requestMagicLink(): void {

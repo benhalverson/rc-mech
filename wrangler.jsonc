@@ -36,7 +36,7 @@
 		"local": {
 			"routes": [],
 			"assets": { "directory": "./public", "binding": "ASSETS" },
-			"send_email": [{ "name": "EMAIL" }],
+			"send_email": [{ "name": "EMAIL", "remote": true }],
 			"d1_databases": [
 				{
 					"binding": "DB",

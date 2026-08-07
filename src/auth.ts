@@ -5,7 +5,14 @@ import { passkey } from '@better-auth/passkey';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from './schema';
 import { createEmailSender } from './email';
-import { configuredOrigins, isLocalDevelopment } from './auth-policy';
+import {
+	configuredOrigins,
+	isConfiguredOwner,
+	isLocalDevelopment,
+	normalizeEmail,
+} from './auth-policy';
+import { and, eq } from 'drizzle-orm';
+import { inviteCode } from './schema';
 
 type AuthEnv = Env & {
 	APP_URL?: string;
@@ -59,6 +66,38 @@ export const createAuth = (env: AuthEnv) => {
 		trustedOrigins: configuredOrigins(appURL, isLocalDevelopment(env)),
 		session: { expiresIn: 60 * 60 * 24 * 7 },
 		user: { modelName: 'owner' },
+		databaseHooks: {
+			user: {
+				create: {
+					before: async (user) => {
+						const email = normalizeEmail(user.email);
+						if (isConfiguredOwner(email, env)) return;
+						const now = new Date().toISOString();
+						const redeemed = await drizzle(env.DB, { schema })
+							.update(inviteCode)
+							.set({
+								status: 'redeemed',
+								redeemedEmail: email,
+								redeemedUserId: user.id,
+								reservedEmail: null,
+								reservedUntil: null,
+								redeemedAt: now,
+								updatedAt: now,
+							})
+							.where(
+								and(
+									eq(inviteCode.status, 'reserved'),
+									eq(inviteCode.reservedEmail, email),
+								),
+							)
+							.returning({ id: inviteCode.id })
+							.all();
+						if (redeemed.length !== 1)
+							throw new Error('A valid invite reservation is required');
+					},
+				},
+			},
+		},
 		plugins: [
 			passkey({
 				rpID: new URL(appURL).hostname,
