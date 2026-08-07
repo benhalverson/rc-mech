@@ -275,6 +275,21 @@ describe('Settings workspace', () => {
 		http.expectNone('/api/auth/passkey/verify-registration');
 	});
 
+	it('rejects overlong passkey names at the store mutation boundary', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		const store = TestBed.inject(SettingsStore);
+		const overlong = 'x'.repeat(81);
+
+		expect(await store.registerPasskey(overlong)).toBe(false);
+		expect(await store.renamePasskey(store.passkeys()[0], overlong)).toBe(
+			false,
+		);
+		expect(store.passkeyActionError()).toContain('80 characters or fewer');
+		expect(createCredential).not.toHaveBeenCalled();
+		http.expectNone('/api/auth/passkey/update-passkey');
+	});
+
 	it('creates an invite code and refreshes the lifetime allowance', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
@@ -308,6 +323,18 @@ describe('Settings workspace', () => {
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Enter an invite code.',
 		);
+	});
+
+	it('rejects an invalid invite code at the store mutation boundary', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		const store = TestBed.inject(SettingsStore);
+
+		expect(await store.createInviteCode('bad code!')).toBe(false);
+		expect(store.inviteActionError()).toContain(
+			'only letters, numbers, or hyphens',
+		);
+		http.expectNone('/api/v1/invite-codes');
 	});
 
 	it('clears a stale invite error after copying succeeds', async () => {

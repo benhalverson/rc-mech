@@ -127,11 +127,11 @@ export const SettingsStore = signalStore(
 		passkeyActionError: computed(() => store.passkeyMutationError()),
 		webAuthnAvailable: computed(
 			() =>
+				typeof window !== 'undefined' &&
 				typeof navigator !== 'undefined' &&
 				'credentials' in navigator &&
 				typeof PublicKeyCredential !== 'undefined' &&
-				(typeof window === 'undefined' ||
-					window.isSecureContext ||
+				(window.isSecureContext ||
 					window.location.hostname === 'localhost' ||
 					window.location.hostname === '127.0.0.1'),
 		),
@@ -187,8 +187,15 @@ export const SettingsStore = signalStore(
 		},
 		async createInviteCode(value: string): Promise<boolean> {
 			const code = value.trim();
+			if (!/^[A-Za-z0-9-]{6,32}$/.test(code)) {
+				patchState(store, {
+					inviteMessage: '',
+					inviteMutationError:
+						'Use 6–32 characters containing only letters, numbers, or hyphens.',
+				});
+				return false;
+			}
 			if (
-				!code ||
 				store.inviteAction() ||
 				!store.inviteResource.hasValue() ||
 				store.inviteResource.value().remaining === 0
@@ -274,8 +281,15 @@ export const SettingsStore = signalStore(
 		},
 		async registerPasskey(nameValue: string): Promise<boolean> {
 			const name = nameValue.trim();
-			if (!store.webAuthnAvailable() || !name || store.passkeyAction())
+			if (!name || name.length > 80) {
+				patchState(store, {
+					passkeyMessage: '',
+					passkeyMutationError:
+						'Name this passkey with 80 characters or fewer.',
+				});
 				return false;
+			}
+			if (!store.webAuthnAvailable() || store.passkeyAction()) return false;
 			patchState(store, {
 				passkeyAction: 'register',
 				passkeyMessage: '',
@@ -326,7 +340,15 @@ export const SettingsStore = signalStore(
 		},
 		async renamePasskey(passkey: Passkey, nameValue: string): Promise<boolean> {
 			const name = nameValue.trim();
-			if (!name || store.passkeyAction()) return false;
+			if (!name || name.length > 80) {
+				patchState(store, {
+					passkeyMessage: '',
+					passkeyMutationError:
+						'Name this passkey with 80 characters or fewer.',
+				});
+				return false;
+			}
+			if (store.passkeyAction()) return false;
 			patchState(store, {
 				passkeyAction: `rename:${passkey.id}`,
 				passkeyMessage: '',
