@@ -39,10 +39,10 @@ if (
 	process.exit(2);
 }
 const sql = `INSERT INTO invite_code (id, code, creator_id, status, created_at, updated_at) VALUES ('seed-${Date.now()}', '${code.replaceAll("'", "''")}', '${creator.replaceAll("'", "''")}', 'available', datetime('now'), datetime('now'));`;
-const flags = remote ? '--remote' : '--local';
+const flags = remote ? ['--remote'] : ['--local', '--env', 'local'];
 const child = (await import('node:child_process')).spawn(
 	'pnpm',
-	['exec', 'wrangler', 'd1', 'execute', database, flags, '--command', sql],
+	['exec', 'wrangler', 'd1', 'execute', database, ...flags, '--command', sql],
 	{ stdio: 'inherit' },
 );
 child.on('exit', (status) => process.exit(status ?? 1));
