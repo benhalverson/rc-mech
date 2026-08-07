@@ -40,7 +40,14 @@ const MOCK_ENV = {
 		},
 	},
 	ASSETS: {
-		fetch: async () => new Response('Not found', { status: 404 }),
+		fetch: async (input: RequestInfo | URL) => {
+			const request = new Request(input);
+			return new URL(request.url).pathname === '/'
+				? new Response('<app-root></app-root>', {
+						headers: { 'content-type': 'text/html' },
+					})
+				: new Response('Not found', { status: 404 });
+		},
 	} as unknown as Fetcher,
 	APP_URL: 'http://localhost:8787',
 	ENVIRONMENT: 'local',
@@ -88,6 +95,23 @@ test('unknown API routes return the JSON API 404 contract', async () => {
 
 	expect(response.status).toBe(404);
 	expect(await response.json()).toEqual({ error: 'Not found' });
+});
+
+test.each([
+	'/.env',
+	'/.git/HEAD',
+	'/.aws/credentials',
+	'/app/.env',
+	'/backend/.env.production',
+	'/%2eenv',
+	'/%2egit/HEAD',
+])('hidden-file probe %s does not use the SPA fallback', async (path) => {
+	const response = await request(path, {
+		headers: { Accept: 'text/html' },
+	});
+
+	expect(response.status).toBe(404);
+	expect(await response.text()).toBe('Not found');
 });
 
 test('protected routes require authentication using the configured D1 binding', async () => {

@@ -3492,7 +3492,26 @@ app.post('/api/v1/service-records/:recordId/restore', async (c) => {
 
 app.all('/api', (c) => c.json({ error: 'Not found' }, 404));
 app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
+
+const hasHiddenPathSegment = (pathname: string): boolean =>
+	pathname.split('/').some((segment) => {
+		let decoded = segment;
+		for (let pass = 0; pass < 2; pass += 1) {
+			try {
+				const next = decodeURIComponent(decoded);
+				if (next === decoded) break;
+				decoded = next;
+			} catch {
+				break;
+			}
+		}
+		return decoded.startsWith('.');
+	});
+
 app.all('*', async (c) => {
+	if (hasHiddenPathSegment(new URL(c.req.url).pathname))
+		return c.text('Not found', 404);
+
 	const response = await c.env.ASSETS.fetch(c.req.raw);
 	if (
 		response.status !== 404 ||
