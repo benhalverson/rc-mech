@@ -51,14 +51,26 @@ describe('App workspace shell', () => {
 		expect(
 			fixture.nativeElement.querySelectorAll('.workspace-shell'),
 		).toHaveLength(1);
-		expect(fixture.nativeElement.querySelectorAll('.nav-toggle')).toHaveLength(
-			1,
-		);
 		expect(
 			fixture.nativeElement.querySelectorAll(
 				'nav[aria-label="Primary workspace"]',
 			),
 		).toHaveLength(1);
 		expect(fixture.nativeElement.querySelectorAll('main')).toHaveLength(1);
+		const root = fixture.nativeElement as HTMLElement;
+		const navigation = root.querySelector('.workspace-nav');
+		if (!navigation) throw new Error('Workspace navigation was not rendered.');
+		expect(navigation.classList.contains('nav-open')).toBe(true);
+		root
+			.querySelector('a[routerLink="/garage"]')
+			?.dispatchEvent(new Event('click'));
+		fixture.detectChanges();
+		expect(navigation.classList.contains('nav-open')).toBe(true);
+		(fixture.componentInstance as unknown as { closeNav(): void }).closeNav();
+		fixture.detectChanges();
+		expect(navigation.classList.contains('nav-open')).toBe(false);
+		(fixture.componentInstance as unknown as { openNav(): void }).openNav();
+		fixture.detectChanges();
+		expect(navigation.classList.contains('nav-open')).toBe(true);
 	});
 });

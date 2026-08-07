@@ -1,9 +1,7 @@
-import { BreakpointObserver } from '@angular/cdk/layout';
 import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { MatSidenavModule } from '@angular/material/sidenav';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { filter, firstValueFrom } from 'rxjs';
 import { CarPhotoGallery } from './car-photo-gallery';
@@ -389,7 +387,6 @@ const carPayload = (form: CarForm): Record<string, string> => {
 		MaintenanceCockpit,
 		CarPhotoGallery,
 		SetupSnapshots,
-		MatSidenavModule,
 		RouterLink,
 	],
 	templateUrl: './garage-pages.html',
@@ -400,9 +397,6 @@ export class GaragePages {
 	private readonly http = inject(HttpClient);
 	private readonly routeTransition = inject(RouteTransitionAnnouncer);
 	private readonly router = inject(Router, { optional: true });
-	private readonly breakpointObserver = inject(BreakpointObserver, {
-		optional: true,
-	});
 
 	protected readonly state = signal<ViewState>('checking');
 	protected readonly email = signal('');
@@ -524,8 +518,6 @@ export class GaragePages {
 				window.location.hostname === 'localhost' ||
 				window.location.hostname === '127.0.0.1'),
 	);
-	protected readonly navOpen = signal(true);
-	protected readonly navMode = signal<'side' | 'over'>('side');
 	protected readonly currentUrl = signal(
 		typeof window === 'undefined' ? '/garage' : window.location.pathname,
 	);
@@ -547,12 +539,6 @@ export class GaragePages {
 	});
 
 	constructor() {
-		this.breakpointObserver
-			?.observe(['(max-width: 700px)'])
-			.subscribe(({ matches }) => {
-				this.navMode.set(matches ? 'over' : 'side');
-				this.navOpen.set(!matches);
-			});
 		this.router?.events
 			.pipe(
 				filter(
@@ -561,7 +547,6 @@ export class GaragePages {
 			)
 			.subscribe((event) => {
 				this.currentUrl.set(event.urlAfterRedirects);
-				if (this.navMode() === 'over') this.navOpen.set(false);
 				const carId = event.urlAfterRedirects.match(/^\/garage\/([^/]+)/)?.[1];
 				if (carId) {
 					this.selectedCarId.set(carId);

@@ -9,42 +9,51 @@
 } @else if (!signedIn()) {
 	<router-outlet />
 } @else {
-		<main class="workspace-root">
+	<main class="workspace-root">
 		<div class="workspace-shell bg-graphite text-bone">
-		<div
-			class="workspace-nav bg-graphite"
-			[hidden]="!navOpen()"
+			<aside
+				id="workspace-navigation"
+				class="workspace-nav bg-graphite"
+				[class.nav-open]="navOpen()"
+				[attr.aria-hidden]="mobileNav() && !navOpen() ? 'true' : null"
+				[attr.inert]="mobileNav() && !navOpen() ? '' : null"
 				aria-label="Workspace navigation"
-		>
-			<div class="nav-brand"><span class="eyebrow">RC Mech</span><strong>Field notebook</strong></div>
-			<nav aria-label="Primary workspace">
-				<a routerLink="/garage" routerLinkActive="active-nav" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" (click)="navOpen.set(false)"><span class="nav-number">01</span>Garage</a>
-				<a routerLink="/maintenance" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="navOpen.set(false)"><span class="nav-number">02</span>Maintenance</a>
-				<a routerLink="/settings" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="navOpen.set(false)"><span class="nav-number">03</span>Settings</a>
-			</nav>
-			<a class="nav-docs" href="/api/docs">API notes ↗</a>
-		</div>
-		<div class="workspace-content">
-				<div class="workspace-frame" role="region" aria-label="Workspace shell" tabindex="-1" [attr.aria-busy]="transition.loading()">
-				<header>
-					<button class="nav-toggle" type="button" (click)="navOpen.set(true)" aria-label="Open workspace navigation">☰</button>
-					<div>
-						<div class="eyebrow">RC Mech / Field notebook</div>
-						<h1>Garage control<br />for the next run.</h1>
-						<p class="stamp">OWNER ACCESS · {{ ownerEmail() }} · PRIVATE BY DEFAULT</p>
-					</div>
-					<div class="actions"><span class="workspace-label">{{ ownerEmail() }}</span><button class="button quiet" type="button" (click)="signOut()">Sign out</button></div>
-				</header>
-				@if (signOutMessage()) { <p class="message" role="alert">{{ signOutMessage() }}</p> }
-				@if (transition.error()) {
-					<div class="state-card error-state" role="alert">
-						<p>{{ transition.error() }}</p>
-						<button class="text-button" type="button" (click)="transition.retry()">Try again</button>
-					</div>
-				}
-				<router-outlet />
+			>
+				<div class="nav-heading">
+					<div class="nav-brand"><span class="eyebrow">RC Mech</span><strong>Field notebook</strong></div>
+					<button class="nav-close" type="button" (click)="closeNav()" aria-label="Close workspace navigation">×</button>
 				</div>
+				<nav aria-label="Primary workspace">
+					<a routerLink="/garage" routerLinkActive="active-nav" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" (click)="selectNav()"><span class="nav-number">01</span>Garage</a>
+					<a routerLink="/maintenance" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="selectNav()"><span class="nav-number">02</span>Maintenance</a>
+					<a routerLink="/settings" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="selectNav()"><span class="nav-number">03</span>Settings</a>
+				</nav>
+				<a class="nav-docs" href="/api/docs">API notes ↗</a>
+			</aside>
+			@if (mobileNav() && navOpen()) {
+				<button class="workspace-backdrop" type="button" (click)="closeNav()" aria-label="Close workspace navigation"></button>
+			}
+			<div class="workspace-content">
+				<div class="workspace-frame" role="region" aria-label="Workspace shell" tabindex="-1" [attr.aria-busy]="transition.loading()">
+					<header>
+						<button class="nav-toggle" type="button" (click)="openNav()" [attr.aria-expanded]="navOpen()" aria-controls="workspace-navigation" aria-label="Open workspace navigation">☰</button>
+						<div>
+							<div class="eyebrow">RC Mech / Field notebook</div>
+							<h1>Garage control<br />for the next run.</h1>
+							<p class="stamp">OWNER ACCESS · {{ ownerEmail() }} · PRIVATE BY DEFAULT</p>
+						</div>
+						<div class="actions"><span class="workspace-label">{{ ownerEmail() }}</span><button class="button quiet" type="button" (click)="signOut()">Sign out</button></div>
+					</header>
+					@if (signOutMessage()) { <p class="message" role="alert">{{ signOutMessage() }}</p> }
+					@if (transition.error()) {
+						<div class="state-card error-state" role="alert">
+							<p>{{ transition.error() }}</p>
+							<button class="text-button" type="button" (click)="transition.retry()">Try again</button>
+						</div>
+					}
+					<router-outlet />
+				</div>
+			</div>
 		</div>
-		</div>
-		</main>
+	</main>
 }

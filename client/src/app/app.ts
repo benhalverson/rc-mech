@@ -1,4 +1,5 @@
 import { HttpClient } from '@angular/common/http';
+import { BreakpointObserver } from '@angular/cdk/layout';
 import { Component, computed, inject, signal } from '@angular/core';
 import {
 	Router,
@@ -19,8 +20,16 @@ export class App {
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly http = inject(HttpClient);
 	private readonly router = inject(Router);
+	private readonly breakpointObserver = inject(BreakpointObserver, {
+		optional: true,
+	});
 	protected readonly transition = inject(RouteTransitionAnnouncer);
-	protected readonly navOpen = signal(true);
+	protected readonly mobileNav = signal(
+		typeof window !== 'undefined' &&
+			typeof window.matchMedia === 'function' &&
+			window.matchMedia('(max-width: 700px)').matches,
+	);
+	protected readonly navOpen = signal(!this.mobileNav());
 	protected readonly signOutMessage = signal('');
 	protected readonly checking = computed(
 		() =>
@@ -29,6 +38,27 @@ export class App {
 	);
 	protected readonly signedIn = this.sessionStore.authenticated;
 	protected readonly ownerEmail = this.sessionStore.ownerEmail;
+
+	constructor() {
+		this.breakpointObserver
+			?.observe(['(max-width: 700px)'])
+			.subscribe(({ matches }) => {
+				this.mobileNav.set(matches);
+				this.navOpen.set(!matches);
+			});
+	}
+
+	protected openNav(): void {
+		this.navOpen.set(true);
+	}
+
+	protected closeNav(): void {
+		this.navOpen.set(false);
+	}
+
+	protected selectNav(): void {
+		if (this.mobileNav()) this.closeNav();
+	}
 
 	protected signOut(): void {
 		this.signOutMessage.set('');
