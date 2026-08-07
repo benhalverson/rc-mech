@@ -8,7 +8,7 @@ import { CarStore } from './car-store';
 	imports: [CarPhotoGallery, CarSectionShell],
 	template: `
 		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
-		@else if (carStore.error()) { <div class="state-card" role="alert"><p>{{ carStore.error() }}</p>@if (!carStore.notFound()) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
+		@else if (carStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
 		@else if (carStore.car(); as car) {
 			<app-car-section-shell [car]="car" section="photos">
 				<app-car-photo-gallery [carId]="car.id" [archived]="!!car.archivedAt" />

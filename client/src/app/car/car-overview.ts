@@ -63,8 +63,8 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 	template: `
 		@if (store.loading()) {
 			<div class="state-card" role="status">Opening the car overview…</div>
-		} @else if (store.error()) {
-			<div class="state-card" role="alert"><p>{{ store.error() }}</p>@if (!store.notFound()) { <button type="button" (click)="store.retry()">Try again</button> }</div>
+		} @else if (store.failure(); as failure) {
+			<div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="store.retry()">Try again</button> }</div>
 		} @else if (store.car(); as car) {
 			<app-car-section-shell [car]="car" section="overview">
 				@if (editing()) {

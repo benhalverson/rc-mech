@@ -562,6 +562,19 @@ describe('Car section routes', () => {
 		expect(alert?.querySelector('button')).toBeNull();
 	});
 
+	it('explains an expired car read without offering retry', async () => {
+		await harness.navigateByUrl('/garage/car-1/overview');
+		http
+			.expectOne('/api/v1/cars/car-1')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Your garage session has expired');
+		expect(alert?.querySelector('button')).toBeNull();
+	});
+
 	it.each([
 		{
 			path: 'build',
