@@ -1,6 +1,15 @@
 <div class="route-announcement" aria-live="polite" aria-atomic="true">
 	{{ transition.announcement() }}
 </div>
+@if (transition.loading()) {
+	<div class="route-state" aria-hidden="true">Loading page…</div>
+}
+@if (transition.error()) {
+	<div class="route-state error-state" role="alert">
+		<p>{{ transition.error() }}</p>
+		<button class="text-button" type="button" (click)="transition.retry()">Try again</button>
+	</div>
+}
 @if (checking()) {
 	<main class="access-shell" aria-live="polite">
 		<div class="eyebrow">RC Mech / Field notebook</div>
@@ -34,7 +43,7 @@
 				<button class="workspace-backdrop" type="button" (click)="closeNav()" aria-label="Close workspace navigation"></button>
 			}
 			<div class="workspace-content">
-				<div class="workspace-frame" role="region" aria-label="Workspace shell" tabindex="-1" [attr.aria-busy]="transition.loading()">
+				<div class="workspace-frame" role="region" aria-label="Workspace shell" [attr.aria-busy]="transition.loading()">
 					<header>
 						<button class="nav-toggle" type="button" (click)="openNav()" [attr.aria-expanded]="navOpen()" aria-controls="workspace-navigation" aria-label="Open workspace navigation">☰</button>
 						<div>
@@ -45,12 +54,6 @@
 						<div class="actions"><span class="workspace-label">{{ ownerEmail() }}</span><button class="button quiet" type="button" (click)="signOut()">Sign out</button></div>
 					</header>
 					@if (signOutMessage()) { <p class="message" role="alert">{{ signOutMessage() }}</p> }
-					@if (transition.error()) {
-						<div class="state-card error-state" role="alert">
-							<p>{{ transition.error() }}</p>
-							<button class="text-button" type="button" (click)="transition.retry()">Try again</button>
-						</div>
-					}
 					<router-outlet />
 				</div>
 			</div>

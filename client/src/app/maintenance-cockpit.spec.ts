@@ -1,15 +1,15 @@
+import { provideHttpClient } from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
-import { provideHttpClient } from '@angular/common/http';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import {
+	calculatePlanState,
+	calendarDays,
 	MaintenanceCockpit,
 	MaintenancePlan,
 	ServiceRecord,
-	calculatePlanState,
-	calendarDays,
 } from './maintenance-cockpit';
 
 type TestMember = {
@@ -101,6 +101,11 @@ describe('MaintenanceCockpit', () => {
 		expect(calculatePlanState({ ...plan, status: 'archived' })).toBe(
 			'archived',
 		);
+		expect(
+			fixture.nativeElement.querySelector(
+				'#maintenance-title[data-route-focus][tabindex="-1"]',
+			),
+		).toBeTruthy();
 	});
 
 	it('creates a plan through the existing relative maintenance endpoint', () => {

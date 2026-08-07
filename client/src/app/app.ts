@@ -1,5 +1,5 @@
-import { HttpClient } from '@angular/common/http';
 import { BreakpointObserver } from '@angular/cdk/layout';
+import { HttpClient } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import {
 	Router,
@@ -66,7 +66,7 @@ export class App {
 			.post('/api/auth/sign-out', {}, { withCredentials: true })
 			.subscribe({
 				next: () => {
-					this.sessionStore.refresh();
+					this.sessionStore.expire();
 					void this.router.navigate(['/sign-in']);
 				},
 				error: () =>

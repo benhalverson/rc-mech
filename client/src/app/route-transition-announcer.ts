@@ -1,4 +1,5 @@
-import { Injectable, signal } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
+import { inject, Service, signal } from '@angular/core';
 import {
 	NavigationCancel,
 	NavigationEnd,
@@ -8,15 +9,17 @@ import {
 } from '@angular/router';
 import { filter } from 'rxjs';
 
-@Injectable({ providedIn: 'root' })
+@Service()
 export class RouteTransitionAnnouncer {
+	private readonly document = inject(DOCUMENT);
+	private readonly router = inject(Router);
 	readonly loading = signal(false);
 	readonly announcement = signal('');
 	readonly error = signal('');
 	private lastUrl = '/garage';
 
-	constructor(private readonly router: Router) {
-		router.events
+	constructor() {
+		this.router.events
 			.pipe(
 				filter(
 					(event) =>
@@ -34,8 +37,8 @@ export class RouteTransitionAnnouncer {
 				}
 				if (event instanceof NavigationError) {
 					this.loading.set(false);
-					this.error.set('This workspace could not be loaded. Try again.');
-					this.announcement.set('Workspace loading failed.');
+					this.error.set('This page could not be loaded. Try again.');
+					this.announcement.set('');
 					return;
 				}
 				if (event instanceof NavigationCancel) {
@@ -45,19 +48,14 @@ export class RouteTransitionAnnouncer {
 				this.loading.set(false);
 				this.error.set('');
 				this.announcement.set(`Opened ${this.label(event.urlAfterRedirects)}.`);
-				queueMicrotask(() => {
-					const heading = document.querySelector<HTMLElement>(
-						'main[tabindex="-1"]',
-					);
-					heading?.focus({ preventScroll: true });
-				});
+				queueMicrotask(() => this.focusRouteHeading());
 			});
 	}
 
 	start(): void {
 		this.loading.set(true);
 		this.error.set('');
-		this.announcement.set('Loading workspace…');
+		this.announcement.set('Loading page…');
 	}
 
 	retry(): void {
@@ -68,6 +66,13 @@ export class RouteTransitionAnnouncer {
 		if (url.startsWith('/garage')) return 'Garage';
 		if (url.startsWith('/maintenance')) return 'Maintenance';
 		if (url.startsWith('/settings')) return 'Settings';
-		return 'workspace';
+		if (url.startsWith('/sign-in')) return 'Sign in';
+		return 'page';
+	}
+
+	private focusRouteHeading(): void {
+		this.document
+			.querySelector<HTMLElement>('[data-route-focus]')
+			?.focus({ preventScroll: true });
 	}
 }
