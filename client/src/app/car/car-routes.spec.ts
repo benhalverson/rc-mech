@@ -223,6 +223,21 @@ describe('Car section routes', () => {
 		expect(alert?.querySelector('button')).toBeNull();
 	});
 
+	it('explains an expired session while preparing setup imports', async () => {
+		await harness.navigateByUrl('/garage/car-1/setups');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne('/api/v1/cars')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Your garage session has expired');
+		expect(alert?.querySelector('button')).toBeNull();
+		http.expectNone('/api/v1/cars/car-1/setups');
+	});
+
 	it('edits car details and refreshes the overview resource', async () => {
 		await harness.navigateByUrl('/garage/car-1/overview');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });

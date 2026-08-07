@@ -20,6 +20,7 @@ type GalleryTestHarness = {
 	action: TestSignal<string | null>;
 	designatePrimary: (...args: unknown[]) => unknown;
 	move: (...args: unknown[]) => unknown;
+	retry(): void;
 };
 
 describe('CarPhotoGallery', () => {
@@ -92,6 +93,22 @@ describe('CarPhotoGallery', () => {
 			'/api/v1/cars/car-1/photos',
 			'invalid files never reach the Worker',
 		);
+	});
+
+	it('explains an expired session without retrying the protected read', async () => {
+		const app = fixture.componentInstance as unknown as GalleryTestHarness;
+		app.retry();
+		let request: TestRequest | undefined;
+		await vi.waitFor(() => {
+			request = http.expectOne('/api/v1/cars/car-1/photos');
+		});
+		request?.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const alert = fixture.nativeElement.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Your garage session has expired');
+		expect(alert?.querySelector('button')).toBeNull();
 	});
 
 	it('uploads a supported photo as multipart form data with credentials', async () => {

@@ -18,7 +18,7 @@ import { CarStore } from './car-store';
 				@if (createError()) { <p role="alert">{{ createError() }}</p> }
 				@if (createAction()) { <p role="status">Creating the new car…</p> }
 				@if (setupsStore.loading()) { <div class="state-card" role="status">Preparing setup imports…</div> }
-				@else if (setupsStore.error()) { <div class="state-card" role="alert"><p>The garage list needed for setup imports could not be loaded.</p><button type="button" (click)="setupsStore.retry()">Try again</button></div> }
+				@else if (setupsStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="setupsStore.retry()">Try again</button> }</div> }
 				@else { <app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="setupsStore.availableCars()" (createCarFromImport)="createCar($event)" /> }
 			</app-car-section-shell>
 		}

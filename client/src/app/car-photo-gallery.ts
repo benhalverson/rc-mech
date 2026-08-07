@@ -34,12 +34,11 @@ export class CarPhotoGallery {
 		this.ordered(this.store.photos()),
 	);
 	protected readonly state = computed(() =>
-		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
+		this.store.loading() ? 'loading' : this.store.failure() ? 'error' : 'ready',
 	);
+	protected readonly readFailure = this.store.failure;
 	private readonly mutationError = signal('');
-	protected readonly error = computed(
-		() => this.store.error() || this.mutationError(),
-	);
+	protected readonly error = computed(() => this.mutationError());
 	protected readonly action = signal<string | null>(null);
 	protected readonly validationError = signal('');
 

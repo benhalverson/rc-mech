@@ -7,6 +7,7 @@ import {
 	withProps,
 } from '@ngrx/signals';
 import type { GarageCar } from '../garage/garage-store';
+import { carReadFailure } from './car-read-failure';
 
 export const CarSetupsStore = signalStore(
 	withProps(() => ({
@@ -20,7 +21,12 @@ export const CarSetupsStore = signalStore(
 			store.collection.hasValue() ? store.collection.value().cars : [],
 		),
 		loading: computed(() => store.collection.isLoading()),
-		error: computed(() => store.collection.error()),
+		failure: computed(() =>
+			carReadFailure(
+				store.collection.error(),
+				'The garage list needed for setup imports could not be loaded.',
+			),
+		),
 	})),
 	withMethods((store) => ({
 		retry(): void {

@@ -1,4 +1,4 @@
-import { HttpErrorResponse, httpResource } from '@angular/common/http';
+import { httpResource } from '@angular/common/http';
 import { computed } from '@angular/core';
 import {
 	patchState,
@@ -8,6 +8,7 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
+import { carReadFailure } from './car/car-read-failure';
 import type { CarPhoto } from './car/car.models';
 
 export const CarPhotoStore = signalStore(
@@ -28,13 +29,12 @@ export const CarPhotoStore = signalStore(
 			store.resource.hasValue() ? store.resource.value().photos : [],
 		),
 		loading: computed(() => store.resource.isLoading()),
-		error: computed(() => {
-			const error = store.resource.error();
-			if (!error) return '';
-			return error instanceof HttpErrorResponse && error.status === 401
-				? 'Your garage session has expired. Sign in again to continue.'
-				: 'The photo gallery could not be loaded.';
-		}),
+		failure: computed(() =>
+			carReadFailure(
+				store.resource.error(),
+				'The photo gallery could not be loaded.',
+			),
+		),
 	})),
 	withMethods((store) => ({
 		selectCar(carId: string): void {

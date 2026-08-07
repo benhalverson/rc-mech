@@ -11,11 +11,11 @@
   <p class="section-intro">Photos stay private to your garage. The primary image leads the gallery; the arrows set the rest of the order.</p>
   @if (archived()) { <p class="archive-note">This car is archived. Its photos remain visible, but photo changes are disabled until the car is restored.</p> }
   @if (validationError()) { <p class="message" role="alert">{{ validationError() }}</p> }
-  @if (error()) { <p class="message" role="alert">{{ error() }} @if (state() === 'error') { <button class="text-button" type="button" (click)="retry()">Try again</button> }</p> }
+  @if (error()) { <p class="message" role="alert">{{ error() }}</p> }
   @if (state() === 'loading') {
     <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Opening the private gallery…</p></div>
   } @else if (state() === 'error') {
-    <div class="state-card error-state"><span class="state-mark">!</span><p>Photos could not be loaded.</p></div>
+    <div class="state-card error-state" role="alert"><span class="state-mark" aria-hidden="true">!</span><p>{{ readFailure()?.message }}</p>@if (readFailure()?.retryable) { <button class="text-button" type="button" (click)="retry()">Try again</button> }</div>
   } @else if (!photos().length) {
     <div class="state-card empty-state"><span class="state-mark">＋</span><h4>No photos yet</h4><p>Add a clear bench photo to identify this car at a glance.</p></div>
   } @else {
