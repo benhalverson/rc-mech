@@ -247,6 +247,34 @@ describe('Settings workspace', () => {
 		).toBe(false);
 	});
 
+	it('explains when the browser returns no passkey credential', async () => {
+		flushInitialReads();
+		createCredential.mockResolvedValue(null);
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const input = fixture.nativeElement.querySelector(
+			'#passkey-name',
+		) as HTMLInputElement;
+		input.value = 'Track phone';
+		input.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
+		input.closest('form')?.dispatchEvent(new Event('submit'));
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/auth/passkey/generate-register-options' &&
+					request.params.get('name') === 'Track phone',
+			)
+			.flush({ challenge: 'AQID' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'No passkey was returned by the browser.',
+		);
+		http.expectNone('/api/auth/passkey/verify-registration');
+	});
+
 	it('creates an invite code and refreshes the lifetime allowance', async () => {
 		flushInitialReads();
 		await fixture.whenStable();

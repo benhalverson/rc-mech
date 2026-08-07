@@ -64,6 +64,11 @@ export const registrationResponse = (
 export const webAuthnError = (error: unknown): string => {
 	if (error instanceof DOMException && error.name === 'NotAllowedError')
 		return 'The passkey ceremony was cancelled or timed out.';
+	if (
+		error instanceof Error &&
+		error.message === 'No passkey was returned by the browser.'
+	)
+		return error.message;
 	return 'The passkey request could not be completed. Try again or use a magic link.';
 };
 
