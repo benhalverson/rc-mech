@@ -190,6 +190,45 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.textContent).toContain('Car overview');
 	});
 
+	it('edits car details and refreshes the overview resource', async () => {
+		await harness.navigateByUrl('/garage/car-1/overview');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const edit = [
+			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
+		].find((button) => button.textContent?.trim() === 'Edit details') as
+			| HTMLButtonElement
+			| undefined;
+		edit?.click();
+		harness.detectChanges();
+		const form = harness.routeNativeElement?.querySelector(
+			'.car-form',
+		) as HTMLFormElement;
+		const name = form.querySelector('input') as HTMLInputElement;
+		name.value = 'Red Runner Evo';
+		name.dispatchEvent(new Event('input'));
+		form.dispatchEvent(new Event('submit'));
+
+		const mutation = http.expectOne('/api/v1/cars/car-1');
+		expect(mutation.request.method).toBe('PATCH');
+		expect(mutation.request.body).toMatchObject({
+			name: 'Red Runner Evo',
+			make: 'Associated',
+		});
+		mutation.flush({ car: { ...car, name: 'Red Runner Evo' } });
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/v1/cars/car-1');
+		});
+		refresh?.flush({ car: { ...car, name: 'Red Runner Evo' } });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Car details saved.',
+		);
+	});
+
 	it('shows missing-car guidance without a connection retry', async () => {
 		await harness.navigateByUrl('/garage/missing/overview');
 		http

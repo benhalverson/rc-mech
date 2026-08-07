@@ -13,12 +13,15 @@ import {
 	withState,
 } from '@ngrx/signals';
 import { firstValueFrom } from 'rxjs';
-import type { GarageCar } from '../garage/garage-store';
+import type { GarageCar, GarageCarInput } from '../garage/garage-store';
 
 type CarState = {
 	carId: string | null;
 	lifecycleAction: 'archive' | 'restore' | null;
 	lifecycleError: string;
+	carAction: 'update' | null;
+	carMutationError: string;
+	carMessage: string;
 };
 
 const carReadError = (error: unknown): string => {
@@ -36,6 +39,9 @@ export const CarStore = signalStore(
 		carId: null,
 		lifecycleAction: null,
 		lifecycleError: '',
+		carAction: null,
+		carMutationError: '',
+		carMessage: '',
 	}),
 	withProps(({ carId }) => ({
 		http: inject(HttpClient),
@@ -70,6 +76,9 @@ export const CarStore = signalStore(
 					carId,
 					lifecycleAction: null,
 					lifecycleError: '',
+					carAction: null,
+					carMutationError: '',
+					carMessage: '',
 				});
 		},
 		retry(): void {
@@ -78,9 +87,45 @@ export const CarStore = signalStore(
 		refresh(): void {
 			store.carResource.reload();
 		},
+		clearCarMutationState(): void {
+			patchState(store, { carMutationError: '', carMessage: '' });
+		},
+		async updateCar(input: GarageCarInput): Promise<boolean> {
+			const carId = store.carId();
+			if (!carId || store.carAction() || store.lifecycleAction()) return false;
+			patchState(store, {
+				carAction: 'update',
+				carMutationError: '',
+				carMessage: '',
+			});
+			try {
+				await firstValueFrom(
+					store.http.patch(`/api/v1/cars/${encodeURIComponent(carId)}`, input, {
+						withCredentials: true,
+					}),
+				);
+				if (store.carId() !== carId) return false;
+				store.carResource.reload();
+				patchState(store, {
+					carAction: null,
+					carMessage: 'Car details saved.',
+				});
+				return true;
+			} catch (error) {
+				if (store.carId() !== carId) return false;
+				patchState(store, {
+					carAction: null,
+					carMutationError:
+						error instanceof HttpErrorResponse && error.status === 401
+							? 'Your garage session has expired. Sign in again to continue.'
+							: 'The car could not be saved. Check the details and try again.',
+				});
+				return false;
+			}
+		},
 		async changeArchiveState(action: 'archive' | 'restore'): Promise<void> {
 			const carId = store.carId();
-			if (!carId || store.lifecycleAction()) return;
+			if (!carId || store.lifecycleAction() || store.carAction()) return;
 			patchState(store, { lifecycleAction: action, lifecycleError: '' });
 			try {
 				await firstValueFrom(

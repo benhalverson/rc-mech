@@ -68,11 +68,10 @@ export class CarPhotoGallery {
 				: 'ready',
 	);
 	private readonly mutationError = signal('');
-	protected readonly error = computed(() =>
-		this.resource.error()
-			? photoReadError(this.resource.error())
-			: this.mutationError(),
-	);
+	protected readonly error = computed(() => {
+		const error = this.resource.error();
+		return error ? photoReadError(error) : this.mutationError();
+	});
 	protected readonly action = signal<string | null>(null);
 	protected readonly validationError = signal('');
 
