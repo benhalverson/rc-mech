@@ -12,11 +12,6 @@ import {
 	normalizeEmail,
 } from './auth-policy';
 import {
-	INVITE_LIFETIME_LIMIT,
-	inviteReservationExpiry,
-	validateInviteCode,
-} from './invite-policy';
-import {
 	canArchive,
 	canRestore,
 	canWrite,
@@ -44,6 +39,11 @@ import {
 	presentDateTime,
 } from './drive-session-policy';
 import {
+	INVITE_LIFETIME_LIMIT,
+	inviteReservationExpiry,
+	validateInviteCode,
+} from './invite-policy';
+import {
 	calculateMaintenanceDue,
 	canTransitionMaintenance,
 	type MaintenanceIntervalUnit,
@@ -62,14 +62,13 @@ import {
 	component,
 	consumableMaintenanceEntry,
 	driveSession,
+	inviteCode,
 	maintenancePlan,
 	owner,
 	photo,
 	serviceRecord,
 	setup,
 	setupImportDraft,
-	inviteCode,
-	authRateLimit,
 } from './schema';
 import {
 	canDeleteServiceRecord,
@@ -134,29 +133,17 @@ const authRateLimited = async (
 	try {
 		const key = `${bucket}:${c.req.header('CF-Connecting-IP') ?? 'unknown'}`;
 		const now = Date.now();
-		const database = db(c.env);
-		const row = await database
-			.select()
-			.from(authRateLimit)
-			.where(eq(authRateLimit.key, key))
-			.get();
-		if (!row || now - row.windowStartedAt >= 60_000) {
-			await database
-				.insert(authRateLimit)
-				.values({ key, windowStartedAt: now, count: 1 })
-				.onConflictDoUpdate({
-					target: authRateLimit.key,
-					set: { windowStartedAt: now, count: 1 },
-				})
-				.run();
-			return false;
-		}
-		if (row.count >= 8) return true;
-		await database
-			.update(authRateLimit)
-			.set({ count: row.count + 1 })
-			.where(eq(authRateLimit.key, key))
-			.run();
+		const row = await c.env.DB.prepare(
+			`INSERT INTO auth_rate_limit (key, window_started_at, count)
+			 VALUES (?, ?, 1)
+			 ON CONFLICT(key) DO UPDATE SET
+			 window_started_at = CASE WHEN auth_rate_limit.window_started_at <= ? THEN excluded.window_started_at ELSE auth_rate_limit.window_started_at END,
+			 count = CASE WHEN auth_rate_limit.window_started_at <= ? THEN 1 ELSE auth_rate_limit.count + 1 END
+			 RETURNING count`,
+		)
+			.bind(key, now, now - 60_000, now - 60_000)
+			.first<{ count: number }>();
+		return (row?.count ?? 1) > 8;
 	} catch {
 		// A database still completing migration 0014 remains usable; deployed
 		// databases persist the bucket once the migration is present.
@@ -177,48 +164,6 @@ app.get(
 	Scalar({ url: '/api/openapi.json', pageTitle: 'RC Mech API' }),
 );
 app.get('/docs', (c) => c.redirect('/api/docs'));
-
-app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
-	if (
-		c.req.path === '/api/auth/sign-in/magic-link' &&
-		c.req.method === 'POST'
-	) {
-		const body = (await c.req.raw
-			.clone()
-			.json()
-			.catch(() => null)) as { email?: unknown } | null;
-		if (await authRateLimited(c, 'magic-link'))
-			return c.json(neutralAuthResponse);
-		if (
-			!isLocalDevelopment(c.env) &&
-			(!hasMagicLinkConfiguration(c.env) || !hasEmailDelivery(c.env))
-		) {
-			return c.json({ error: 'Magic-link delivery is unavailable' }, 503);
-		}
-		if (
-			typeof body?.email === 'string' &&
-			!(await db(c.env)
-				.select({ id: owner.id })
-				.from(owner)
-				.where(eq(owner.email, normalizeEmail(body.email)))
-				.get()) &&
-			!isConfiguredOwner(normalizeEmail(body.email), c.env)
-		) {
-			return c.json({ status: true });
-		}
-		if (typeof body?.email === 'string') {
-			const headers = new Headers(c.req.raw.headers);
-			headers.set('content-type', 'application/json');
-			return createAuth(c.env).handler(
-				new Request(c.req.raw, {
-					body: JSON.stringify({ ...body, email: normalizeEmail(body.email) }),
-					headers,
-				}),
-			);
-		}
-	}
-	return createAuth(c.env).handler(c.req.raw);
-});
 
 app.post('/api/auth/register', async (c) => {
 	if (await authRateLimited(c, 'registration'))
@@ -283,9 +228,10 @@ app.post('/api/auth/register', async (c) => {
 	if (reserved.length !== 1) return c.json(neutralAuthResponse);
 	const headers = new Headers(c.req.raw.headers);
 	headers.set('content-type', 'application/json');
+	const target = new URL('/api/auth/sign-in/magic-link', c.req.url);
 	try {
-		return await createAuth(c.env).handler(
-			new Request(c.req.raw, {
+		const response = await createAuth(c.env).handler(
+			new Request(target, {
 				method: 'POST',
 				body: JSON.stringify({
 					email,
@@ -294,7 +240,7 @@ app.post('/api/auth/register', async (c) => {
 				headers,
 			}),
 		);
-	} catch (error) {
+		if (response.ok) return response;
 		await db(c.env)
 			.update(inviteCode)
 			.set({
@@ -308,8 +254,65 @@ app.post('/api/auth/register', async (c) => {
 				and(eq(inviteCode.id, candidate.id), eq(inviteCode.status, 'reserved')),
 			)
 			.run();
-		throw error;
+		return c.json(neutralAuthResponse);
+	} catch {
+		await db(c.env)
+			.update(inviteCode)
+			.set({
+				status: 'available',
+				reservedEmail: null,
+				reservedUntil: null,
+				reservedAt: null,
+				updatedAt: new Date().toISOString(),
+			})
+			.where(
+				and(eq(inviteCode.id, candidate.id), eq(inviteCode.status, 'reserved')),
+			)
+			.run();
+		return c.json(neutralAuthResponse);
 	}
+});
+
+app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
+	if (
+		c.req.path === '/api/auth/sign-in/magic-link' &&
+		c.req.method === 'POST'
+	) {
+		const body = (await c.req.raw
+			.clone()
+			.json()
+			.catch(() => null)) as { email?: unknown } | null;
+		if (await authRateLimited(c, 'magic-link'))
+			return c.json(neutralAuthResponse);
+		if (
+			!isLocalDevelopment(c.env) &&
+			(!hasMagicLinkConfiguration(c.env) || !hasEmailDelivery(c.env))
+		) {
+			return c.json({ error: 'Magic-link delivery is unavailable' }, 503);
+		}
+		if (
+			typeof body?.email === 'string' &&
+			!(await db(c.env)
+				.select({ id: owner.id })
+				.from(owner)
+				.where(eq(owner.email, normalizeEmail(body.email)))
+				.get()) &&
+			!isConfiguredOwner(normalizeEmail(body.email), c.env)
+		) {
+			return c.json({ status: true });
+		}
+		if (typeof body?.email === 'string') {
+			const headers = new Headers(c.req.raw.headers);
+			headers.set('content-type', 'application/json');
+			return createAuth(c.env).handler(
+				new Request(c.req.raw, {
+					body: JSON.stringify({ ...body, email: normalizeEmail(body.email) }),
+					headers,
+				}),
+			);
+		}
+	}
+	return createAuth(c.env).handler(c.req.raw);
 });
 
 app.use('/api/v1/*', async (c, next) => {
@@ -370,33 +373,29 @@ app.post('/api/v1/invite-codes', async (c) => {
 		return c.json({ error: 'A code is required' }, 400);
 	const parsed = validateInviteCode(body.code);
 	if (parsed.ok === false) return c.json({ error: parsed.reason }, 400);
-	const count = await db(c.env)
-		.select({ id: inviteCode.id })
-		.from(inviteCode)
-		.where(eq(inviteCode.creatorId, creatorId))
-		.all();
-	if (count.length >= INVITE_LIFETIME_LIMIT)
-		return c.json({ error: 'Invite-code allowance exhausted' }, 409);
 	const now = new Date().toISOString();
 	try {
-		const created = await db(c.env)
-			.insert(inviteCode)
-			.values({
-				id: crypto.randomUUID(),
-				code: parsed.code,
-				creatorId,
-				status: 'available',
-				createdAt: now,
-				updatedAt: now,
-			})
-			.returning()
-			.get();
+		const created = await c.env.DB.prepare(`
+			WITH next_slot(slot) AS (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5),
+			available AS (SELECT slot FROM next_slot WHERE NOT EXISTS (SELECT 1 FROM invite_code WHERE creator_id = ? AND slot = next_slot.slot) LIMIT 1)
+			INSERT INTO invite_code (id, code, creator_id, slot, status, created_at, updated_at)
+			SELECT ?, ?, ?, slot, 'available', ?, ? FROM available
+			RETURNING *
+		`)
+			.bind(creatorId, crypto.randomUUID(), parsed.code, creatorId, now, now)
+			.first();
+		if (!created)
+			return c.json({ error: 'Invite-code allowance exhausted' }, 409);
 		return c.json({ code: created }, 201);
-	} catch {
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (!/unique constraint failed: invite_code\.code/i.test(message))
+			throw error;
 		return c.json({ error: 'That invite code is already in use' }, 409);
 	}
 });
 app.post('/api/v1/invite-codes/:id/revoke', async (c) => {
+	await releaseExpiredInvites(c, c.get('userId'));
 	const now = new Date().toISOString();
 	const result = await db(c.env)
 		.update(inviteCode)
@@ -4861,7 +4860,6 @@ invitePaths['/api/auth/register'] = {
 		},
 		responses: {
 			200: { description: 'Neutral response whether registration is accepted' },
-			400: { description: 'Malformed request' },
 		},
 	},
 };

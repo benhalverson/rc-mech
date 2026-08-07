@@ -56,4 +56,53 @@ describe('SignIn', () => {
 		).toBeTruthy();
 		expect(fixture.nativeElement.querySelector('[type="submit"]')).toBeTruthy();
 	});
+
+	it('toggles registration and posts a normalized invite request', () => {
+		const component = fixture.componentInstance as unknown as {
+			email: { set(value: string): void };
+			inviteCode: { set(value: string): void };
+			toggleRegistration(): void;
+			register(): void;
+		};
+		component.toggleRegistration();
+		fixture.detectChanges();
+		const invite = fixture.nativeElement.querySelector(
+			'#invite-code',
+		) as HTMLInputElement;
+		expect(invite).toBeTruthy();
+		expect(invite.required).toBe(true);
+		component.email.set(' User@Example.Test ');
+		component.inviteCode.set(' track-01 ');
+		component.register();
+		const request = http.expectOne('/api/auth/register');
+		expect(request.request.body).toMatchObject({
+			email: 'User@Example.Test',
+			inviteCode: 'track-01',
+		});
+		request.flush({ status: true });
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'registration link is on its way',
+		);
+	});
+
+	it('shows a neutral registration error without exposing invite validity', () => {
+		const component = fixture.componentInstance as unknown as {
+			email: { set(value: string): void };
+			inviteCode: { set(value: string): void };
+			toggleRegistration(): void;
+			register(): void;
+		};
+		component.toggleRegistration();
+		component.email.set('user@example.test');
+		component.inviteCode.set('TRACK-01');
+		component.register();
+		http
+			.expectOne('/api/auth/register')
+			.flush({}, { status: 503, statusText: 'Unavailable' });
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'could not be completed',
+		);
+	});
 });

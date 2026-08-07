@@ -232,6 +232,7 @@ export const inviteCode = sqliteTable('invite_code', {
 	creatorId: text('creator_id')
 		.notNull()
 		.references(() => owner.id),
+	slot: integer('slot'),
 	status: text('status').notNull().default('available'),
 	reservedEmail: text('reserved_email'),
 	reservedUntil: text('reserved_until'),

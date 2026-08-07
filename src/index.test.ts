@@ -66,6 +66,21 @@ test('OpenAPI documents invite registration and management endpoints', async () 
 	expect(document.paths['/api/auth/register']).toBeDefined();
 	expect(document.paths['/api/v1/invite-codes']).toBeDefined();
 	expect(document.paths['/api/v1/invite-codes/{id}/revoke']).toBeDefined();
+	const registration = document.paths['/api/auth/register'] as {
+		post: { responses: Record<string, unknown> };
+	};
+	expect(registration.post.responses['400']).toBeUndefined();
+});
+
+test('registration keeps malformed requests on the neutral contract', async () => {
+	const response = await request('/api/auth/register', {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ email: 'not-an-email' }),
+	});
+
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({ status: true });
 });
 
 test('unknown API routes return the JSON API 404 contract', async () => {

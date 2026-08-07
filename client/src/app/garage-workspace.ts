@@ -97,6 +97,20 @@ type DriveSessionsResponse = {
 };
 type DriveSessionResponse = { driveSession: DriveSession };
 type TimezoneResponse = { timezone?: string };
+type InviteCode = {
+	id: string;
+	code: string;
+	status: string;
+	createdAt: string;
+	reservedEmail?: string | null;
+	reservedUntil?: string | null;
+};
+type InviteCodesResponse = {
+	allowance: number;
+	used: number;
+	remaining: number;
+	codes: InviteCode[];
+};
 type SessionState = 'idle' | 'loading' | 'ready' | 'error';
 type SessionMode = 'add' | 'edit';
 
@@ -446,6 +460,18 @@ export class GarageWorkspace {
 		'loading' | 'ready' | 'saving' | 'error'
 	>('loading');
 	protected readonly timezoneError = signal('');
+	protected readonly inviteCodes = signal<InviteCode[]>([]);
+	protected readonly inviteAllowance = signal({
+		allowance: 5,
+		used: 0,
+		remaining: 5,
+	});
+	protected readonly inviteState = signal<'loading' | 'ready' | 'error'>(
+		'loading',
+	);
+	protected readonly inviteError = signal('');
+	protected readonly inviteForm = signal('');
+	protected readonly inviteAction = signal<string | null>(null);
 	protected readonly sessionCount = computed(
 		() => this.driveSessions().filter((session) => !session.deletedAt).length,
 	);
@@ -549,6 +575,11 @@ export class GarageWorkspace {
 					this.carView.set('detail');
 					this.loadCarSection(carId);
 				}
+				if (
+					event.urlAfterRedirects.startsWith('/settings') &&
+					this.state() === 'signed-in'
+				)
+					this.loadInviteCodes();
 			});
 		this.consumeMagicLinkError();
 		const hasSharedSession = this.sessionStore?.hasResolvedSession ?? false;
@@ -778,6 +809,89 @@ export class GarageWorkspace {
 		this.loadTimezone();
 		if (this.currentUrl().startsWith('/sign-in'))
 			void this.router?.navigateByUrl(this.returnTo);
+	}
+
+	protected loadInviteCodes(): void {
+		this.inviteState.set('loading');
+		this.http
+			.get<InviteCodesResponse>('/api/v1/invite-codes', {
+				withCredentials: true,
+			})
+			.subscribe({
+				next: (response) => {
+					this.inviteCodes.set(response.codes);
+					this.inviteAllowance.set({
+						allowance: response.allowance,
+						used: response.used,
+						remaining: response.remaining,
+					});
+					this.inviteState.set('ready');
+				},
+				error: () => {
+					this.inviteState.set('error');
+					this.inviteError.set('Invite codes could not be loaded.');
+				},
+			});
+	}
+
+	protected createInviteCode(): void {
+		const code = this.inviteForm().trim();
+		if (!code || this.inviteAction()) return;
+		this.inviteAction.set('create');
+		this.inviteError.set('');
+		this.http
+			.post<{ code: InviteCode }>(
+				'/api/v1/invite-codes',
+				{ code },
+				{ withCredentials: true },
+			)
+			.subscribe({
+				next: (response) => {
+					this.inviteForm.set('');
+					this.inviteAction.set(null);
+					this.inviteCodes.update((codes) => [response.code, ...codes]);
+					this.inviteAllowance.update((value) => ({
+						...value,
+						used: value.used + 1,
+						remaining: Math.max(0, value.remaining - 1),
+					}));
+				},
+				error: (error: { error?: { error?: string } }) => {
+					this.inviteAction.set(null);
+					this.inviteError.set(
+						error.error?.error ?? 'Invite code could not be created.',
+					);
+				},
+			});
+	}
+
+	protected async copyInviteCode(code: string): Promise<void> {
+		await navigator.clipboard.writeText(code);
+		this.inviteError.set(`Copied ${code}.`);
+	}
+
+	protected revokeInviteCode(code: InviteCode): void {
+		if (this.inviteAction() || code.status !== 'available') return;
+		this.inviteAction.set(`revoke:${code.id}`);
+		this.inviteError.set('');
+		this.http
+			.post<{ code: InviteCode }>(
+				`/api/v1/invite-codes/${code.id}/revoke`,
+				{},
+				{ withCredentials: true },
+			)
+			.subscribe({
+				next: (response) => {
+					this.inviteAction.set(null);
+					this.inviteCodes.update((codes) =>
+						codes.map((item) => (item.id === code.id ? response.code : item)),
+					);
+				},
+				error: () => {
+					this.inviteAction.set(null);
+					this.inviteError.set('Invite code could not be revoked.');
+				},
+			});
 	}
 
 	private consumeMagicLinkError(): void {

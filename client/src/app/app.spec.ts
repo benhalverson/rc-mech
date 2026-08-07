@@ -69,6 +69,9 @@ describe('App', () => {
 	});
 
 	afterEach(() => {
+		http.match('/api/v1/invite-codes').forEach((request) => {
+			request.flush({ allowance: 5, used: 0, remaining: 5, codes: [] });
+		});
 		http.match('/api/v1/maintenance-plans').forEach((request) => {
 			request.flush({ maintenancePlans: [], activity: [] });
 		});

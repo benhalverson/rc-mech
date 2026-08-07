@@ -1,17 +1,17 @@
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
+import { passkey } from '@better-auth/passkey';
 import { betterAuth } from 'better-auth';
 import { magicLink } from 'better-auth/plugins';
-import { passkey } from '@better-auth/passkey';
+import { and, eq, gt } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
-import * as schema from './schema';
-import { createEmailSender } from './email';
 import {
 	configuredOrigins,
 	isConfiguredOwner,
 	isLocalDevelopment,
 	normalizeEmail,
 } from './auth-policy';
-import { and, eq } from 'drizzle-orm';
+import { createEmailSender } from './email';
+import * as schema from './schema';
 import { inviteCode } from './schema';
 
 type AuthEnv = Env & {
@@ -73,6 +73,26 @@ export const createAuth = (env: AuthEnv) => {
 						const email = normalizeEmail(user.email);
 						if (isConfiguredOwner(email, env)) return;
 						const now = new Date().toISOString();
+						const reservation = await drizzle(env.DB, { schema })
+							.select({ id: inviteCode.id })
+							.from(inviteCode)
+							.where(
+								and(
+									eq(inviteCode.status, 'reserved'),
+									eq(inviteCode.reservedEmail, email),
+									// ISO timestamps sort lexically, so this remains a D1-safe
+									// expiry predicate instead of trusting application state.
+									gt(inviteCode.reservedUntil, now),
+								),
+							)
+							.get();
+						if (!reservation)
+							throw new Error('A valid invite reservation is required');
+					},
+					after: async (user) => {
+						const email = normalizeEmail(user.email);
+						if (isConfiguredOwner(email, env)) return;
+						const now = new Date().toISOString();
 						const redeemed = await drizzle(env.DB, { schema })
 							.update(inviteCode)
 							.set({
@@ -88,6 +108,7 @@ export const createAuth = (env: AuthEnv) => {
 								and(
 									eq(inviteCode.status, 'reserved'),
 									eq(inviteCode.reservedEmail, email),
+									gt(inviteCode.reservedUntil, now),
 								),
 							)
 							.returning({ id: inviteCode.id })
