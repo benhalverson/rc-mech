@@ -27,5 +27,8 @@
 		]
 	},
 	"exclude": ["node_modules", "dist", "tests", "client"],
-	"include": ["src", "worker-configuration.d.ts"]
+	"include": ["src", "worker-configuration.d.ts"],
+	"angularCompilerOptions": {
+		"strictTemplates": true
+	}
 }
