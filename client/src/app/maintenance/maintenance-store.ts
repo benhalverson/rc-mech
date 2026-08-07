@@ -101,6 +101,22 @@ export const MaintenanceStore = signalStore(
 		})),
 	})),
 	withComputed((store) => {
+		const cockpitErrors = computed(() =>
+			[
+				store.carsResource.error(),
+				store.timezoneResource.error(),
+				store.plansResource.error(),
+				store.serviceResource.error(),
+			].filter((error) => error !== undefined),
+		);
+		const consumableErrors = computed(() =>
+			[
+				store.carsResource.error(),
+				store.timezoneResource.error(),
+				store.consumableResource.error(),
+				store.reportResource.error(),
+			].filter((error) => error !== undefined),
+		);
 		const errors = computed(() =>
 			[
 				store.carsResource.error(),
@@ -117,6 +133,22 @@ export const MaintenanceStore = signalStore(
 				store.timezoneResource,
 				store.plansResource,
 				store.serviceResource,
+				store.consumableResource,
+				store.reportResource,
+			].some((resource) => resource.isLoading()),
+		);
+		const cockpitLoading = computed(() =>
+			[
+				store.carsResource,
+				store.timezoneResource,
+				store.plansResource,
+				store.serviceResource,
+			].some((resource) => resource.isLoading()),
+		);
+		const consumablesLoading = computed(() =>
+			[
+				store.carsResource,
+				store.timezoneResource,
 				store.consumableResource,
 				store.reportResource,
 			].some((resource) => resource.isLoading()),
@@ -169,11 +201,31 @@ export const MaintenanceStore = signalStore(
 					? store.reportResource.value().report
 					: null,
 			),
+			cockpitLoading,
+			cockpitError: computed(() =>
+				cockpitErrors().length ? resourceMessage(cockpitErrors()) : '',
+			),
+			consumablesLoading,
+			consumablesError: computed(() =>
+				consumableErrors().length ? resourceMessage(consumableErrors()) : '',
+			),
 			loading,
 			error: computed(() => (errors().length ? resourceMessage(errors()) : '')),
 		};
 	}),
 	withMethods((store) => ({
+		retryCockpit(): void {
+			store.carsResource.reload();
+			store.timezoneResource.reload();
+			store.plansResource.reload();
+			store.serviceResource.reload();
+		},
+		retryConsumables(): void {
+			store.carsResource.reload();
+			store.timezoneResource.reload();
+			store.consumableResource.reload();
+			store.reportResource.reload();
+		},
 		retryAll(): void {
 			store.carsResource.reload();
 			store.timezoneResource.reload();

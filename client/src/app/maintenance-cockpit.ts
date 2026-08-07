@@ -161,9 +161,13 @@ export class MaintenanceCockpit {
 	protected readonly components = signal<MaintenanceComponent[]>([]);
 	protected readonly mutationError = signal('');
 	protected readonly state = computed(() =>
-		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
+		this.store.cockpitLoading()
+			? 'loading'
+			: this.store.cockpitError()
+				? 'error'
+				: 'ready',
 	);
-	protected readonly error = this.store.error;
+	protected readonly error = this.store.cockpitError;
 	protected readonly editing = signal(false);
 	protected readonly serviceEditing = signal(false);
 	protected readonly serviceEditingId = signal<string | null>(null);
@@ -236,7 +240,7 @@ export class MaintenanceCockpit {
 
 	protected load(): void {
 		this.mutationError.set('');
-		this.store.retryAll();
+		this.store.retryCockpit();
 	}
 
 	protected openCreate(): void {

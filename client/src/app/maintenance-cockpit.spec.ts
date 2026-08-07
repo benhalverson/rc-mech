@@ -138,6 +138,25 @@ describe('MaintenanceCockpit', () => {
 		expect(fixture.nativeElement.textContent).toContain('Clean bearings');
 	});
 
+	it('keeps cockpit data visible when only the consumable report fails', async () => {
+		const store = TestBed.inject(MaintenanceStore);
+		store.reportResource.reload();
+		let report: TestRequest | undefined;
+		await vi.waitFor(() => {
+			report = http.expectOne('/api/v1/consumables/report');
+		});
+		report?.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(
+			fixture.nativeElement.querySelector(
+				'.maintenance-cockpit > .state-card.error-state',
+			),
+		).toBeNull();
+		expect(fixture.nativeElement.textContent).toContain('Clean bearings');
+	});
+
 	it('creates a plan through the existing relative maintenance endpoint', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.openCreate();

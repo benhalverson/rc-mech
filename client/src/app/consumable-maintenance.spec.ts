@@ -16,6 +16,7 @@ import {
 import { MaintenanceStore } from './maintenance/maintenance-store';
 
 type Harness = {
+	load: () => void;
 	openCreate: () => void;
 	openEdit: (entry: ConsumableEntry) => void;
 	update: (field: string, value: string) => void;
@@ -214,6 +215,27 @@ describe('ConsumableMaintenance', () => {
 		app.openCreate();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.querySelector('.consumable-form')).toBeNull();
+	});
+
+	it('retries every resource the consumable view depends on', async () => {
+		const app = fixture.componentInstance as unknown as Harness;
+		app.load();
+		let cars: TestRequest | undefined;
+		await vi.waitFor(() => {
+			cars = http.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			);
+		});
+		cars?.flush({ cars: [car] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http
+			.expectOne('/api/v1/consumable-maintenance')
+			.flush({ consumableMaintenance: [] });
+		http.expectOne('/api/v1/consumables/report').flush({ report: {} });
+		http.expectNone('/api/v1/maintenance-plans');
+		http.expectNone('/api/v1/service-records');
 	});
 
 	it('shows archive failures without hiding consumable history', () => {

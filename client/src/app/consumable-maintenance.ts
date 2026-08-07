@@ -211,9 +211,13 @@ export class ConsumableMaintenance {
 	protected readonly timezone = this.store.timezone;
 	protected readonly mutationError = signal('');
 	protected readonly state = computed(() =>
-		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
+		this.store.consumablesLoading()
+			? 'loading'
+			: this.store.consumablesError()
+				? 'error'
+				: 'ready',
 	);
-	protected readonly error = this.store.error;
+	protected readonly error = this.store.consumablesError;
 	protected readonly formError = signal('');
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
@@ -230,7 +234,7 @@ export class ConsumableMaintenance {
 
 	protected load(): void {
 		this.mutationError.set('');
-		this.store.refreshConsumables();
+		this.store.retryConsumables();
 	}
 	protected visibleEntries(): ConsumableEntry[] {
 		return this.entries().filter((entry) =>
