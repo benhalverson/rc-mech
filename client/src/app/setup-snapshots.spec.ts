@@ -18,6 +18,7 @@ import { SetupSnapshots } from './setup-snapshots';
 
 type Harness = {
 	formModel: { set(value: unknown): void };
+	importCarModel: { set(value: { carId: string }): void };
 	openAdd(): void;
 	copyPrevious(): void;
 	openEdit(): void;
@@ -176,6 +177,7 @@ describe('SetupSnapshots', () => {
 		app.formModel.set({
 			...emptySetupForm(),
 			name: 'Quick baseline',
+			pdfUrl: 'legacy-pdf-reference',
 		});
 		fixture.detectChanges();
 		app.save();
@@ -185,6 +187,9 @@ describe('SetupSnapshots', () => {
 		);
 		expect(request.request.body.name).toBe('Quick baseline');
 		expect(request.request.body.track).toBeNull();
+		expect(request.request.body.sourceMetadata.pdfUrl).toBe(
+			'legacy-pdf-reference',
+		);
 		request.flush({
 			setup: {
 				...currentSetup,
@@ -408,6 +413,54 @@ describe('SetupSnapshots', () => {
 				name: 'Team Associated B6.4',
 			},
 		]);
+	});
+
+	it('announces an import saved to another car as a status', async () => {
+		fixture.componentRef.setInput('availableCars', [
+			{ id: 'car-1', name: 'Red Runner' },
+			{ id: 'car-2', name: 'Blue Runner' },
+		]);
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+		app.importCarModel.set({ carId: 'car-2' });
+		app.save();
+		const update = http.expectOne('/api/v1/setup-imports/drafts/draft-1');
+		expect(update.request.body.carId).toBe('car-2');
+		update.flush({ draft: { id: 'draft-1' } });
+		const accept = http.expectOne(
+			'/api/v1/setup-imports/drafts/draft-1/accept',
+		);
+		expect(accept.request.body.carId).toBe('car-2');
+		accept.flush({
+			setup: {
+				...currentSetup,
+				id: 'setup-imported',
+				carId: 'car-2',
+				name: 'Team Associated B6.4',
+			},
+		});
+		fixture.detectChanges();
+
+		const status = [
+			...fixture.nativeElement.querySelectorAll('[role="status"]'),
+		].find((element: HTMLElement) =>
+			element.textContent?.includes('saved to the selected car'),
+		);
+		expect(status).toBeTruthy();
+		expect(
+			[...fixture.nativeElement.querySelectorAll('[role="alert"]')].some(
+				(element: HTMLElement) =>
+					element.textContent?.includes('saved to the selected car'),
+			),
+		).toBe(false);
+		expect(
+			[...fixture.nativeElement.querySelectorAll('button')].some(
+				(button: HTMLButtonElement) =>
+					button.textContent?.includes('Try again'),
+			),
+		).toBe(false);
 	});
 
 	it('reports an unavailable source without opening a review form', () => {

@@ -24,6 +24,8 @@
     </form>
   }
   @if (error()) { <p class="message" role="alert">{{ error() }} <button class="text-button" type="button" (click)="retry()">Try again</button></p> }
+  @if (actionError()) { <p class="message" role="alert">{{ actionError() }}</p> }
+  @if (actionMessage()) { <p class="message" role="status">{{ actionMessage() }}</p> }
 
   @if (state() === 'loading') {
     <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Reading setup history…</p></div>

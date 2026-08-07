@@ -101,11 +101,12 @@ export class SetupSnapshots {
 				? 'error'
 				: 'ready',
 	);
-	private readonly actionError = signal('');
+	protected readonly actionError = signal('');
+	protected readonly actionMessage = signal('');
 	protected readonly error = computed(() =>
 		this.setupsResource.error()
 			? 'Setup history could not be loaded. Check the connection and try again.'
-			: this.actionError(),
+			: '',
 	);
 	protected readonly mode = signal<SetupMode>('add');
 	protected readonly editing = signal(false);
@@ -152,14 +153,6 @@ export class SetupSnapshots {
 				: {
 						kind: 'sourceUrl',
 						message: 'Use a complete HTTP or HTTPS source URL.',
-					},
-		);
-		validate(path.pdfUrl, ({ value }) =>
-			isValidOptionalUrl(value())
-				? undefined
-				: {
-						kind: 'pdfUrl',
-						message: 'Use a complete HTTP or HTTPS PDF URL.',
 					},
 		);
 		validate(path.pdfPage, ({ value }) =>
@@ -212,7 +205,6 @@ export class SetupSnapshots {
 	}
 
 	protected retry(): void {
-		this.actionError.set('');
 		this.setupsResource.reload();
 	}
 
@@ -279,10 +271,6 @@ export class SetupSnapshots {
 		this.cancelEdit();
 	}
 
-	protected selectImportCar(carId: string): void {
-		this.importCarModel.set({ carId });
-	}
-
 	protected requestCreateCar(): void {
 		const identity = this.importPreview()?.carIdentity;
 		if (!identity) return;
@@ -321,8 +309,6 @@ export class SetupSnapshots {
 				this.setupForm.name().focusBoundControl();
 			else if (this.setupForm.sourceUrl().invalid())
 				this.setupForm.sourceUrl().focusBoundControl();
-			else if (this.setupForm.pdfUrl().invalid())
-				this.setupForm.pdfUrl().focusBoundControl();
 			else if (this.setupForm.pdfPage().invalid())
 				this.setupForm.pdfPage().focusBoundControl();
 			return;
@@ -330,6 +316,7 @@ export class SetupSnapshots {
 		if (this.action()) return;
 		this.action.set('save');
 		this.actionError.set('');
+		this.actionMessage.set('');
 		this.formError.set('');
 		const setup = this.importPreview() ? null : this.selected();
 		const importDraft = this.importPreview();
@@ -377,7 +364,7 @@ export class SetupSnapshots {
 					this.selectedId.set(saved.id);
 					this.setupsResource.reload();
 				} else {
-					this.actionError.set('Imported setup saved to the selected car.');
+					this.actionMessage.set('Imported setup saved to the selected car.');
 				}
 			},
 			error: () => {
@@ -398,6 +385,7 @@ export class SetupSnapshots {
 		if (!setup || this.archived() || this.action()) return;
 		this.action.set('copy');
 		this.actionError.set('');
+		this.actionMessage.set('');
 		this.service.copy(this.carId(), setup.id).subscribe({
 			next: ({ setup: copied }) => {
 				this.action.set(null);
@@ -420,6 +408,7 @@ export class SetupSnapshots {
 		if (!setup || setup.current || this.archived() || this.action()) return;
 		this.action.set('current');
 		this.actionError.set('');
+		this.actionMessage.set('');
 		this.service.selectCurrent(this.carId(), setup.id).subscribe({
 			next: ({ setup: current }) => {
 				this.action.set(null);
