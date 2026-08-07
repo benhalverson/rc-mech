@@ -32,7 +32,7 @@ export const routes: Routes = [
 	{
 		path: 'garage/:carId/overview',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadGaragePages,
+		loadComponent: loadGarage,
 		providers: [GarageStore],
 	},
 	{

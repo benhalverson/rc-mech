@@ -11,6 +11,17 @@ describe('protected workspace routes', () => {
 		expect(garage?.providers).toBeDefined();
 	});
 
+	it('keeps collection and overview on the same route-scoped Garage feature', () => {
+		const collection = routes.find((route) => route.path === 'garage');
+		const overview = routes.find(
+			(route) => route.path === 'garage/:carId/overview',
+		);
+
+		expect(overview?.loadComponent).toBe(collection?.loadComponent);
+		expect(overview?.providers).toBeDefined();
+		expect(overview?.canMatch).toHaveLength(1);
+	});
+
 	it('keeps a public sign-in route available for rejected navigation', () => {
 		expect(routes.some((route) => route.path === 'sign-in')).toBe(true);
 	});
