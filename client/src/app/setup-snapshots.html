@@ -70,31 +70,31 @@
           }
           @if (formError()) { <div id="setup-form-validation" class="message" role="alert"><p>{{ formError() }}</p>@if (setupForm().invalid()) { <ul>@for (validationError of setupForm().errorSummary(); track $index) { <li>{{ validationError.message }}</li> }</ul> }</div> }
           <div class="form-grid">
-            <label class="wide">Setup name <input placeholder="Outdoor clay baseline" [formField]="setupForm.name" /></label>
-            <label>Date <input type="date" [formField]="setupForm.recordedAt" /></label>
-            <label>Track <input placeholder="The home track" [formField]="setupForm.track" /></label>
-            <label>Event <input placeholder="Club race" [formField]="setupForm.event" /></label>
-            <label>Surface <input placeholder="Dry clay" [formField]="setupForm.surface" /></label>
-            <label>Traction / grip <input placeholder="Medium" [formField]="setupForm.traction" /></label>
-            <label>Moisture <input placeholder="Damp" [formField]="setupForm.moisture" /></label>
-            <label>Condition <input placeholder="Qualifying" [formField]="setupForm.condition" /></label>
-            <label>Temperature <input placeholder="72°F" [formField]="setupForm.temperature" /></label>
+			<label class="wide">Setup name <input placeholder="Outdoor clay baseline" [formField]="setupForm.name" [attr.aria-describedby]="formError() && setupForm.name().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Date <input type="date" [formField]="setupForm.recordedAt" [attr.aria-describedby]="formError() && setupForm.recordedAt().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Track <input placeholder="The home track" [formField]="setupForm.track" [attr.aria-describedby]="formError() && setupForm.track().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Event <input placeholder="Club race" [formField]="setupForm.event" [attr.aria-describedby]="formError() && setupForm.event().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Surface <input placeholder="Dry clay" [formField]="setupForm.surface" [attr.aria-describedby]="formError() && setupForm.surface().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Traction / grip <input placeholder="Medium" [formField]="setupForm.traction" [attr.aria-describedby]="formError() && setupForm.traction().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Moisture <input placeholder="Damp" [formField]="setupForm.moisture" [attr.aria-describedby]="formError() && setupForm.moisture().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Condition <input placeholder="Qualifying" [formField]="setupForm.condition" [attr.aria-describedby]="formError() && setupForm.condition().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>Temperature <input placeholder="72°F" [formField]="setupForm.temperature" [attr.aria-describedby]="formError() && setupForm.temperature().invalid() ? 'setup-form-validation' : null" /></label>
           </div>
 
           <div class="setup-sections">
             @for (section of sectionKeys; track section) {
               <fieldset class="setup-section"><legend>{{ sectionLabels[section] }}</legend><div class="form-grid">
-                @for (field of sectionFields[section]; track field) { <label>{{ displayName(field) }} <input [placeholder]="'Optional ' + displayName(field).toLowerCase()" [formField]="setupForm.sections[section][field]" /></label> }
+				@for (field of sectionFields[section]; track field) { <label>{{ displayName(field) }} <input [placeholder]="'Optional ' + displayName(field).toLowerCase()" [formField]="setupForm.sections[section][field]" [attr.aria-describedby]="formError() && setupForm.sections[section][field]().invalid() ? 'setup-form-validation' : null" /></label> }
               </div></fieldset>
             }
           </div>
 
           <fieldset class="source-fields"><legend>Source and provenance</legend><p class="hint">Keep the source link and retained PDF reference when this setup came from an external sheet. Nothing here is required for a manual baseline.</p><div class="form-grid">
-            <label class="wide">Source URL <input type="url" placeholder="https://…" [formField]="setupForm.sourceUrl" /></label>
-            <label>PDF title / reference <input placeholder="Setup sheet, page 2" [formField]="setupForm.pdfTitle" /></label>
-            <label>PDF page <input type="text" inputmode="numeric" placeholder="Optional" [formField]="setupForm.pdfPage" /></label>
-            <label class="wide">Uncertain or unmapped values <textarea rows="5" placeholder="Values that still need review…" [formField]="setupForm.unmappedValues"></textarea></label>
-            <label class="wide">Raw source values <textarea rows="5" placeholder="The original extracted values are retained here…" [formField]="setupForm.rawValues"></textarea></label>
+			<label class="wide">Source URL <input type="url" placeholder="https://…" [formField]="setupForm.sourceUrl" [attr.aria-describedby]="formError() && setupForm.sourceUrl().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>PDF title / reference <input placeholder="Setup sheet, page 2" [formField]="setupForm.pdfTitle" [attr.aria-describedby]="formError() && setupForm.pdfTitle().invalid() ? 'setup-form-validation' : null" /></label>
+			<label>PDF page <input type="text" inputmode="numeric" placeholder="Optional" [formField]="setupForm.pdfPage" [attr.aria-describedby]="formError() && setupForm.pdfPage().invalid() ? 'setup-form-validation' : null" /></label>
+			<label class="wide">Uncertain or unmapped values <textarea rows="5" placeholder="Values that still need review…" [formField]="setupForm.unmappedValues" [attr.aria-describedby]="formError() && setupForm.unmappedValues().invalid() ? 'setup-form-validation' : null"></textarea></label>
+			<label class="wide">Raw source values <textarea rows="5" placeholder="The original extracted values are retained here…" [formField]="setupForm.rawValues" [attr.aria-describedby]="formError() && setupForm.rawValues().invalid() ? 'setup-form-validation' : null"></textarea></label>
           </div></fieldset>
           <div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">{{ action() === 'save' ? 'Saving…' : importPreview() ? 'Save as new snapshot' : 'Save snapshot' }}</button><button class="button quiet" type="button" (click)="importPreview() ? cancelImport() : cancelEdit()" [disabled]="action() !== null">Cancel</button></div>
         </form>

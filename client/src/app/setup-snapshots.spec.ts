@@ -254,6 +254,7 @@ describe('SetupSnapshots', () => {
 			editor.querySelector('#setup-form-validation[role="alert"]')?.textContent,
 		).toContain('Name this setup before saving');
 		expect(document.activeElement).toBe(name);
+		expect(name.getAttribute('aria-describedby')).toBe('setup-form-validation');
 
 		name.value = 'Valid setup';
 		name.dispatchEvent(new Event('input'));
@@ -262,6 +263,7 @@ describe('SetupSnapshots', () => {
 		fixture.detectChanges();
 		expect(editor.getAttribute('aria-describedby')).toBeNull();
 		expect(editor.querySelector('#setup-form-validation')).toBeNull();
+		expect(name.getAttribute('aria-describedby')).toBeNull();
 	});
 
 	it('focuses the first invalid optional field in editor order', async () => {
@@ -284,6 +286,9 @@ describe('SetupSnapshots', () => {
 			?.querySelector('input');
 
 		expect(document.activeElement).toBe(trackInput);
+		expect(trackInput?.getAttribute('aria-describedby')).toBe(
+			'setup-form-validation',
+		);
 	});
 
 	it('copies a setup and can select the copied snapshot as current', async () => {
