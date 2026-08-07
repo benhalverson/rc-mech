@@ -42,6 +42,9 @@ type SetupMode = 'add' | 'edit';
 type SetupAction = 'save' | 'copy' | 'current' | null;
 type ImportState = 'idle' | 'loading' | 'review' | 'error';
 
+const SETUP_VALIDATION_MESSAGE =
+	'Review the highlighted setup fields before saving.';
+
 const sectionLabels: Record<SetupSectionKey, string> = {
 	vehicle: 'Vehicle',
 	drivetrain: 'Drivetrain',
@@ -202,6 +205,13 @@ export class SetupSnapshots {
 					setups.find((setup) => setup.current)?.id ?? setups[0]?.id ?? null,
 				);
 		});
+		effect(() => {
+			if (
+				!this.setupForm().invalid() &&
+				this.formError() === SETUP_VALIDATION_MESSAGE
+			)
+				this.formError.set('');
+		});
 	}
 
 	protected retry(): void {
@@ -304,7 +314,7 @@ export class SetupSnapshots {
 		this.setupForm().markAsTouched();
 		const formModel = this.formModel();
 		if (this.setupForm().invalid()) {
-			this.formError.set('Review the highlighted setup fields before saving.');
+			this.formError.set(SETUP_VALIDATION_MESSAGE);
 			[
 				this.setupForm.name(),
 				this.setupForm.track(),

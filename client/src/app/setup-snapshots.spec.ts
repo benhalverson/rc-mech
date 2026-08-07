@@ -226,6 +226,14 @@ describe('SetupSnapshots', () => {
 			editor.querySelector('#setup-form-validation[role="alert"]')?.textContent,
 		).toContain('Name this setup before saving');
 		expect(document.activeElement).toBe(name);
+
+		name.value = 'Valid setup';
+		name.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(editor.getAttribute('aria-describedby')).toBeNull();
+		expect(editor.querySelector('#setup-form-validation')).toBeNull();
 	});
 
 	it('focuses the first invalid optional field in editor order', async () => {
