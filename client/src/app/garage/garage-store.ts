@@ -28,11 +28,24 @@ export type GarageCar = {
 	createdAt?: string;
 };
 
+export type GarageCarInput = {
+	name: string;
+	make?: string;
+	model?: string;
+	scale?: string;
+	vehicleType?: string;
+	powerType?: string;
+	notes?: string;
+};
+
 type GarageState = {
 	activeCarId: string | null;
 	showArchived: boolean;
 	lifecycleAction: 'archive' | 'restore' | null;
 	lifecycleError: string;
+	carAction: 'create' | 'update' | null;
+	carMutationError: string;
+	carMessage: string;
 };
 
 const readErrorMessage = (
@@ -54,6 +67,9 @@ export const GarageStore = signalStore(
 		showArchived: false,
 		lifecycleAction: null,
 		lifecycleError: '',
+		carAction: null,
+		carMutationError: '',
+		carMessage: '',
 	}),
 	withProps(({ activeCarId, showArchived }) => {
 		const collection = httpResource<{ cars: GarageCar[] }>(() => ({
@@ -140,6 +156,70 @@ export const GarageStore = signalStore(
 		},
 		retryOverview(): void {
 			store.overview.reload();
+		},
+		clearCarMutationState(): void {
+			patchState(store, { carMutationError: '', carMessage: '' });
+		},
+		async createCar(input: GarageCarInput): Promise<GarageCar | null> {
+			if (store.carAction()) return null;
+			patchState(store, {
+				carAction: 'create',
+				carMutationError: '',
+				carMessage: '',
+			});
+			try {
+				const { car } = await firstValueFrom(
+					store.http.post<{ car: GarageCar }>('/api/v1/cars', input, {
+						withCredentials: true,
+					}),
+				);
+				store.collection.reload();
+				patchState(store, {
+					carAction: null,
+					carMessage: 'Car added to the garage.',
+				});
+				return car;
+			} catch (error) {
+				patchState(store, {
+					carAction: null,
+					carMutationError:
+						error instanceof HttpErrorResponse && error.status === 401
+							? 'Your garage session has expired. Sign in again to continue.'
+							: 'The car could not be saved. Check the details and try again.',
+				});
+				return null;
+			}
+		},
+		async updateCar(carId: string, input: GarageCarInput): Promise<boolean> {
+			if (store.carAction()) return false;
+			patchState(store, {
+				carAction: 'update',
+				carMutationError: '',
+				carMessage: '',
+			});
+			try {
+				await firstValueFrom(
+					store.http.patch(`/api/v1/cars/${encodeURIComponent(carId)}`, input, {
+						withCredentials: true,
+					}),
+				);
+				store.collection.reload();
+				store.overview.reload();
+				patchState(store, {
+					carAction: null,
+					carMessage: 'Car details saved.',
+				});
+				return true;
+			} catch (error) {
+				patchState(store, {
+					carAction: null,
+					carMutationError:
+						error instanceof HttpErrorResponse && error.status === 401
+							? 'Your garage session has expired. Sign in again to continue.'
+							: 'The car could not be saved. Check the details and try again.',
+				});
+				return false;
+			}
 		},
 		async changeArchiveState(action: 'archive' | 'restore'): Promise<void> {
 			const carId = store.activeCarId();

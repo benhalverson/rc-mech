@@ -2,8 +2,26 @@
 	<div class="eyebrow">Today’s workbench</div>
 	<h2 id="garage-collection-title" data-route-focus tabindex="-1">The garage</h2>
 	<p class="section-intro">Keep the cars you actually drive close at hand. Their build sheets, sessions, and service history will follow.</p>
+	@if (store.carMessage()) { <p role="status">{{ store.carMessage() }}</p> }
 
-	@if (store.activeCarId()) {
+	@if (editing()) {
+		<form class="car-form" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : null" novalidate>
+			<div class="eyebrow">{{ editing() === 'create' ? 'New car' : 'Edit car' }}</div>
+			<h3 id="car-form-title">{{ editing() === 'create' ? 'Put a car on the bench.' : 'Update the car record.' }}</h3>
+			<p class="section-intro">Use the names you use in the workshop. Empty optional fields stay empty.</p>
+			@if (formError()) { <p id="car-form-error" role="alert">{{ formError() }}</p> }
+			<div class="form-grid">
+				<label class="wide">Name <input [formField]="carFields.name" [attr.aria-describedby]="formError() && carFields.name().invalid() ? 'car-form-error' : null" /></label>
+				<label>Make <input [formField]="carFields.make" [attr.aria-describedby]="formError() && carFields.make().invalid() ? 'car-form-error' : null" /></label>
+				<label>Model <input [formField]="carFields.model" [attr.aria-describedby]="formError() && carFields.model().invalid() ? 'car-form-error' : null" /></label>
+				<label>Scale <input placeholder="1/10" [formField]="carFields.scale" [attr.aria-describedby]="formError() && carFields.scale().invalid() ? 'car-form-error' : null" /></label>
+				<label>Vehicle type <input placeholder="Buggy, truck…" [formField]="carFields.vehicleType" [attr.aria-describedby]="formError() && carFields.vehicleType().invalid() ? 'car-form-error' : null" /></label>
+				<label>Power type <input placeholder="Electric, nitro…" [formField]="carFields.powerType" [attr.aria-describedby]="formError() && carFields.powerType().invalid() ? 'car-form-error' : null" /></label>
+				<label class="wide">Notes <textarea rows="5" [formField]="carFields.notes" [attr.aria-describedby]="formError() && carFields.notes().invalid() ? 'car-form-error' : null"></textarea></label>
+			</div>
+			<div class="form-actions"><button type="submit" [disabled]="store.carAction() !== null">{{ store.carAction() === 'create' ? 'Adding…' : store.carAction() === 'update' ? 'Saving…' : 'Save car' }}</button><button type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button></div>
+		</form>
+	} @else if (store.activeCarId()) {
 		<a class="back-link" routerLink="/garage">← Garage collection</a>
 		@if (store.overviewLoading()) {
 			<div class="state-card" role="status"><span aria-hidden="true">•••</span><p>Opening the car overview…</p></div>
@@ -13,11 +31,11 @@
 			<article class="car-overview" aria-labelledby="active-car-title">
 				<div class="overview-heading">
 					<div><span class="status-pill">{{ car.archivedAt ? 'Archived' : 'Active car' }}</span><h3 id="active-car-title">{{ car.name }}</h3></div>
-					@if (car.archivedAt) {
+					<div class="overview-actions"><button type="button" (click)="openEdit(car)" [disabled]="store.lifecycleAction() !== null">Edit details</button>@if (car.archivedAt) {
 						<button type="button" (click)="store.changeArchiveState('restore')" [disabled]="store.lifecycleAction() !== null">{{ store.lifecycleAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button>
 					} @else {
 						<button type="button" class="danger" (click)="store.changeArchiveState('archive')" [disabled]="store.lifecycleAction() !== null">{{ store.lifecycleAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button>
-					}
+					}</div>
 				</div>
 				@if (store.lifecycleError()) { <p role="alert">{{ store.lifecycleError() }}</p> }
 				<p class="overview-identity">{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</p>
@@ -41,14 +59,14 @@
 	} @else {
 		<div class="garage-toolbar">
 			<span><strong>{{ store.cars().length }}</strong> {{ store.showArchived() ? 'active and archived' : 'active' }} cars</span>
-			<button type="button" (click)="store.toggleArchived()">{{ store.showArchived() ? 'Show active cars' : 'Inspect archived cars' }}</button>
+			<div class="toolbar-actions">@if (!store.showArchived()) { <button type="button" (click)="openCreate()">Add a car</button> }<button type="button" (click)="store.toggleArchived()">{{ store.showArchived() ? 'Show active cars' : 'Inspect archived cars' }}</button></div>
 		</div>
 		@if (store.collectionLoading()) {
 			<div class="state-card" role="status"><span aria-hidden="true">•••</span><p>Opening the garage ledger…</p></div>
 		} @else if (store.collectionError()) {
 			<div class="state-card" role="alert"><p>{{ store.collectionError() }}</p><button type="button" (click)="store.retryCollection()">Try again</button></div>
 		} @else if (!store.cars().length) {
-			<div class="state-card"><span aria-hidden="true">＋</span><h3>{{ store.showArchived() ? 'No archived cars' : 'The garage is waiting' }}</h3><p>{{ store.showArchived() ? 'Archived cars will stay here with their history.' : 'Add the first car to start a build sheet.' }}</p></div>
+			<div class="state-card"><span aria-hidden="true">＋</span><h3>{{ store.showArchived() ? 'No archived cars' : 'The garage is waiting' }}</h3><p>{{ store.showArchived() ? 'Archived cars will stay here with their history.' : 'Add the first car to start a build sheet.' }}</p>@if (!store.showArchived()) { <button type="button" (click)="openCreate()">Add the first car</button> }</div>
 		} @else {
 			<nav class="car-list" aria-label="Cars">
 				@for (car of store.cars(); track car.id) {

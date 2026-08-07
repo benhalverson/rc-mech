@@ -15,6 +15,13 @@
 	border-bottom: 1px solid var(--line);
 	color: var(--muted);
 }
+.toolbar-actions,
+.overview-actions,
+.form-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
 .garage-toolbar strong {
 	color: var(--accent);
 	font:
@@ -24,13 +31,45 @@
 }
 .garage-toolbar button,
 .state-card button,
-.car-overview button {
+.car-overview button,
+.car-form button {
 	background: transparent;
 	border: 1px solid var(--accent);
 	color: var(--accent);
 	padding: 8px 12px;
 	font: inherit;
 	cursor: pointer;
+}
+.car-form {
+	display: grid;
+	gap: 18px;
+	padding: 28px 0;
+}
+.car-form h3,
+.car-form p {
+	margin: 0;
+}
+.form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+}
+.form-grid label {
+	display: grid;
+	gap: 6px;
+}
+.form-grid .wide {
+	grid-column: 1 / -1;
+}
+.form-grid input,
+.form-grid textarea {
+	box-sizing: border-box;
+	width: 100%;
+	border: 1px solid var(--line);
+	background: var(--paper);
+	color: var(--ink);
+	font: inherit;
+	padding: 10px;
 }
 .state-card {
 	display: grid;
@@ -141,8 +180,15 @@
 		grid-template-columns: 1fr;
 	}
 	.overview-heading,
-	.car-row {
+	.car-row,
+	.garage-toolbar {
 		align-items: start;
 		flex-direction: column;
+	}
+	.form-grid {
+		grid-template-columns: 1fr;
+	}
+	.form-grid .wide {
+		grid-column: auto;
 	}
 }

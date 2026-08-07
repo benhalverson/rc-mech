@@ -10,6 +10,7 @@ import {
 	ActivatedRoute,
 	convertToParamMap,
 	provideRouter,
+	Router,
 } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,6 +48,44 @@ describe('Garage', () => {
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
 			'The garage is waiting',
+		);
+	});
+
+	it('creates the first car through an accessible Signal Form', async () => {
+		vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+		http.expectOne('/api/v1/cars').flush({ cars: [] });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) =>
+				button.textContent?.trim() === 'Add the first car',
+		) as HTMLButtonElement;
+		add.click();
+		fixture.detectChanges();
+		const form = fixture.nativeElement.querySelector(
+			'.car-form',
+		) as HTMLFormElement;
+		form.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		const name = form.querySelector('input') as HTMLInputElement;
+		expect(document.activeElement).toBe(name);
+
+		name.value = 'Red Runner';
+		name.dispatchEvent(new Event('input'));
+		form.dispatchEvent(new Event('submit'));
+		const mutation = http.expectOne('/api/v1/cars');
+		expect(mutation.request.method).toBe('POST');
+		expect(mutation.request.body).toEqual({ name: 'Red Runner' });
+		mutation.flush({ car: { id: 'car-1', name: 'Red Runner' } });
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/v1/cars');
+		});
+		refresh?.flush({ cars: [{ id: 'car-1', name: 'Red Runner' }] });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Car added to the garage.',
 		);
 	});
 
@@ -162,6 +201,46 @@ describe('Garage overview', () => {
 				'nav[aria-label="Car detail sections"] a[aria-current="page"]',
 			)?.textContent,
 		).toContain('Overview');
+	});
+
+	it('edits car details and refreshes collection and overview truth', async () => {
+		http.expectOne('/api/v1/cars/car-1').flush({
+			car: { id: 'car-1', name: 'Red Runner', make: 'Associated' },
+		});
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const edit = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) =>
+				button.textContent?.trim() === 'Edit details',
+		) as HTMLButtonElement;
+		edit.click();
+		fixture.detectChanges();
+		const form = fixture.nativeElement.querySelector(
+			'.car-form',
+		) as HTMLFormElement;
+		const name = form.querySelector('input') as HTMLInputElement;
+		name.value = 'Red Runner Evo';
+		name.dispatchEvent(new Event('input'));
+		form.dispatchEvent(new Event('submit'));
+
+		const mutation = http.expectOne('/api/v1/cars/car-1');
+		expect(mutation.request.method).toBe('PATCH');
+		expect(mutation.request.body).toMatchObject({
+			name: 'Red Runner Evo',
+			make: 'Associated',
+		});
+		mutation.flush({ car: { id: 'car-1', name: 'Red Runner Evo' } });
+		let collection: TestRequest | undefined;
+		let overview: TestRequest | undefined;
+		await vi.waitFor(() => {
+			collection = http.expectOne('/api/v1/cars');
+			overview = http.expectOne('/api/v1/cars/car-1');
+		});
+		collection?.flush({ cars: [{ id: 'car-1', name: 'Red Runner Evo' }] });
+		overview?.flush({ car: { id: 'car-1', name: 'Red Runner Evo' } });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Car details saved.');
 	});
 
 	it('loads a new overview when a reused route receives another car id', async () => {
