@@ -692,14 +692,18 @@ describe('Car section routes', () => {
 			createCar(identity: { name: string; make: string; model: string }): void;
 		};
 		const identity = {
-			name: 'Imported buggy',
-			make: 'Associated',
-			model: 'B7',
+			name: ' Imported buggy ',
+			make: ' Associated ',
+			model: ' ',
 		};
 		component.createCar(identity);
 		component.createCar(identity);
 		const creation = http.expectOne('/api/v1/cars');
 		expect(creation.request.method).toBe('POST');
+		expect(creation.request.body).toEqual({
+			name: 'Imported buggy',
+			make: 'Associated',
+		});
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Creating the new car',
@@ -712,7 +716,7 @@ describe('Car section routes', () => {
 
 		component.createCar(identity);
 		http.expectOne('/api/v1/cars').flush({
-			car: { ...car, id: 'car-2', name: identity.name },
+			car: { ...car, id: 'car-2', name: 'Imported buggy' },
 		});
 		let collectionRefresh: TestRequest | undefined;
 		let carRefresh: TestRequest | undefined;
@@ -721,10 +725,10 @@ describe('Car section routes', () => {
 			carRefresh = http.expectOne('/api/v1/cars/car-2');
 		});
 		collectionRefresh?.flush({
-			cars: [car, { ...car, id: 'car-2', name: identity.name }],
+			cars: [car, { ...car, id: 'car-2', name: 'Imported buggy' }],
 		});
 		carRefresh?.flush({
-			car: { ...car, id: 'car-2', name: identity.name },
+			car: { ...car, id: 'car-2', name: 'Imported buggy' },
 		});
 		let setupRefresh: TestRequest | undefined;
 		await vi.waitFor(() => {

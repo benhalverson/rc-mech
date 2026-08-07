@@ -8,7 +8,7 @@ import {
 	signal,
 } from '@angular/core';
 import { Router } from '@angular/router';
-import type { GarageCar } from '../garage/garage-store';
+import type { GarageCar, GarageCarInput } from '../garage/garage-store';
 import { SetupSnapshots } from '../setup-snapshots';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
@@ -64,10 +64,20 @@ export class CarSetups {
 	}): void {
 		if (this.createAction()) return;
 		const sourceCarId = this.carId();
+		const make = identity.make.trim();
+		const model = identity.model.trim();
+		const payload: GarageCarInput = {
+			name:
+				identity.name.trim() ||
+				[make, model].filter(Boolean).join(' ') ||
+				'Imported car',
+			...(make ? { make } : {}),
+			...(model ? { model } : {}),
+		};
 		this.createAction.set(true);
 		this.createError.set('');
 		this.http
-			.post<{ car: GarageCar }>('/api/v1/cars', identity, {
+			.post<{ car: GarageCar }>('/api/v1/cars', payload, {
 				withCredentials: true,
 			})
 			.subscribe({
