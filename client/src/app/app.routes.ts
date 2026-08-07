@@ -5,6 +5,10 @@ import { ownerSessionCanMatch } from './owner-session.guard';
 const loadGaragePages = () =>
 	import('./garage-pages').then(({ GaragePages }) => GaragePages);
 const loadGarage = () => import('./garage/garage').then(({ Garage }) => Garage);
+const loadSettingsRoutes = () =>
+	import('./settings/settings.routes').then(
+		({ SETTINGS_ROUTES }) => SETTINGS_ROUTES,
+	);
 
 export const signInRoute = {
 	path: 'sign-in',
@@ -59,7 +63,7 @@ export const routes: Routes = [
 	{
 		path: 'settings',
 		canMatch: [ownerSessionCanMatch],
-		loadComponent: loadGaragePages,
+		loadChildren: loadSettingsRoutes,
 	},
 	{ path: '**', redirectTo: 'garage' },
 ];
