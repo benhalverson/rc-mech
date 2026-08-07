@@ -99,7 +99,7 @@ describe('Maintenance workspace', () => {
 		).not.toThrow();
 	});
 
-	it('renders an unauthorized state and retries all idempotent reads', async () => {
+	it('renders an unauthorized state and retries cockpit reads', async () => {
 		flushInitialReads({ status: 401, statusText: 'Unauthorized' });
 		await fixture.whenStable();
 		fixture.detectChanges();
@@ -123,7 +123,14 @@ describe('Maintenance workspace', () => {
 			...(carsRequest ? [carsRequest] : []),
 			...http.match(() => true),
 		];
-		expect(requests).toHaveLength(6);
+		expect(requests.map((request) => request.request.url).sort()).toEqual(
+			[
+				'/api/v1/cars',
+				'/api/v1/preferences/timezone',
+				'/api/v1/maintenance-plans',
+				'/api/v1/service-records',
+			].sort(),
+		);
 		for (const request of requests) {
 			if (request.request.url === '/api/v1/cars') request.flush({ cars: [] });
 			else if (request.request.url === '/api/v1/preferences/timezone')
@@ -132,9 +139,6 @@ describe('Maintenance workspace', () => {
 				request.flush({ maintenancePlans: [], activity: [] });
 			else if (request.request.url === '/api/v1/service-records')
 				request.flush({ serviceRecords: [] });
-			else if (request.request.url === '/api/v1/consumable-maintenance')
-				request.flush({ consumableMaintenance: [] });
-			else request.flush({ report: {} });
 		}
 	});
 });
