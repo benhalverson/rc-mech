@@ -1,5 +1,4 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
-import { toSignal } from '@angular/core/rxjs-interop';
+import { Component, computed, inject, signal } from '@angular/core';
 import {
 	FormField,
 	maxLength,
@@ -7,13 +6,8 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { map } from 'rxjs';
-import {
-	type GarageCar,
-	type GarageCarInput,
-	GarageStore,
-} from './garage-store';
+import { Router, RouterLink } from '@angular/router';
+import { type GarageCarInput, GarageStore } from './garage-store';
 
 type CarForm = {
 	name: string;
@@ -33,16 +27,6 @@ const emptyCarForm = (): CarForm => ({
 	vehicleType: '',
 	powerType: '',
 	notes: '',
-});
-
-const carFormFrom = (car: GarageCar): CarForm => ({
-	name: car.name,
-	make: car.make ?? car.manufacturer ?? '',
-	model: car.model ?? '',
-	scale: car.scale ?? '',
-	vehicleType: car.vehicleType ?? '',
-	powerType: car.powerType ?? '',
-	notes: car.notes ?? '',
 });
 
 const carPayload = (form: CarForm): GarageCarInput => {
@@ -67,13 +51,8 @@ const carPayload = (form: CarForm): GarageCarInput => {
 })
 export class Garage {
 	protected readonly store = inject(GarageStore);
-	private readonly route = inject(ActivatedRoute);
 	private readonly router = inject(Router);
-	private readonly routeCarId = toSignal(
-		this.route.paramMap.pipe(map((params) => params.get('carId'))),
-		{ initialValue: this.route.snapshot.paramMap.get('carId') },
-	);
-	protected readonly editing = signal<'create' | 'update' | null>(null);
+	protected readonly editing = signal(false);
 	protected readonly form = signal(emptyCarForm());
 	protected readonly carFields = signalForm(this.form, (path) => {
 		required(path.name, { message: 'Give this car a name before saving.' });
@@ -99,40 +78,17 @@ export class Garage {
 		() => this.formValidationError() || this.store.carMutationError(),
 	);
 
-	constructor() {
-		let previousCarId = this.routeCarId();
-		effect(() => {
-			const carId = this.routeCarId();
-			if (carId !== previousCarId) {
-				previousCarId = carId;
-				this.editing.set(null);
-				this.formValidationError.set('');
-				this.store.clearCarMutationState();
-				this.carFields().reset(emptyCarForm());
-			}
-			this.store.selectCar(carId);
-		});
-	}
-
 	protected openCreate(): void {
 		if (this.store.carAction()) return;
 		this.store.clearCarMutationState();
 		this.formValidationError.set('');
 		this.carFields().reset(emptyCarForm());
-		this.editing.set('create');
-	}
-
-	protected openEdit(car: GarageCar): void {
-		if (this.store.carAction()) return;
-		this.store.clearCarMutationState();
-		this.formValidationError.set('');
-		this.carFields().reset(carFormFrom(car));
-		this.editing.set('update');
+		this.editing.set(true);
 	}
 
 	protected cancelEdit(): void {
 		if (this.store.carAction()) return;
-		this.editing.set(null);
+		this.editing.set(false);
 		this.formValidationError.set('');
 		this.store.clearCarMutationState();
 		this.carFields().reset();
@@ -151,16 +107,9 @@ export class Garage {
 			return;
 		}
 		this.formValidationError.set('');
-		const input = carPayload(this.form());
-		if (this.editing() === 'create') {
-			const car = await this.store.createCar(input);
-			if (!car) return;
-			this.editing.set(null);
-			await this.router.navigate(['/garage', car.id, 'overview']);
-			return;
-		}
-		const car = this.store.activeCar();
-		if (!car || !(await this.store.updateCar(car.id, input))) return;
-		this.editing.set(null);
+		const car = await this.store.createCar(carPayload(this.form()));
+		if (!car) return;
+		this.editing.set(false);
+		await this.router.navigate(['/garage', car.id, 'overview']);
 	}
 }

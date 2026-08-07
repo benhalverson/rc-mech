@@ -2,9 +2,11 @@ import { provideHttpClient } from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
+	type TestRequest,
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { CarPhotoGallery, type CarPhoto } from './car-photo-gallery';
+import { vi } from 'vitest';
+import { type CarPhoto, CarPhotoGallery } from './car-photo-gallery';
 
 type TestMember = {
 	set(value: unknown): void;
@@ -13,6 +15,7 @@ type TestMember = {
 type TestSignal<T> = TestMember & (() => T);
 type GalleryTestHarness = {
 	photos: TestSignal<CarPhoto[]>;
+	action: TestSignal<string | null>;
 	designatePrimary: (...args: unknown[]) => unknown;
 	move: (...args: unknown[]) => unknown;
 };
@@ -31,6 +34,7 @@ describe('CarPhotoGallery', () => {
 		fixture.componentRef.setInput('carId', 'car-1');
 		fixture.detectChanges();
 		http.expectOne('/api/v1/cars/car-1/photos').flush({ photos: [] });
+		await fixture.whenStable();
 		fixture.detectChanges();
 	});
 
@@ -73,7 +77,7 @@ describe('CarPhotoGallery', () => {
 		);
 	});
 
-	it('uploads a supported photo as multipart form data with credentials', () => {
+	it('uploads a supported photo as multipart form data with credentials', async () => {
 		const input = fixture.nativeElement.querySelector(
 			'input[type=file]',
 		) as HTMLInputElement;
@@ -95,6 +99,22 @@ describe('CarPhotoGallery', () => {
 				createdAt: '2026-08-03T00:00:00Z',
 				sortOrder: 0,
 			},
+		});
+		let reload: TestRequest | undefined;
+		await vi.waitFor(() => {
+			reload = http.expectOne('/api/v1/cars/car-1/photos');
+		});
+		reload?.flush({
+			photos: [
+				{
+					id: 'photo-1',
+					carId: 'car-1',
+					objectKey: 'photo-1.webp',
+					contentType: 'image/webp',
+					createdAt: '2026-08-03T00:00:00Z',
+					sortOrder: 0,
+				},
+			],
 		});
 	});
 
@@ -119,6 +139,78 @@ describe('CarPhotoGallery', () => {
 		);
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('session has expired');
+	});
+
+	it('encodes reserved car and photo identifiers', async () => {
+		fixture.componentRef.setInput('carId', 'car/one');
+		fixture.detectChanges();
+		let collection: TestRequest | undefined;
+		await vi.waitFor(() => {
+			collection = http.expectOne('/api/v1/cars/car%2Fone/photos');
+		});
+		collection?.flush({ photos: [] });
+		const app = fixture.componentInstance as unknown as GalleryTestHarness;
+		const photo = {
+			id: 'photo/one',
+			carId: 'car/one',
+			objectKey: 'owner/car/one/photo/one.webp',
+			contentType: 'image/webp',
+			createdAt: '2026-08-03T00:00:00Z',
+			sortOrder: 0,
+		};
+		app.photos.set([photo]);
+		app.designatePrimary(photo);
+		http
+			.expectOne('/api/v1/cars/car%2Fone/photos/photo%2Fone')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+	});
+
+	it('rejects a stale photo mutation after the route identity changes', () => {
+		const app = fixture.componentInstance as unknown as GalleryTestHarness;
+		const photo = {
+			id: 'photo/one',
+			carId: 'car/old',
+			objectKey: 'owner/car/old/photo/one.webp',
+			contentType: 'image/webp',
+			createdAt: '2026-08-03T00:00:00Z',
+			sortOrder: 0,
+		};
+		app.photos.set([photo]);
+		app.designatePrimary(photo);
+
+		http.expectNone('/api/v1/cars/car%2Fold/photos/photo%2Fone');
+		expect(app.action()).toBeNull();
+	});
+
+	it('clears local mutation state and ignores stale results when cars change', async () => {
+		const app = fixture.componentInstance as unknown as GalleryTestHarness;
+		const photo = {
+			id: 'photo-1',
+			carId: 'car-1',
+			objectKey: 'owner/car-1/photo-1.webp',
+			contentType: 'image/webp',
+			createdAt: '2026-08-03T00:00:00Z',
+			sortOrder: 0,
+		};
+		app.photos.set([photo]);
+		app.designatePrimary(photo);
+		const oldMutation = http.expectOne('/api/v1/cars/car-1/photos/photo-1');
+		expect(app.action()).toBe('primary:photo-1');
+
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		expect(app.action()).toBeNull();
+		let nextGallery: TestRequest | undefined;
+		await vi.waitFor(() => {
+			nextGallery = http.expectOne('/api/v1/cars/car-2/photos');
+		});
+		nextGallery?.flush({ photos: [] });
+		oldMutation.flush({ photo: { ...photo, isPrimary: true } });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(app.photos()).toEqual([]);
+		http.expectNone('/api/v1/cars/car-2/photos');
 	});
 
 	it('reorders the complete gallery through one authenticated atomic request', async () => {
@@ -151,7 +243,16 @@ describe('CarPhotoGallery', () => {
 				{ ...first, sortOrder: 1 },
 			],
 		});
-		await Promise.resolve();
+		let reload: TestRequest | undefined;
+		await vi.waitFor(() => {
+			reload = http.expectOne('/api/v1/cars/car-1/photos');
+		});
+		reload?.flush({
+			photos: [
+				{ ...second, sortOrder: 0 },
+				{ ...first, sortOrder: 1 },
+			],
+		});
 		expect(app.photos()[0].id).toBe('photo-2');
 	});
 });

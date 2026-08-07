@@ -6,8 +6,8 @@
 
 	@if (editing()) {
 		<form class="car-form" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : null" novalidate>
-			<div class="eyebrow">{{ editing() === 'create' ? 'New car' : 'Edit car' }}</div>
-			<h3 id="car-form-title">{{ editing() === 'create' ? 'Put a car on the bench.' : 'Update the car record.' }}</h3>
+			<div class="eyebrow">New car</div>
+			<h3 id="car-form-title">Put a car on the bench.</h3>
 			<p class="section-intro">Use the names you use in the workshop. Empty optional fields stay empty.</p>
 			@if (formError()) { <p id="car-form-error" role="alert">{{ formError() }}</p> }
 			<div class="form-grid">
@@ -19,43 +19,8 @@
 				<label>Power type <input placeholder="Electric, nitro…" [formField]="carFields.powerType" [attr.aria-describedby]="formError() && carFields.powerType().invalid() ? 'car-form-error' : null" /></label>
 				<label class="wide">Notes <textarea rows="5" [formField]="carFields.notes" [attr.aria-describedby]="formError() && carFields.notes().invalid() ? 'car-form-error' : null"></textarea></label>
 			</div>
-			<div class="form-actions"><button type="submit" [disabled]="store.carAction() !== null">{{ store.carAction() === 'create' ? 'Adding…' : store.carAction() === 'update' ? 'Saving…' : 'Save car' }}</button><button type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button></div>
+			<div class="form-actions"><button type="submit" [disabled]="store.carAction() !== null">{{ store.carAction() === 'create' ? 'Adding…' : 'Save car' }}</button><button type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button></div>
 		</form>
-	} @else if (store.activeCarId()) {
-		<a class="back-link" routerLink="/garage">← Garage collection</a>
-		@if (store.overviewLoading()) {
-			<div class="state-card" role="status"><span aria-hidden="true">•••</span><p>Opening the car overview…</p></div>
-		} @else if (store.overviewError()) {
-			<div class="state-card" role="alert"><p>{{ store.overviewError() }}</p>@if (!store.overviewNotFound()) { <button type="button" (click)="store.retryOverview()">Try again</button> }</div>
-		} @else if (store.activeCar(); as car) {
-			<article class="car-overview" aria-labelledby="active-car-title">
-				<div class="overview-heading">
-					<div><span class="status-pill">{{ car.archivedAt ? 'Archived' : 'Active car' }}</span><h3 id="active-car-title">{{ car.name }}</h3></div>
-					<div class="overview-actions"><button type="button" (click)="openEdit(car)" [disabled]="store.lifecycleAction() !== null">Edit details</button>@if (car.archivedAt) {
-						<button type="button" (click)="store.changeArchiveState('restore')" [disabled]="store.lifecycleAction() !== null">{{ store.lifecycleAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button>
-					} @else {
-						<button type="button" class="danger" (click)="store.changeArchiveState('archive')" [disabled]="store.lifecycleAction() !== null">{{ store.lifecycleAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button>
-					}</div>
-				</div>
-				@if (store.lifecycleError()) { <p role="alert">{{ store.lifecycleError() }}</p> }
-				<p class="overview-identity">{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</p>
-				<dl class="overview-grid">
-					<div><dt>Scale</dt><dd>{{ car.scale || 'Not recorded' }}</dd></div>
-					<div><dt>Vehicle type</dt><dd>{{ car.vehicleType || 'Not recorded' }}</dd></div>
-					<div><dt>Power type</dt><dd>{{ car.powerType || 'Not recorded' }}</dd></div>
-				</dl>
-				<div class="overview-notes"><strong>Workshop notes</strong><p>{{ car.notes || 'No notes recorded yet.' }}</p></div>
-				<nav class="car-tabs" aria-label="Car detail sections">
-					<a [routerLink]="['/garage', car.id, 'overview']" aria-current="page">Overview</a>
-					<a [routerLink]="['/garage', car.id, 'build']">Build</a>
-					<a [routerLink]="['/garage', car.id, 'setups']">Setups</a>
-					<a [routerLink]="['/garage', car.id, 'photos']">Photos</a>
-					<a [routerLink]="['/garage', car.id, 'runs']">Runs</a>
-				</nav>
-			</article>
-		} @else {
-			<div class="state-card"><h3>Car not found</h3><p>Return to the Garage collection and choose another car.</p></div>
-		}
 	} @else {
 		<div class="garage-toolbar">
 			<span><strong>{{ store.cars().length }}</strong> {{ store.showArchived() ? 'active and archived' : 'active' }} cars</span>

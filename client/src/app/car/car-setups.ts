@@ -1,0 +1,101 @@
+import { HttpClient, httpResource } from '@angular/common/http';
+import {
+	Component,
+	computed,
+	effect,
+	inject,
+	input,
+	signal,
+} from '@angular/core';
+import { Router } from '@angular/router';
+import type { GarageCar, GarageCarInput } from '../garage/garage-store';
+import { SetupSnapshots } from '../setup-snapshots';
+import { CarSectionShell } from './car-section-shell';
+import { CarStore } from './car-store';
+
+@Component({
+	selector: 'app-car-setups',
+	imports: [CarSectionShell, SetupSnapshots],
+	template: `
+		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
+		@else if (carStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
+		@else if (carStore.car(); as car) {
+			<app-car-section-shell [car]="car" section="setups">
+				@if (createError()) { <p role="alert">{{ createError() }}</p> }
+				@if (createAction()) { <p role="status">Creating the new car…</p> }
+				<app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="availableCars()" (createCarFromImport)="createCar($event)" />
+			</app-car-section-shell>
+		}
+	`,
+})
+export class CarSetups {
+	readonly carId = input('');
+	protected readonly carStore = inject(CarStore);
+	private readonly http = inject(HttpClient);
+	private readonly router = inject(Router);
+	private readonly collection = httpResource<{ cars: GarageCar[] }>(() => ({
+		url: '/api/v1/cars',
+		withCredentials: true,
+	}));
+	protected readonly availableCars = computed(() =>
+		this.collection.hasValue() ? this.collection.value().cars : [],
+	);
+	protected readonly createError = signal('');
+	protected readonly createAction = signal(false);
+
+	constructor() {
+		let previousCarId: string | undefined;
+		effect(() => {
+			const carId = this.carId();
+			if (!carId) return;
+			if (previousCarId !== undefined && carId !== previousCarId) {
+				this.createAction.set(false);
+				this.createError.set('');
+			}
+			previousCarId = carId;
+			this.carStore.selectCar(carId);
+		});
+	}
+
+	protected createCar(identity: {
+		name: string;
+		make: string;
+		model: string;
+	}): void {
+		if (this.createAction()) return;
+		const sourceCarId = this.carId();
+		const make = identity.make.trim();
+		const model = identity.model.trim();
+		const payload: GarageCarInput = {
+			name:
+				identity.name.trim() ||
+				[make, model].filter(Boolean).join(' ') ||
+				'Imported car',
+			...(make ? { make } : {}),
+			...(model ? { model } : {}),
+		};
+		this.createAction.set(true);
+		this.createError.set('');
+		this.http
+			.post<{ car: GarageCar }>('/api/v1/cars', payload, {
+				withCredentials: true,
+			})
+			.subscribe({
+				next: ({ car }) => {
+					if (this.carId() !== sourceCarId) return;
+					this.createAction.set(false);
+					this.collection.reload();
+					void this.router.navigate(['/garage', car.id, 'setups']);
+				},
+				error: (error: { status?: number }) => {
+					if (this.carId() !== sourceCarId) return;
+					this.createAction.set(false);
+					this.createError.set(
+						error.status === 401
+							? 'Your garage session has expired. Sign in again to continue.'
+							: 'The new car could not be created from this reviewed import.',
+					);
+				},
+			});
+	}
+}
