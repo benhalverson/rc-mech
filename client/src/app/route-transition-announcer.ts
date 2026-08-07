@@ -37,8 +37,8 @@ export class RouteTransitionAnnouncer {
 				}
 				if (event instanceof NavigationError) {
 					this.loading.set(false);
-					this.error.set('This workspace could not be loaded. Try again.');
-					this.announcement.set('Workspace loading failed.');
+					this.error.set('This page could not be loaded. Try again.');
+					this.announcement.set('Page loading failed.');
 					return;
 				}
 				if (event instanceof NavigationCancel) {
@@ -55,7 +55,7 @@ export class RouteTransitionAnnouncer {
 	start(): void {
 		this.loading.set(true);
 		this.error.set('');
-		this.announcement.set('Loading workspace…');
+		this.announcement.set('Loading page…');
 	}
 
 	retry(): void {
@@ -66,7 +66,8 @@ export class RouteTransitionAnnouncer {
 		if (url.startsWith('/garage')) return 'Garage';
 		if (url.startsWith('/maintenance')) return 'Maintenance';
 		if (url.startsWith('/settings')) return 'Settings';
-		return 'workspace';
+		if (url.startsWith('/sign-in')) return 'Sign in';
+		return 'page';
 	}
 
 	private focusRouteHeading(): void {

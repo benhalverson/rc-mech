@@ -10,13 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RouteTransitionAnnouncer } from './route-transition-announcer';
 
 describe('RouteTransitionAnnouncer', () => {
-	const events = new Subject<
-		NavigationStart | NavigationEnd | NavigationError
-	>();
+	let events: Subject<NavigationStart | NavigationEnd | NavigationError>;
 	const navigateByUrl = vi.fn(async () => true);
 	let transition: RouteTransitionAnnouncer;
 
 	beforeEach(() => {
+		events = new Subject();
 		navigateByUrl.mockClear();
 		TestBed.configureTestingModule({
 			providers: [
@@ -31,6 +30,7 @@ describe('RouteTransitionAnnouncer', () => {
 	});
 
 	afterEach(() => {
+		events.complete();
 		document.querySelector('[data-route-focus]')?.remove();
 		TestBed.resetTestingModule();
 	});
@@ -43,7 +43,7 @@ describe('RouteTransitionAnnouncer', () => {
 
 		events.next(new NavigationStart(1, '/maintenance'));
 		expect(transition.loading()).toBe(true);
-		expect(transition.announcement()).toBe('Loading workspace…');
+		expect(transition.announcement()).toBe('Loading page…');
 
 		events.next(new NavigationEnd(1, '/maintenance', '/maintenance'));
 		await Promise.resolve();
@@ -61,11 +61,21 @@ describe('RouteTransitionAnnouncer', () => {
 
 		expect(transition.loading()).toBe(false);
 		expect(transition.error()).toBe(
-			'This workspace could not be loaded. Try again.',
+			'This page could not be loaded. Try again.',
 		);
-		expect(transition.announcement()).toBe('Workspace loading failed.');
+		expect(transition.announcement()).toBe('Page loading failed.');
 
 		transition.retry();
 		expect(navigateByUrl).toHaveBeenCalledWith('/settings');
+	});
+
+	it('announces public and unknown routes accurately', async () => {
+		events.next(new NavigationEnd(3, '/sign-in', '/sign-in'));
+		await Promise.resolve();
+		expect(transition.announcement()).toBe('Opened Sign in.');
+
+		events.next(new NavigationEnd(4, '/legal', '/legal'));
+		await Promise.resolve();
+		expect(transition.announcement()).toBe('Opened page.');
 	});
 });

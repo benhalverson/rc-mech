@@ -113,10 +113,13 @@ describe('SignIn', () => {
 		http
 			.expectOne('/api/auth/passkey/generate-authenticate-options')
 			.flush({ challenge: 'AQ' });
-		await new Promise<void>((resolve) => setTimeout(resolve));
-		http
-			.expectOne('/api/auth/passkey/verify-authentication')
-			.flush({ status: true });
+		let verificationRequest: TestRequest | undefined;
+		await vi.waitFor(() => {
+			verificationRequest = http.expectOne(
+				'/api/auth/passkey/verify-authentication',
+			);
+		});
+		verificationRequest?.flush({ status: true });
 		fixture.detectChanges();
 		let sessionRequest: TestRequest | undefined;
 		await vi.waitFor(() => {

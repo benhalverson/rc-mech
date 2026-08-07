@@ -83,7 +83,7 @@ describe('App workspace shell', () => {
 		fixture.detectChanges();
 		expect(
 			fixture.nativeElement.querySelector('.route-state').textContent,
-		).toContain('Loading workspace');
+		).toContain('Loading page');
 	});
 
 	it('signs out through the shared session store and returns to public routing', async () => {
