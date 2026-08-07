@@ -25,7 +25,7 @@ export type MaintenancePlan = {
 	intervalSessions?: number | null;
 	baselineAt?: string | null;
 	baselineSessionCount?: number | null;
-	status: 'active' | 'paused' | 'archived' | string;
+	status: 'active' | 'paused' | 'archived';
 	pausedAt?: string | null;
 	nextDueAt?: string | null;
 	dateDueAt?: string | null;

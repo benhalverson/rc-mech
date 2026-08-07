@@ -46,12 +46,15 @@ describe('CarPhotoGallery', () => {
 
 	afterEach(() => http.verify());
 
-	it('waits for the car input before loading the gallery', () => {
+	it('waits for the car input and encodes it before loading the gallery', () => {
 		fixture.destroy();
 		fixture = TestBed.createComponent(CarPhotoGallery);
 
 		expect(() => fixture.detectChanges()).not.toThrow();
 		http.expectNone((request) => request.url.includes('/photos'));
+		fixture.componentRef.setInput('carId', 'car/one');
+		fixture.detectChanges();
+		http.expectOne('/api/v1/cars/car%2Fone/photos').flush({ photos: [] });
 	});
 
 	it('loads an owner-scoped gallery with credentials and renders the primary photo', () => {

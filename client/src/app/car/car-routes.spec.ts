@@ -755,6 +755,33 @@ describe('Car section routes', () => {
 		setupRefresh?.flush({ setups: [] });
 	});
 
+	it.each([
+		{
+			path: 'build',
+			endpoint: '/api/v1/cars/car%2Fone/components',
+			body: { components: [] },
+		},
+		{
+			path: 'runs',
+			endpoint: '/api/v1/cars/car%2Fone/drives',
+			body: { driveSessions: [] },
+		},
+	])('encodes reserved characters for $path reads', async ({
+		path,
+		endpoint,
+		body,
+	}) => {
+		await harness.navigateByUrl(`/garage/car%2Fone/${path}`);
+		http.expectOne('/api/v1/cars/car%2Fone').flush({
+			car: { ...car, id: 'car/one' },
+		});
+		http.expectOne((request) => request.url === endpoint).flush(body);
+		if (path === 'runs')
+			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+	});
+
 	it('keeps an archived car readable while hiding build mutations', async () => {
 		await harness.navigateByUrl('/garage/car-1/build');
 		http.expectOne('/api/v1/cars/car-1').flush({

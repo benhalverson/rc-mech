@@ -176,7 +176,7 @@ describe('MaintenanceCockpit', () => {
 		expect(fixture.nativeElement.textContent).toContain('Clean bearings');
 	});
 
-	it('creates a plan through the existing relative maintenance endpoint', async () => {
+	it('creates a plan with only a calendar interval', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.openCreate();
 		http
@@ -188,7 +188,7 @@ describe('MaintenanceCockpit', () => {
 			name: 'Clean bearings',
 			calendarValue: '2',
 			calendarUnit: 'weeks',
-			runInterval: '5',
+			runInterval: '',
 			baselineAt: '2026-08-01T10:00',
 			baselineRuns: '3',
 		});
@@ -201,9 +201,9 @@ describe('MaintenanceCockpit', () => {
 			componentId: 'component-1',
 			intervalUnit: 'weeks',
 			intervalValue: 2,
-			intervalSessions: 5,
 			baselineSessionCount: 3,
 		});
+		expect(request.request.body.intervalSessions).toBeUndefined();
 		request.flush({
 			maintenancePlan: { ...plan, name: 'Clean bearings', intervalDays: 14 },
 		});

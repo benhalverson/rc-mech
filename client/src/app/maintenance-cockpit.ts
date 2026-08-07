@@ -154,16 +154,18 @@ export class MaintenanceCockpit {
 			message: 'Use 160 characters or fewer for the plan name.',
 		});
 		for (const interval of [path.calendarValue, path.runInterval])
-			validate(interval, ({ value }) =>
-				!value().trim() || /^\d+$/.test(value().trim())
-					? Number(value()) >= 1
-						? undefined
-						: { kind: 'minimum', message: 'Intervals must be at least one.' }
-					: {
-							kind: 'wholeNumber',
-							message: 'Intervals must be whole numbers.',
-						},
-			);
+			validate(interval, ({ value }) => {
+				const intervalValue = value().trim();
+				if (!intervalValue) return undefined;
+				if (!/^\d+$/.test(intervalValue))
+					return {
+						kind: 'wholeNumber',
+						message: 'Intervals must be whole numbers.',
+					};
+				return Number(intervalValue) >= 1
+					? undefined
+					: { kind: 'minimum', message: 'Intervals must be at least one.' };
+			});
 		validate(path.baselineRuns, ({ value }) =>
 			!value().trim() || /^\d+$/.test(value().trim())
 				? undefined
