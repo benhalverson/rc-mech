@@ -983,10 +983,8 @@ export class GaragePages {
 	}
 
 	private loadCarSection(carId: string): void {
-		if (this.carSection() === 'build')
-			this.loadComponents(carId);
-		if (this.carSection() === 'runs')
-			this.loadDriveSessions(carId);
+		if (this.carSection() === 'build') this.loadComponents(carId);
+		if (this.carSection() === 'runs') this.loadDriveSessions(carId);
 	}
 
 	protected editCar(): void {

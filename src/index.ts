@@ -416,7 +416,9 @@ app.post('/api/v1/invite-codes', async (c) => {
 				})
 				.onConflictDoNothing(),
 		);
-		await database.batch(inserts as [typeof inserts[number], ...typeof inserts]);
+		await database.batch(
+			inserts as [(typeof inserts)[number], ...typeof inserts],
+		);
 		const existing = await database
 			.select({ id: inviteCode.id })
 			.from(inviteCode)
@@ -431,7 +433,8 @@ app.post('/api/v1/invite-codes', async (c) => {
 			.from(inviteCode)
 			.where(eq(inviteCode.id, existing.id))
 			.get();
-		if (!created) return c.json({ error: 'Invite-code allowance exhausted' }, 409);
+		if (!created)
+			return c.json({ error: 'Invite-code allowance exhausted' }, 409);
 		return c.json({ code: created }, 201);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

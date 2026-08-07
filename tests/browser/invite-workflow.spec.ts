@@ -19,9 +19,13 @@ const verify = async (
 
 const expectSingleShell = async (page: import('@playwright/test').Page) => {
 	await expect(page.locator('.workspace-shell')).toHaveCount(1);
-	await expect(page.getByRole('button', { name: 'Open workspace navigation' })).toHaveCount(1);
+	await expect(
+		page.getByRole('button', { name: 'Open workspace navigation' }),
+	).toHaveCount(1);
 	await page.getByRole('button', { name: 'Open workspace navigation' }).click();
-	await expect(page.getByRole('navigation', { name: 'Primary workspace' })).toHaveCount(1);
+	await expect(
+		page.getByRole('navigation', { name: 'Primary workspace' }),
+	).toHaveCount(1);
 	await expect(page.locator('main')).toHaveCount(1);
 };
 

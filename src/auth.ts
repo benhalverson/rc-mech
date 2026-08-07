@@ -55,7 +55,8 @@ export const createAuth = (env: AuthEnv) => {
 	};
 	if (isLocalDevelopment(env)) {
 		Object.assign(magicLinkOptions, {
-			generateToken: async () => env.MAGIC_LINK_TEST_TOKEN ?? 'local-test-token',
+			generateToken: async () =>
+				env.MAGIC_LINK_TEST_TOKEN ?? 'local-test-token',
 		});
 	}
 	return betterAuth({

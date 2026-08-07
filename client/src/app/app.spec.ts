@@ -1,5 +1,8 @@
 import { provideHttpClient } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import {
+	HttpTestingController,
+	provideHttpClientTesting,
+} from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { provideRouter, withDisabledInitialNavigation } from '@angular/router';
@@ -45,9 +48,17 @@ describe('App workspace shell', () => {
 		});
 		await fixture.whenStable();
 		fixture.detectChanges();
-		expect(fixture.nativeElement.querySelectorAll('.workspace-shell')).toHaveLength(1);
-		expect(fixture.nativeElement.querySelectorAll('.nav-toggle')).toHaveLength(1);
-		expect(fixture.nativeElement.querySelectorAll('nav[aria-label="Primary workspace"]')).toHaveLength(1);
+		expect(
+			fixture.nativeElement.querySelectorAll('.workspace-shell'),
+		).toHaveLength(1);
+		expect(fixture.nativeElement.querySelectorAll('.nav-toggle')).toHaveLength(
+			1,
+		);
+		expect(
+			fixture.nativeElement.querySelectorAll(
+				'nav[aria-label="Primary workspace"]',
+			),
+		).toHaveLength(1);
 		expect(fixture.nativeElement.querySelectorAll('main')).toHaveLength(1);
 	});
 });

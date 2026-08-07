@@ -72,5 +72,11 @@ if (!create.ok)
 		`Invite creation failed (${create.status}): ${await create.text()}`,
 	);
 const invite = await create.json();
-if (options.cookieFile) await writeFile(options.cookieFile, `${cookie}\n`, { mode: 0o600 });
-console.log(JSON.stringify({ invite, ...(options.cookieFile ? { cookieFile: options.cookieFile } : {}) }));
+if (options.cookieFile)
+	await writeFile(options.cookieFile, `${cookie}\n`, { mode: 0o600 });
+console.log(
+	JSON.stringify({
+		invite,
+		...(options.cookieFile ? { cookieFile: options.cookieFile } : {}),
+	}),
+);
