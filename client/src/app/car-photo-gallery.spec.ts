@@ -140,6 +140,30 @@ describe('CarPhotoGallery', () => {
 		expect(fixture.nativeElement.textContent).toContain('session has expired');
 	});
 
+	it('encodes reserved car and photo identifiers', async () => {
+		fixture.componentRef.setInput('carId', 'car/one');
+		fixture.detectChanges();
+		let collection: TestRequest | undefined;
+		await vi.waitFor(() => {
+			collection = http.expectOne('/api/v1/cars/car%2Fone/photos');
+		});
+		collection?.flush({ photos: [] });
+		const app = fixture.componentInstance as unknown as GalleryTestHarness;
+		const photo = {
+			id: 'photo/one',
+			carId: 'car/one',
+			objectKey: 'owner/car/one/photo/one.webp',
+			contentType: 'image/webp',
+			createdAt: '2026-08-03T00:00:00Z',
+			sortOrder: 0,
+		};
+		app.photos.set([photo]);
+		app.designatePrimary(photo);
+		http
+			.expectOne('/api/v1/cars/car%2Fone/photos/photo%2Fone')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+	});
+
 	it('reorders the complete gallery through one authenticated atomic request', async () => {
 		const app = fixture.componentInstance as unknown as GalleryTestHarness;
 		const first = {

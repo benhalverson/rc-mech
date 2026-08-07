@@ -190,6 +190,103 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.textContent).toContain('Car overview');
 	});
 
+	it('shows missing-car guidance without a connection retry', async () => {
+		await harness.navigateByUrl('/garage/missing/overview');
+		http
+			.expectOne('/api/v1/cars/missing')
+			.flush('missing', { status: 404, statusText: 'Not Found' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+
+		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Car not found');
+		expect(alert?.textContent).not.toContain('Check the connection');
+		expect(alert?.querySelector('button')).toBeNull();
+	});
+
+	it.each([
+		{
+			path: 'build',
+			endpoint: '/api/v1/cars/car%2Fone/components',
+			body: { components: [] },
+		},
+		{
+			path: 'runs',
+			endpoint: '/api/v1/cars/car%2Fone/drives',
+			body: { driveSessions: [] },
+		},
+	])('encodes reserved characters for $path reads', async ({
+		path,
+		endpoint,
+		body,
+	}) => {
+		await harness.navigateByUrl(`/garage/car%2Fone/${path}`);
+		http.expectOne('/api/v1/cars/car%2Fone').flush({
+			car: { ...car, id: 'car/one' },
+		});
+		http.expectOne((request) => request.url === endpoint).flush(body);
+		if (path === 'runs')
+			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+	});
+
+	it('encodes reserved identifiers for drive mutations', async () => {
+		const session = {
+			id: 'drive/one',
+			carId: 'car/one',
+			startedAt: '2026-08-07T00:00:00.000Z',
+		};
+		await harness.navigateByUrl('/garage/car%2Fone/runs');
+		http.expectOne('/api/v1/cars/car%2Fone').flush({
+			car: { ...car, id: 'car/one' },
+		});
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car%2Fone/drives')
+			.flush({ driveSessions: [session] });
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			archive(value: typeof session): void;
+		};
+		component.archive(session);
+		const request = http.expectOne('/api/v1/cars/car%2Fone/drives/drive%2Fone');
+		expect(request.request.method).toBe('DELETE');
+		request.flush('offline', { status: 503, statusText: 'Unavailable' });
+	});
+
+	it('blocks build editor entry while a mutation is in flight', async () => {
+		const installed = {
+			id: 'component-1',
+			carId: 'car-1',
+			slot: 'motor',
+			slotType: 'standard' as const,
+			name: 'Race motor',
+		};
+		await harness.navigateByUrl('/garage/car-1/build');
+		http.expectOne('/api/v1/cars/car-1').flush({ car });
+		http
+			.expectOne((request) => request.url === '/api/v1/cars/car-1/components')
+			.flush({ components: [installed] });
+		await harness.fixture.whenStable();
+		harness.detectChanges();
+		const component = harness.routeDebugElement
+			?.componentInstance as unknown as {
+			action: TestSignal<string | null>;
+			openAdd(slot?: string): void;
+			openEdit(value: typeof installed): void;
+			openReplace(value: typeof installed): void;
+		};
+		component.action.set('edit');
+		component.openAdd();
+		component.openEdit(installed);
+		component.openReplace(installed);
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
+	});
+
 	it('clears lifecycle state when selecting a different car', async () => {
 		await harness.navigateByUrl('/garage/car-1/overview');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
@@ -256,9 +353,26 @@ describe('Car section routes', () => {
 		);
 
 		component.createCar(identity);
-		http
-			.expectOne('/api/v1/cars')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		http.expectOne('/api/v1/cars').flush({
+			car: { ...car, id: 'car-2', name: identity.name },
+		});
+		let collectionRefresh: TestRequest | undefined;
+		let carRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			collectionRefresh = http.expectOne('/api/v1/cars');
+			carRefresh = http.expectOne('/api/v1/cars/car-2');
+		});
+		collectionRefresh?.flush({
+			cars: [car, { ...car, id: 'car-2', name: identity.name }],
+		});
+		carRefresh?.flush({
+			car: { ...car, id: 'car-2', name: identity.name },
+		});
+		let setupRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			setupRefresh = http.expectOne('/api/v1/cars/car-2/setups');
+		});
+		setupRefresh?.flush({ setups: [] });
 	});
 
 	it('keeps an archived car readable while hiding build mutations', async () => {

@@ -103,7 +103,7 @@ const emptyForm = (): DriveForm => ({
 	imports: [CarSectionShell, DatePipe, FormsModule],
 	template: `
 		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
-		@else if (carStore.error()) { <div class="state-card" role="alert"><p>The car could not be loaded.</p><button type="button" (click)="carStore.retry()">Try again</button></div> }
+		@else if (carStore.error()) { <div class="state-card" role="alert"><p>{{ carStore.error() }}</p>@if (!carStore.notFound()) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
 		@else if (carStore.car(); as car) {
 			<app-car-section-shell [car]="car" section="runs">
 				<section class="session-log" aria-labelledby="runs-title">
@@ -131,7 +131,7 @@ export class CarRuns {
 		const carId = this.carId();
 		return carId
 			? {
-					url: `/api/v1/cars/${carId}/drives`,
+					url: `/api/v1/cars/${encodeURIComponent(carId)}/drives`,
 					withCredentials: true,
 					params: { history: 'true' },
 				}
@@ -241,12 +241,18 @@ export class CarRuns {
 			notes: form.notes.trim(),
 		};
 		const request = id
-			? this.http.patch(`/api/v1/cars/${car.id}/drives/${id}`, body, {
-					withCredentials: true,
-				})
-			: this.http.post(`/api/v1/cars/${car.id}/drives`, body, {
-					withCredentials: true,
-				});
+			? this.http.patch(
+					`/api/v1/cars/${encodeURIComponent(car.id)}/drives/${encodeURIComponent(id)}`,
+					body,
+					{ withCredentials: true },
+				)
+			: this.http.post(
+					`/api/v1/cars/${encodeURIComponent(car.id)}/drives`,
+					body,
+					{
+						withCredentials: true,
+					},
+				);
 		request.subscribe({
 			next: () => {
 				this.sessionsResource.reload();
@@ -272,9 +278,10 @@ export class CarRuns {
 		if (!car || car.archivedAt || this.action()) return;
 		this.action.set(`delete:${session.id}`);
 		this.http
-			.delete(`/api/v1/cars/${car.id}/drives/${session.id}`, {
-				withCredentials: true,
-			})
+			.delete(
+				`/api/v1/cars/${encodeURIComponent(car.id)}/drives/${encodeURIComponent(session.id)}`,
+				{ withCredentials: true },
+			)
 			.subscribe({
 				next: () => {
 					this.sessionsResource.reload();

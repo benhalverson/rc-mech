@@ -1,4 +1,8 @@
-import { HttpClient, httpResource } from '@angular/common/http';
+import {
+	HttpClient,
+	HttpErrorResponse,
+	httpResource,
+} from '@angular/common/http';
 import {
 	Component,
 	computed,
@@ -28,6 +32,11 @@ type PhotoResponse = { photo: CarPhoto };
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
+const photoReadError = (error: unknown): string =>
+	error instanceof HttpErrorResponse && error.status === 401
+		? 'Your garage session has expired. Sign in again to continue.'
+		: 'The photo gallery could not be loaded.';
+
 @Component({
 	selector: 'app-car-photo-gallery',
 	imports: [],
@@ -42,7 +51,10 @@ export class CarPhotoGallery {
 	private readonly resource = httpResource<PhotosResponse>(() => {
 		const carId = this.carId();
 		return carId
-			? { url: `/api/v1/cars/${carId}/photos`, withCredentials: true }
+			? {
+					url: `/api/v1/cars/${encodeURIComponent(carId)}/photos`,
+					withCredentials: true,
+				}
 			: undefined;
 	});
 	protected readonly photos = linkedSignal(() =>
@@ -58,7 +70,7 @@ export class CarPhotoGallery {
 	private readonly mutationError = signal('');
 	protected readonly error = computed(() =>
 		this.resource.error()
-			? 'The photo gallery could not be loaded.'
+			? photoReadError(this.resource.error())
 			: this.mutationError(),
 	);
 	protected readonly action = signal<string | null>(null);
@@ -177,7 +189,11 @@ export class CarPhotoGallery {
 
 	private upload(file: File): void {
 		if (!this.validate(file) || this.archived() || this.action()) return;
-		this.sendFile(`/api/v1/cars/${this.carId()}/photos`, file, 'upload');
+		this.sendFile(
+			`/api/v1/cars/${encodeURIComponent(this.carId())}/photos`,
+			file,
+			'upload',
+		);
 	}
 
 	private replace(photo: CarPhoto, file: File): void {
@@ -232,7 +248,7 @@ export class CarPhotoGallery {
 		this.photos.set(optimistic);
 		firstValueFrom(
 			this.http.patch<PhotosResponse>(
-				`/api/v1/cars/${this.carId()}/photos/reorder`,
+				`/api/v1/cars/${encodeURIComponent(this.carId())}/photos/reorder`,
 				{
 					photoIds: photos.map((photo) => photo.id),
 				},
@@ -277,7 +293,7 @@ export class CarPhotoGallery {
 	}
 
 	private photoEndpoint(photo: CarPhoto): string {
-		return `/api/v1/cars/${this.carId()}/photos/${photo.id}`;
+		return `/api/v1/cars/${encodeURIComponent(this.carId())}/photos/${encodeURIComponent(photo.id)}`;
 	}
 
 	private fail(error: { status?: number }, fallback: string): void {

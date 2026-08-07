@@ -1,4 +1,8 @@
-import { HttpClient, httpResource } from '@angular/common/http';
+import {
+	HttpClient,
+	HttpErrorResponse,
+	httpResource,
+} from '@angular/common/http';
 import { computed, inject } from '@angular/core';
 import {
 	patchState,
@@ -15,6 +19,16 @@ type CarState = {
 	carId: string | null;
 	lifecycleAction: 'archive' | 'restore' | null;
 	lifecycleError: string;
+};
+
+const carReadError = (error: unknown): string => {
+	if (error instanceof HttpErrorResponse) {
+		if (error.status === 401)
+			return 'Your garage session has expired. Sign in again to continue.';
+		if (error.status === 404)
+			return 'Car not found. Return to the Garage collection and choose another car.';
+	}
+	return 'The car could not be loaded. Check the connection and try again.';
 };
 
 export const CarStore = signalStore(
@@ -40,7 +54,14 @@ export const CarStore = signalStore(
 			store.carResource.hasValue() ? store.carResource.value().car : null,
 		),
 		loading: computed(() => store.carResource.isLoading()),
-		error: computed(() => store.carResource.error()),
+		error: computed(() => {
+			const error = store.carResource.error();
+			return error ? carReadError(error) : '';
+		}),
+		notFound: computed(() => {
+			const error = store.carResource.error();
+			return error instanceof HttpErrorResponse && error.status === 404;
+		}),
 	})),
 	withMethods((store) => ({
 		selectCar(carId: string): void {

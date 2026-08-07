@@ -9,7 +9,7 @@ import { CarStore } from './car-store';
 		@if (store.loading()) {
 			<div class="state-card" role="status">Opening the car overview…</div>
 		} @else if (store.error()) {
-			<div class="state-card" role="alert"><p>The car overview could not be loaded.</p><button type="button" (click)="store.retry()">Try again</button></div>
+			<div class="state-card" role="alert"><p>{{ store.error() }}</p>@if (!store.notFound()) { <button type="button" (click)="store.retry()">Try again</button> }</div>
 		} @else if (store.car(); as car) {
 			<app-car-section-shell [car]="car" section="overview">
 				<section class="overview" aria-labelledby="overview-title">

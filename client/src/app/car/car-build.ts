@@ -101,7 +101,7 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 	imports: [CarSectionShell, DatePipe, FormsModule],
 	template: `
 		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
-		@else if (carStore.error()) { <div class="state-card" role="alert"><p>The car could not be loaded.</p><button type="button" (click)="carStore.retry()">Try again</button></div> }
+		@else if (carStore.error()) { <div class="state-card" role="alert"><p>{{ carStore.error() }}</p>@if (!carStore.notFound()) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
 		@else if (carStore.car(); as car) {
 			<app-car-section-shell [car]="car" section="build">
 				<section class="build-sheet" aria-labelledby="build-title">
@@ -141,7 +141,7 @@ export class CarBuild {
 		const carId = this.carId();
 		return carId
 			? {
-					url: `/api/v1/cars/${carId}/components`,
+					url: `/api/v1/cars/${encodeURIComponent(carId)}/components`,
 					withCredentials: true,
 					params: { history: 'true' },
 				}
@@ -184,7 +184,7 @@ export class CarBuild {
 	}
 
 	protected openAdd(slot = ''): void {
-		if (this.carStore.car()?.archivedAt) return;
+		if (this.carStore.car()?.archivedAt || this.action()) return;
 		const current = slot
 			? (this.groups().find((group) => group.slot === slot)?.current ??
 				undefined)
@@ -204,7 +204,7 @@ export class CarBuild {
 	}
 
 	protected openEdit(component: InstalledComponent): void {
-		if (this.carStore.car()?.archivedAt) return;
+		if (this.carStore.car()?.archivedAt || this.action()) return;
 		this.mode.set('edit');
 		this.editingId.set(component.id);
 		this.form.set({
@@ -220,7 +220,7 @@ export class CarBuild {
 	}
 
 	protected openReplace(component: InstalledComponent): void {
-		if (this.carStore.car()?.archivedAt) return;
+		if (this.carStore.car()?.archivedAt || this.action()) return;
 		this.mode.set('replace');
 		this.editingId.set(component.id);
 		this.form.set({
@@ -259,19 +259,21 @@ export class CarBuild {
 		const request =
 			mode === 'edit' && id
 				? this.http.patch(
-						`/api/v1/cars/${car.id}/components/${id}`,
+						`/api/v1/cars/${encodeURIComponent(car.id)}/components/${encodeURIComponent(id)}`,
 						payload(form, false),
 						{ withCredentials: true },
 					)
 				: mode === 'replace' && id
 					? this.http.post(
-							`/api/v1/cars/${car.id}/components/${id}/replace`,
+							`/api/v1/cars/${encodeURIComponent(car.id)}/components/${encodeURIComponent(id)}/replace`,
 							payload(form),
 							{ withCredentials: true },
 						)
-					: this.http.post(`/api/v1/cars/${car.id}/components`, payload(form), {
-							withCredentials: true,
-						});
+					: this.http.post(
+							`/api/v1/cars/${encodeURIComponent(car.id)}/components`,
+							payload(form),
+							{ withCredentials: true },
+						);
 		request.subscribe({
 			next: () => {
 				this.resource.reload();
