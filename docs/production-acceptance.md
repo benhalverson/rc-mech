@@ -75,7 +75,9 @@ It checks remote migration status, the R2 bucket,
 the deployed passkey RP host, authenticated owner reads, and cross-owner
 record/photo isolation. Email delivery still requires the operator to send and
 redeem a real magic link; the release script deliberately does not send mail.
-Do not put those cookie values in source, logs, or pull requests.
+Do not put those cookie values in source, logs, or pull requests. Email delivery
+is operator-only: the release script deliberately does not send mail, and
+automated local tests always use a no-op sender.
 
 ## Local browser integration
 
@@ -94,6 +96,21 @@ Open `http://localhost:4200`. Angular's `src/proxy.conf.json` forwards
 same-origin from the browser shell. Direct Worker routes remain available at
 `http://localhost:8787/api/docs`, `/api/openapi.json`, and
 `/api/v1/health`; unknown `/api/*` paths must be JSON 404s, not Angular HTML.
+
+For an isolated invite acceptance run, use the typed API seed CLI after the
+local Worker is ready:
+
+```sh
+pnpm db:migrate:local
+pnpm exec tsx scripts/invite-cli.ts \
+  --url http://127.0.0.1:8787 \
+  --owner-email owner@example.com \
+  --code OWNER-01
+```
+
+The CLI requests and redeems the deterministic local magic link, then creates
+the code through the authenticated invite-management endpoint. It does not
+write production data or bypass the request boundary.
 
 ## Browser acceptance
 
@@ -115,6 +132,18 @@ Use an owner account and verify this sequence in a browser:
    an archived car is read-only and another owner cannot list or stream it.
 7. Open `/api/docs` and `/api/openapi.json` from the deployed origin and check
    that the documented routes match the browser requests.
+
+For the invite-specific sequence, verify that the Owner starts with an empty
+invite history, User A registers with `OWNER-01`, creates a code, and User B
+registers with that code. Confirm each user sees an empty garage and cannot
+read the other user's cars or invite history. Reuse a redeemed code and try a
+revoked code; both must remain neutral registration responses. Force a
+reserved invite's `reserved_until` into the past in isolated local D1 before
+retrying it, rather than waiting fifteen minutes. Creation stops after five
+lifetime slots; redeemed and revoked slots remain consumed, while an expired
+temporary reservation is released. Production email links must be requested
+and redeemed by an operator with real Email Service delivery; the deterministic
+local token is never a production verification mechanism.
 
 Record the deployed URL, migration result, dry-run result, and any blocked
 email, WebAuthn, or R2 steps with the release. Never put private photo bytes,

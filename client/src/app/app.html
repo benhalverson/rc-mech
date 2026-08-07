@@ -9,13 +9,12 @@
 } @else if (!signedIn()) {
 	<router-outlet />
 } @else {
-	<mat-sidenav-container class="workspace-shell bg-graphite text-bone">
-		<mat-sidenav
+		<main class="workspace-root">
+		<div class="workspace-shell bg-graphite text-bone">
+		<div
 			class="workspace-nav bg-graphite"
-			mode="over"
-			[opened]="navOpen()"
-			(closedStart)="navOpen.set(false)"
-			aria-label="Workspace navigation"
+			[hidden]="!navOpen()"
+				aria-label="Workspace navigation"
 		>
 			<div class="nav-brand"><span class="eyebrow">RC Mech</span><strong>Field notebook</strong></div>
 			<nav aria-label="Primary workspace">
@@ -24,9 +23,9 @@
 				<a routerLink="/settings" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="navOpen.set(false)"><span class="nav-number">03</span>Settings</a>
 			</nav>
 			<a class="nav-docs" href="/api/docs">API notes ↗</a>
-		</mat-sidenav>
-		<mat-sidenav-content>
-			<main tabindex="-1" [attr.aria-busy]="transition.loading()">
+		</div>
+		<div class="workspace-content">
+				<div class="workspace-frame" role="region" aria-label="Workspace shell" tabindex="-1" [attr.aria-busy]="transition.loading()">
 				<header>
 					<button class="nav-toggle" type="button" (click)="navOpen.set(true)" aria-label="Open workspace navigation">☰</button>
 					<div>
@@ -44,7 +43,8 @@
 					</div>
 				}
 				<router-outlet />
-			</main>
-		</mat-sidenav-content>
-	</mat-sidenav-container>
+				</div>
+		</div>
+		</div>
+		</main>
 }

@@ -33,6 +33,9 @@
 			},
 			"style": {
 				"useImportType": "off"
+			},
+			"complexity": {
+				"useLiteralKeys": "off"
 			}
 		}
 	},

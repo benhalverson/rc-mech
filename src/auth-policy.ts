@@ -26,13 +26,13 @@ export const configuredOrigins = (
 	if (!origin) return [];
 	if (!local) return [origin];
 	const host = new URL(origin).hostname;
-	const devOrigin =
+	const devOrigins =
 		host === '127.0.0.1'
-			? 'http://127.0.0.1:4200'
+			? ['http://127.0.0.1:4200', 'http://127.0.0.1:4201']
 			: host === 'localhost'
-				? 'http://localhost:4200'
-				: undefined;
-	return devOrigin ? [origin, devOrigin] : [origin];
+				? ['http://localhost:4200', 'http://localhost:4201']
+				: [];
+	return [origin, ...devOrigins];
 };
 
 export const isLocalDevelopment = (env: AuthEnvironment): boolean => {

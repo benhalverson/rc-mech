@@ -1,5 +1,5 @@
 import { BreakpointObserver } from '@angular/cdk/layout';
-import { DatePipe, TitleCasePipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -382,10 +382,9 @@ const carPayload = (form: CarForm): Record<string, string> => {
 };
 
 @Component({
-	selector: 'app-garage-workspace',
+	selector: 'app-garage-pages',
 	imports: [
 		DatePipe,
-		TitleCasePipe,
 		FormsModule,
 		MaintenanceCockpit,
 		CarPhotoGallery,
@@ -393,10 +392,10 @@ const carPayload = (form: CarForm): Record<string, string> => {
 		MatSidenavModule,
 		RouterLink,
 	],
-	templateUrl: './garage-workspace.html',
-	styleUrl: './garage-workspace.css',
+	templateUrl: './garage-pages.html',
+	styleUrl: './garage-pages.css',
 })
-export class GarageWorkspace {
+export class GaragePages {
 	private readonly sessionStore = inject(OwnerSessionStore, { optional: true });
 	private readonly http = inject(HttpClient);
 	private readonly routeTransition = inject(RouteTransitionAnnouncer);
@@ -532,19 +531,13 @@ export class GarageWorkspace {
 	);
 	protected readonly routeLoading = this.routeTransition.loading;
 	protected readonly routeAnnouncement = this.routeTransition.announcement;
-	protected readonly legacyMode = computed(() => {
-		const url = this.currentUrl();
-		return !url || url === '/';
-	});
 	protected readonly workspace = computed(() => {
-		if (this.legacyMode()) return 'legacy';
 		const url = this.currentUrl();
 		if (url.startsWith('/maintenance')) return 'maintenance';
 		if (url.startsWith('/settings')) return 'settings';
 		return 'garage';
 	});
 	protected readonly carSection = computed(() => {
-		if (this.legacyMode()) return 'all';
 		const url = this.currentUrl();
 		if (url.includes('/build')) return 'build';
 		if (url.includes('/setups')) return 'setups';
@@ -985,16 +978,13 @@ export class GarageWorkspace {
 		this.carFormError.set('');
 		this.carEditing.set(false);
 		this.carView.set('detail');
-		if (!this.legacyMode())
-			void this.router?.navigate(['/garage', car.id, 'overview']);
+		void this.router?.navigate(['/garage', car.id, 'overview']);
 		this.loadCarSection(car.id);
 	}
 
 	private loadCarSection(carId: string): void {
-		if (this.legacyMode() || this.carSection() === 'build')
-			this.loadComponents(carId);
-		if (this.legacyMode() || this.carSection() === 'runs')
-			this.loadDriveSessions(carId);
+		if (this.carSection() === 'build') this.loadComponents(carId);
+		if (this.carSection() === 'runs') this.loadDriveSessions(carId);
 	}
 
 	protected editCar(): void {
@@ -1014,7 +1004,7 @@ export class GarageWorkspace {
 		this.selectedCarId.set(null);
 		this.carEditing.set(false);
 		this.carView.set('list');
-		if (!this.legacyMode()) void this.router?.navigate(['/garage']);
+		void this.router?.navigate(['/garage']);
 	}
 
 	protected retryComponents(): void {

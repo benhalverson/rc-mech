@@ -1,6 +1,5 @@
 import { HttpClient } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
-import { MatSidenavModule } from '@angular/material/sidenav';
 import {
 	Router,
 	RouterLink,
@@ -12,16 +11,16 @@ import { RouteTransitionAnnouncer } from './route-transition-announcer';
 
 @Component({
 	selector: 'app-root',
-	imports: [MatSidenavModule, RouterLink, RouterLinkActive, RouterOutlet],
+	imports: [RouterLink, RouterLinkActive, RouterOutlet],
 	templateUrl: './app.html',
-	styleUrl: './garage-workspace.css',
+	styleUrl: './garage-pages.css',
 })
 export class App {
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly http = inject(HttpClient);
 	private readonly router = inject(Router);
 	protected readonly transition = inject(RouteTransitionAnnouncer);
-	protected readonly navOpen = signal(false);
+	protected readonly navOpen = signal(true);
 	protected readonly signOutMessage = signal('');
 	protected readonly checking = computed(
 		() =>

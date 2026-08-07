@@ -37,7 +37,7 @@ const bytesToBase64Url = (value: ArrayBuffer): string => {
 @Component({
 	selector: 'app-sign-in',
 	imports: [FormsModule],
-	styleUrl: './garage-workspace.css',
+	styleUrl: './garage-pages.css',
 	template: `
 		<main class="access-shell" tabindex="-1">
 			<section class="access-card" aria-labelledby="sign-in-title">
@@ -112,10 +112,12 @@ export class SignIn {
 						'If the email and invite code are valid, a registration link is on its way.',
 					);
 				},
-				error: () => {
+				error: (error: { status?: number }) => {
 					this.sending.set(false);
 					this.message.set(
-						'That request could not be completed. Check the details and try again.',
+						error.status === 429
+							? 'Too many requests. Please wait a moment before trying again.'
+							: 'That request could not be completed. Check the details and try again.',
 					);
 				},
 			});
@@ -142,10 +144,12 @@ export class SignIn {
 						'If that address is allowed, a sign-in link is on its way.',
 					);
 				},
-				error: () => {
+				error: (error: { status?: number }) => {
 					this.sending.set(false);
 					this.message.set(
-						'That request could not be completed. Check the address and try again.',
+						error.status === 429
+							? 'Too many requests. Please wait a moment before trying again.'
+							: 'That request could not be completed. Check the address and try again.',
 					);
 				},
 			});

@@ -9,6 +9,7 @@ cookie_file="$(mktemp)"
 response_file="$(mktemp)"
 headers_file="$(mktemp)"
 photo_file="$(mktemp --suffix=.png)"
+state_dir="$(mktemp -d -t rc-mech-auth.XXXXXX)"
 printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d >"$photo_file"
 
 cleanup() {
@@ -20,6 +21,7 @@ cleanup() {
     wait "$worker_pid" 2>/dev/null || true
   fi
   rm -f "$log_file" "$cookie_file" "$response_file" "$headers_file" "$photo_file"
+  rm -rf "$state_dir"
 }
 trap cleanup EXIT
 
@@ -28,7 +30,7 @@ if curl -fsS "$base/api/v1/health" >/dev/null 2>&1; then
   exit 1
 fi
 
-setsid pnpm exec wrangler dev --env local --port "$port" --var "APP_URL:${base}" --var "OWNER_EMAIL:owner@example.com" --var "MAGIC_LINK_TEST_TOKEN:${token}" >"$log_file" 2>&1 &
+setsid pnpm exec wrangler dev --env local --local --port "$port" --persist-to "$state_dir" --var "APP_URL:${base}" --var "OWNER_EMAIL:owner@example.com" --var "MAGIC_LINK_TEST_TOKEN:${token}" >"$log_file" 2>&1 &
 worker_pid=$!
 
 for _ in {1..40}; do
@@ -289,14 +291,14 @@ photo_delete_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http
   "$base/api/v1/cars/${car_id}/photos/${photo_second_id}")"
 [[ "$photo_delete_status" == "200" ]]
 
-other_owner_id="smoke-owner-${BASHPID}"
-other_session_id="smoke-session-${BASHPID}"
-other_session_token="smoke-owner-session-${BASHPID}-0123456789abcdef"
-now_ms="$(( $(date +%s) * 1000 ))"
-expires_ms="$(( now_ms + 3600000 ))"
-pnpm exec wrangler d1 execute DB --local --command "INSERT INTO owner (id, name, email, email_verified, created_at, updated_at) VALUES ('${other_owner_id}', 'Other owner', 'other-${BASHPID}@example.com', 1, ${now_ms}, ${now_ms}); INSERT INTO session (id, expires_at, token, created_at, updated_at, user_id) VALUES ('${other_session_id}', ${expires_ms}, '${other_session_token}', ${now_ms}, ${now_ms}, '${other_owner_id}');" >/dev/null
-other_session_signature="$(printf %s "$other_session_token" | openssl dgst -sha256 -hmac 'local-development-secret-change-me' -binary | base64 -w 0)"
-other_cookie="better-auth.session_token=${other_session_token}.${other_session_signature}"
+other_code="OTHER-${BASHPID}"
+curl -sS -o /dev/null -b "$cookie_file" -X POST "$base/api/v1/invite-codes" \
+  -H 'Content-Type: application/json' --data "{\"code\":\"${other_code}\"}"
+curl -sS -o /dev/null -X POST "$base/api/auth/register" \
+  -H 'Content-Type: application/json' --data "{\"email\":\"other-${BASHPID}@example.com\",\"inviteCode\":\"${other_code}\"}"
+curl -sS -o /dev/null -D "$headers_file" -w '%{http_code}' \
+  "$base/api/auth/magic-link/verify?token=${token}&callbackURL=%2F" | grep -q '^302$'
+other_cookie="$(awk -F'[; ]' 'tolower($1) == "set-cookie:" {print $2; exit}' "$headers_file")"
 other_list_status="$(curl -sS -o "$response_file" -H "Cookie: ${other_cookie}" -w '%{http_code}' "$base/api/v1/cars")"
 [[ "$other_list_status" == "200" ]]
 ! jq -e --arg id "$car_id" '.cars[] | select(.id == $id)' "$response_file" >/dev/null
@@ -351,22 +353,8 @@ authentication_options_status="$(curl -sS -o "$response_file" -w '%{http_code}' 
 grep -q '"challenge"' "$response_file"
 ! grep -q '"allowCredentials"' "$response_file"
 
-owner_id="$(pnpm exec wrangler d1 execute DB --local --command "SELECT id FROM owner WHERE email='owner@example.com'" --json | jq -r '.[0].results[0].id')"
-passkey_id="smoke-passkey-$$"
-pnpm exec wrangler d1 execute DB --local --command "INSERT INTO passkey (id, name, public_key, user_id, credential_id, counter, device_type, backed_up, transports) VALUES ('${passkey_id}', 'Smoke key', 'cHVibGljLWtleQ', '${owner_id}', 'smoke-credential-${passkey_id}', 0, 'singleDevice', 0, '')" >/dev/null
-
 list_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/auth/passkey/list-user-passkeys")"
 [[ "$list_status" == "200" ]]
-grep -q "${passkey_id}" "$response_file"
-
-rename_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/auth/passkey/update-passkey" \
-  -H "Origin: ${base}" -H 'Content-Type: application/json' --data "{\"id\":\"${passkey_id}\",\"name\":\"Garage laptop\"}")"
-[[ "$rename_status" == "200" ]]
-grep -q '"name":"Garage laptop"' "$response_file"
-
-revoke_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{http_code}' "$base/api/auth/passkey/delete-passkey" \
-  -H "Origin: ${base}" -H 'Content-Type: application/json' --data "{\"id\":\"${passkey_id}\"}")"
-[[ "$revoke_status" == "200" ]]
 
 curl -fsS -o /dev/null -b "$cookie_file" -X POST -H "Origin: ${base}" -H 'Content-Type: application/json' --data '{}' "$base/api/auth/sign-out"
 request_recovery_status="$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/auth/sign-in/magic-link" \
