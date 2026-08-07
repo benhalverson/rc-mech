@@ -69,6 +69,7 @@ import {
 	serviceRecord,
 	setup,
 	setupImportDraft,
+	authRateLimit,
 } from './schema';
 import {
 	canDeleteServiceRecord,
@@ -142,17 +143,34 @@ const authRateLimited = async (
 	try {
 		const key = `${bucket}:${c.req.header('CF-Connecting-IP') ?? 'unknown'}`;
 		const now = Date.now();
-		const row = await c.env.DB.prepare(
-			`INSERT INTO auth_rate_limit (key, window_started_at, count)
-			 VALUES (?, ?, 1)
-			 ON CONFLICT(key) DO UPDATE SET
-			 window_started_at = CASE WHEN auth_rate_limit.window_started_at <= ? THEN excluded.window_started_at ELSE auth_rate_limit.window_started_at END,
-			 count = CASE WHEN auth_rate_limit.window_started_at <= ? THEN 1 ELSE auth_rate_limit.count + 1 END
-			 RETURNING count`,
-		)
-			.bind(key, now, now - 60_000, now - 60_000)
-			.first<{ count: number }>();
-		return (row?.count ?? 1) > 8;
+		const database = db(c.env);
+		const existing = await database
+			.select()
+			.from(authRateLimit)
+			.where(eq(authRateLimit.key, key))
+			.get();
+		if (!existing || existing.windowStartedAt <= now - 60_000) {
+			await database
+				.insert(authRateLimit)
+				.values({ key, windowStartedAt: now, count: 1 })
+				.onConflictDoUpdate({
+					target: authRateLimit.key,
+					set: { windowStartedAt: now, count: 1 },
+				});
+			return false;
+		}
+		const updated = await database
+			.update(authRateLimit)
+			.set({ count: existing.count + 1 })
+			.where(
+				and(
+					eq(authRateLimit.key, key),
+					eq(authRateLimit.windowStartedAt, existing.windowStartedAt),
+				),
+			)
+			.returning({ count: authRateLimit.count })
+			.get();
+		return (updated?.count ?? existing.count + 1) > 8;
 	} catch {
 		// A database still completing migration 0014 remains usable; deployed
 		// databases persist the bucket once the migration is present.
