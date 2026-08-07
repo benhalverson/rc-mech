@@ -12,11 +12,16 @@ import {
 } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CarPhotoStore } from '../car-photo-store';
+import { SetupSnapshotStore } from '../setup-snapshot-store';
 import { CarBuild } from './car-build';
+import { CarBuildStore } from './car-build-store';
 import { CarOverview } from './car-overview';
 import { CarPhotos } from './car-photos';
 import { CarRuns } from './car-runs';
+import { CarRunsStore } from './car-runs-store';
 import { CarSetups } from './car-setups';
+import { CarSetupsStore } from './car-setups-store';
 import { CarStore } from './car-store';
 
 type TestSignal<T> = (() => T) & { set(value: T): void };
@@ -30,22 +35,22 @@ const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/build',
 		component: CarBuild,
-		providers: [CarStore],
+		providers: [CarBuildStore, CarStore],
 	},
 	{
 		path: 'garage/:carId/setups',
 		component: CarSetups,
-		providers: [CarStore],
+		providers: [CarSetupsStore, CarStore, SetupSnapshotStore],
 	},
 	{
 		path: 'garage/:carId/photos',
 		component: CarPhotos,
-		providers: [CarStore],
+		providers: [CarPhotoStore, CarStore],
 	},
 	{
 		path: 'garage/:carId/runs',
 		component: CarRuns,
-		providers: [CarStore],
+		providers: [CarRunsStore, CarStore],
 	},
 ];
 
@@ -1007,8 +1012,10 @@ describe('Car section routes', () => {
 		harness.detectChanges();
 
 		const component = harness.routeDebugElement
-			?.componentInstance as unknown as { timezone(): string };
-		expect(component.timezone()).toBe('UTC');
+			?.componentInstance as unknown as {
+			runsStore: { timezone(): string };
+		};
+		expect(component.runsStore.timezone()).toBe('UTC');
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Conditions not recorded',
 		);

@@ -13,6 +13,7 @@ import { filter } from 'rxjs';
 export class RouteTransitionAnnouncer {
 	private readonly document = inject(DOCUMENT);
 	private readonly router = inject(Router);
+	private focusObserver?: MutationObserver;
 	readonly loading = signal(false);
 	readonly announcement = signal('');
 	readonly error = signal('');
@@ -53,6 +54,8 @@ export class RouteTransitionAnnouncer {
 	}
 
 	start(): void {
+		this.focusObserver?.disconnect();
+		this.focusObserver = undefined;
 		this.loading.set(true);
 		this.error.set('');
 		this.announcement.set('Loading page…');
@@ -71,8 +74,29 @@ export class RouteTransitionAnnouncer {
 	}
 
 	private focusRouteHeading(): void {
-		this.document
-			.querySelector<HTMLElement>('[data-route-focus]')
-			?.focus({ preventScroll: true });
+		this.focusObserver?.disconnect();
+		if (this.focusCurrentHeading()) return;
+
+		const MutationObserver = this.document.defaultView?.MutationObserver;
+		if (!MutationObserver || !this.document.body) return;
+		this.focusObserver = new MutationObserver(() => {
+			if (!this.focusCurrentHeading()) return;
+			this.focusObserver?.disconnect();
+			this.focusObserver = undefined;
+		});
+		this.focusObserver.observe(this.document.body, {
+			childList: true,
+			subtree: true,
+		});
+	}
+
+	private focusCurrentHeading(): boolean {
+		for (const heading of this.document.querySelectorAll<HTMLElement>(
+			'[data-route-focus]',
+		)) {
+			heading.focus({ preventScroll: true });
+			if (this.document.activeElement === heading) return true;
+		}
+		return false;
 	}
 }

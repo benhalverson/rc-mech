@@ -6,13 +6,13 @@ import {
 	withMethods,
 	withProps,
 } from '@ngrx/signals';
-import type { ConsumableEntry } from '../consumable-maintenance';
 import type {
+	ConsumableEntry,
 	MaintenanceActivity,
 	MaintenanceCar,
 	MaintenancePlan,
 	ServiceRecord,
-} from '../maintenance-cockpit';
+} from './maintenance.models';
 
 type PlansResponse = {
 	maintenancePlans?: MaintenancePlan[];

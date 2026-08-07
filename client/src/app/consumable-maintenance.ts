@@ -7,40 +7,30 @@ import {
 	linkedSignal,
 	signal,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import {
+	FormField,
+	maxLength,
+	required,
+	form as signalForm,
+	validate,
+} from '@angular/forms/signals';
+import type {
+	ConsumableEntry,
+	FluidArea,
+	TireAxle,
+} from './maintenance/maintenance.models';
+import { MaintenanceLookups } from './maintenance/maintenance-lookups';
 import {
 	type MaintenanceReport,
 	MaintenanceStore,
 } from './maintenance/maintenance-store';
 
+export type { ConsumableEntry } from './maintenance/maintenance.models';
+
 export type ConsumableCar = {
 	id: string;
 	name: string;
 	archivedAt?: string | null;
-};
-export type FluidArea =
-	| 'front-shocks'
-	| 'rear-shocks'
-	| 'front-differential'
-	| 'rear-differential'
-	| 'custom';
-export type TireAxle = 'front' | 'rear' | 'both';
-export type ConsumableEntry = {
-	id: string;
-	carId: string;
-	kind: 'shock-fluid' | 'differential-fluid' | 'tires';
-	performedAt: string;
-	fluidArea?: FluidArea | null;
-	customArea?: string | null;
-	axle?: TireAxle | null;
-	frontDetails?: string | null;
-	rearDetails?: string | null;
-	frontCost?: number | null;
-	rearCost?: number | null;
-	cost?: number | null;
-	currency?: string | null;
-	notes?: string | null;
-	deletedAt?: string | null;
 };
 export type TireReport = {
 	front: TireReportAxle;
@@ -60,10 +50,6 @@ export type TireReportAxle = {
 	missingDetails: boolean;
 };
 type EntryResponse = { consumableMaintenance: ConsumableEntry };
-type SetupResponse = {
-	setup?: { tires?: Record<string, unknown> | null };
-	setups?: Array<{ current?: boolean; tires?: Record<string, unknown> | null }>;
-};
 type EntryForm = {
 	carId: string;
 	kind: 'shock-fluid' | 'differential-fluid' | 'tires';
@@ -197,12 +183,13 @@ export const spendLabel = (value: number | null): string =>
 
 @Component({
 	selector: 'app-consumable-maintenance',
-	imports: [CommonModule, DatePipe, FormsModule],
+	imports: [CommonModule, DatePipe, FormField],
 	templateUrl: './consumable-maintenance.html',
 	styleUrl: './consumable-maintenance.css',
 })
 export class ConsumableMaintenance {
 	private readonly http = inject(HttpClient);
+	private readonly lookups = inject(MaintenanceLookups);
 	private readonly store = inject(MaintenanceStore);
 	protected readonly garage = linkedSignal(() => this.store.cars());
 	protected readonly entries = linkedSignal(() =>
@@ -227,6 +214,20 @@ export class ConsumableMaintenance {
 		this.garage().some((car) => !car.archivedAt),
 	);
 	protected readonly form = signal<EntryForm>(emptyForm());
+	protected readonly entryFields = signalForm(this.form, (path) => {
+		required(path.carId, { message: 'Choose a car.' });
+		required(path.performedAt, { message: 'Add the change date.' });
+		maxLength(path.notes, 4000, {
+			message: 'Use 4,000 characters or fewer for notes.',
+		});
+		for (const cost of [path.frontCost, path.rearCost])
+			validate(cost, ({ value }) =>
+				!value().trim() ||
+				(Number.isFinite(Number(value())) && Number(value()) >= 0)
+					? undefined
+					: { kind: 'cost', message: 'Costs must be zero or greater.' },
+			);
+	});
 	protected readonly report = computed(() =>
 		mergeTireReport(buildTireReport(this.entries()), this.store.report()),
 	);
@@ -246,7 +247,7 @@ export class ConsumableMaintenance {
 	protected openCreate(): void {
 		if (!this.hasActiveCars()) return;
 		const car = this.garage().find((item) => !item.archivedAt);
-		this.form.set({
+		this.entryFields().reset({
 			...emptyForm(),
 			carId: car?.id ?? '',
 			performedAt: this.localDateTime(new Date()),
@@ -257,7 +258,7 @@ export class ConsumableMaintenance {
 	}
 	protected openEdit(entry: ConsumableEntry): void {
 		if (this.isReadOnly(entry)) return;
-		this.form.set({
+		this.entryFields().reset({
 			...emptyForm(),
 			carId: entry.carId,
 			kind: entry.kind,
@@ -286,18 +287,41 @@ export class ConsumableMaintenance {
 		this.editing.set(false);
 		this.editingId.set(null);
 		this.formError.set('');
+		this.entryFields().reset();
 	}
 	protected update(field: keyof EntryForm, value: string): void {
 		this.form.update((current) => ({ ...current, [field]: value }));
-		if (field === 'kind' && value !== 'tires')
-			this.form.update((current) => ({ ...current, axle: 'front' }));
-		if (field === 'kind' && value === 'tires')
-			this.prefillTires(this.form().carId);
+		if (field === 'kind') this.changeKind();
 	}
-	protected save(): void {
+	protected changeKind(): void {
+		const kind = this.form().kind;
+		if (kind !== 'tires')
+			this.form.update((current) => ({
+				...current,
+				axle: 'front',
+				rearDetails: '',
+				rearCost: '',
+			}));
+		else this.prefillTires(this.form().carId);
+	}
+	protected save(event?: Event): void {
+		event?.preventDefault();
+		this.entryFields().markAsTouched();
 		const form = this.form();
-		if (!form.carId || !form.performedAt) {
-			this.formError.set('Choose a car and date for this entry.');
+		if (this.entryFields().invalid()) {
+			this.formError.set(
+				this.entryFields().errorSummary()[0]?.message ??
+					'Review the consumable history fields.',
+			);
+			if (this.entryFields.carId().invalid())
+				this.entryFields.carId().focusBoundControl();
+			else if (this.entryFields.performedAt().invalid())
+				this.entryFields.performedAt().focusBoundControl();
+			else if (this.entryFields.frontCost().invalid())
+				this.entryFields.frontCost().focusBoundControl();
+			else if (this.entryFields.rearCost().invalid())
+				this.entryFields.rearCost().focusBoundControl();
+			else this.entryFields.notes().focusBoundControl();
 			return;
 		}
 		if (
@@ -479,27 +503,19 @@ export class ConsumableMaintenance {
 	}
 	private prefillTires(carId: string): void {
 		if (!carId) return;
-		this.http
-			.get<SetupResponse>(`/api/v1/cars/${carId}/setups/current`, {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: (response) => {
-					const setup =
-						response.setup ??
-						response.setups?.find((item) => item.current) ??
-						response.setups?.[0];
-					if (!setup?.tires) return;
-					const details = Object.entries(setup.tires)
-						.map(([key, value]) => `${key}: ${String(value)}`)
-						.join('\n');
-					this.form.update((current) => ({
-						...current,
-						frontDetails: current.frontDetails || details,
-						rearDetails: current.rearDetails || details,
-					}));
-				},
-			});
+		this.lookups.currentTires(carId).subscribe({
+			next: (tires) => {
+				if (!tires) return;
+				const details = Object.entries(tires)
+					.map(([key, value]) => `${key}: ${String(value)}`)
+					.join('\n');
+				this.form.update((current) => ({
+					...current,
+					frontDetails: current.frontDetails || details,
+					rearDetails: current.rearDetails || details,
+				}));
+			},
+		});
 	}
 	private localDateTime(date: Date): string {
 		const parts = new Intl.DateTimeFormat('en-CA', {

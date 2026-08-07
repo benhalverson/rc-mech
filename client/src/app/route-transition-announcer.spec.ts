@@ -31,7 +31,8 @@ describe('RouteTransitionAnnouncer', () => {
 
 	afterEach(() => {
 		events.complete();
-		document.querySelector('[data-route-focus]')?.remove();
+		for (const heading of document.querySelectorAll('[data-route-focus]'))
+			heading.remove();
 		TestBed.resetTestingModule();
 	});
 
@@ -53,10 +54,44 @@ describe('RouteTransitionAnnouncer', () => {
 		expect(document.activeElement).toBe(heading);
 	});
 
-	it('exposes a retry state for a failed lazy navigation', () => {
-		events.next(new NavigationStart(2, '/settings'));
+	it('focuses a heading that renders after initial navigation completes', async () => {
+		events.next(new NavigationStart(2, '/garage/car-1/overview'));
 		events.next(
-			new NavigationError(2, '/settings', new Error('chunk unavailable')),
+			new NavigationEnd(2, '/garage/car-1/overview', '/garage/car-1/overview'),
+		);
+		await Promise.resolve();
+
+		const heading = document.createElement('h2');
+		heading.tabIndex = -1;
+		heading.dataset['routeFocus'] = '';
+		document.body.append(heading);
+		await Promise.resolve();
+
+		expect(document.activeElement).toBe(heading);
+	});
+
+	it('keeps observing until a route heading can actually receive focus', async () => {
+		const unfocusable = document.createElement('h2');
+		unfocusable.dataset['routeFocus'] = '';
+		document.body.append(unfocusable);
+
+		events.next(new NavigationEnd(3, '/garage', '/garage'));
+		await Promise.resolve();
+		expect(document.activeElement).not.toBe(unfocusable);
+
+		const focusable = document.createElement('h2');
+		focusable.tabIndex = -1;
+		focusable.dataset['routeFocus'] = '';
+		document.body.append(focusable);
+		await Promise.resolve();
+
+		expect(document.activeElement).toBe(focusable);
+	});
+
+	it('exposes a retry state for a failed lazy navigation', () => {
+		events.next(new NavigationStart(3, '/settings'));
+		events.next(
+			new NavigationError(3, '/settings', new Error('chunk unavailable')),
 		);
 
 		expect(transition.loading()).toBe(false);

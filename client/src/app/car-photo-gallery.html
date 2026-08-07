@@ -2,7 +2,7 @@
   <div class="section-heading">
     <div>
       <div class="eyebrow">Private gallery</div>
-      <h4 id="photo-gallery-title">Car photos</h4>
+      <h3 id="photo-gallery-title">Car photos</h3>
     </div>
     @if (!archived() && state() === 'ready') {
       <label class="button quiet upload-button">Add photo<input class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" (change)="onUpload($event)" [disabled]="action() !== null" /></label>
@@ -17,7 +17,7 @@
   } @else if (state() === 'error') {
     <div class="state-card error-state"><span class="state-mark">!</span><p>Photos could not be loaded.</p></div>
   } @else if (!photos().length) {
-    <div class="state-card empty-state"><span class="state-mark">＋</span><h5>No photos yet</h5><p>Add a clear bench photo to identify this car at a glance.</p></div>
+    <div class="state-card empty-state"><span class="state-mark">＋</span><h4>No photos yet</h4><p>Add a clear bench photo to identify this car at a glance.</p></div>
   } @else {
     <div class="photo-grid" aria-label="Car photo gallery">
       @for (photo of photos(); track photo.id; let index = $index) {

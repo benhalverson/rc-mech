@@ -1,13 +1,6 @@
 import { DatePipe } from '@angular/common';
-import { HttpClient, httpResource } from '@angular/common/http';
-import {
-	Component,
-	computed,
-	effect,
-	inject,
-	input,
-	signal,
-} from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Component, effect, inject, input, signal } from '@angular/core';
 import {
 	FormField,
 	maxLength,
@@ -15,23 +8,10 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
-import { carReadFailure } from './car-read-failure';
+import type { InstalledComponent } from './car.models';
+import { CarBuildStore } from './car-build-store';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
-
-export type InstalledComponent = {
-	id: string;
-	carId: string;
-	slot: string;
-	slotType?: 'standard' | 'custom' | null;
-	name: string;
-	manufacturer?: string | null;
-	model?: string | null;
-	serialNumber?: string | null;
-	notes?: string | null;
-	installedAt?: string;
-	removedAt?: string | null;
-};
 
 type ComponentForm = {
 	slotType: 'standard' | 'custom';
@@ -72,13 +52,6 @@ const componentSlotType = (
 ): ComponentForm['slotType'] =>
 	component.slotType ??
 	(standardSlots.includes(component.slot) ? 'standard' : 'custom');
-
-const installationTime = (component: InstalledComponent): number => {
-	const timestamp = component.installedAt
-		? Date.parse(component.installedAt)
-		: Number.NaN;
-	return Number.isNaN(timestamp) ? 0 : timestamp;
-};
 
 const emptyForm = (): ComponentForm => ({
 	slotType: 'standard',
@@ -123,10 +96,10 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 							<label>Name <input [formField]="componentForm.name" [attr.aria-describedby]="componentForm.name().invalid() && formError() ? 'component-form-error' : null" /></label><label>Manufacturer <input [formField]="componentForm.manufacturer" /></label><label>Model <input [formField]="componentForm.model" /></label><label>Serial number <input [formField]="componentForm.serialNumber" /></label><label class="wide">Notes <textarea rows="3" [formField]="componentForm.notes"></textarea></label></div>
 							<div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save component</button><button class="button quiet" type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div>
 						</form>
-					} @else if (resource.isLoading()) { <div class="state-card" role="status">Reading the build sheet…</div> }
-					@else if (readFailure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="resource.reload()">Try again</button> }</div> }
-					@else if (!groups().length) { <div class="state-card"><h4>No components recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()">Add the first component</button> }</div> }
-					@else { <div class="component-groups">@for (group of groups(); track group.slot) { <article class="component-slot"><div class="section-heading"><h4>{{ group.slot }}</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd(group.slot)">{{ group.current ? 'Replace' : 'Install' }}</button> }</div>
+					} @else if (buildStore.loading()) { <div class="state-card" role="status">Reading the build sheet…</div> }
+					@else if (buildStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="buildStore.retry()">Try again</button> }</div> }
+					@else if (!buildStore.groups().length) { <div class="state-card"><h4>No components recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()">Add the first component</button> }</div> }
+					@else { <div class="component-groups">@for (group of buildStore.groups(); track group.slot) { <article class="component-slot"><div class="section-heading"><h4>{{ group.slot }}</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd(group.slot)">{{ group.current ? 'Replace' : 'Install' }}</button> }</div>
 						@if (group.current; as current) { <p><strong>{{ current.name }}</strong> · {{ current.manufacturer || 'Manufacturer not recorded' }}@if (current.model) { · {{ current.model }} }</p>@if (!car.archivedAt) { <div class="form-actions"><button type="button" (click)="openEdit(current)">Edit</button><button type="button" (click)="openReplace(current)">Replace</button></div> } }
 						@if (group.history.length) { <details><summary>Previous installations ({{ group.history.length }})</summary><ul>@for (old of group.history; track old.id) { <li>{{ old.name }} · removed {{ old.removedAt | date:'mediumDate' }}</li> }</ul></details> }
 					</article> }</div> }
@@ -140,47 +113,9 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 export class CarBuild {
 	readonly carId = input('');
 	protected readonly carStore = inject(CarStore);
+	protected readonly buildStore = inject(CarBuildStore);
 	private readonly http = inject(HttpClient);
 	protected readonly standardSlots = standardSlots;
-	protected readonly resource = httpResource<{
-		components: InstalledComponent[];
-	}>(() => {
-		const carId = this.carId();
-		return carId
-			? {
-					url: `/api/v1/cars/${encodeURIComponent(carId)}/components`,
-					withCredentials: true,
-					params: { history: 'true' },
-				}
-			: undefined;
-	});
-	protected readonly components = computed(() =>
-		this.resource.hasValue() ? this.resource.value().components : [],
-	);
-	protected readonly readFailure = computed(() =>
-		carReadFailure(
-			this.resource.error(),
-			'The build sheet could not be loaded.',
-		),
-	);
-	protected readonly groups = computed(() => {
-		const grouped = new Map<string, InstalledComponent[]>();
-		for (const component of this.components())
-			grouped.set(component.slot, [
-				...(grouped.get(component.slot) ?? []),
-				component,
-			]);
-		return [...grouped.entries()].map(([slot, items]) => {
-			const newestFirst = [...items].sort(
-				(left, right) => installationTime(right) - installationTime(left),
-			);
-			return {
-				slot,
-				current: newestFirst.find((item) => !item.removedAt) ?? null,
-				history: newestFirst.filter((item) => item.removedAt),
-			};
-		});
-	});
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
 	protected readonly mode = signal<ComponentMode>('add');
@@ -215,6 +150,7 @@ export class CarBuild {
 				this.resetRouteState();
 			previousCarId = carId;
 			this.carStore.selectCar(carId);
+			this.buildStore.selectCar(carId);
 		});
 	}
 
@@ -231,8 +167,8 @@ export class CarBuild {
 	protected openAdd(slot = ''): void {
 		if (this.carStore.car()?.archivedAt || this.action()) return;
 		const current = slot
-			? (this.groups().find((group) => group.slot === slot)?.current ??
-				undefined)
+			? (this.buildStore.groups().find((group) => group.slot === slot)
+					?.current ?? undefined)
 			: undefined;
 		if (current) {
 			this.openReplace(current);
@@ -329,7 +265,7 @@ export class CarBuild {
 		request.subscribe({
 			next: () => {
 				if (this.carId() !== car.id) return;
-				this.resource.reload();
+				this.buildStore.refresh();
 				this.action.set(null);
 				this.editing.set(false);
 				this.message.set(

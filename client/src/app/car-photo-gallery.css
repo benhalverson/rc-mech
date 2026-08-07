@@ -6,7 +6,7 @@
 	margin-top: 38px;
 	padding-top: 24px;
 }
-.photo-gallery h4 {
+.photo-gallery h3 {
 	margin: 10px 0 0;
 	font:
 		700 1.45rem Georgia,
@@ -88,10 +88,10 @@
 	color: var(--muted);
 }
 .state-card p,
-.state-card h5 {
+.state-card h4 {
 	margin: 0;
 }
-.state-card h5 {
+.state-card h4 {
 	color: var(--ink);
 	font:
 		700 1.2rem Georgia,

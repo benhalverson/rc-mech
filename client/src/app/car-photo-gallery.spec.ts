@@ -6,7 +6,9 @@ import {
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import { type CarPhoto, CarPhotoGallery } from './car-photo-gallery';
+import type { CarPhoto } from './car/car.models';
+import { CarPhotoGallery } from './car-photo-gallery';
+import { CarPhotoStore } from './car-photo-store';
 
 type TestMember = {
 	set(value: unknown): void;
@@ -27,7 +29,11 @@ describe('CarPhotoGallery', () => {
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
 			imports: [CarPhotoGallery],
-			providers: [provideHttpClient(), provideHttpClientTesting()],
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				CarPhotoStore,
+			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
 		fixture = TestBed.createComponent(CarPhotoGallery);
@@ -39,6 +45,14 @@ describe('CarPhotoGallery', () => {
 	});
 
 	afterEach(() => http.verify());
+
+	it('waits for the car input before loading the gallery', () => {
+		fixture.destroy();
+		fixture = TestBed.createComponent(CarPhotoGallery);
+
+		expect(() => fixture.detectChanges()).not.toThrow();
+		http.expectNone((request) => request.url.includes('/photos'));
+	});
 
 	it('loads an owner-scoped gallery with credentials and renders the primary photo', () => {
 		const app = fixture.componentInstance as unknown as GalleryTestHarness;

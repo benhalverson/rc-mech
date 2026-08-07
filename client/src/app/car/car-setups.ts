@@ -1,16 +1,10 @@
-import { HttpClient, httpResource } from '@angular/common/http';
-import {
-	Component,
-	computed,
-	effect,
-	inject,
-	input,
-	signal,
-} from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Component, effect, inject, input, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import type { GarageCar, GarageCarInput } from '../garage/garage-store';
 import { SetupSnapshots } from '../setup-snapshots';
 import { CarSectionShell } from './car-section-shell';
+import { CarSetupsStore } from './car-setups-store';
 import { CarStore } from './car-store';
 
 @Component({
@@ -23,7 +17,9 @@ import { CarStore } from './car-store';
 			<app-car-section-shell [car]="car" section="setups">
 				@if (createError()) { <p role="alert">{{ createError() }}</p> }
 				@if (createAction()) { <p role="status">Creating the new car…</p> }
-				<app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="availableCars()" (createCarFromImport)="createCar($event)" />
+				@if (setupsStore.loading()) { <div class="state-card" role="status">Preparing setup imports…</div> }
+				@else if (setupsStore.error()) { <div class="state-card" role="alert"><p>The garage list needed for setup imports could not be loaded.</p><button type="button" (click)="setupsStore.retry()">Try again</button></div> }
+				@else { <app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="setupsStore.availableCars()" (createCarFromImport)="createCar($event)" /> }
 			</app-car-section-shell>
 		}
 	`,
@@ -31,15 +27,9 @@ import { CarStore } from './car-store';
 export class CarSetups {
 	readonly carId = input('');
 	protected readonly carStore = inject(CarStore);
+	protected readonly setupsStore = inject(CarSetupsStore);
 	private readonly http = inject(HttpClient);
 	private readonly router = inject(Router);
-	private readonly collection = httpResource<{ cars: GarageCar[] }>(() => ({
-		url: '/api/v1/cars',
-		withCredentials: true,
-	}));
-	protected readonly availableCars = computed(() =>
-		this.collection.hasValue() ? this.collection.value().cars : [],
-	);
 	protected readonly createError = signal('');
 	protected readonly createAction = signal(false);
 
@@ -84,7 +74,7 @@ export class CarSetups {
 				next: ({ car }) => {
 					if (this.carId() !== sourceCarId) return;
 					this.createAction.set(false);
-					this.collection.reload();
+					this.setupsStore.refresh();
 					void this.router.navigate(['/garage', car.id, 'setups']);
 				},
 				error: (error: { status?: number }) => {

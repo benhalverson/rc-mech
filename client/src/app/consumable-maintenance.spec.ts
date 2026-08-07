@@ -13,6 +13,7 @@ import {
 	mergeTireReport,
 	spendLabel,
 } from './consumable-maintenance';
+import { MaintenanceLookups } from './maintenance/maintenance-lookups';
 import { MaintenanceStore } from './maintenance/maintenance-store';
 
 type Harness = {
@@ -172,6 +173,7 @@ describe('ConsumableMaintenance', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
+				MaintenanceLookups,
 				MaintenanceStore,
 			],
 		}).compileComponents();
@@ -412,6 +414,27 @@ describe('ConsumableMaintenance', () => {
 		const request = http.expectOne('/api/v1/cars/car-1/consumable-maintenance');
 		expect(request.request.body.frontDetails).toContain('front: Blue');
 		expect(request.request.body.rearDetails).toBeUndefined();
+	});
+
+	it('applies the same tire cleanup through the programmatic kind update', () => {
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openCreate();
+		app.form.set({
+			...app.form(),
+			kind: 'tires',
+			axle: 'both',
+			rearDetails: 'Rear set',
+			rearCost: '25',
+		});
+
+		app.update('kind', 'shock-fluid');
+
+		expect(app.form()).toMatchObject({
+			kind: 'shock-fluid',
+			axle: 'front',
+			rearDetails: '',
+			rearCost: '',
+		});
 	});
 
 	it('records a fluid service area and optional cost', () => {

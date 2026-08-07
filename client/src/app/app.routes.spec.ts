@@ -6,9 +6,9 @@ describe('protected workspace routes', () => {
 		const garage = routes.find((route) => route.path === 'garage');
 
 		expect(garage?.canMatch).toHaveLength(1);
-		expect(garage?.loadComponent).toBeTypeOf('function');
+		expect(garage?.loadChildren).toBeTypeOf('function');
 		expect(garage?.component).toBeUndefined();
-		expect(garage?.providers).toBeDefined();
+		expect(garage?.providers).toBeUndefined();
 	});
 
 	it('keeps collection and overview independently route scoped', () => {
@@ -17,12 +17,12 @@ describe('protected workspace routes', () => {
 			(route) => route.path === 'garage/:carId/overview',
 		);
 
-		expect(overview?.loadComponent).not.toBe(collection?.loadComponent);
-		expect(overview?.providers).toBeDefined();
+		expect(overview?.loadChildren).not.toBe(collection?.loadChildren);
+		expect(overview?.providers).toBeUndefined();
 		expect(overview?.canMatch).toHaveLength(1);
 	});
 
-	it('gives every car leaf its own protected lazy component and route store', () => {
+	it('gives every car leaf its own protected lazy route boundary', () => {
 		const carRoutes = routes.filter((route) =>
 			route.path?.startsWith('garage/:carId/'),
 		);
@@ -34,10 +34,25 @@ describe('protected workspace routes', () => {
 			'garage/:carId/photos',
 			'garage/:carId/runs',
 		]);
-		expect(new Set(carRoutes.map((route) => route.loadComponent)).size).toBe(5);
+		expect(new Set(carRoutes.map((route) => route.loadChildren)).size).toBe(5);
 		for (const route of carRoutes) {
 			expect(route.canMatch).toHaveLength(1);
-			expect(route.providers).toBeDefined();
+			expect(route.loadChildren).toBeTypeOf('function');
+			expect(route.providers).toBeUndefined();
+		}
+	});
+
+	it('keeps feature stores beside lazy leaf components', async () => {
+		for (const route of routes.filter(
+			(candidate) =>
+				candidate.path === 'garage' ||
+				candidate.path?.startsWith('garage/:carId/'),
+		)) {
+			const lazyRoutes = await route.loadChildren?.();
+			expect(Array.isArray(lazyRoutes)).toBe(true);
+			if (!Array.isArray(lazyRoutes)) continue;
+			expect(lazyRoutes[0]?.providers).toBeDefined();
+			expect(lazyRoutes[0]?.loadComponent).toBeTypeOf('function');
 		}
 	});
 

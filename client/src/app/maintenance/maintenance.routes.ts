@@ -1,10 +1,11 @@
 import { Routes } from '@angular/router';
+import { MaintenanceLookups } from './maintenance-lookups';
 import { MaintenanceStore } from './maintenance-store';
 
 export const MAINTENANCE_ROUTES: Routes = [
 	{
 		path: '',
-		providers: [MaintenanceStore],
+		providers: [MaintenanceLookups, MaintenanceStore],
 		loadComponent: () =>
 			import('./maintenance').then(({ Maintenance }) => Maintenance),
 	},
