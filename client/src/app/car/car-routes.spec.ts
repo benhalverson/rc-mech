@@ -896,6 +896,11 @@ describe('Car section routes', () => {
 			) as HTMLButtonElement
 		).click();
 		harness.detectChanges();
+		expect(
+			harness.routeNativeElement
+				?.querySelector('form')
+				?.getAttribute('aria-describedby'),
+		).toBeNull();
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
 			action: TestSignal<string | null>;
@@ -955,6 +960,17 @@ describe('Car section routes', () => {
 		component.action.set(null);
 		component.openAdd();
 		harness.detectChanges();
+		const startedAt = harness.routeNativeElement?.querySelector(
+			'input[type="datetime-local"]',
+		) as HTMLInputElement;
+		startedAt.value = '';
+		startedAt.dispatchEvent(new Event('input'));
+		harness.detectChanges();
+		expect(
+			harness.routeNativeElement
+				?.querySelector('form')
+				?.getAttribute('aria-describedby'),
+		).toBeNull();
 		component.action.set('save');
 		harness.detectChanges();
 		const cancel = [
