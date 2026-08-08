@@ -4,6 +4,7 @@ import {
 	type MockD1Controller,
 } from './testing/hono-fixture';
 import type { VoiceProcessor } from './voice-processing';
+import { VoiceProcessingError } from './voice-processing';
 
 const id = '35ecb4da-0bb4-46cc-85d6-b02c7b3d9552';
 const now = '2026-08-08T01:00:00.000Z';
@@ -245,7 +246,7 @@ describe('voice processing routes', () => {
 			const response = await request(`/api/v1/voice-updates/${id}/process`, {
 				method: 'POST',
 			});
-			expect(response.status).toBe(502);
+			expect(response.status).toBe(_case === 'no speech' ? 422 : 502);
 			expect((await response.json()) as { error: string }).toMatchObject({
 				error: expect.stringContaining(message),
 			});
@@ -269,6 +270,37 @@ describe('voice processing routes', () => {
 				})
 			).status,
 		).toBe(502);
+	});
+
+	test('logs only stage-safe processing failure metadata', async () => {
+		const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const upstream = Object.assign(new Error('provider details'), {
+			name: 'InferenceUpstreamError',
+		});
+		const { d1, request } = fixture(
+			processor(async () => {
+				throw new VoiceProcessingError('provider details', 'extraction', 2, {
+					cause: upstream,
+				});
+			}),
+		);
+		d1.queue(
+			{ kind: 'first', value: voice() },
+			{ kind: 'first', value: car() },
+			{ kind: 'run' },
+			{ kind: 'run' },
+			{ kind: 'first', value: voice({ status: 'failed' }) },
+		);
+		const response = await request(`/api/v1/voice-updates/${id}/process`, {
+			method: 'POST',
+		});
+		expect(response.status).toBe(502);
+		expect(log).toHaveBeenCalledWith('voice processing failed', {
+			voiceUpdateId: id,
+			stage: 'extraction',
+			errorName: 'InferenceUpstreamError',
+			attemptCount: 2,
+		});
 	});
 
 	test('fails loudly if a processed voice update cannot be reloaded', async () => {

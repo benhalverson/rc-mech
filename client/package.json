@@ -23,7 +23,6 @@
 		"@ngrx/signals": "^20.1.0",
 		"@tailwindcss/postcss": "^4.3.3",
 		"dexie": "^4.4.4",
-		"extendable-media-recorder": "^9.2.39",
 		"rxjs": "~7.8.0",
 		"tailwindcss": "^4.3.3",
 		"tslib": "^2.3.0"

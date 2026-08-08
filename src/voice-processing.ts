@@ -30,6 +30,56 @@ export type VoiceProcessor = {
 	process(request: VoiceProcessingRequest): Promise<VoiceProcessingResult>;
 };
 
+export type VoiceProcessingStage =
+	| 'storage'
+	| 'transcription'
+	| 'extraction'
+	| 'validation'
+	| 'persistence';
+
+export class VoiceProcessingError extends Error {
+	constructor(
+		message: string,
+		readonly stage: VoiceProcessingStage,
+		readonly attemptCount: number,
+		options?: ErrorOptions,
+	) {
+		super(message, options);
+		this.name = options?.cause instanceof Error ? options.cause.name : 'Error';
+	}
+}
+
+const isInferenceUpstreamError = (error: unknown): boolean =>
+	error instanceof Error && error.name === 'InferenceUpstreamError';
+
+const processingError = (
+	stage: VoiceProcessingStage,
+	error: unknown,
+	attemptCount = 1,
+): VoiceProcessingError =>
+	error instanceof VoiceProcessingError && error.stage === stage
+		? error
+		: new VoiceProcessingError(
+				error instanceof Error ? error.message : 'Voice processing failed',
+				stage,
+				attemptCount,
+				{ cause: error },
+			);
+
+const runAi = async <T>(
+	stage: VoiceProcessingStage,
+	operation: () => Promise<T>,
+	attempt = 1,
+): Promise<T> => {
+	try {
+		return await operation();
+	} catch (error) {
+		if (attempt === 1 && isInferenceUpstreamError(error))
+			return runAi(stage, operation, 2);
+		throw processingError(stage, error, attempt);
+	}
+};
+
 const extractionResult = z.object({
 	draft: voiceDraftInput,
 	clarificationPrompt: z
@@ -190,16 +240,22 @@ const transcribe = async (
 	if (request.text) return request.text.trim();
 	if (!request.audio || !request.contentType)
 		throw new Error('A recording or text note is required');
-	const result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
-		audio: Buffer.from(request.audio).toString('base64'),
-		task: 'transcribe',
-		vad_filter: true,
-		condition_on_previous_text: false,
-		initial_prompt:
-			'RC car setup, handling, tires, shock oil, differential fluid, track conditions, and drive-session notes.',
-	});
+	const result = await runAi('transcription', () =>
+		env.AI.run('@cf/openai/whisper-large-v3-turbo', {
+			audio: Buffer.from(request.audio as ArrayBuffer).toString('base64'),
+			task: 'transcribe',
+			vad_filter: true,
+			condition_on_previous_text: false,
+			initial_prompt:
+				'RC car setup, handling, tires, shock oil, differential fluid, track conditions, and drive-session notes.',
+		}),
+	);
 	const transcript = result.text.trim();
-	if (!transcript) throw new Error('No speech was detected in the recording');
+	if (!transcript)
+		throw processingError(
+			'transcription',
+			new Error('No speech was detected in the recording'),
+		);
 	return transcript;
 };
 
@@ -236,17 +292,17 @@ const extractDraft = async (
 	};
 	const options = { tags: ['rc-mech', 'voice-track-log'] };
 	try {
-		return await env.AI.run(
-			'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-			{ ...request, response_format: { type: 'json_object' } },
-			options,
+		return await runAi('extraction', () =>
+			env.AI.run(
+				'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+				{ ...request, response_format: { type: 'json_object' } },
+				options,
+			),
 		);
 	} catch (error) {
 		if (!jsonModeCouldNotBeMet(error)) throw error;
-		return env.AI.run(
-			'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-			request,
-			options,
+		return runAi('extraction', () =>
+			env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', request, options),
 		);
 	}
 };
@@ -259,14 +315,24 @@ export const createWorkersAiVoiceProcessor = (
 		const correctionContext = request.previous
 			? `This is a correction. Original transcript: ${request.previous.transcript}\nCurrent draft: ${JSON.stringify(request.previous.draft)}\nCorrection: ${transcript}`
 			: `Voice note: ${transcript}`;
-		const result = await extractDraft(env, [
-			{ role: 'system', content: extractionOutputInstructions },
-			{
-				role: 'user',
-				content: `Context: ${JSON.stringify(request.context)}\n${correctionContext}`,
-			},
-		]);
-		const parsed = extractionResult.parse(responseJson(result));
+		let result: unknown;
+		try {
+			result = await extractDraft(env, [
+				{ role: 'system', content: extractionOutputInstructions },
+				{
+					role: 'user',
+					content: `Context: ${JSON.stringify(request.context)}\n${correctionContext}`,
+				},
+			]);
+		} catch (error) {
+			throw processingError('extraction', error);
+		}
+		let parsed: z.infer<typeof extractionResult>;
+		try {
+			parsed = extractionResult.parse(responseJson(result));
+		} catch (error) {
+			throw processingError('validation', error);
+		}
 		return {
 			transcript,
 			draft: parsed.draft,
