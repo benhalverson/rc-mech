@@ -11,6 +11,10 @@ import {
 	voiceDraftInput,
 } from '../../types';
 import { VOICE_MAX_BYTES, validateVoiceMetadata } from '../../voice-policy';
+import {
+	isNoSpeechProcessingError,
+	VoiceProcessingError,
+} from '../../voice-processing';
 import { ownedCar } from '../cars/car-records';
 import { jsonValue } from '../json-values';
 import {
@@ -19,10 +23,6 @@ import {
 	publicVoiceUpdate,
 	voiceResults,
 } from './voice-records';
-import {
-	isNoSpeechProcessingError,
-	VoiceProcessingError,
-} from '../../voice-processing';
 
 type CorrectionSource = { text?: string; file?: File };
 
@@ -91,6 +91,15 @@ const processingFailureMetadata = (
 	errorName: error instanceof Error ? error.name : 'UnknownError',
 	attemptCount: error instanceof VoiceProcessingError ? error.attemptCount : 1,
 });
+
+const isCorrectionAiFailure = (
+	error: unknown,
+	stage: 'storage' | 'processing' | 'validation' | 'persistence',
+): boolean => {
+	const effectiveStage =
+		error instanceof VoiceProcessingError ? error.stage : stage;
+	return effectiveStage === 'extraction' || effectiveStage === 'validation';
+};
 
 export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 	const routes = new Hono<AppEnv>();
@@ -189,6 +198,21 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 		const parsed = await parseCorrection(c);
 		if ('error' in parsed)
 			return c.json({ error: parsed.error, maxBytes: VOICE_MAX_BYTES }, 400);
+		const correctionText = parsed.text?.trim();
+		const previousCorrections = correctionRecords(existing.correctionsJson);
+		if (
+			correctionText &&
+			previousCorrections.some(
+				(correction) =>
+					correction.kind === 'manual' &&
+					correction.transcript === correctionText,
+			)
+		) {
+			return c.json({
+				voiceUpdate: publicVoiceUpdate(existing),
+				correction: { outcome: 'manual-note' as const },
+			});
+		}
 		const correctionId = crypto.randomUUID();
 		const objectKey = parsed.file
 			? `voice/${c.get('userId')}/${existing.carId}/${existing.id}/corrections/${correctionId}`
@@ -199,6 +223,7 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 			});
 		let failureStage: 'storage' | 'processing' | 'validation' | 'persistence' =
 			'storage';
+		let outcome: 'ai-draft' | 'manual-note' = 'ai-draft';
 		try {
 			failureStage = 'processing';
 			const result = await dependencies.voiceProcessor(c.env).process({
@@ -232,21 +257,70 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 				})
 				.where(eq(voiceUpdate.id, existing.id));
 		} catch (error) {
-			if (objectKey) await c.env.PHOTOS.delete(objectKey);
-			console.error('voice correction failed', {
-				voiceUpdateId: existing.id,
-				...processingFailureMetadata(error, failureStage),
-			});
-			return c.json(
-				{
-					error: correctionFailureMessage(error),
-				},
-				processingFailureStatus(error),
-			);
+			if (correctionText && isCorrectionAiFailure(error, failureStage)) {
+				const aiFailureMetadata = processingFailureMetadata(
+					error,
+					failureStage,
+				);
+				try {
+					const manualDraft = voiceDraftInput.parse({
+						...draft.data,
+						unmappedNotes: draft.data.unmappedNotes.includes(correctionText)
+							? draft.data.unmappedNotes
+							: [...draft.data.unmappedNotes, correctionText],
+					});
+					const corrections = correctionRecords(existing.correctionsJson);
+					corrections.push({
+						id: correctionId,
+						kind: 'manual',
+						transcript: correctionText,
+						createdAt: new Date().toISOString(),
+					});
+					failureStage = 'persistence';
+					await db(c.env)
+						.update(voiceUpdate)
+						.set({
+							draftJson: JSON.stringify(manualDraft),
+							correctionsJson: JSON.stringify(corrections),
+							error: null,
+							updatedAt: new Date().toISOString(),
+						})
+						.where(eq(voiceUpdate.id, existing.id));
+					outcome = 'manual-note';
+					console.warn('voice correction used manual fallback', {
+						voiceUpdateId: existing.id,
+						...aiFailureMetadata,
+					});
+				} catch (fallbackError) {
+					console.error('voice correction failed', {
+						voiceUpdateId: existing.id,
+						...processingFailureMetadata(fallbackError, 'persistence'),
+					});
+					return c.json(
+						{ error: correctionFailureMessage(fallbackError) },
+						502,
+					);
+				}
+			} else {
+				if (objectKey) await c.env.PHOTOS.delete(objectKey);
+				console.error('voice correction failed', {
+					voiceUpdateId: existing.id,
+					...processingFailureMetadata(error, failureStage),
+				});
+				return c.json(
+					{
+						error: correctionFailureMessage(error),
+					},
+					processingFailureStatus(error),
+				);
+			}
 		}
 		const updated = await ownedVoiceUpdate(c, existing.id);
 		if (!updated) throw new Error('Corrected voice update could not be loaded');
-		return c.json({ voiceUpdate: publicVoiceUpdate(updated) });
+		return c.json({
+			voiceUpdate: publicVoiceUpdate(updated),
+			correction: { outcome },
+		});
 	});
 
 	routes.get('/voice-updates/:voiceUpdateId/results', async (c) => {

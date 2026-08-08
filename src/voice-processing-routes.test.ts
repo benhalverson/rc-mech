@@ -5,6 +5,7 @@ import {
 } from './testing/hono-fixture';
 import type { VoiceProcessor } from './voice-processing';
 import {
+	createWorkersAiVoiceProcessor,
 	NO_SPEECH_DETECTED_MESSAGE,
 	VoiceProcessingError,
 } from './voice-processing';
@@ -401,6 +402,72 @@ describe('voice processing routes', () => {
 		expect(process.mock.calls[0]?.[0].previous?.draft).toEqual(emptyDraft);
 	});
 
+	test('falls back when the real Workers AI processor returns malformed extraction', async () => {
+		const aiFixture = createHonoFixture();
+		vi.spyOn(aiFixture.env.AI, 'run').mockResolvedValueOnce({
+			response: 'not-json',
+		} as never);
+		const { d1, request } = fixture(
+			createWorkersAiVoiceProcessor(aiFixture.env),
+		);
+		d1.queue(
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify(emptyDraft),
+				}),
+			},
+			{ kind: 'first', value: car() },
+			{ kind: 'run' },
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify({
+						...emptyDraft,
+						unmappedNotes: ['Rear, not front'],
+					}),
+				}),
+			},
+		);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'Rear, not front' }),
+		);
+		expect(response.status).toBe(200);
+		expect((await response.json()) as { correction: unknown }).toMatchObject({
+			correction: { outcome: 'manual-note' },
+		});
+	});
+
+	test('falls back when the route rejects an AI draft schema', async () => {
+		const { d1, request } = fixture(
+			processor(async () => ({
+				transcript: 'Rear, not front',
+				draft: {} as never,
+				clarificationPrompt: null,
+			})),
+		);
+		d1.queue(
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify(emptyDraft),
+				}),
+			},
+			{ kind: 'first', value: car() },
+			{ kind: 'run' },
+			{ kind: 'first', value: voice({ status: 'needs-review' }) },
+		);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'Rear, not front' }),
+		);
+		expect(response.status).toBe(200);
+	});
+
 	test('rejects a correction when the stored draft is absent', async () => {
 		const { d1, request } = fixture();
 		d1.queue({
@@ -500,10 +567,70 @@ describe('voice processing routes', () => {
 		expect(r2.objects.size).toBe(0);
 	});
 
-	test('retains a text draft when correction processing throws a non-error', async () => {
+	test('falls back to a manual note when text correction processing fails', async () => {
 		vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		const { d1, request } = fixture(
-			processor(async () => Promise.reject('provider unavailable')),
+			processor(async () => {
+				throw new VoiceProcessingError('provider unavailable', 'extraction', 2);
+			}),
+		);
+		d1.queue(
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify({
+						...emptyDraft,
+						unmappedNotes: ['Rear, not front'],
+					}),
+				}),
+			},
+			{ kind: 'first', value: car() },
+			{ kind: 'run' },
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify({
+						...emptyDraft,
+						unmappedNotes: ['Rear, not front'],
+					}),
+					correctionsJson: JSON.stringify([
+						{
+							id: 'manual-correction',
+							kind: 'manual',
+							transcript: 'Rear, not front',
+							createdAt: now,
+						},
+					]),
+				}),
+			},
+		);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'Rear, not front' }),
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			correction: { outcome: 'manual-note' },
+			voiceUpdate: {
+				draft: { unmappedNotes: ['Rear, not front'] },
+				corrections: [
+					expect.objectContaining({
+						kind: 'manual',
+						transcript: 'Rear, not front',
+					}),
+				],
+			},
+		});
+	});
+
+	test('does not claim a manual fallback when its persistence fails', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const { d1, request } = fixture(
+			processor(async () => {
+				throw new VoiceProcessingError('provider unavailable', 'extraction', 2);
+			}),
 		);
 		d1.queue(
 			{
@@ -514,15 +641,54 @@ describe('voice processing routes', () => {
 				}),
 			},
 			{ kind: 'first', value: car() },
+			{ kind: 'error', error: new Error('database unavailable') },
 		);
-		expect(
-			(
-				await request(
-					`/api/v1/voice-updates/${id}/corrections`,
-					json({ text: 'Rear, not front' }),
-				)
-			).status,
-		).toBe(502);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'Rear, not front' }),
+		);
+		expect(response.status).toBe(502);
+		expect(await response.json()).toEqual({
+			error:
+				'The correction could not be applied. The original draft is unchanged.',
+		});
+	});
+
+	test('does not duplicate an existing manual correction', async () => {
+		const { d1, request } = fixture(
+			processor(async () => {
+				throw new Error('processor should not be called');
+			}),
+		);
+		d1.queue(
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify({
+						...emptyDraft,
+						unmappedNotes: ['Rear, not front'],
+					}),
+					correctionsJson: JSON.stringify([
+						{
+							id: 'manual-correction',
+							kind: 'manual',
+							transcript: 'Rear, not front',
+							createdAt: now,
+						},
+					]),
+				}),
+			},
+			{ kind: 'first', value: car() },
+		);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'Rear, not front' }),
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			correction: { outcome: 'manual-note' },
+		});
 	});
 
 	test('reports no speech in a correction as user-actionable', async () => {

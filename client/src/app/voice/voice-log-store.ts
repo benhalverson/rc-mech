@@ -181,7 +181,7 @@ export const VoiceLogStore = signalStore(
 			action: string,
 			request: () => Promise<VoiceMutationResponse>,
 			fallback: string,
-			message?: string,
+			message?: string | ((response: VoiceMutationResponse) => string),
 		): Promise<VoiceMutationResponse | null> => {
 			if (store.action()) return null;
 			patchState(store, { action, error: '', message: '' });
@@ -190,7 +190,8 @@ export const VoiceLogStore = signalStore(
 				store.updatesResource.reload();
 				patchState(store, {
 					action: null,
-					message: message ?? '',
+					message:
+						typeof message === 'function' ? message(response) : (message ?? ''),
 				});
 				return response;
 			} catch (error) {
@@ -301,7 +302,10 @@ export const VoiceLogStore = signalStore(
 							),
 						),
 					'The correction could not be applied. The draft is unchanged.',
-					'Draft corrected. Review the changes before saving.',
+					(response) =>
+						response.correction?.outcome === 'manual-note'
+							? 'Correction saved as a free-form note. Review it before saving.'
+							: 'Draft corrected. Review the changes before saving.',
 				);
 			},
 			correctAudio(
