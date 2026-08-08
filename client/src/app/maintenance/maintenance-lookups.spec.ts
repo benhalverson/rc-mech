@@ -48,4 +48,23 @@ describe('MaintenanceLookups', () => {
 		expect(components).toEqual([{ id: 'current', name: 'Motor' }]);
 		expect(tires).toEqual({ front: 'Pink' });
 	});
+
+	it('falls through current, first, and missing setup collections', () => {
+		const results: unknown[] = [];
+		for (const carId of ['current', 'first', 'missing'])
+			lookups.currentTires(carId).subscribe((value) => results.push(value));
+
+		http.expectOne('/api/v1/cars/current/setups/current').flush({
+			setups: [
+				{ tires: { front: 'Fallback' } },
+				{ current: true, tires: { front: 'Current' } },
+			],
+		});
+		http.expectOne('/api/v1/cars/first/setups/current').flush({
+			setups: [{ tires: { front: 'First' } }],
+		});
+		http.expectOne('/api/v1/cars/missing/setups/current').flush({});
+
+		expect(results).toEqual([{ front: 'Current' }, { front: 'First' }, null]);
+	});
 });

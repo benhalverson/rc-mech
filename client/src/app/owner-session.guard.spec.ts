@@ -1,6 +1,11 @@
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter, Router, RouterOutlet } from '@angular/router';
+import {
+	provideRouter,
+	Router,
+	RouterOutlet,
+	UrlSegment,
+} from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ownerSessionCanMatch } from './owner-session.guard';
 import { OwnerSessionStore } from './owner-session-store';
@@ -78,5 +83,35 @@ describe('ownerSessionCanMatch', () => {
 		expect(loadPrivateFeature).toHaveBeenCalledTimes(1);
 		expect(sessionStore.resolved).toHaveBeenCalledTimes(1);
 		expect(router.url).toBe('/garage/car-1/photos');
+	});
+
+	it('uses the matched segments when no current navigation is available', async () => {
+		sessionStore.resolved.mockResolvedValue(null);
+		const rootResult = await TestBed.runInInjectionContext(() =>
+			ownerSessionCanMatch(
+				{ path: 'garage' },
+				[],
+				router.routerState.snapshot.root,
+			),
+		);
+
+		expect(rootResult).toEqual(
+			router.createUrlTree(['/sign-in'], {
+				queryParams: { returnTo: '/garage' },
+			}),
+		);
+
+		const segmentResult = await TestBed.runInInjectionContext(() =>
+			ownerSessionCanMatch(
+				{ path: 'maintenance' },
+				[new UrlSegment('maintenance', {})],
+				router.routerState.snapshot.root,
+			),
+		);
+		expect(segmentResult).toEqual(
+			router.createUrlTree(['/sign-in'], {
+				queryParams: { returnTo: '/maintenance' },
+			}),
+		);
 	});
 });

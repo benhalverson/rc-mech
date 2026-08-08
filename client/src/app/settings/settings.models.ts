@@ -25,7 +25,9 @@ export type InviteCodesResponse = {
 
 export const defaultTimezone = (): string => {
 	try {
-		return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+		const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		if (!timezone) return 'UTC';
+		return timezone;
 	} catch {
 		return 'UTC';
 	}

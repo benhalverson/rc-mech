@@ -53,7 +53,8 @@ const isValidTimezone = (value: unknown): value is string => {
 const browserTimezone = (): string => {
 	try {
 		const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-		return isValidTimezone(timezone) ? timezone : 'UTC';
+		if (!isValidTimezone(timezone)) return 'UTC';
+		return timezone;
 	} catch {
 		return 'UTC';
 	}
@@ -174,11 +175,10 @@ export const MaintenanceStore = signalStore(
 			),
 			serviceRecords,
 			activity: computed(() => {
-				if (
-					store.plansResource.hasValue() &&
-					store.plansResource.value().activity?.length
-				)
-					return store.plansResource.value().activity ?? [];
+				const serverActivity = store.plansResource.hasValue()
+					? store.plansResource.value().activity
+					: undefined;
+				if (serverActivity?.length) return serverActivity;
 				return serviceRecords()
 					.filter((record) => !record.deletedAt)
 					.map((record) => ({

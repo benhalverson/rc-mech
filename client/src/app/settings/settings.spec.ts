@@ -194,6 +194,8 @@ describe('Settings workspace', () => {
 		input.dispatchEvent(new Event('input'));
 		fixture.detectChanges();
 		input.closest('form')?.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		expect(input.parentElement?.textContent).toContain('Saving…');
 		input.closest('form')?.dispatchEvent(new Event('submit'));
 
 		const mutation = http.expectOne('/api/v1/preferences/timezone');
@@ -223,6 +225,8 @@ describe('Settings workspace', () => {
 		input.dispatchEvent(new Event('input'));
 		fixture.detectChanges();
 		input.closest('form')?.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		expect(input.parentElement?.textContent).toContain('Waiting…');
 		http
 			.expectOne(
 				(request) =>
@@ -301,6 +305,8 @@ describe('Settings workspace', () => {
 		input.dispatchEvent(new Event('input'));
 		fixture.detectChanges();
 		input.closest('form')?.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		expect(input.parentElement?.textContent).toContain('Creating…');
 
 		const mutation = http.expectOne('/api/v1/invite-codes');
 		expect(mutation.request.method).toBe('POST');
@@ -439,5 +445,346 @@ describe('Settings workspace', () => {
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Name this passkey.',
 		);
+	});
+
+	it('renders empty states, non-revocable invites, and retries passkey reads', async () => {
+		http.expectOne('/api/v1/preferences/timezone').flush({});
+		http.expectOne('/api/v1/invite-codes').flush({
+			allowance: 5,
+			used: 1,
+			remaining: 4,
+			codes: [
+				{
+					id: 'invite-used',
+					code: 'USED-01',
+					status: 'redeemed',
+					createdAt: '2026-08-07T00:00:00.000Z',
+				},
+			],
+		});
+		http
+			.expectOne('/api/auth/passkey/list-user-passkeys')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain('USED-01');
+		expect(fixture.nativeElement.textContent).not.toContain('Revoke');
+		expect(fixture.nativeElement.textContent).toContain(
+			'Passkeys could not be loaded',
+		);
+		const retry = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) =>
+				button.textContent?.trim() === 'Try again' &&
+				button.previousElementSibling?.textContent?.includes('Passkeys'),
+		) as HTMLButtonElement;
+		retry.click();
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/auth/passkey/list-user-passkeys');
+		});
+		refresh?.flush([]);
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('No passkeys yet');
+	});
+
+	it('marks each settings form invalid before it can mutate', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		for (const selector of [
+			'#garage-timezone',
+			'#new-invite-code',
+			'#passkey-name',
+		]) {
+			const input = fixture.nativeElement.querySelector(
+				selector,
+			) as HTMLInputElement;
+			input.value = '';
+			input.dispatchEvent(new Event('input'));
+			input.closest('form')?.dispatchEvent(new Event('submit'));
+		}
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain('Enter a timezone');
+		expect(fixture.nativeElement.textContent).toContain('Enter an invite code');
+		expect(fixture.nativeElement.textContent).toContain('Name this passkey');
+		http.expectNone('/api/v1/preferences/timezone');
+		http.expectNone('/api/v1/invite-codes');
+		http.expectNone('/api/auth/passkey/generate-register-options');
+	});
+
+	it('rejects invalid and concurrent timezone saves and surfaces API detail', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		const store = TestBed.inject(SettingsStore);
+
+		expect(await store.saveTimezone('Not/A_Timezone')).toBe(false);
+		expect(store.timezoneError()).toContain('valid IANA timezone');
+
+		const pending = store.saveTimezone(' UTC ');
+		expect(await store.saveTimezone('America/New_York')).toBe(false);
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush(
+				{ error: 'That timezone is disabled.' },
+				{ status: 422, statusText: 'Unprocessable Content' },
+			);
+		expect(await pending).toBe(false);
+		expect(store.timezoneError()).toBe('That timezone is disabled.');
+
+		const fallback = store.saveTimezone('UTC');
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		expect(await fallback).toBe(false);
+		expect(store.timezoneError()).toContain('could not be saved');
+	});
+
+	it('blocks unavailable invite creation and handles create and revoke failures', async () => {
+		const store = TestBed.inject(SettingsStore);
+		expect(await store.createInviteCode('EARLY-01')).toBe(false);
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http.expectOne('/api/v1/invite-codes').flush({
+			allowance: 5,
+			used: 5,
+			remaining: 0,
+			codes: [],
+		});
+		http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const input = fixture.nativeElement.querySelector(
+			'#new-invite-code',
+		) as HTMLInputElement;
+		input.value = 'FINAL-01';
+		input.dispatchEvent(new Event('input'));
+		input.closest('form')?.dispatchEvent(new Event('submit'));
+		await fixture.whenStable();
+		expect(input.value).toBe('FINAL-01');
+		http.expectNone('/api/v1/invite-codes');
+	});
+
+	it('serializes invite mutations and supports their failure paths', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		const store = TestBed.inject(SettingsStore);
+
+		const create = store.createInviteCode('TRACK-03');
+		expect(await store.createInviteCode('TRACK-04')).toBe(false);
+		http
+			.expectOne('/api/v1/invite-codes')
+			.flush(
+				{ error: 'That invite code already exists.' },
+				{ status: 409, statusText: 'Conflict' },
+			);
+		expect(await create).toBe(false);
+		expect(store.inviteActionError()).toContain('already exists');
+
+		const usedCode = { ...store.inviteCodes()[0], status: 'redeemed' };
+		await store.revokeInviteCode(usedCode);
+		http.expectNone(`/api/v1/invite-codes/${usedCode.id}/revoke`);
+
+		const available = store.inviteCodes()[0];
+		const revoke = store.revokeInviteCode(available);
+		await store.revokeInviteCode(available);
+		http
+			.expectOne(`/api/v1/invite-codes/${available.id}/revoke`)
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await revoke;
+		expect(store.inviteActionError()).toContain('could not be revoked');
+	});
+
+	it('handles empty, malformed, and concurrent passkey registration', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		const store = TestBed.inject(SettingsStore);
+		expect(await store.registerPasskey('')).toBe(false);
+
+		createCredential.mockResolvedValue({});
+		const malformed = store.registerPasskey('Track tablet');
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/auth/passkey/generate-register-options',
+			)
+			.flush({ challenge: 'AQ' });
+		expect(await malformed).toBe(false);
+		expect(store.passkeyActionError()).toContain(
+			'No passkey was returned by the browser',
+		);
+
+		const pending = store.registerPasskey('Track tablet');
+		expect(await store.registerPasskey('Track phone')).toBe(false);
+		http
+			.expectOne(
+				(request) =>
+					request.url === '/api/auth/passkey/generate-register-options',
+			)
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		expect(await pending).toBe(false);
+	});
+
+	it('renames and revokes passkeys while serializing actions', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		const store = TestBed.inject(SettingsStore);
+		const passkey = store.passkeys()[0];
+		expect(await store.renamePasskey(passkey, '')).toBe(false);
+
+		const rename = store.renamePasskey(passkey, ' Track laptop ');
+		expect(await store.renamePasskey(passkey, 'Other name')).toBe(false);
+		const renameRequest = http.expectOne('/api/auth/passkey/update-passkey');
+		expect(renameRequest.request.body).toEqual({
+			id: 'passkey-1',
+			name: 'Track laptop',
+		});
+		renameRequest.flush({ status: true });
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/auth/passkey/list-user-passkeys');
+		});
+		refresh?.flush([passkey]);
+		expect(await rename).toBe(true);
+
+		const revoke = store.revokePasskey(passkey);
+		await store.revokePasskey(passkey);
+		http
+			.expectOne('/api/auth/passkey/delete-passkey')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await revoke;
+		expect(store.passkeyActionError()).toContain('could not be completed');
+	});
+
+	it('drives invite and passkey row actions through their rendered controls', async () => {
+		writeClipboardText.mockResolvedValue(undefined);
+		flushInitialReads();
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		const button = (label: string): HTMLButtonElement => {
+			const match = [...fixture.nativeElement.querySelectorAll('button')].find(
+				(candidate: HTMLButtonElement) =>
+					candidate.textContent?.trim() === label,
+			) as HTMLButtonElement | undefined;
+			if (!match) throw new Error(`${label} button was not rendered.`);
+			return match;
+		};
+
+		button('Copy').click();
+		await vi.waitFor(() =>
+			expect(writeClipboardText).toHaveBeenCalledWith('OWNER-01'),
+		);
+
+		button('Rename').click();
+		fixture.detectChanges();
+		const renameInput = fixture.nativeElement.querySelector(
+			'#rename-passkey-1',
+		) as HTMLInputElement;
+		renameInput.value = 'Pit laptop';
+		renameInput.dispatchEvent(new Event('input'));
+		renameInput.closest('form')?.dispatchEvent(new Event('submit'));
+		const rename = http.expectOne('/api/auth/passkey/update-passkey');
+		rename.flush({ status: true });
+		let passkeyRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			passkeyRefresh = http.expectOne('/api/auth/passkey/list-user-passkeys');
+		});
+		passkeyRefresh?.flush([]);
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		button('Revoke').click();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Revoking…');
+		http
+			.expectOne('/api/v1/invite-codes/invite-1/revoke')
+			.flush({ status: true });
+		let inviteRefresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			inviteRefresh = http.expectOne('/api/v1/invite-codes');
+		});
+		inviteRefresh?.flush({ allowance: 5, used: 2, remaining: 3, codes: [] });
+	});
+
+	it('renders unnamed passkeys and preserves rename editing after a failed save', async () => {
+		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		http.expectOne('/api/v1/invite-codes').flush({
+			allowance: 5,
+			used: 0,
+			remaining: 5,
+			codes: [],
+		});
+		http
+			.expectOne('/api/auth/passkey/list-user-passkeys')
+			.flush([{ id: 'passkey-unnamed', name: null }]);
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Unnamed passkey');
+		expect(fixture.nativeElement.textContent).toContain('Added recently');
+
+		const button = (label: string): HTMLButtonElement =>
+			[...fixture.nativeElement.querySelectorAll('button')].find(
+				(candidate: HTMLButtonElement) =>
+					candidate.textContent?.trim() === label,
+			) as HTMLButtonElement;
+		button('Rename').click();
+		fixture.detectChanges();
+		const renameInput = fixture.nativeElement.querySelector(
+			'#rename-passkey-unnamed',
+		) as HTMLInputElement;
+		expect(renameInput.value).toBe('Passkey');
+		renameInput.value = 'Backup key';
+		renameInput.dispatchEvent(new Event('input'));
+		renameInput.closest('form')?.dispatchEvent(new Event('submit'));
+		http
+			.expectOne('/api/auth/passkey/update-passkey')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(
+			fixture.nativeElement.querySelector('#rename-passkey-unnamed'),
+		).toBeTruthy();
+
+		button('Cancel').click();
+		fixture.detectChanges();
+		button('Revoke').click();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Revoking…');
+		http.expectOne('/api/auth/passkey/delete-passkey').flush({ status: true });
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/auth/passkey/list-user-passkeys');
+		});
+		refresh?.flush([]);
+	});
+
+	it('retries a failed timezone read from its rendered control', async () => {
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		http.expectOne('/api/v1/invite-codes').flush({
+			allowance: 5,
+			used: 0,
+			remaining: 5,
+			codes: [],
+		});
+		http.expectOne('/api/auth/passkey/list-user-passkeys').flush([]);
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const retry = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) =>
+				button.textContent?.trim() === 'Try again' &&
+				button.previousElementSibling?.textContent?.includes('timezone'),
+		) as HTMLButtonElement;
+		retry.click();
+		let refresh: TestRequest | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/v1/preferences/timezone');
+		});
+		refresh?.flush({ timezone: 'UTC' });
 	});
 });

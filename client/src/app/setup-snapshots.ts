@@ -392,7 +392,7 @@ export class SetupSnapshots {
 									(reviewValues['unmapped'] as
 										| Record<string, unknown>
 										| undefined) ?? {},
-								sourceMetadata: payload.sourceMetadata ?? {},
+								sourceMetadata: { ...payload.sourceMetadata },
 							})
 							.pipe(
 								switchMap(() =>

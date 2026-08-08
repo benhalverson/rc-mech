@@ -26,6 +26,7 @@ describe('ownerSessionExpiryInterceptor', () => {
 	beforeEach(() => {
 		sessionStore.expire.mockClear();
 		router.navigate.mockClear();
+		router.url = '/garage/car-1/photos';
 		TestBed.configureTestingModule({
 			providers: [
 				provideHttpClient(withInterceptors([ownerSessionExpiryInterceptor])),
@@ -74,5 +75,20 @@ describe('ownerSessionExpiryInterceptor', () => {
 
 		expect(sessionStore.expire).not.toHaveBeenCalled();
 		expect(router.navigate).not.toHaveBeenCalled();
+	});
+
+	it('falls back to Garage when the current router URL is not absolute', () => {
+		router.url = 'not-yet-navigated';
+		http.get('/api/v1/cars').subscribe({ error: () => undefined });
+		controller
+			.expectOne('/api/v1/cars')
+			.flush({}, { status: 401, statusText: 'Unauthorized' });
+
+		expect(router.navigate).toHaveBeenCalledWith(['/sign-in'], {
+			queryParams: {
+				returnTo: '/garage',
+				reason: 'session-expired',
+			},
+		});
 	});
 });

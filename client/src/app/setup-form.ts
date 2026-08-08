@@ -101,7 +101,7 @@ export const setupFormFromSnapshot = (
 	pdfUrl: setup.source?.pdfUrl ?? '',
 	pdfTitle: setup.source?.pdfTitle ?? '',
 	pdfPage: setup.source?.pdfPage == null ? '' : String(setup.source.pdfPage),
-	sections: setup.sections ? editableSections(setup.sections) : emptySections(),
+	sections: editableSections(setup.sections),
 	unmappedValues: setup.unmappedValues
 		? JSON.stringify(setup.unmappedValues, null, 2)
 		: '',
