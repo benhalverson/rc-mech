@@ -31,6 +31,26 @@ const mockR2 = {
 	list: async () => ({ objects: [], truncated: false }),
 } as unknown as R2Bucket;
 
+const mockAi = {
+	aiGatewayLogId: null,
+	gateway: () => {
+		throw new Error('Unexpected Workers AI gateway call in backend tests');
+	},
+	aiSearch: () => {
+		throw new Error('Unexpected AI Search call in backend tests');
+	},
+	autorag: () => {
+		throw new Error('Unexpected AutoRAG call in backend tests');
+	},
+	run: () => {
+		throw new Error('Unexpected Workers AI call in backend tests');
+	},
+	models: async () => [],
+	toMarkdown: () => {
+		throw new Error('Unexpected Markdown conversion in backend tests');
+	},
+} satisfies Ai;
+
 const MOCK_ENV = {
 	DB: mockD1(),
 	PHOTOS: mockR2,
@@ -39,6 +59,7 @@ const MOCK_ENV = {
 			throw new Error('Unexpected email delivery in backend tests');
 		},
 	},
+	AI: mockAi,
 	ASSETS: {
 		fetch: async (input: RequestInfo | URL) => {
 			const request = new Request(input);
@@ -76,6 +97,15 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	expect(document.paths['/api/v1/service-records']).toBeDefined();
 	expect(document.paths['/api/v1/consumable-maintenance']).toBeDefined();
 	expect(document.paths['/api/v1/consumables/report']).toBeDefined();
+	expect(document.paths['/api/v1/cars/{carId}/voice-updates']).toBeDefined();
+	expect(
+		document.paths['/api/v1/voice-updates/{voiceUpdateId}/confirm'],
+	).toBeDefined();
+	expect(
+		document.paths[
+			'/api/v1/voice-updates/{voiceUpdateId}/corrections/{correctionId}/audio'
+		],
+	).toBeDefined();
 	const registration = document.paths['/api/auth/register'] as {
 		post: { responses: Record<string, unknown> };
 	};

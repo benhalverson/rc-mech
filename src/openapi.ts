@@ -1438,3 +1438,154 @@ invitePaths['/api/v1/invite-codes/{id}/revoke'] = {
 		},
 	},
 };
+
+const voicePaths = openApi.paths as Record<string, unknown>;
+const voiceUpdateIdParameter = {
+	name: 'voiceUpdateId',
+	in: 'path',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+};
+voicePaths['/api/v1/cars/{carId}/voice-updates'] = {
+	parameters: [carIdParameter],
+	get: {
+		summary: 'List owner-scoped voice track notes for a car',
+		responses: {
+			200: { description: 'Voice updates and processing states' },
+			404: { description: 'Car not found' },
+		},
+	},
+	post: {
+		summary: 'Store an idempotent private audio or text track note',
+		requestBody: {
+			required: true,
+			content: {
+				'multipart/form-data': {
+					schema: {
+						type: 'object',
+						required: ['captureId', 'file'],
+						properties: {
+							captureId: { type: 'string', format: 'uuid' },
+							driveSessionId: { type: 'string' },
+							file: { type: 'string', format: 'binary' },
+						},
+					},
+				},
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['captureId', 'text'],
+						properties: {
+							captureId: { type: 'string', format: 'uuid' },
+							text: { type: 'string', maxLength: 20000 },
+							driveSessionId: { type: 'string', nullable: true },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Private pending voice artifact created' },
+			200: { description: 'Existing capture returned for idempotent retry' },
+			400: { description: 'Invalid capture' },
+			404: { description: 'Car or drive session not found' },
+			409: { description: 'Archived car or capture collision' },
+		},
+	},
+};
+voicePaths['/api/v1/voice-updates/{voiceUpdateId}'] = {
+	parameters: [voiceUpdateIdParameter],
+	get: {
+		summary: 'Read voice provenance and derived record links',
+		responses: {
+			200: { description: 'Owner-scoped voice update' },
+			404: { description: 'Voice update not found' },
+		},
+	},
+	patch: {
+		summary: 'Correct a pending voice context or review draft',
+		responses: {
+			200: { description: 'Voice update corrected' },
+			409: { description: 'Voice update is read-only' },
+		},
+	},
+	delete: {
+		summary:
+			'Discard a pending capture or remove saved audio without deleting derived history',
+		responses: {
+			200: { description: 'Artifact policy applied' },
+			409: { description: 'Archived provenance is read-only' },
+		},
+	},
+};
+voicePaths['/api/v1/voice-updates/{voiceUpdateId}/audio'] = {
+	parameters: [voiceUpdateIdParameter],
+	get: {
+		summary: 'Stream an owner-scoped private original recording',
+		responses: {
+			200: { description: 'Private audio stream' },
+			404: { description: 'Recording not found' },
+		},
+	},
+};
+voicePaths[
+	'/api/v1/voice-updates/{voiceUpdateId}/corrections/{correctionId}/audio'
+] = {
+	parameters: [
+		voiceUpdateIdParameter,
+		{
+			name: 'correctionId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	get: {
+		summary: 'Stream an owner-scoped private voice correction recording',
+		responses: {
+			200: { description: 'Private correction audio stream' },
+			404: { description: 'Correction recording not found' },
+		},
+	},
+};
+voicePaths['/api/v1/voice-updates/{voiceUpdateId}/process'] = {
+	parameters: [voiceUpdateIdParameter],
+	post: {
+		summary: 'Transcribe and extract a review-only update draft',
+		responses: {
+			200: { description: 'Reviewable draft created' },
+			202: { description: 'Already processing' },
+			502: { description: 'Retryable provider failure' },
+		},
+	},
+};
+voicePaths['/api/v1/voice-updates/{voiceUpdateId}/corrections'] = {
+	parameters: [voiceUpdateIdParameter],
+	post: {
+		summary: 'Apply a short voice or text correction to a review draft',
+		responses: {
+			200: { description: 'Corrected review draft' },
+			409: { description: 'Draft is not reviewable' },
+		},
+	},
+};
+voicePaths['/api/v1/voice-updates/{voiceUpdateId}/confirm'] = {
+	parameters: [voiceUpdateIdParameter],
+	post: {
+		summary: 'Idempotently save confirmed facts to immutable garage history',
+		responses: {
+			200: { description: 'Voice update and created record links' },
+			409: { description: 'Unresolved facts still require an explicit choice' },
+		},
+	},
+};
+voicePaths['/api/v1/voice-updates/{voiceUpdateId}/results'] = {
+	parameters: [voiceUpdateIdParameter],
+	get: {
+		summary: 'Read voice provenance and created record links',
+		responses: {
+			200: { description: 'Voice update result provenance' },
+			404: { description: 'Voice update not found' },
+		},
+	},
+};

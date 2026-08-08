@@ -65,7 +65,14 @@ test('invite registration, management, isolation, and accessible states', async 
 	});
 	expect(carResponse.ok()).toBe(true);
 	const created = (await carResponse.json()) as { car: { id: string } };
-	for (const section of ['overview', 'build', 'setups', 'photos', 'runs']) {
+	for (const section of [
+		'overview',
+		'build',
+		'setups',
+		'photos',
+		'runs',
+		'voice',
+	]) {
 		await page.goto(`/garage/${created.car.id}/${section}`);
 		await expect(page).toHaveURL(
 			new RegExp(`/garage/${created.car.id}/${section}$`),

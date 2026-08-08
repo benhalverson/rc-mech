@@ -14,7 +14,7 @@ import { createEmailSender } from './email';
 import * as schema from './schema';
 import { inviteCode } from './schema';
 
-type AuthEnv = Env & {
+type AuthEnv = Pick<Env, 'DB' | 'EMAIL'> & {
 	APP_URL?: string;
 	BETTER_AUTH_SECRET?: string;
 	EMAIL_FROM?: string;

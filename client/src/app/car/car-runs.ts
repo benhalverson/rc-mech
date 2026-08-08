@@ -1,6 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Component, effect, inject, input, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import {
 	FormField,
 	required,
@@ -71,14 +72,14 @@ const emptyForm = (): DriveForm => ({
 
 @Component({
 	selector: 'app-car-runs',
-	imports: [CarSectionShell, DatePipe, FormField],
+	imports: [CarSectionShell, DatePipe, FormField, RouterLink],
 	template: `
 		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
 		@else if (carStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
 		@else if (carStore.car(); as car) {
 			<app-car-section-shell [car]="car" section="runs">
 				<section class="session-log" aria-labelledby="runs-title">
-					<div class="section-heading"><div><div class="eyebrow">Drive history</div><h3 id="runs-title">The run log</h3></div><span><strong>{{ runsStore.activeCount() }}</strong> recorded</span>@if (!car.archivedAt && !editing()) { <button class="button" type="button" (click)="openAdd()" [disabled]="action() !== null">Record a drive</button> }</div>
+					<div class="section-heading"><div><div class="eyebrow">Drive history</div><h3 id="runs-title">The run log</h3></div><span><strong>{{ runsStore.activeCount() }}</strong> recorded</span>@if (!car.archivedAt && !editing()) { <a class="button" [routerLink]="['/garage', car.id, 'voice']">Voice track log</a><button class="button" type="button" (click)="openAdd()" [disabled]="action() !== null">Record a drive</button> }</div>
 					@if (editing()) { <form (submit)="save($event)" aria-labelledby="run-form-title" [attr.aria-describedby]="formError() ? 'run-form-error' : null" novalidate><h4 id="run-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive' }}</h4>@if (formError()) { <p id="run-form-error" role="alert">{{ formError() }}</p> }<div class="form-grid"><label>Started <input type="datetime-local" [formField]="runForm.startedAt" [attr.aria-describedby]="runForm.startedAt().invalid() && formError() ? 'run-form-error' : null" /></label><label>Duration (minutes) <input type="text" inputmode="numeric" [formField]="runForm.durationMinutes" [attr.aria-describedby]="runForm.durationMinutes().invalid() && formError() ? 'run-form-error' : null" /></label><label class="wide">Conditions <input [formField]="runForm.conditions" /></label><label class="wide">Notes <textarea rows="3" [formField]="runForm.notes"></textarea></label></div><p>Saved in {{ runsStore.timezone() }}.</p><div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save session</button><button type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div></form> }
 					@else if (runsStore.loading()) { <div class="state-card" role="status">Opening the run log…</div> }
 					@else if (runsStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="runsStore.retry()">Try again</button> }</div> }

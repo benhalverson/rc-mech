@@ -161,6 +161,55 @@ export const photo = sqliteTable('photo', {
 	createdAt: text('created_at').notNull(),
 });
 
+export const voiceUpdate = sqliteTable('voice_update', {
+	id: id('id'),
+	ownerId: text('owner_id')
+		.notNull()
+		.references(() => owner.id),
+	carId: text('car_id')
+		.notNull()
+		.references(() => car.id),
+	driveSessionId: text('drive_session_id').references(() => driveSession.id),
+	objectKey: text('object_key').unique(),
+	contentType: text('content_type'),
+	fileName: text('file_name'),
+	byteSize: integer('byte_size').notNull().default(0),
+	status: text('status').notNull().default('pending'),
+	transcript: text('transcript'),
+	draftJson: text('draft_json'),
+	correctionsJson: text('corrections_json'),
+	clarificationPrompt: text('clarification_prompt'),
+	error: text('error'),
+	confirmedAt: text('confirmed_at'),
+	artifactDeletedAt: text('artifact_deleted_at'),
+	createdAt: text('created_at').notNull(),
+	updatedAt: text('updated_at').notNull(),
+});
+
+export const voiceProblemNote = sqliteTable('voice_problem_note', {
+	id: id('id'),
+	voiceUpdateId: text('voice_update_id')
+		.notNull()
+		.references(() => voiceUpdate.id),
+	carId: text('car_id')
+		.notNull()
+		.references(() => car.id),
+	driveSessionId: text('drive_session_id').references(() => driveSession.id),
+	note: text('note').notNull(),
+	createdAt: text('created_at').notNull(),
+});
+
+export const voiceUpdateResult = sqliteTable('voice_update_result', {
+	id: id('id'),
+	voiceUpdateId: text('voice_update_id')
+		.notNull()
+		.references(() => voiceUpdate.id),
+	kind: text('kind').notNull(),
+	recordId: text('record_id').notNull(),
+	label: text('label').notNull(),
+	createdAt: text('created_at').notNull(),
+});
+
 export const owner = sqliteTable('owner', {
 	id: id('id'),
 	name: text('name').notNull(),

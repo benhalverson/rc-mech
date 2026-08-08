@@ -434,3 +434,110 @@ export const consumableUpdateInput = z
 	);
 export type ConsumableInput = z.infer<typeof consumableInput>;
 export type ConsumableUpdateInput = z.infer<typeof consumableUpdateInput>;
+
+export const voiceConfidence = z.enum(['high', 'medium', 'low']);
+const voiceFactBase = {
+	confidence: voiceConfidence,
+	needsReview: z.boolean(),
+	sourceText: z.string().trim().min(1).max(2000),
+};
+export const voiceSetupSection = z.enum([
+	'context',
+	'vehicle',
+	'drivetrain',
+	'electronics',
+	'tires',
+	'shocks',
+	'frontSuspension',
+	'rearSuspension',
+]);
+export const voiceSetupChange = z.object({
+	...voiceFactBase,
+	section: voiceSetupSection,
+	field: z.string().trim().min(1).max(160),
+	value: z.union([z.string().max(4000), z.number().finite(), z.boolean()]),
+});
+export const voiceObservation = z.object({
+	...voiceFactBase,
+	text: z.string().trim().min(1).max(4000),
+});
+export const voiceCondition = z.object({
+	...voiceFactBase,
+	field: z.enum([
+		'track',
+		'event',
+		'surface',
+		'traction',
+		'moisture',
+		'condition',
+		'temperature',
+	]),
+	value: z.string().trim().min(1).max(1000),
+});
+export const voiceConsumable = z
+	.object({
+		...voiceFactBase,
+		kind: z.enum(['tires', 'fluid']),
+		axle: z.enum(['front', 'rear', 'both']).optional(),
+		details: z.string().trim().min(1).max(4000).optional(),
+		fluidArea: fluidArea.optional(),
+		customFluidArea: z.string().trim().min(1).max(160).optional(),
+		notes: z.string().trim().min(1).max(4000).optional(),
+	})
+	.superRefine((value, context) => {
+		if (value.kind === 'tires' && !value.axle)
+			context.addIssue({
+				code: 'custom',
+				message: 'Tire changes require an axle',
+				path: ['axle'],
+			});
+		if (value.kind === 'fluid' && !value.fluidArea)
+			context.addIssue({
+				code: 'custom',
+				message: 'Fluid changes require an area',
+				path: ['fluidArea'],
+			});
+		if (value.fluidArea === 'custom' && !value.customFluidArea)
+			context.addIssue({
+				code: 'custom',
+				message: 'Custom fluid changes require an area name',
+				path: ['customFluidArea'],
+			});
+	});
+
+export const voiceDraftInput = z.object({
+	setupChanges: z.array(voiceSetupChange).max(100),
+	problems: z.array(voiceObservation).max(100),
+	conditions: z.array(voiceCondition).max(100),
+	driveSessionNotes: z.array(voiceObservation).max(100),
+	consumables: z.array(voiceConsumable).max(100),
+	unmappedNotes: z.array(z.string().trim().min(1).max(4000)).max(100),
+	unresolvedNotes: z.array(z.string().trim().min(1).max(4000)).max(100),
+});
+
+export const voiceCaptureId = z.string().uuid();
+export const voiceTextCaptureInput = z.object({
+	captureId: voiceCaptureId,
+	text: z.string().trim().min(1).max(20_000),
+	driveSessionId: z.string().min(1).max(160).nullable().optional(),
+});
+export const voiceContextUpdateInput = z
+	.object({
+		carId: z.string().min(1).max(160).optional(),
+		driveSessionId: z.string().min(1).max(160).nullable().optional(),
+		draft: voiceDraftInput.optional(),
+		correction: z.string().trim().min(1).max(4000).optional(),
+	})
+	.refine(
+		(value) => Object.keys(value).length > 0,
+		'At least one voice update field is required',
+	);
+export const voiceCorrectionInput = z.object({
+	text: z.string().trim().min(1).max(20_000),
+});
+export const voiceConfirmInput = z.object({
+	acceptUnresolvedAsNotes: z.boolean().optional(),
+});
+
+export type VoiceDraft = z.infer<typeof voiceDraftInput>;
+export type VoiceCorrectionInput = z.infer<typeof voiceCorrectionInput>;

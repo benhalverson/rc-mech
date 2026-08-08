@@ -33,8 +33,9 @@ describe('protected workspace routes', () => {
 			'garage/:carId/build',
 			'garage/:carId/photos',
 			'garage/:carId/runs',
+			'garage/:carId/voice',
 		]);
-		expect(new Set(carRoutes.map((route) => route.loadChildren)).size).toBe(5);
+		expect(new Set(carRoutes.map((route) => route.loadChildren)).size).toBe(6);
 		for (const route of carRoutes) {
 			expect(route.canMatch).toHaveLength(1);
 			expect(route.loadChildren).toBeTypeOf('function');

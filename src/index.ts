@@ -13,6 +13,7 @@ import { createInviteRoutes } from './routes/invites';
 import { createMaintenanceRoutes } from './routes/maintenance';
 import { createPhotosRoutes } from './routes/photos';
 import { createSetupsRoutes } from './routes/setups';
+import { createVoiceRoutes } from './routes/voice';
 import { spaFallback } from './spa-fallback';
 import type { AppEnv } from './types';
 
@@ -52,6 +53,7 @@ export const createApp = (
 	app.route('/api/v1', createSetupsRoutes());
 	app.route('/api/v1', createPhotosRoutes());
 	app.route('/api/v1', createMaintenanceRoutes());
+	app.route('/api/v1', createVoiceRoutes(dependencies));
 
 	app.all('/api', (c) => c.json({ error: 'Not found' }, 404));
 	app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
