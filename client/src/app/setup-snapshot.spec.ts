@@ -148,6 +148,34 @@ describe('setup snapshot clients', () => {
 		expect(Object.keys(preview?.sections ?? {})).toHaveLength(8);
 	});
 
+	it('ignores null and non-object import metadata', () => {
+		for (const [index, metadata] of [null, 'invalid', ['invalid']].entries()) {
+			let preview: SoDialedImportPreview | undefined;
+			const url = `https://sodialed.com/setup/fallback${index}`;
+			importer.preview(url, 'car-1').subscribe((value) => {
+				preview = value;
+			});
+			http.expectOne('/api/v1/setup-imports/drafts').flush({
+				draft: {
+					id: `draft-fallback-${index}`,
+					sourceUrl: url,
+					sourceIdentity: {},
+					source: { url, hasPdfReference: false, metadata },
+					knownValues: {},
+					uncertainValues: {},
+					rawValues: {},
+					unmappedValues: {},
+				},
+			});
+			expect(preview?.source).toEqual({
+				url,
+				pdfUrl: null,
+				pdfTitle: null,
+				pdfPage: null,
+			});
+		}
+	});
+
 	it('updates, cancels, and accepts import drafts with credentials', () => {
 		importer.update('draft/1', { carId: 'car-2' }).subscribe();
 		const update = http.expectOne('/api/v1/setup-imports/drafts/draft/1');

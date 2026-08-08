@@ -178,7 +178,7 @@ type ImportDraft = {
 	source: {
 		url: string;
 		hasPdfReference?: boolean;
-		metadata?: Record<string, unknown> | null;
+		metadata?: unknown;
 	};
 	knownValues: Record<string, unknown>;
 	uncertainValues: Record<string, unknown>;
@@ -193,41 +193,47 @@ type ImportDraftPatch = {
 	unmappedValues?: Record<string, unknown>;
 	sourceMetadata?: Record<string, unknown>;
 };
-const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => ({
-	draftId: draft.id,
-	source: {
-		...draft.source.metadata,
-		url: draft.source.url,
-		pdfUrl: null,
-		pdfTitle: draft.source.hasPdfReference ? 'Original setup PDF' : null,
-		pdfPage:
-			typeof (draft.source.metadata as { pdfPage?: unknown } | null)
-				?.pdfPage === 'number'
-				? ((draft.source.metadata as { pdfPage?: unknown }).pdfPage as number)
-				: null,
-	},
-	carIdentity: {
-		name:
-			typeof (draft.sourceIdentity as { name?: unknown }).name === 'string'
-				? ((draft.sourceIdentity as { name?: unknown }).name as string)
-				: null,
-		make:
-			typeof (draft.sourceIdentity as { make?: unknown }).make === 'string'
-				? ((draft.sourceIdentity as { make?: unknown }).make as string)
-				: null,
-		model:
-			typeof (draft.sourceIdentity as { model?: unknown }).model === 'string'
-				? ((draft.sourceIdentity as { model?: unknown }).model as string)
-				: null,
-	},
-	context: (draft.knownValues as { context?: SetupContext }).context ?? {},
-	sections:
-		(draft.knownValues as { sections?: SetupSections }).sections ??
-		emptyImportSections(),
-	uncertainValues: draft.uncertainValues,
-	unmappedValues: draft.unmappedValues,
-	rawValues: draft.rawValues,
-});
+const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => {
+	const rawMetadata = draft.source.metadata;
+	const metadata =
+		rawMetadata !== null &&
+		typeof rawMetadata === 'object' &&
+		!Array.isArray(rawMetadata)
+			? (rawMetadata as Record<string, unknown>)
+			: {};
+	const pdfPage = metadata['pdfPage'];
+	return {
+		draftId: draft.id,
+		source: {
+			...metadata,
+			url: draft.source.url,
+			pdfUrl: null,
+			pdfTitle: draft.source.hasPdfReference ? 'Original setup PDF' : null,
+			pdfPage: typeof pdfPage === 'number' ? pdfPage : null,
+		},
+		carIdentity: {
+			name:
+				typeof (draft.sourceIdentity as { name?: unknown }).name === 'string'
+					? ((draft.sourceIdentity as { name?: unknown }).name as string)
+					: null,
+			make:
+				typeof (draft.sourceIdentity as { make?: unknown }).make === 'string'
+					? ((draft.sourceIdentity as { make?: unknown }).make as string)
+					: null,
+			model:
+				typeof (draft.sourceIdentity as { model?: unknown }).model === 'string'
+					? ((draft.sourceIdentity as { model?: unknown }).model as string)
+					: null,
+		},
+		context: (draft.knownValues as { context?: SetupContext }).context ?? {},
+		sections:
+			(draft.knownValues as { sections?: SetupSections }).sections ??
+			emptyImportSections(),
+		uncertainValues: draft.uncertainValues,
+		unmappedValues: draft.unmappedValues,
+		rawValues: draft.rawValues,
+	};
+};
 const emptyImportSections = (): SetupSections =>
 	Object.fromEntries(setupSectionKeys.map((key) => [key, {}])) as SetupSections;
 
