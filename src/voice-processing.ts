@@ -180,6 +180,9 @@ const extractionJsonSchema = {
 const extractionInstructions = `Convert an RC car track-side voice note into a review draft.
 Never invent a number, axle, direction, setup section, car, or track. Mark uncertain facts needsReview=true and use low or medium confidence. Keep every unmatched observation in unmappedNotes. Use context setup fields only for track, event, surface, traction, moisture, condition, and temperature. Use setupChanges for actual car setup deltas. Use problems for symptoms or handling problems. Use driveSessionNotes for run observations. Use consumables only for explicitly stated tire-set or shock/differential-fluid work. If a missing answer blocks safe attribution or a precise change, ask one short clarificationPrompt. Otherwise set clarificationPrompt to null.`;
 
+const extractionOutputInstructions = `${extractionInstructions}
+Return only one JSON object matching this JSON Schema: ${JSON.stringify(extractionJsonSchema)}`;
+
 const transcribe = async (
 	env: Pick<Env, 'AI'>,
 	request: VoiceProcessingRequest,
@@ -212,6 +215,42 @@ const responseText = (value: unknown): string => {
 	throw new Error('The extraction provider returned no response');
 };
 
+const responseJson = (value: unknown): unknown => {
+	const text = responseText(value).trim();
+	const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
+	return JSON.parse(fenced?.[1] ?? text);
+};
+
+const jsonModeCouldNotBeMet = (error: unknown): boolean =>
+	error instanceof Error &&
+	/JSON Mo(?:de|del) couldn't be met/.test(error.message);
+
+const extractDraft = async (
+	env: Pick<Env, 'AI'>,
+	messages: { role: 'system' | 'user'; content: string }[],
+): Promise<unknown> => {
+	const request = {
+		messages,
+		temperature: 0,
+		max_tokens: 4096,
+	};
+	const options = { tags: ['rc-mech', 'voice-track-log'] };
+	try {
+		return await env.AI.run(
+			'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+			{ ...request, response_format: { type: 'json_object' } },
+			options,
+		);
+	} catch (error) {
+		if (!jsonModeCouldNotBeMet(error)) throw error;
+		return env.AI.run(
+			'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+			request,
+			options,
+		);
+	}
+};
+
 export const createWorkersAiVoiceProcessor = (
 	env: Pick<Env, 'AI'>,
 ): VoiceProcessor => ({
@@ -220,26 +259,14 @@ export const createWorkersAiVoiceProcessor = (
 		const correctionContext = request.previous
 			? `This is a correction. Original transcript: ${request.previous.transcript}\nCurrent draft: ${JSON.stringify(request.previous.draft)}\nCorrection: ${transcript}`
 			: `Voice note: ${transcript}`;
-		const result = await env.AI.run(
-			'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+		const result = await extractDraft(env, [
+			{ role: 'system', content: extractionOutputInstructions },
 			{
-				messages: [
-					{ role: 'system', content: extractionInstructions },
-					{
-						role: 'user',
-						content: `Context: ${JSON.stringify(request.context)}\n${correctionContext}`,
-					},
-				],
-				response_format: {
-					type: 'json_schema',
-					json_schema: extractionJsonSchema,
-				},
-				temperature: 0,
-				max_tokens: 4096,
+				role: 'user',
+				content: `Context: ${JSON.stringify(request.context)}\n${correctionContext}`,
 			},
-			{ tags: ['rc-mech', 'voice-track-log'] },
-		);
-		const parsed = extractionResult.parse(JSON.parse(responseText(result)));
+		]);
+		const parsed = extractionResult.parse(responseJson(result));
 		return {
 			transcript,
 			draft: parsed.draft,

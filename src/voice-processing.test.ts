@@ -25,7 +25,7 @@ const request = (
 });
 
 describe('Workers AI voice processor', () => {
-	test('extracts a text fallback with schema-constrained JSON', async () => {
+	test('extracts a text fallback with JSON object mode and runtime validation', async () => {
 		const { env } = createHonoFixture();
 		const run = vi.spyOn(env.AI, 'run');
 		const calls = run.mock.calls as unknown as [unknown, unknown?][];
@@ -45,6 +45,66 @@ describe('Workers AI voice processor', () => {
 		});
 		expect(run).toHaveBeenCalledOnce();
 		expect(calls[0]?.[0]).toBe('@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+		expect(calls[0]?.[1]).toMatchObject({
+			response_format: { type: 'json_object' },
+		});
+	});
+
+	test.each([
+		"5024: JSON Model couldn't be met",
+		"5024: JSON Mode couldn't be met",
+	])('falls back to prompted JSON after %s', async (providerError) => {
+		const { env } = createHonoFixture();
+		const run = vi.spyOn(env.AI, 'run');
+		const calls = run.mock.calls as unknown as [unknown, unknown?][];
+		run.mockRejectedValueOnce(new Error(providerError));
+		run.mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: emptyDraft,
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request()),
+		).resolves.toMatchObject({
+			transcript: 'The car pushed on corner exit',
+			draft: emptyDraft,
+		});
+		expect(run).toHaveBeenCalledTimes(2);
+		expect(calls[0]?.[1]).toMatchObject({
+			response_format: { type: 'json_object' },
+		});
+		expect(calls[1]?.[1]).not.toHaveProperty('response_format');
+		expect(JSON.stringify(calls[0]?.[1])).toContain('clarificationPrompt');
+	});
+
+	test('does not retry unrelated provider failures', async () => {
+		const { env } = createHonoFixture();
+		const run = vi
+			.spyOn(env.AI, 'run')
+			.mockRejectedValueOnce(new Error('Network connection lost'));
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request()),
+		).rejects.toThrow('Network connection lost');
+		expect(run).toHaveBeenCalledOnce();
+	});
+
+	test('accepts a JSON object wrapped in a provider Markdown fence', async () => {
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockResolvedValueOnce({
+			response: `\`\`\`json
+${JSON.stringify({ draft: emptyDraft, clarificationPrompt: null })}
+\`\`\``,
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request()),
+		).resolves.toMatchObject({
+			draft: emptyDraft,
+			clarificationPrompt: null,
+		});
 	});
 
 	test('transcribes audio before extracting the draft', async () => {
