@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { z } from 'zod';
-import { type VoiceDraft, voiceDraftInput } from './types';
+import { type VoiceDraft, voiceCondition, voiceDraftInput } from './types';
 
 export type VoiceProcessingContext = {
 	carName: string;
@@ -222,6 +222,16 @@ const extractionJsonSchema = {
 			type: 'object',
 			additionalProperties: false,
 			required: ['kind', 'confidence', 'needsReview', 'sourceText'],
+			oneOf: [
+				{
+					properties: { kind: { const: 'tires' } },
+					required: ['axle'],
+				},
+				{
+					properties: { kind: { const: 'fluid' } },
+					required: ['fluidArea'],
+				},
+			],
 			properties: {
 				kind: { type: 'string', enum: ['tires', 'fluid'] },
 				axle: { type: 'string', enum: ['front', 'rear', 'both'] },
@@ -247,7 +257,7 @@ const extractionJsonSchema = {
 } as const;
 
 const extractionInstructions = `Convert an RC car track-side voice note into a review draft.
-Never invent a number, axle, direction, setup section, car, or track. Mark uncertain facts needsReview=true and use low or medium confidence. Keep every unmatched observation in unmappedNotes. Use context setup fields only for track, event, surface, traction, moisture, condition, and temperature. Use setupChanges for actual car setup deltas. Use problems for symptoms or handling problems. Use driveSessionNotes for run observations. Use consumables only for explicitly stated tire-set or shock/differential-fluid work. If a missing answer blocks safe attribution or a precise change, ask one short clarificationPrompt. Otherwise set clarificationPrompt to null.`;
+Never invent a number, axle, direction, setup section, car, or track. Mark uncertain facts needsReview=true and use low or medium confidence. Keep every unmatched observation in unmappedNotes. Use context setup fields only for track, event, surface, traction, moisture, condition, and temperature. Use setupChanges for actual car setup deltas. Use problems for symptoms or handling problems. Use driveSessionNotes for run observations. Use consumables only for completed tire-set or shock/differential-fluid work, never for work the user only thinks may be needed. Pushing or understeer commonly indicates worn or low-grip front tires: when the user mentions pushing plus a possible tire need, add "Front tires may be worn" as a medium-confidence problem that needs review, do not add a consumable, and ask whether the front tires are worn or a different tire set was meant. If completed tire work does not identify front, rear, or both, keep it unresolved and ask which axle instead of emitting an incomplete consumable. If a missing answer blocks safe attribution or a precise change, ask one short clarificationPrompt. Otherwise set clarificationPrompt to null.`;
 
 const extractionOutputInstructions = `${extractionInstructions}
 Return only one JSON object matching this JSON Schema: ${JSON.stringify(extractionJsonSchema)}`;
@@ -296,6 +306,97 @@ const responseJson = (value: unknown): unknown => {
 	const text = responseText(value).trim();
 	const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
 	return JSON.parse(fenced?.[1] ?? text);
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null;
+
+const isTireConsumable = (value: unknown): value is Record<string, unknown> =>
+	isRecord(value) && value.kind === 'tires';
+
+const isTireConsumableWithoutAxle = (value: unknown): boolean =>
+	isTireConsumable(value) && !('axle' in value);
+
+const frontTireHypothesis = (value: unknown, transcript: string): unknown => {
+	if (
+		!/\b(push(?:es|ed|ing)?|understeer(?:s|ed|ing)?)\b/i.test(transcript) ||
+		!/\btires?\b/i.test(transcript) ||
+		!/\b(need(?:s|ed|ing)?|worn|wear(?:ing)?|wore|replac(?:e|es|ed|ing|ement))\b/i.test(
+			transcript,
+		) ||
+		!isRecord(value) ||
+		!isRecord(value.draft) ||
+		!Array.isArray(value.draft.problems) ||
+		!Array.isArray(value.draft.conditions) ||
+		!Array.isArray(value.draft.consumables)
+	)
+		return value;
+	const sourceText = transcript.slice(0, 2000);
+	return {
+		...value,
+		draft: {
+			...value.draft,
+			problems: [
+				...value.draft.problems.filter(
+					(item) =>
+						!isRecord(item) ||
+						typeof item.text !== 'string' ||
+						!/front tires? may be worn/i.test(item.text),
+				),
+				{
+					text: 'Front tires may be worn',
+					confidence: 'medium',
+					needsReview: true,
+					sourceText,
+				},
+			],
+			conditions: value.draft.conditions.filter(
+				(item) => voiceCondition.safeParse(item).success,
+			),
+			consumables: value.draft.consumables.filter(
+				(item) => !isTireConsumable(item),
+			),
+		},
+		clarificationPrompt:
+			'Are the front tires worn, or did you mean a different tire set?',
+	};
+};
+
+const unresolvedAmbiguousTires = (value: unknown): unknown => {
+	if (
+		!isRecord(value) ||
+		!isRecord(value.draft) ||
+		!Array.isArray(value.draft.consumables) ||
+		!Array.isArray(value.draft.unresolvedNotes)
+	)
+		return value;
+	const draft = value.draft;
+	const consumables = value.draft.consumables;
+	const unresolvedNotes = value.draft.unresolvedNotes;
+	const incompleteTires = consumables.filter(isTireConsumableWithoutAxle);
+	if (!incompleteTires.length) return value;
+	const sourceTexts = incompleteTires.flatMap((item) =>
+		isRecord(item) && typeof item.sourceText === 'string'
+			? [item.sourceText]
+			: [],
+	);
+	if (sourceTexts.length !== incompleteTires.length) return value;
+	return {
+		...value,
+		draft: {
+			...draft,
+			consumables: consumables.filter(
+				(item) => !isTireConsumableWithoutAxle(item),
+			),
+			unresolvedNotes: [
+				...unresolvedNotes,
+				...sourceTexts.filter(
+					(sourceText) => !unresolvedNotes.includes(sourceText),
+				),
+			],
+		},
+		clarificationPrompt: 'Are the tires front, rear, or both?',
+	};
 };
 
 const jsonModeCouldNotBeMet = (error: unknown): boolean =>
@@ -350,7 +451,11 @@ export const createWorkersAiVoiceProcessor = (
 		}
 		let parsed: z.infer<typeof extractionResult>;
 		try {
-			parsed = extractionResult.parse(responseJson(result));
+			parsed = extractionResult.parse(
+				unresolvedAmbiguousTires(
+					frontTireHypothesis(responseJson(result), transcript),
+				),
+			);
 		} catch (error) {
 			throw processingError('validation', error);
 		}
