@@ -37,17 +37,36 @@ export type VoiceProcessingStage =
 	| 'validation'
 	| 'persistence';
 
+export const NO_SPEECH_DETECTED_MESSAGE =
+	'No speech was detected in the recording';
+
+type VoiceProcessingErrorCode = 'processing-failed' | 'no-speech';
+
+type VoiceProcessingErrorOptions = ErrorOptions & {
+	code?: VoiceProcessingErrorCode;
+};
+
 export class VoiceProcessingError extends Error {
+	readonly code: VoiceProcessingErrorCode;
+
 	constructor(
 		message: string,
 		readonly stage: VoiceProcessingStage,
 		readonly attemptCount: number,
-		options?: ErrorOptions,
+		options?: VoiceProcessingErrorOptions,
 	) {
 		super(message, options);
 		this.name = options?.cause instanceof Error ? options.cause.name : 'Error';
+		this.code = options?.code ?? 'processing-failed';
 	}
 }
+
+export const isNoSpeechProcessingError = (
+	error: unknown,
+): error is VoiceProcessingError =>
+	error instanceof VoiceProcessingError &&
+	error.stage === 'transcription' &&
+	error.code === 'no-speech';
 
 const isInferenceUpstreamError = (error: unknown): boolean =>
 	error instanceof Error && error.name === 'InferenceUpstreamError';
@@ -252,9 +271,11 @@ const transcribe = async (
 	);
 	const transcript = result.text.trim();
 	if (!transcript)
-		throw processingError(
+		throw new VoiceProcessingError(
+			NO_SPEECH_DETECTED_MESSAGE,
 			'transcription',
-			new Error('No speech was detected in the recording'),
+			1,
+			{ code: 'no-speech' },
 		);
 	return transcript;
 };

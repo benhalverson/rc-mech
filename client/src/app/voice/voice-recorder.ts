@@ -63,6 +63,7 @@ export class VoiceRecorder {
 	private audioContext: AudioContext | null = null;
 	private analyser: AnalyserNode | null = null;
 	private levelTimer: ReturnType<typeof setInterval> | null = null;
+	private levelMonitoring = false;
 	private chunks: Blob[] = [];
 	private elapsedTimer: ReturnType<typeof setInterval> | null = null;
 	private recordingStartedAt = 0;
@@ -114,12 +115,15 @@ export class VoiceRecorder {
 				},
 			});
 			this.chunks = [];
+			const audioTracks = this.stream.getAudioTracks();
 			this.state.set({
 				inputLevel: 0,
 				audioDetected: false,
-				inputMuted: false,
+				inputMuted: audioTracks.some(
+					(track) => track.muted || track.readyState === 'ended',
+				),
 			});
-			for (const track of this.stream.getAudioTracks()) {
+			for (const track of audioTracks) {
 				const handlers = {
 					mute: () => this.state.set({ inputMuted: true }),
 					unmute: () => this.state.set({ inputMuted: false }),
@@ -167,12 +171,13 @@ export class VoiceRecorder {
 			};
 			recorder.onstop = () => {
 				const detected = this.audioDetected();
+				const monitored = this.levelMonitoring;
 				const blob = new Blob(this.chunks, {
 					type: recorder.mimeType || 'audio/webm',
 				});
 				this.release();
 				if (!blob.size) reject(new Error('The recording is empty.'));
-				else if (!detected)
+				else if (monitored && !detected)
 					reject(
 						new Error(
 							'No microphone audio was detected. Check the selected input and try again.',
@@ -196,6 +201,7 @@ export class VoiceRecorder {
 	}
 
 	private setupLevelMonitor(stream: MediaStream): void {
+		this.levelMonitoring = false;
 		const Context = (globalThis.AudioContext ??
 			(
 				globalThis as typeof globalThis & {
@@ -229,6 +235,7 @@ export class VoiceRecorder {
 					this.aboveThresholdSince = null;
 				}
 			}, 50);
+			this.levelMonitoring = true;
 		} catch {
 			this.audioContext?.close();
 			this.audioContext = null;
@@ -241,6 +248,7 @@ export class VoiceRecorder {
 		if (this.levelTimer !== null) clearInterval(this.levelTimer);
 		this.elapsedTimer = null;
 		this.levelTimer = null;
+		this.levelMonitoring = false;
 		this.recordingStartedAt = 0;
 		this.analyser?.disconnect();
 		this.analyser = null;

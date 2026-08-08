@@ -3,6 +3,7 @@ import { defaultAppDependencies } from './app-dependencies';
 import { createHonoFixture } from './testing/hono-fixture';
 import {
 	createWorkersAiVoiceProcessor,
+	NO_SPEECH_DETECTED_MESSAGE,
 	type VoiceProcessingRequest,
 	VoiceProcessingError,
 } from './voice-processing';
@@ -263,7 +264,11 @@ ${JSON.stringify({ draft: emptyDraft, clarificationPrompt: null })}
 					contentType: 'audio/webm',
 				}),
 			),
-		).rejects.toThrow('No speech');
+		).rejects.toMatchObject({
+			message: NO_SPEECH_DETECTED_MESSAGE,
+			stage: 'transcription',
+			code: 'no-speech',
+		});
 	});
 
 	test.each([{} as never, { response: 42 } as never])(

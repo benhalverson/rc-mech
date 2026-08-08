@@ -25,6 +25,8 @@ const harness = vi.hoisted(() => ({
 	emitFinal: true,
 	contextMode: 'works' as 'works' | 'error',
 	includeOrphan: false,
+	trackMuted: false,
+	trackReadyState: 'live' as MediaStreamTrackState,
 }));
 
 class FakeAnalyser {
@@ -88,8 +90,8 @@ const createTrack = (): TrackHarness => {
 		id: 'track-1',
 		label: 'Synthetic microphone',
 		enabled: true,
-		muted: false,
-		readyState: 'live',
+		muted: harness.trackMuted,
+		readyState: harness.trackReadyState,
 		contentHint: '',
 		stop,
 		clone: vi.fn(),
@@ -134,6 +136,8 @@ describe('VoiceRecorder', () => {
 		harness.emitFinal = true;
 		harness.contextMode = 'works';
 		harness.includeOrphan = false;
+		harness.trackMuted = false;
+		harness.trackReadyState = 'live';
 		getUserMedia = vi.fn(async () => {
 			const track = createTrack();
 			const orphan = createTrack();
@@ -221,6 +225,21 @@ describe('VoiceRecorder', () => {
 		expect(recorder.recording()).toBe(false);
 	});
 
+	it.each([
+		['muted', true, 'live'],
+		['ended', false, 'ended'],
+	] as const)(
+		'reflects an initially %s input track',
+		async (_case, muted, state) => {
+			harness.trackMuted = muted;
+			harness.trackReadyState = state;
+			const recorder = TestBed.inject(VoiceRecorder);
+			await recorder.start();
+			expect(recorder.inputMuted()).toBe(true);
+			recorder.cancel();
+		},
+	);
+
 	it('reports missing native recorder support', async () => {
 		vi.stubGlobal('MediaRecorder', undefined);
 		const recorder = TestBed.inject(VoiceRecorder);
@@ -288,13 +307,13 @@ describe('VoiceRecorder', () => {
 		vi.stubGlobal('AudioContext', undefined);
 		const noAnalyser = TestBed.inject(VoiceRecorder);
 		await noAnalyser.start();
-		await expect(noAnalyser.stop()).rejects.toThrow('No microphone audio');
+		await expect(noAnalyser.stop()).resolves.toBeInstanceOf(Blob);
 
 		vi.stubGlobal('AudioContext', FakeAudioContext);
 		harness.contextMode = 'error';
 		const brokenAnalyser = TestBed.inject(VoiceRecorder);
 		harness.includeOrphan = true;
 		await brokenAnalyser.start();
-		await expect(brokenAnalyser.stop()).rejects.toThrow('No microphone audio');
+		await expect(brokenAnalyser.stop()).resolves.toBeInstanceOf(Blob);
 	});
 });

@@ -4,7 +4,10 @@ import {
 	type MockD1Controller,
 } from './testing/hono-fixture';
 import type { VoiceProcessor } from './voice-processing';
-import { VoiceProcessingError } from './voice-processing';
+import {
+	NO_SPEECH_DETECTED_MESSAGE,
+	VoiceProcessingError,
+} from './voice-processing';
 
 const id = '35ecb4da-0bb4-46cc-85d6-b02c7b3d9552';
 const now = '2026-08-08T01:00:00.000Z';
@@ -222,16 +225,25 @@ describe('voice processing routes', () => {
 	});
 
 	test.each([
-		['provider failure', new Error('upstream'), 'could not be processed'],
-		['non-error provider failure', 'upstream', 'could not be processed'],
+		['provider failure', new Error('upstream'), 'could not be processed', 502],
+		['non-error provider failure', 'upstream', 'could not be processed', 502],
 		[
-			'no speech',
-			new Error('No speech was detected'),
+			'unstructured no-speech message',
+			new Error(NO_SPEECH_DETECTED_MESSAGE),
+			'could not be processed',
+			502,
+		],
+		[
+			'structured no-speech failure',
+			new VoiceProcessingError(NO_SPEECH_DETECTED_MESSAGE, 'transcription', 1, {
+				code: 'no-speech',
+			}),
 			'No speech was detected',
+			422,
 		],
 	] as const)(
 		'retains a retryable failed state after %s',
-		async (_case, failure, message) => {
+		async (_case, failure, message, status) => {
 			vi.spyOn(console, 'error').mockImplementation(() => undefined);
 			const { d1, request } = fixture(
 				processor(async () => Promise.reject(failure)),
@@ -246,7 +258,7 @@ describe('voice processing routes', () => {
 			const response = await request(`/api/v1/voice-updates/${id}/process`, {
 				method: 'POST',
 			});
-			expect(response.status).toBe(_case === 'no speech' ? 422 : 502);
+			expect(response.status).toBe(status);
 			expect((await response.json()) as { error: string }).toMatchObject({
 				error: expect.stringContaining(message),
 			});
@@ -511,6 +523,39 @@ describe('voice processing routes', () => {
 				)
 			).status,
 		).toBe(502);
+	});
+
+	test('reports no speech in a correction as user-actionable', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const { d1, request } = fixture(
+			processor(async () => {
+				throw new VoiceProcessingError(
+					NO_SPEECH_DETECTED_MESSAGE,
+					'transcription',
+					1,
+					{ code: 'no-speech' },
+				);
+			}),
+		);
+		d1.queue(
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify(emptyDraft),
+				}),
+			},
+			{ kind: 'first', value: car() },
+		);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'Rear, not front' }),
+		);
+		expect(response.status).toBe(422);
+		expect(await response.json()).toEqual({
+			error:
+				'No speech was detected in the correction. The original draft is unchanged; try again or use the text fallback.',
+		});
 	});
 
 	test('fails loudly if a corrected draft cannot be reloaded', async () => {

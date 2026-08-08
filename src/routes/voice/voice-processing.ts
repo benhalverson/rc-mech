@@ -19,7 +19,10 @@ import {
 	publicVoiceUpdate,
 	voiceResults,
 } from './voice-records';
-import { VoiceProcessingError } from '../../voice-processing';
+import {
+	isNoSpeechProcessingError,
+	VoiceProcessingError,
+} from '../../voice-processing';
 
 type CorrectionSource = { text?: string; file?: File };
 
@@ -68,12 +71,17 @@ const contextFor = async (
 };
 
 const processingFailureMessage = (error: unknown): string =>
-	error instanceof Error && error.message.includes('No speech')
+	isNoSpeechProcessingError(error)
 		? 'No speech was detected. Try again or use the text fallback.'
 		: 'The voice note could not be processed. Your recording is safe; try again.';
 
 const processingFailureStatus = (error: unknown): 422 | 502 =>
-	error instanceof Error && error.message.includes('No speech') ? 422 : 502;
+	isNoSpeechProcessingError(error) ? 422 : 502;
+
+const correctionFailureMessage = (error: unknown): string =>
+	isNoSpeechProcessingError(error)
+		? 'No speech was detected in the correction. The original draft is unchanged; try again or use the text fallback.'
+		: 'The correction could not be applied. The original draft is unchanged.';
 
 const processingFailureMetadata = (
 	error: unknown,
@@ -231,10 +239,9 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 			});
 			return c.json(
 				{
-					error:
-						'The correction could not be applied. The original draft is unchanged.',
+					error: correctionFailureMessage(error),
 				},
-				502,
+				processingFailureStatus(error),
 			);
 		}
 		const updated = await ownedVoiceUpdate(c, existing.id);
