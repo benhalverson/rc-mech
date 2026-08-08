@@ -1,11 +1,9 @@
 packages:
   - client
 
-ignoredBuiltDependencies:
+onlyBuiltDependencies:
   - '@parcel/watcher'
   - esbuild
-
-onlyBuiltDependencies:
   - lmdb
   - msgpackr-extract
   - workerd
