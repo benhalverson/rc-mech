@@ -22,7 +22,7 @@
 		"test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
 		"test:production": "bash scripts/production-acceptance.sh",
 		"check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
-		"check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run"
+		"check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run --env=\"\""
 	},
 	"dependencies": {
 		"@better-auth/drizzle-adapter": "^1.6.26",

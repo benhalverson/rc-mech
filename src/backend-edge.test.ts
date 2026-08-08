@@ -28,19 +28,21 @@ import {
 import { chooseCopySource, shouldSelectCurrentSetup } from './setup-policy';
 import {
 	consumableInsertValues,
-	draftValues,
-	fetchSoDialedSource,
-	jsonText,
-	jsonValue,
-	planDue,
 	publicConsumable,
-	publicImportDraft,
-	publicSetup,
+} from './routes/maintenance/consumable-records';
+import { planDue } from './routes/maintenance/plan-records';
+import { draftValues, publicImportDraft } from './routes/setups/import-records';
+import {
+	fetchSoDialedSource,
 	readLimitedText,
-	required,
+} from './routes/setups/import-source';
+import {
+	publicSetup,
 	setupCopyValue,
 	setupInsertValues,
-} from './routes/shared';
+} from './routes/setups/setup-records';
+import { required } from './routes/invariant';
+import { jsonText, jsonValue } from './routes/json-values';
 import {
 	consumableInput,
 	consumableUpdateInput,
