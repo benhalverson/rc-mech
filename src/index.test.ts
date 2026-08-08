@@ -122,12 +122,15 @@ test.each([
 	'/api/v1/service-records',
 	'/api/v1/consumable-maintenance',
 	'/api/v1/consumables/report',
-])('protected route %s requires authentication using the configured D1 binding', async (path) => {
-	const response = await request(path);
+])(
+	'protected route %s requires authentication using the configured D1 binding',
+	async (path) => {
+		const response = await request(path);
 
-	expect(response.status).toBe(401);
-	expect(await response.json()).toEqual({ error: 'Authentication required' });
-});
+		expect(response.status).toBe(401);
+		expect(await response.json()).toEqual({ error: 'Authentication required' });
+	},
+);
 
 test('authentication rejects invalid request input through the Worker interface', async () => {
 	const response = await request('/api/auth/sign-in/magic-link', {

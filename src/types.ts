@@ -236,14 +236,31 @@ const setupContext = {
 	unmappedValues: setupSection.optional(),
 };
 
-const nullableSetupContext = Object.fromEntries(
-	Object.entries(setupContext).map(([key, value]) => [
-		key,
-		key === 'name' || key === 'status'
-			? value
-			: (value as z.ZodTypeAny).nullable().optional(),
-	]),
-) as typeof setupContext;
+const nullableSetupContext = {
+	name: setupContext.name,
+	status: setupContext.status,
+	setupDate: setupContext.setupDate.nullable(),
+	track: setupContext.track.nullable(),
+	event: setupContext.event.nullable(),
+	surface: setupContext.surface.nullable(),
+	traction: setupContext.traction.nullable(),
+	moisture: setupContext.moisture.nullable(),
+	condition: setupContext.condition.nullable(),
+	temperature: setupContext.temperature.nullable(),
+	vehicle: setupContext.vehicle.nullable(),
+	drivetrain: setupContext.drivetrain.nullable(),
+	electronics: setupContext.electronics.nullable(),
+	tires: setupContext.tires.nullable(),
+	shocks: setupContext.shocks.nullable(),
+	frontSuspension: setupContext.frontSuspension.nullable(),
+	rearSuspension: setupContext.rearSuspension.nullable(),
+	notes: setupContext.notes.nullable(),
+	sourceUrl: setupContext.sourceUrl.nullable(),
+	sourcePdfReference: setupContext.sourcePdfReference.nullable(),
+	sourceMetadata: setupContext.sourceMetadata.nullable(),
+	rawValues: setupContext.rawValues.nullable(),
+	unmappedValues: setupContext.unmappedValues.nullable(),
+};
 
 export const setupInput = z.object({
 	...nullableSetupContext,
@@ -253,16 +270,9 @@ export type SetupInput = z.infer<typeof setupInput>;
 
 export const setupUpdateInput = z
 	.object({
-		...Object.fromEntries(
-			Object.entries(nullableSetupContext).map(([key, value]) => [
-				key,
-				key === 'name' || key === 'status'
-					? (
-							setupContext[key as keyof typeof setupContext] as z.ZodTypeAny
-						).optional()
-					: value,
-			]),
-		),
+		...nullableSetupContext,
+		name: setupContext.name.optional(),
+		status: setupContext.status,
 	})
 	.refine(
 		(value) => Object.keys(value).length > 0,
@@ -284,7 +294,7 @@ export const setupImportSourceUrl = z
 				url.hostname === 'www.sodialed.com') &&
 			url.username === '' &&
 			url.password === '' &&
-			(url.port === '' || url.port === '443') &&
+			url.port === '' &&
 			/^\/setup\/[A-Za-z0-9]+\/?$/.test(url.pathname)
 		);
 	}, 'Only supported So Dialed setup URLs are accepted');

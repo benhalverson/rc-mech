@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.3.7/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
@@ -26,7 +26,7 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"suspicious": {
 				"noExplicitAny": "error",
 				"noUnknownAtRules": "off"
@@ -56,5 +56,31 @@
 		"formatter": {
 			"quoteStyle": "single"
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["client/**/*.html"],
+			"linter": {
+				"rules": {
+					"a11y": {
+						"noLabelWithoutControl": "off",
+						"useAltText": "off",
+						"useAriaPropsSupportedByRole": "off",
+						"useSemanticElements": "off",
+						"useValidAnchor": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["client/**/*.spec.ts"],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnsafeOptionalChaining": "off"
+					}
+				}
+			}
+		}
+	]
 }

@@ -125,51 +125,50 @@ describe('Car section routes', () => {
 			],
 			visible: 'No drive sessions recorded',
 		},
-	])('deep-links to $path and requests only its section data', async ({
-		path,
-		urls,
-		visible,
-	}) => {
-		await harness.navigateByUrl(`/garage/car-1/${path}`);
-		const requests = http.match(() => true);
-		for (const request of requests) flush(request);
-		await Promise.resolve();
-		harness.detectChanges();
-		const nestedRequests: TestRequest[] = [];
-		if (path === 'setups' || path === 'photos') {
-			let nested: TestRequest | undefined;
-			await vi.waitFor(() => {
-				nested = http.expectOne(
-					path === 'setups'
-						? '/api/v1/cars/car-1/setups'
-						: '/api/v1/cars/car-1/photos',
-				);
-			});
-			if (nested) nestedRequests.push(nested);
-		}
-		for (const request of nestedRequests) flush(request);
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(
-			[...requests, ...nestedRequests]
-				.map((request) => request.request.url)
-				.sort(),
-		).toEqual([...urls].sort());
+	])(
+		'deep-links to $path and requests only its section data',
+		async ({ path, urls, visible }) => {
+			await harness.navigateByUrl(`/garage/car-1/${path}`);
+			const requests = http.match(() => true);
+			for (const request of requests) flush(request);
+			await Promise.resolve();
+			harness.detectChanges();
+			const nestedRequests: TestRequest[] = [];
+			if (path === 'setups' || path === 'photos') {
+				let nested: TestRequest | undefined;
+				await vi.waitFor(() => {
+					nested = http.expectOne(
+						path === 'setups'
+							? '/api/v1/cars/car-1/setups'
+							: '/api/v1/cars/car-1/photos',
+					);
+				});
+				if (nested) nestedRequests.push(nested);
+			}
+			for (const request of nestedRequests) flush(request);
+			await harness.fixture.whenStable();
+			harness.detectChanges();
+			expect(
+				[...requests, ...nestedRequests]
+					.map((request) => request.request.url)
+					.sort(),
+			).toEqual([...urls].sort());
 
-		expect(harness.routeNativeElement?.textContent).toContain(visible);
-		expect(
-			harness.routeNativeElement?.querySelector(
-				'[data-route-focus][tabindex="-1"]',
-			),
-		).toBeTruthy();
-		expect(
-			harness.routeNativeElement
-				?.querySelector(
-					'nav[aria-label="Car detail sections"] a[aria-current="page"]',
-				)
-				?.textContent?.toLowerCase(),
-		).toContain(path);
-	});
+			expect(harness.routeNativeElement?.textContent).toContain(visible);
+			expect(
+				harness.routeNativeElement?.querySelector(
+					'[data-route-focus][tabindex="-1"]',
+				),
+			).toBeTruthy();
+			expect(
+				harness.routeNativeElement
+					?.querySelector(
+						'nav[aria-label="Car detail sections"] a[aria-current="page"]',
+					)
+					?.textContent?.toLowerCase(),
+			).toContain(path);
+		},
+	);
 
 	it('shows a loading state and retries a failed car read', async () => {
 		await harness.navigateByUrl('/garage/car-1/overview');
@@ -204,24 +203,26 @@ describe('Car section routes', () => {
 			path: 'runs',
 			endpoint: '/api/v1/cars/car-1/drives',
 		},
-	])('explains an expired session on the $path read', async ({
-		path,
-		endpoint,
-	}) => {
-		await harness.navigateByUrl(`/garage/car-1/${path}`);
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === endpoint)
-			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		if (path === 'runs')
-			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
+	])(
+		'explains an expired session on the $path read',
+		async ({ path, endpoint }) => {
+			await harness.navigateByUrl(`/garage/car-1/${path}`);
+			http.expectOne('/api/v1/cars/car-1').flush({ car });
+			http
+				.expectOne((request) => request.url === endpoint)
+				.flush('expired', { status: 401, statusText: 'Unauthorized' });
+			if (path === 'runs')
+				http
+					.expectOne('/api/v1/preferences/timezone')
+					.flush({ timezone: 'UTC' });
+			await harness.fixture.whenStable();
+			harness.detectChanges();
 
-		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
-		expect(alert?.textContent).toContain('Your garage session has expired');
-		expect(alert?.querySelector('button')).toBeNull();
-	});
+			const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
+			expect(alert?.textContent).toContain('Your garage session has expired');
+			expect(alert?.querySelector('button')).toBeNull();
+		},
+	);
 
 	it('explains an expired session while preparing setup imports', async () => {
 		await harness.navigateByUrl('/garage/car-1/setups');
@@ -606,21 +607,22 @@ describe('Car section routes', () => {
 			endpoint: '/api/v1/cars/car%2Fone/drives',
 			body: { driveSessions: [] },
 		},
-	])('encodes reserved characters for $path reads', async ({
-		path,
-		endpoint,
-		body,
-	}) => {
-		await harness.navigateByUrl(`/garage/car%2Fone/${path}`);
-		http.expectOne('/api/v1/cars/car%2Fone').flush({
-			car: { ...car, id: 'car/one' },
-		});
-		http.expectOne((request) => request.url === endpoint).flush(body);
-		if (path === 'runs')
-			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-	});
+	])(
+		'encodes reserved characters for $path reads',
+		async ({ path, endpoint, body }) => {
+			await harness.navigateByUrl(`/garage/car%2Fone/${path}`);
+			http.expectOne('/api/v1/cars/car%2Fone').flush({
+				car: { ...car, id: 'car/one' },
+			});
+			http.expectOne((request) => request.url === endpoint).flush(body);
+			if (path === 'runs')
+				http
+					.expectOne('/api/v1/preferences/timezone')
+					.flush({ timezone: 'UTC' });
+			await harness.fixture.whenStable();
+			harness.detectChanges();
+		},
+	);
 
 	it('encodes reserved identifiers for drive mutations', async () => {
 		const session = {
@@ -781,21 +783,22 @@ describe('Car section routes', () => {
 			endpoint: '/api/v1/cars/car%2Fone/drives',
 			body: { driveSessions: [] },
 		},
-	])('encodes reserved characters for $path reads', async ({
-		path,
-		endpoint,
-		body,
-	}) => {
-		await harness.navigateByUrl(`/garage/car%2Fone/${path}`);
-		http.expectOne('/api/v1/cars/car%2Fone').flush({
-			car: { ...car, id: 'car/one' },
-		});
-		http.expectOne((request) => request.url === endpoint).flush(body);
-		if (path === 'runs')
-			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-	});
+	])(
+		'encodes reserved characters for $path reads',
+		async ({ path, endpoint, body }) => {
+			await harness.navigateByUrl(`/garage/car%2Fone/${path}`);
+			http.expectOne('/api/v1/cars/car%2Fone').flush({
+				car: { ...car, id: 'car/one' },
+			});
+			http.expectOne((request) => request.url === endpoint).flush(body);
+			if (path === 'runs')
+				http
+					.expectOne('/api/v1/preferences/timezone')
+					.flush({ timezone: 'UTC' });
+			await harness.fixture.whenStable();
+			harness.detectChanges();
+		},
+	);
 
 	it('keeps an archived car readable while hiding build mutations', async () => {
 		await harness.navigateByUrl('/garage/car-1/build');
