@@ -52,6 +52,236 @@ describe('Workers AI voice processor', () => {
 		});
 	});
 
+	test('turns an ambiguous tire need while pushing into a reviewable front-tire hypothesis', async () => {
+		const transcript =
+			'My car is starting to push on corner entry. I think I need new tires.';
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: {
+					...emptyDraft,
+					problems: [
+						{
+							text: 'The car pushes on corner entry',
+							confidence: 'high',
+							needsReview: false,
+							sourceText: 'My car is starting to push on corner entry.',
+						},
+					],
+					consumables: [
+						{
+							kind: 'tires',
+							confidence: 'medium',
+							needsReview: true,
+							sourceText: 'I think I need new tires.',
+						},
+					],
+				},
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request({ text: transcript })),
+		).resolves.toMatchObject({
+			transcript,
+			draft: {
+				problems: [
+					{
+						text: 'The car pushes on corner entry',
+						needsReview: false,
+					},
+					{
+						text: 'Front tires may be worn',
+						confidence: 'medium',
+						needsReview: true,
+						sourceText: transcript,
+					},
+				],
+				consumables: [],
+			},
+			clarificationPrompt:
+				'Are the front tires worn, or did you mean a different tire set?',
+		});
+	});
+
+	test('keeps other axle-ambiguous tire work as an unresolved review note', async () => {
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: {
+					...emptyDraft,
+					consumables: [
+						{
+							kind: 'tires',
+							confidence: 'medium',
+							needsReview: true,
+							sourceText: 'I changed tires.',
+						},
+					],
+				},
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(
+				request({ text: 'I changed tires.' }),
+			),
+		).resolves.toMatchObject({
+			draft: {
+				consumables: [],
+				unresolvedNotes: ['I changed tires.'],
+			},
+			clarificationPrompt: 'Are the tires front, rear, or both?',
+		});
+	});
+
+	test('rejects an incomplete tire item without source provenance', async () => {
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: {
+					...emptyDraft,
+					consumables: [
+						{
+							kind: 'tires',
+							confidence: 'low',
+							needsReview: true,
+						},
+					],
+				},
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(
+				request({ text: 'I changed tires.' }),
+			),
+		).rejects.toMatchObject({ stage: 'validation' });
+	});
+
+	test('does not persist a speculative tire need when the provider guesses an axle', async () => {
+		const transcript =
+			'My car is starting to push on corner entry. I think I need new tires.';
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: {
+					...emptyDraft,
+					consumables: [
+						{
+							kind: 'tires',
+							axle: 'both',
+							confidence: 'low',
+							needsReview: true,
+							sourceText: 'I think I need new tires.',
+						},
+					],
+				},
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request({ text: transcript })),
+		).resolves.toMatchObject({
+			draft: {
+				problems: [
+					{
+						text: 'Front tires may be worn',
+						confidence: 'medium',
+						needsReview: true,
+					},
+				],
+				consumables: [],
+			},
+		});
+	});
+
+	test('applies the pushing heuristic when the provider omits the tire hypothesis', async () => {
+		const transcript =
+			'My car is starting to push on corner entry. I think I need new tires.';
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: emptyDraft,
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request({ text: transcript })),
+		).resolves.toMatchObject({
+			draft: {
+				problems: [
+					{
+						text: 'Front tires may be worn',
+						confidence: 'medium',
+						needsReview: true,
+						sourceText: transcript,
+					},
+				],
+			},
+			clarificationPrompt:
+				'Are the front tires worn, or did you mean a different tire set?',
+		});
+	});
+
+	test('moves a tire-wear condition misclassification into the front-tire hypothesis', async () => {
+		const transcript =
+			'At SDRC, my car is starting to push on corner entry. I think I need new tires.';
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: {
+					...emptyDraft,
+					conditions: [
+						{
+							field: 'track',
+							value: 'SDRC',
+							confidence: 'high',
+							needsReview: false,
+							sourceText: 'At SDRC',
+						},
+						{
+							field: 'tires',
+							value: 'The front tires may be worn',
+							confidence: 'medium',
+							needsReview: true,
+							sourceText: 'I think I need new tires.',
+						},
+					],
+				},
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request({ text: transcript })),
+		).resolves.toMatchObject({
+			draft: {
+				conditions: [
+					{
+						field: 'track',
+						value: 'SDRC',
+					},
+				],
+				problems: [
+					{
+						text: 'Front tires may be worn',
+						confidence: 'medium',
+						needsReview: true,
+						sourceText: transcript,
+					},
+				],
+			},
+			clarificationPrompt:
+				'Are the front tires worn, or did you mean a different tire set?',
+		});
+	});
+
 	test.each([
 		"5024: JSON Model couldn't be met",
 		"5024: JSON Mode couldn't be met",
