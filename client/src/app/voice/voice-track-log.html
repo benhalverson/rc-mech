@@ -43,6 +43,10 @@
 								</strong>
 								<small>{{ recorder.starting() ? 'Wait for the timer before speaking.' : 'Audio is being captured.' }}</small>
 							</div>
+							<div class="microphone-meter">
+								<progress class="microphone-progress" max="1" [value]="recorder.inputLevel()" aria-label="Live microphone level"></progress>
+								<small>{{ recorder.inputMuted() ? 'Microphone muted' : (recorder.audioDetected() ? 'Audio detected' : 'Speak to test the microphone') }}</small>
+							</div>
 							@if (!recorder.starting()) {
 								<div class="recording-timer" role="timer" aria-live="off" [attr.aria-label]="recordingDuration().label">
 									<span aria-hidden="true">REC</span>

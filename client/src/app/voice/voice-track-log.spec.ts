@@ -138,6 +138,9 @@ describe('VoiceTrackLog', () => {
 		starting: ReturnType<typeof signal<boolean>>;
 		recording: ReturnType<typeof signal<boolean>>;
 		elapsedSeconds: ReturnType<typeof signal<number>>;
+		inputLevel: ReturnType<typeof signal<number>>;
+		audioDetected: ReturnType<typeof signal<boolean>>;
+		inputMuted: ReturnType<typeof signal<boolean>>;
 		detectSupport: ReturnType<typeof vi.fn>;
 		start: ReturnType<typeof vi.fn>;
 		stop: ReturnType<typeof vi.fn>;
@@ -224,6 +227,9 @@ describe('VoiceTrackLog', () => {
 			starting: signal(false),
 			recording: signal(false),
 			elapsedSeconds: signal(0),
+			inputLevel: signal(0),
+			audioDetected: signal(false),
+			inputMuted: signal(false),
 			detectSupport: vi.fn(async () => true),
 			start: vi.fn(async () => undefined),
 			stop: vi.fn(async () => new Blob(['voice'], { type: 'audio/webm' })),
@@ -455,6 +461,13 @@ describe('VoiceTrackLog', () => {
 			fixture.nativeElement.querySelector('.recording-timer')?.textContent,
 		).toContain('0:03');
 		expect(button('Stop and keep recording')).toBeTruthy();
+		recorder.inputMuted.set(true);
+		await detect();
+		expect(fixture.nativeElement.textContent).toContain('Microphone muted');
+		recorder.inputMuted.set(false);
+		recorder.audioDetected.set(true);
+		await detect();
+		expect(fixture.nativeElement.textContent).toContain('Audio detected');
 
 		recorder.elapsedSeconds.set(61);
 		await detect();

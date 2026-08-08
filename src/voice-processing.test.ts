@@ -3,7 +3,9 @@ import { defaultAppDependencies } from './app-dependencies';
 import { createHonoFixture } from './testing/hono-fixture';
 import {
 	createWorkersAiVoiceProcessor,
+	NO_SPEECH_DETECTED_MESSAGE,
 	type VoiceProcessingRequest,
+	VoiceProcessingError,
 } from './voice-processing';
 
 const emptyDraft = {
@@ -89,6 +91,90 @@ describe('Workers AI voice processor', () => {
 			createWorkersAiVoiceProcessor(env).process(request()),
 		).rejects.toThrow('Network connection lost');
 		expect(run).toHaveBeenCalledOnce();
+	});
+
+	test('normalizes non-Error provider failures safely', async () => {
+		const { env } = createHonoFixture();
+		vi.spyOn(env.AI, 'run').mockRejectedValueOnce('provider failed');
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request()),
+		).rejects.toMatchObject({ stage: 'extraction', attemptCount: 1 });
+		expect(
+			new VoiceProcessingError('invalid cause', 'validation', 1, {
+				cause: 'provider failed',
+			}).name,
+		).toBe('Error');
+	});
+
+	test('retries a transcription upstream failure once', async () => {
+		const { env } = createHonoFixture();
+		const run = vi.spyOn(env.AI, 'run');
+		const upstream = Object.assign(new Error('temporary upstream'), {
+			name: 'InferenceUpstreamError',
+		});
+		run.mockRejectedValueOnce(upstream);
+		run.mockResolvedValueOnce({ text: 'Changed rear tires' } as never);
+		run.mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: emptyDraft,
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(
+				request({
+					text: undefined,
+					audio: new ArrayBuffer(1),
+					contentType: 'audio/webm',
+				}),
+			),
+		).resolves.toMatchObject({ transcript: 'Changed rear tires' });
+		expect(run).toHaveBeenCalledTimes(3);
+	});
+
+	test('exhausts an upstream retry after two attempts', async () => {
+		const { env } = createHonoFixture();
+		const run = vi.spyOn(env.AI, 'run');
+		const upstream = Object.assign(new Error('temporary upstream'), {
+			name: 'InferenceUpstreamError',
+		});
+		run.mockRejectedValue(upstream);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(
+				request({
+					text: undefined,
+					audio: new ArrayBuffer(1),
+					contentType: 'audio/webm',
+				}),
+			),
+		).rejects.toMatchObject({
+			name: 'InferenceUpstreamError',
+			stage: 'transcription',
+			attemptCount: 2,
+		});
+		expect(run).toHaveBeenCalledTimes(2);
+	});
+
+	test('retries an extraction upstream failure once', async () => {
+		const { env } = createHonoFixture();
+		const run = vi.spyOn(env.AI, 'run');
+		const upstream = Object.assign(new Error('temporary upstream'), {
+			name: 'InferenceUpstreamError',
+		});
+		run.mockRejectedValueOnce(upstream);
+		run.mockResolvedValueOnce({
+			response: JSON.stringify({
+				draft: emptyDraft,
+				clarificationPrompt: null,
+			}),
+		} as never);
+
+		await expect(
+			createWorkersAiVoiceProcessor(env).process(request()),
+		).resolves.toMatchObject({ draft: emptyDraft });
+		expect(run).toHaveBeenCalledTimes(2);
 	});
 
 	test('accepts a JSON object wrapped in a provider Markdown fence', async () => {
@@ -178,7 +264,11 @@ ${JSON.stringify({ draft: emptyDraft, clarificationPrompt: null })}
 					contentType: 'audio/webm',
 				}),
 			),
-		).rejects.toThrow('No speech');
+		).rejects.toMatchObject({
+			message: NO_SPEECH_DETECTED_MESSAGE,
+			stage: 'transcription',
+			code: 'no-speech',
+		});
 	});
 
 	test.each([{} as never, { response: 42 } as never])(

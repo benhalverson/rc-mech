@@ -19,6 +19,10 @@ import {
 	publicVoiceUpdate,
 	voiceResults,
 } from './voice-records';
+import {
+	isNoSpeechProcessingError,
+	VoiceProcessingError,
+} from '../../voice-processing';
 
 type CorrectionSource = { text?: string; file?: File };
 
@@ -67,9 +71,26 @@ const contextFor = async (
 };
 
 const processingFailureMessage = (error: unknown): string =>
-	error instanceof Error && error.message.includes('No speech')
+	isNoSpeechProcessingError(error)
 		? 'No speech was detected. Try again or use the text fallback.'
 		: 'The voice note could not be processed. Your recording is safe; try again.';
+
+const processingFailureStatus = (error: unknown): 422 | 502 =>
+	isNoSpeechProcessingError(error) ? 422 : 502;
+
+const correctionFailureMessage = (error: unknown): string =>
+	isNoSpeechProcessingError(error)
+		? 'No speech was detected in the correction. The original draft is unchanged; try again or use the text fallback.'
+		: 'The correction could not be applied. The original draft is unchanged.';
+
+const processingFailureMetadata = (
+	error: unknown,
+	fallbackStage: 'storage' | 'processing' | 'validation' | 'persistence',
+) => ({
+	stage: error instanceof VoiceProcessingError ? error.stage : fallbackStage,
+	errorName: error instanceof Error ? error.name : 'UnknownError',
+	attemptCount: error instanceof VoiceProcessingError ? error.attemptCount : 1,
+});
 
 export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 	const routes = new Hono<AppEnv>();
@@ -96,19 +117,24 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 				updatedAt: new Date().toISOString(),
 			})
 			.where(eq(voiceUpdate.id, existing.id));
+		let failureStage: 'storage' | 'processing' | 'validation' | 'persistence' =
+			'storage';
 		try {
 			const object = existing.objectKey
 				? await c.env.PHOTOS.get(existing.objectKey)
 				: null;
 			if (existing.objectKey && !object)
 				throw new Error('Stored recording is unavailable');
+			failureStage = 'processing';
 			const result = await dependencies.voiceProcessor(c.env).process({
 				audio: object ? await object.arrayBuffer() : undefined,
 				contentType: existing.contentType ?? undefined,
 				text: object ? undefined : (existing.transcript ?? undefined),
 				context: context.processingContext,
 			});
+			failureStage = 'validation';
 			const draft = voiceDraftInput.parse(result.draft);
+			failureStage = 'persistence';
 			await db(c.env)
 				.update(voiceUpdate)
 				.set({
@@ -123,7 +149,7 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 		} catch (error) {
 			console.error('voice processing failed', {
 				voiceUpdateId: existing.id,
-				errorName: error instanceof Error ? error.name : 'UnknownError',
+				...processingFailureMetadata(error, failureStage),
 			});
 			const message = processingFailureMessage(error);
 			await db(c.env)
@@ -140,7 +166,7 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 					error: message,
 					voiceUpdate: failed ? publicVoiceUpdate(failed) : undefined,
 				},
-				502,
+				processingFailureStatus(error),
 			);
 		}
 		const updated = await ownedVoiceUpdate(c, existing.id);
@@ -171,7 +197,10 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 			await c.env.PHOTOS.put(objectKey, parsed.file.stream(), {
 				httpMetadata: { contentType: parsed.file.type.toLowerCase() },
 			});
+		let failureStage: 'storage' | 'processing' | 'validation' | 'persistence' =
+			'storage';
 		try {
+			failureStage = 'processing';
 			const result = await dependencies.voiceProcessor(c.env).process({
 				audio: parsed.file ? await parsed.file.arrayBuffer() : undefined,
 				contentType: parsed.file?.type.toLowerCase(),
@@ -179,6 +208,7 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 				context: context.processingContext,
 				previous: { transcript: existing.transcript, draft: draft.data },
 			});
+			failureStage = 'validation';
 			const revisedDraft = voiceDraftInput.parse(result.draft);
 			const corrections = correctionRecords(existing.correctionsJson);
 			corrections.push({
@@ -190,6 +220,7 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 				byteSize: parsed.file?.size,
 				createdAt: new Date().toISOString(),
 			});
+			failureStage = 'persistence';
 			await db(c.env)
 				.update(voiceUpdate)
 				.set({
@@ -204,14 +235,13 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 			if (objectKey) await c.env.PHOTOS.delete(objectKey);
 			console.error('voice correction failed', {
 				voiceUpdateId: existing.id,
-				errorName: error instanceof Error ? error.name : 'UnknownError',
+				...processingFailureMetadata(error, failureStage),
 			});
 			return c.json(
 				{
-					error:
-						'The correction could not be applied. The original draft is unchanged.',
+					error: correctionFailureMessage(error),
 				},
-				502,
+				processingFailureStatus(error),
 			);
 		}
 		const updated = await ownedVoiceUpdate(c, existing.id);

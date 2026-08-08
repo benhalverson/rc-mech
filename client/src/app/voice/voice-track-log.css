@@ -125,6 +125,37 @@ summary:focus-visible {
 	color: var(--muted);
 }
 
+.microphone-meter {
+	display: grid;
+	gap: 4px;
+	min-width: 180px;
+}
+
+.microphone-progress {
+	display: block;
+	width: 100%;
+	height: 8px;
+	border: 1px solid var(--line);
+	background: #202829;
+}
+
+.microphone-progress::-webkit-progress-bar {
+	background: #202829;
+}
+
+.microphone-progress::-webkit-progress-value {
+	background: var(--accent);
+}
+
+.microphone-progress::-moz-progress-bar {
+	background: var(--accent);
+}
+
+.microphone-meter small {
+	color: var(--muted);
+	font-size: 0.75rem;
+}
+
 .recording-timer {
 	display: flex;
 	align-items: baseline;

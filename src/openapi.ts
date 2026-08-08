@@ -1555,6 +1555,7 @@ voicePaths['/api/v1/voice-updates/{voiceUpdateId}/process'] = {
 		responses: {
 			200: { description: 'Reviewable draft created' },
 			202: { description: 'Already processing' },
+			422: { description: 'Recording contains no detected speech' },
 			502: { description: 'Retryable provider failure' },
 		},
 	},
