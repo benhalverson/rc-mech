@@ -8,12 +8,12 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OwnerSessionStore } from '../owner-session-store';
-import { VoiceLogStore } from './voice-log-store';
 import type {
 	PendingVoiceCapture,
 	VoiceMutationResponse,
 	VoiceUpdate,
 } from './voice.models';
+import { VoiceLogStore } from './voice-log-store';
 import { VoiceOfflineQueue } from './voice-offline-queue';
 
 const emptyDraft = {
@@ -382,6 +382,19 @@ describe('VoiceLogStore', () => {
 			'/api/v1/voice-updates/voice-1/corrections',
 		);
 		expect(store.message()).toContain('Draft corrected');
+
+		await completeMutation(
+			store.correctText('voice-1', 'Keep this as a note'),
+			'POST',
+			'/api/v1/voice-updates/voice-1/corrections',
+			{
+				voiceUpdate: update(),
+				correction: { outcome: 'manual-note' },
+			},
+		);
+		expect(store.message()).toBe(
+			'Correction saved as a free-form note. Review it before saving.',
+		);
 
 		await completeMutation(
 			store.correctAudio('voice-1', new Blob(['fix'], { type: 'audio/webm' })),

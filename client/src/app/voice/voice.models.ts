@@ -120,4 +120,8 @@ export type PendingVoiceCapture = {
 };
 
 export type VoiceListResponse = { voiceUpdates: VoiceUpdate[] };
-export type VoiceMutationResponse = { voiceUpdate: VoiceUpdate };
+export type VoiceCorrectionOutcome = 'ai-draft' | 'manual-note';
+export type VoiceMutationResponse = {
+	voiceUpdate: VoiceUpdate;
+	correction?: { outcome: VoiceCorrectionOutcome };
+};
