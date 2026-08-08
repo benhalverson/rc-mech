@@ -12,7 +12,8 @@ export const validateVoiceMetadata = (value: {
 	contentType: string;
 	byteSize: number;
 }): string | undefined => {
-	if (!supportedAudioTypes.has(value.contentType))
+	const mediaType = value.contentType.replace(/;.*$/s, '').trim().toLowerCase();
+	if (!supportedAudioTypes.has(mediaType))
 		return 'Use a WebM, MP4, MP3, Ogg, or WAV audio recording';
 	if (!Number.isInteger(value.byteSize) || value.byteSize <= 0)
 		return 'The recording is empty';

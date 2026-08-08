@@ -270,6 +270,35 @@ describe('voice capture and provenance routes', () => {
 		expect(r2.objects.size).toBe(1);
 	});
 
+	test('accepts the codec-qualified WebM type produced by the browser recorder', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: car() },
+			{ kind: 'first', value: null },
+			{ kind: 'run' },
+			{
+				kind: 'first',
+				value: voice({
+					objectKey: `voice/owner-1/car-1/${captureId}`,
+					contentType: 'audio/webm;codecs=opus',
+					fileName: 'note.webm',
+					byteSize: 5,
+					transcript: null,
+				}),
+			},
+		);
+		const response = await request(
+			'/api/v1/cars/car-1/voice-updates',
+			captureForm(
+				{},
+				new File(['voice'], 'note.webm', {
+					type: 'audio/webm;codecs=opus',
+				}),
+			),
+		);
+		expect(response.status).toBe(201);
+	});
+
 	test.each([
 		['invalid id', captureForm({ captureId: 'bad' }), 400],
 		['missing file', captureForm({}, null), 400],

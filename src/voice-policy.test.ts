@@ -14,9 +14,11 @@ import {
 describe('voice policy', () => {
 	test.each([
 		['audio/webm', 12],
+		['audio/webm;codecs=opus', 12],
 		['audio/mp4', 12],
 		['audio/mpeg', 12],
 		['audio/ogg', 12],
+		['audio/ogg; codecs=opus', 12],
 		['audio/wav', 12],
 	] as const)('accepts %s audio metadata', (contentType, byteSize) => {
 		expect(validateVoiceMetadata({ contentType, byteSize })).toBeUndefined();
