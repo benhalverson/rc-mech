@@ -2,7 +2,13 @@ import { Component, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import type { GarageCar } from '../garage/garage-store';
 
-export type CarSection = 'overview' | 'build' | 'setups' | 'photos' | 'runs';
+export type CarSection =
+	| 'overview'
+	| 'build'
+	| 'setups'
+	| 'photos'
+	| 'runs'
+	| 'voice';
 
 @Component({
 	selector: 'app-car-section-shell',
@@ -41,5 +47,6 @@ export class CarSectionShell {
 		{ path: 'setups', label: 'Setups' },
 		{ path: 'photos', label: 'Photos' },
 		{ path: 'runs', label: 'Runs' },
+		{ path: 'voice', label: 'Voice log' },
 	];
 }

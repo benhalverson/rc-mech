@@ -1,5 +1,6 @@
 import { expect } from 'vitest';
 import { type AppDependencies, createApp } from '../index';
+import type { VoiceProcessor } from '../voice-processing';
 
 const D1_META: D1Meta & Record<string, unknown> = {
 	duration: 0,
@@ -19,9 +20,9 @@ const d1Result = <T>(results: T[]): D1Result<T> => ({
 
 export type D1Step =
 	| { kind: 'first'; value: Record<string, unknown> | null }
-	| { kind: 'all'; rows: Record<string, unknown>[] }
-	| { kind: 'run'; rows?: Record<string, unknown>[] }
-	| { kind: 'batch'; rows?: Record<string, unknown>[][] }
+	| { kind: 'all'; rows: readonly Record<string, unknown>[] }
+	| { kind: 'run'; rows?: readonly Record<string, unknown>[] }
+	| { kind: 'batch'; rows?: readonly (readonly Record<string, unknown>[])[] }
 	| { kind: 'error'; error: unknown };
 
 export type RecordedD1Query = {
@@ -32,8 +33,10 @@ export type RecordedD1Query = {
 
 export class MockD1Controller {
 	readonly queries: RecordedD1Query[] = [];
+	readonly batches: string[][] = [];
 	readonly database: D1Database;
 	#steps: D1Step[] = [];
+	readonly #queryByStatement = new WeakMap<D1PreparedStatement, string>();
 
 	constructor() {
 		this.database = this.#database();
@@ -73,13 +76,15 @@ export class MockD1Controller {
 			},
 			run: async <T = Record<string, unknown>>() => {
 				const step = record('run');
-				return d1Result(
-					(step.kind === 'run' ? step.rows : undefined) ?? [],
-				) as D1Result<T>;
+				return d1Result([
+					...((step.kind === 'run' ? step.rows : undefined) ?? []),
+				]) as D1Result<T>;
 			},
 			all: async <T = Record<string, unknown>>() => {
 				const step = record('all');
-				return d1Result(step.kind === 'all' ? step.rows : []) as D1Result<T>;
+				return d1Result(
+					step.kind === 'all' ? [...step.rows] : [],
+				) as D1Result<T>;
 			},
 			raw: (async () => {
 				const step = this.#steps.shift();
@@ -95,12 +100,18 @@ export class MockD1Controller {
 				return rows.map((row) => Object.values(row));
 			}) as D1PreparedStatement['raw'],
 		};
+		this.#queryByStatement.set(statement, query);
 		return statement;
 	}
 
 	#database(): D1Database {
 		const prepare = (query: string) => this.#statement(query);
 		const batch = async <T = unknown>(statements: D1PreparedStatement[]) => {
+			this.batches.push(
+				statements.map(
+					(statement) => this.#queryByStatement.get(statement) ?? '<unknown>',
+				),
+			);
 			this.queries.push({ query: '<batch>', values: [], operation: 'batch' });
 			const step = this.#take('batch');
 			const rows = step.kind === 'batch' ? step.rows : undefined;
@@ -267,6 +278,7 @@ export class MockR2Controller {
 type HonoFixtureOptions = {
 	authenticated?: boolean;
 	handleAuth?: AppDependencies['handleAuth'];
+	voiceProcessor?: VoiceProcessor;
 };
 
 export const createHonoFixture = (
@@ -294,10 +306,30 @@ export const createHonoFixture = (
 			throw new Error('Unexpected socket connection in backend tests');
 		},
 	}) satisfies Fetcher;
+	const ai = {
+		aiGatewayLogId: null,
+		gateway: () => {
+			throw new Error('Unexpected Workers AI gateway call in backend tests');
+		},
+		aiSearch: () => {
+			throw new Error('Unexpected AI Search call in backend tests');
+		},
+		autorag: () => {
+			throw new Error('Unexpected AutoRAG call in backend tests');
+		},
+		run: () => {
+			throw new Error('Unexpected Workers AI call in backend tests');
+		},
+		models: async () => [],
+		toMarkdown: () => {
+			throw new Error('Unexpected Markdown conversion in backend tests');
+		},
+	} satisfies Ai;
 	const env = {
 		DB: d1.database,
 		PHOTOS: r2.bucket,
 		EMAIL: email,
+		AI: ai,
 		ASSETS: assets,
 		APP_URL: 'http://localhost:8787',
 		ENVIRONMENT: 'local',
@@ -310,6 +342,12 @@ export const createHonoFixture = (
 		handleAuth:
 			fixtureOptions.handleAuth ??
 			(async () => Response.json({ status: true })),
+		voiceProcessor: () =>
+			fixtureOptions.voiceProcessor ?? {
+				process: async () => {
+					throw new Error('Unexpected voice processing in backend tests');
+				},
+			},
 	};
 	const app = createApp(auth);
 	return {

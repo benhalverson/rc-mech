@@ -23,6 +23,8 @@ const loadCarRunsRoutes = () =>
 	import('./car/car-runs.routes').then(
 		({ CAR_RUNS_ROUTES }) => CAR_RUNS_ROUTES,
 	);
+const loadVoiceRoutes = () =>
+	import('./voice/voice.routes').then(({ VOICE_ROUTES }) => VOICE_ROUTES);
 const loadSettingsRoutes = () =>
 	import('./settings/settings.routes').then(
 		({ SETTINGS_ROUTES }) => SETTINGS_ROUTES,
@@ -70,6 +72,11 @@ export const routes: Routes = [
 		path: 'garage/:carId/runs',
 		canMatch: [ownerSessionCanMatch],
 		loadChildren: loadCarRunsRoutes,
+	},
+	{
+		path: 'garage/:carId/voice',
+		canMatch: [ownerSessionCanMatch],
+		loadChildren: loadVoiceRoutes,
 	},
 	{
 		path: 'maintenance',

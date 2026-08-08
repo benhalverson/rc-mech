@@ -1,3 +1,5 @@
+import type { AuthEnvironment } from './auth-policy.ts';
+
 export type OutboundEmail = {
 	from: string;
 	to: string;
@@ -29,9 +31,10 @@ const platformEmailSender = (binding: SendEmail): EmailSender => ({
 	},
 });
 
-export const createEmailSender = (env: Env & AuthEnvironment): EmailSender => {
+export const createEmailSender = (
+	env: Pick<Env, 'EMAIL'> & AuthEnvironment,
+): EmailSender => {
 	if (env.ENVIRONMENT === 'local') return noopEmailSender;
 	const binding = (env as Env & { EMAIL?: SendEmail }).EMAIL;
 	return binding ? platformEmailSender(binding) : noopEmailSender;
 };
-import type { AuthEnvironment } from './auth-policy.ts';

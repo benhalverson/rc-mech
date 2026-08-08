@@ -22,6 +22,8 @@
 		"@angular/router": "^22.1.0",
 		"@ngrx/signals": "^20.1.0",
 		"@tailwindcss/postcss": "^4.3.3",
+		"dexie": "^4.4.4",
+		"extendable-media-recorder": "^9.2.39",
 		"rxjs": "~7.8.0",
 		"tailwindcss": "^4.3.3",
 		"tslib": "^2.3.0"
@@ -30,6 +32,7 @@
 		"@angular/build": "^22.1.2",
 		"@angular/cli": "^22.1.2",
 		"@angular/compiler-cli": "^22.1.0",
+		"fake-indexeddb": "^6.2.5",
 		"jsdom": "^28.0.0",
 		"typescript": "~6.0.2",
 		"vitest": "^4.0.8"
