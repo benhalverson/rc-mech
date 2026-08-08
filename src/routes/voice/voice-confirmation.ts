@@ -394,8 +394,12 @@ export const createVoiceConfirmationRoutes = () => {
 				updatedAt: now,
 			})
 			.where(eq(voiceUpdate.id, existing.id));
+		const batchStatements: [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]] = [
+			confirmation,
+		];
+		batchStatements.unshift(...statements);
 		try {
-			await database.batch([confirmation, ...statements]);
+			await database.batch(batchStatements);
 		} catch (error) {
 			const raced = await ownedVoiceUpdate(c, existing.id);
 			if (raced?.status !== 'saved') throw error;

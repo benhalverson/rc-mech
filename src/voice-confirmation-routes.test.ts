@@ -302,6 +302,42 @@ describe('voice confirmation routes', () => {
 		).toBe(200);
 	});
 
+	test('creates a derived drive before confirmation references it', async () => {
+		const draft = {
+			...emptyDraft,
+			unmappedNotes: ['Free-form track note'],
+		};
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: voice({ draftJson: JSON.stringify(draft) }) },
+			{ kind: 'first', value: car() },
+			{ kind: 'batch' },
+			{
+				kind: 'first',
+				value: voice({
+					status: 'saved',
+					draftJson: JSON.stringify(draft),
+					driveSessionId: `${id}:drive`,
+				}),
+			},
+			{ kind: 'all', rows: [] },
+		);
+
+		expect(
+			(await request(`/api/v1/voice-updates/${id}/confirm`, confirm())).status,
+		).toBe(200);
+		const statements = d1.batches[0] ?? [];
+		const driveInsert = statements.findIndex((query) =>
+			query.startsWith('insert into "drive_session"'),
+		);
+		const confirmationUpdate = statements.findIndex((query) =>
+			query.startsWith('update "voice_update"'),
+		);
+		expect(driveInsert).toBeGreaterThanOrEqual(0);
+		expect(confirmationUpdate).toBeGreaterThanOrEqual(0);
+		expect(driveInsert).toBeLessThan(confirmationUpdate);
+	});
+
 	test('creates an empty-section setup map when there is no prior setup', async () => {
 		const draft = {
 			...emptyDraft,
