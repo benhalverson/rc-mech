@@ -12,6 +12,7 @@ import {
 } from '../../types';
 import { VOICE_MAX_BYTES, validateVoiceMetadata } from '../../voice-policy';
 import { ownedCar } from '../cars/car-records';
+import { jsonValue } from '../json-values';
 import {
 	correctionRecords,
 	ownedVoiceUpdate,
@@ -152,9 +153,7 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 		if (!existing) return c.json({ error: 'Voice update not found' }, 404);
 		if (existing.status !== 'needs-review' || !existing.transcript)
 			return c.json({ error: 'Only a reviewable draft can be corrected' }, 409);
-		const draft = voiceDraftInput.safeParse(
-			existing.draftJson ? JSON.parse(existing.draftJson) : null,
-		);
+		const draft = voiceDraftInput.safeParse(jsonValue(existing.draftJson));
 		if (!draft.success)
 			return c.json({ error: 'The current draft is unavailable' }, 409);
 		const context = await contextFor(c, existing);

@@ -707,6 +707,9 @@ describe('VoiceTrackLog', () => {
 			voiceUpdate({ id: 'discarded', status: 'discarded', draft: null }),
 		]);
 		await detect();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Discarded voice update',
+		);
 		expect(fixture.nativeElement.textContent).toContain('New setup snapshot');
 		expect(fixture.nativeElement.textContent).toContain(
 			'Correction provenance',

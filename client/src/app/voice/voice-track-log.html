@@ -121,7 +121,16 @@
 					@for (update of voiceStore.updates(); track update.id) {
 						<article class="voice-card">
 							<header>
-								<div><span class="status-pill" [attr.data-status]="update.status">{{ update.status }}</span><h4>{{ update.status === 'saved' ? 'Saved voice update' : 'Voice update draft' }}</h4></div>
+								<div>
+									<span class="status-pill" [attr.data-status]="update.status">{{ update.status }}</span>
+									@if (update.status === 'saved') {
+										<h4>Saved voice update</h4>
+									} @else if (update.status === 'discarded') {
+										<h4>Discarded voice update</h4>
+									} @else {
+										<h4>Voice update draft</h4>
+									}
+								</div>
 								<time [dateTime]="update.createdAt">{{ update.createdAt | date: 'short' }}</time>
 							</header>
 

@@ -23,6 +23,7 @@ import {
 import { ownedCar } from '../cars/car-records';
 import { consumableInsertValues } from '../maintenance/consumable-records';
 import { setupCopyValue, setupInsertValues } from '../setups/setup-records';
+import { jsonValue } from '../json-values';
 import {
 	ownedDriveSession,
 	ownedVoiceUpdate,
@@ -154,7 +155,7 @@ export const createVoiceConfirmationRoutes = () => {
 		if (!parsedBody.success)
 			return c.json({ error: 'Invalid voice confirmation' }, 400);
 		const parsedDraft = voiceDraftInput.safeParse(
-			existing.draftJson ? JSON.parse(existing.draftJson) : null,
+			jsonValue(existing.draftJson),
 		);
 		if (!parsedDraft.success)
 			return c.json({ error: 'The review draft is unavailable' }, 409);

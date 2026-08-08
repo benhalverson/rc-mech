@@ -373,6 +373,22 @@ describe('voice processing routes', () => {
 		).toBe(409);
 	});
 
+	test('rejects a correction when the stored draft is malformed JSON', async () => {
+		const { d1, request } = fixture();
+		d1.queue({
+			kind: 'first',
+			value: voice({ status: 'needs-review', draftJson: '{malformed' }),
+		});
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'fix' }),
+		);
+		expect(response.status).toBe(409);
+		expect(await response.json()).toEqual({
+			error: 'The current draft is unavailable',
+		});
+	});
+
 	test('stores and applies a private voice correction', async () => {
 		const { d1, r2, request } = fixture();
 		d1.queue(

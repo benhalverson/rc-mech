@@ -481,6 +481,22 @@ describe('voice confirmation routes', () => {
 		).toBe(409);
 	});
 
+	test('rejects confirmation when the stored draft is malformed JSON', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: voice({ draftJson: '{malformed' }) },
+			{ kind: 'first', value: car() },
+		);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/confirm`,
+			confirm(),
+		);
+		expect(response.status).toBe(409);
+		expect(await response.json()).toEqual({
+			error: 'The review draft is unavailable',
+		});
+	});
+
 	test.each([
 		['missing', null],
 		['deleted', drive({ deletedAt: now })],
