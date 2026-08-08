@@ -41,10 +41,8 @@ export const createAuth = (env: AuthEnv) => {
 			if (isLocalDevelopment(env)) return;
 			const from = env.EMAIL_FROM;
 			const sender = createEmailSender(env);
-			if (!from || !sender.available) {
-				if (isLocalDevelopment(env)) return;
+			if (!from || !sender.available)
 				throw new Error('Magic-link email delivery is not configured');
-			}
 			await sender.send({
 				from,
 				to: email,

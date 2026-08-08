@@ -1,5 +1,6 @@
 {
 	"files.associations": {
 		"wrangler.json": "jsonc"
-	}
+	},
+	"angular.enable-strict-mode-prompt": true
 }

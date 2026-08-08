@@ -2,6 +2,10 @@ packages:
   - client
 
 onlyBuiltDependencies:
+  - '@parcel/watcher'
+  - esbuild
+  - lmdb
+  - msgpackr-extract
   - workerd
 
 overrides:
