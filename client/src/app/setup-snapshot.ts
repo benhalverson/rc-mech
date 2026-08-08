@@ -196,6 +196,7 @@ type ImportDraftPatch = {
 const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => ({
 	draftId: draft.id,
 	source: {
+		...draft.source.metadata,
 		url: draft.source.url,
 		pdfUrl: null,
 		pdfTitle: draft.source.hasPdfReference ? 'Original setup PDF' : null,
@@ -204,7 +205,6 @@ const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => ({
 				?.pdfPage === 'number'
 				? ((draft.source.metadata as { pdfPage?: unknown }).pdfPage as number)
 				: null,
-		...draft.source.metadata,
 	},
 	carIdentity: {
 		name:

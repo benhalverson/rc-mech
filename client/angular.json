@@ -68,7 +68,17 @@
 					"defaultConfiguration": "development"
 				},
 				"test": {
-					"builder": "@angular/build:unit-test"
+					"builder": "@angular/build:unit-test",
+					"options": {
+						"coverage": true,
+						"coverageThresholds": {
+							"perFile": true,
+							"statements": 100,
+							"branches": 100,
+							"functions": 100,
+							"lines": 100
+						}
+					}
 				}
 			}
 		}

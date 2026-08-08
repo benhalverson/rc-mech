@@ -53,6 +53,24 @@ describe('protected workspace routes', () => {
 			if (!Array.isArray(lazyRoutes)) continue;
 			expect(lazyRoutes[0]?.providers).toBeDefined();
 			expect(lazyRoutes[0]?.loadComponent).toBeTypeOf('function');
+			expect(await lazyRoutes[0]?.loadComponent?.()).toBeTypeOf('function');
+		}
+	});
+
+	it('resolves every top-level lazy route boundary', async () => {
+		for (const route of routes) {
+			if (route.loadComponent)
+				expect(await route.loadComponent()).toBeTypeOf('function');
+			if (route.loadChildren) {
+				const lazyRoutes = await route.loadChildren();
+				expect(Array.isArray(lazyRoutes)).toBe(true);
+				if (Array.isArray(lazyRoutes)) {
+					for (const lazyRoute of lazyRoutes) {
+						if (lazyRoute.loadComponent)
+							expect(await lazyRoute.loadComponent()).toBeTypeOf('function');
+					}
+				}
+			}
 		}
 	});
 

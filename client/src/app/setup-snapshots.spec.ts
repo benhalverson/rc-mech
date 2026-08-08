@@ -13,6 +13,7 @@ import { emptySetupForm } from './setup-form';
 import {
 	SoDialedImporterClient,
 	SoDialedImportPreview,
+	type SetupSnapshot,
 } from './setup-snapshot';
 import { SetupSnapshotStore } from './setup-snapshot-store';
 import { SetupSnapshots } from './setup-snapshots';
@@ -20,8 +21,17 @@ import { SetupSnapshots } from './setup-snapshots';
 type Harness = {
 	formModel: { set(value: unknown): void };
 	importCarModel: { set(value: { carId: string }): void };
+	setups: (() => SetupSnapshot[]) & { set(value: SetupSnapshot[]): void };
+	selectedId: (() => string | null) & { set(value: string | null): void };
+	action: (() => string | null) & { set(value: string | null): void };
+	actionError: (() => string) & { set(value: string): void };
+	formError: (() => string) & { set(value: string): void };
+	importPreview: (() => SoDialedImportPreview | null) & {
+		set(value: SoDialedImportPreview | null): void;
+	};
 	openAdd(): void;
 	copyPrevious(): void;
+	select(setup: SetupSnapshot): void;
 	openEdit(): void;
 	makeCurrent(): void;
 	copy(): void;
@@ -29,6 +39,10 @@ type Harness = {
 	updateImportUrl(value: string): void;
 	previewImport(): void;
 	cancelImport(): void;
+	requestCreateCar(): void;
+	displayName(field: string): string;
+	importValueCount(values: Record<string, unknown>): number;
+	sectionHasValues(values: Record<string, string | null>): boolean;
 };
 
 const preview: SoDialedImportPreview = {
@@ -657,5 +671,460 @@ describe('SetupSnapshots', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Your garage session has expired. Sign in again to continue.',
 		);
+	});
+
+	it('selects rows, formats labels, counts review values, and detects section data', async () => {
+		await flushSetups([currentSetup]);
+		const app = fixture.componentInstance as unknown as Harness;
+		app.select(currentSetup);
+		expect(app.selectedId()).toBe('setup-1');
+		expect(app.displayName('frontRideHeight')).toBe('Front Ride Height');
+		expect(app.importValueCount({ one: 1, two: 2 })).toBe(2);
+		expect(app.sectionHasValues({ empty: null, blank: '' })).toBe(false);
+		expect(app.sectionHasValues({ value: '22mm' })).toBe(true);
+	});
+
+	it('emits every imported car identity fallback and ignores missing previews', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		const emitted: Array<{ name: string; make: string; model: string }> = [];
+		fixture.componentInstance.createCarFromImport.subscribe((value) =>
+			emitted.push(value),
+		);
+		app.requestCreateCar();
+		for (const identity of [
+			{ name: 'Named', make: 'Make', model: 'Model' },
+			{ name: '', make: 'Make', model: 'Model' },
+			{ name: '', make: '', model: '' },
+		]) {
+			app.importPreview.set({ ...preview, carIdentity: identity });
+			app.requestCreateCar();
+		}
+		expect(emitted).toEqual([
+			{ name: 'Named', make: 'Make', model: 'Model' },
+			{ name: 'Make Model', make: 'Make', model: 'Model' },
+			{ name: 'Imported car', make: '', model: '' },
+		]);
+	});
+
+	it('guards mutations without a source, while archived, or while busy', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.copy();
+		app.copyPrevious();
+		app.makeCurrent();
+		app.openEdit();
+		http.expectNone((request) => request.method !== 'GET');
+
+		app.setups.set([currentSetup]);
+		app.select(currentSetup);
+		app.makeCurrent();
+		app.action.set('save');
+		app.copy();
+		app.makeCurrent();
+		app.action.set(null);
+		fixture.componentRef.setInput('archived', true);
+		fixture.detectChanges();
+		app.copy();
+		app.makeCurrent();
+		app.openEdit();
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+		http.expectNone((request) => request.method !== 'GET');
+	});
+
+	it('validates blank names, source URLs, and PDF page numbers', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openAdd();
+		app.formModel.set({
+			...emptySetupForm(),
+			name: '   ',
+			sourceUrl: 'ftp://example.test/setup',
+			pdfPage: '0',
+		});
+		app.save();
+		expect(app.formError()).toContain('Review the highlighted');
+		app.formModel.set({
+			...emptySetupForm(),
+			name: 'Valid',
+			sourceUrl: 'not a URL',
+		});
+		app.save();
+		expect(app.formError()).toContain('Review the highlighted');
+		app.formModel.set({
+			...emptySetupForm(),
+			name: 'Valid',
+			sourceUrl: '',
+			pdfPage: '0',
+		});
+		app.save();
+		expect(app.formError()).toContain('Review the highlighted');
+		app.formModel.set({
+			...emptySetupForm(),
+			name: 'Valid',
+			sourceUrl: 'https://example.test/setup',
+			pdfPage: '2',
+		});
+		app.action.set('save');
+		app.save();
+		http.expectNone((request) => request.method === 'POST');
+	});
+
+	it('maps current and generic setup save failures', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		for (const [status, message] of [
+			[401, 'session has expired'],
+			[500, 'could not be saved'],
+		] as const) {
+			app.openAdd();
+			app.formModel.set({ ...emptySetupForm(), name: 'Baseline' });
+			app.save();
+			http
+				.expectOne('/api/v1/cars/car-1/setups')
+				.flush('failed', { status, statusText: 'Failed' });
+			expect(app.formError()).toContain(message);
+		}
+	});
+
+	it('updates an existing setup and replaces its local row', async () => {
+		const previous = { ...currentSetup, id: 'setup-0', current: false };
+		await flushSetups([currentSetup, previous]);
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openEdit();
+		app.formModel.set({ ...emptySetupForm(), name: 'Updated baseline' });
+		app.save();
+		const update = http.expectOne('/api/v1/cars/car-1/setups/setup-1');
+		expect(update.request.method).toBe('PATCH');
+		update.flush({ setup: { ...currentSetup, name: 'Updated baseline' } });
+		await flushSetups([
+			{ ...currentSetup, name: 'Updated baseline' },
+			previous,
+		]);
+		expect(app.setups()[0]?.name).toBe('Updated baseline');
+	});
+
+	it('maps copy failures and ignores stale copy errors', async () => {
+		await flushSetups([currentSetup]);
+		const app = fixture.componentInstance as unknown as Harness;
+		for (const [status, message] of [
+			[401, 'session has expired'],
+			[500, 'could not be copied'],
+		] as const) {
+			app.copy();
+			http
+				.expectOne('/api/v1/cars/car-1/setups/setup-1/copy')
+				.flush('failed', { status, statusText: 'Failed' });
+			expect(app.actionError()).toContain(message);
+		}
+
+		app.copy();
+		const stale = http.expectOne('/api/v1/cars/car-1/setups/setup-1/copy');
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		await flushSetups([], 'car-2');
+		stale.flush('failed', { status: 500, statusText: 'Failed' });
+		expect(app.actionError()).toBe('');
+	});
+
+	it('maps current-selection failures and ignores stale outcomes', async () => {
+		const old = { ...currentSetup, id: 'setup-old', current: false };
+		await flushSetups([old]);
+		const app = fixture.componentInstance as unknown as Harness;
+		for (const [status, message] of [
+			[401, 'session has expired'],
+			[500, 'could not be changed'],
+		] as const) {
+			app.makeCurrent();
+			http
+				.expectOne('/api/v1/cars/car-1/setups/setup-old/current')
+				.flush('failed', { status, statusText: 'Failed' });
+			expect(app.actionError()).toContain(message);
+		}
+
+		app.makeCurrent();
+		const stale = http.expectOne('/api/v1/cars/car-1/setups/setup-old/current');
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		await flushSetups([], 'car-2');
+		stale.flush({ setup: { ...old, current: true } });
+		expect(app.setups()).toEqual([]);
+	});
+
+	it('ignores stale preview errors and stale save errors', async () => {
+		await flushSetups();
+		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const pending = new Subject<SoDialedImportPreview>();
+		importer.result = pending;
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		await flushSetups([], 'car-2');
+		pending.error(new Error('late failure'));
+
+		app.openAdd();
+		app.formModel.set({ ...emptySetupForm(), name: 'New car setup' });
+		app.save();
+		const save = http.expectOne('/api/v1/cars/car-2/setups');
+		fixture.componentRef.setInput('carId', 'car-3');
+		fixture.detectChanges();
+		await flushSetups([], 'car-3');
+		save.flush('failed', { status: 500, statusText: 'Failed' });
+		expect(app.formError()).toBe('');
+	});
+
+	it('maps generic preview errors and cancels without a draft', async () => {
+		await flushSetups();
+		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		importer.result = throwError(() => ({ status: 500 }));
+		const app = fixture.componentInstance as unknown as Harness;
+		app.updateImportUrl('https://sodialed.com/setup/unavailable');
+		app.previewImport();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'That source could not be read',
+		);
+		app.cancelImport();
+		http.expectNone((request) => request.url.includes('/cancel'));
+	});
+
+	it('uses empty strings when imported identity fields are absent', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		const emitted: Array<{ name: string; make: string; model: string }> = [];
+		fixture.componentInstance.createCarFromImport.subscribe((value) =>
+			emitted.push(value),
+		);
+		app.importPreview.set({ ...preview, carIdentity: {} });
+		app.requestCreateCar();
+		expect(emitted).toEqual([{ name: 'Imported car', make: '', model: '' }]);
+	});
+
+	it('ignores stale copy success and stale current-selection errors', async () => {
+		const old = { ...currentSetup, id: 'setup-old', current: false };
+		await flushSetups([old]);
+		const app = fixture.componentInstance as unknown as Harness;
+		app.copy();
+		const copy = http.expectOne('/api/v1/cars/car-1/setups/setup-old/copy');
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		await flushSetups([], 'car-2');
+		copy.flush({ setup: { ...old, id: 'copy' } });
+		expect(app.setups()).toEqual([]);
+
+		fixture.componentRef.setInput('carId', 'car-1');
+		fixture.detectChanges();
+		await flushSetups([old]);
+		app.makeCurrent();
+		const current = http.expectOne(
+			'/api/v1/cars/car-1/setups/setup-old/current',
+		);
+		fixture.componentRef.setInput('carId', 'car-2');
+		fixture.detectChanges();
+		await flushSetups([], 'car-2');
+		current.flush('failed', { status: 500, statusText: 'Failed' });
+		expect(app.actionError()).toBe('');
+	});
+
+	it('falls back to draft review data when edited JSON has no review buckets', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		app.importPreview.set(preview);
+		app.importCarModel.set({ carId: '' });
+		app.formModel.set({
+			...emptySetupForm(),
+			name: 'Imported fallback',
+			unmappedValues: '{}',
+			rawValues: '{}',
+		});
+		app.save();
+		const update = http.expectOne('/api/v1/setup-imports/drafts/draft-1');
+		expect(update.request.body).toMatchObject({
+			carId: 'car-1',
+			uncertainValues: preview.uncertainValues,
+			unmappedValues: {},
+		});
+		update.flush('failed', { status: 500, statusText: 'Failed' });
+	});
+
+	it('executes every setup action through its rendered control', async () => {
+		const historical = {
+			...currentSetup,
+			id: 'setup-old',
+			name: 'Historical',
+			current: false,
+		};
+		await flushSetups([currentSetup, historical]);
+		const app = fixture.componentInstance as unknown as Harness;
+		const byText = (label: string): HTMLButtonElement => {
+			const button = [...fixture.nativeElement.querySelectorAll('button')].find(
+				(candidate: HTMLButtonElement) =>
+					candidate.textContent?.trim() === label && !candidate.disabled,
+			);
+			expect(button).toBeTruthy();
+			return button as HTMLButtonElement;
+		};
+
+		byText('New setup').click();
+		fixture.detectChanges();
+		byText('Cancel').click();
+		fixture.detectChanges();
+
+		app.action.set('copy');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Copying…');
+		app.action.set(null);
+		fixture.detectChanges();
+		byText('Copy previous').click();
+		http
+			.expectOne('/api/v1/cars/car-1/setups/setup-1/copy')
+			.flush('offline', { status: 500, statusText: 'Unavailable' });
+		fixture.detectChanges();
+
+		const oldRow = [
+			...fixture.nativeElement.querySelectorAll('.setup-row'),
+		].find((row: HTMLButtonElement) =>
+			row.textContent?.includes('Historical'),
+		) as HTMLButtonElement;
+		oldRow.click();
+		fixture.detectChanges();
+		byText('Copy setup').click();
+		http
+			.expectOne('/api/v1/cars/car-1/setups/setup-old/copy')
+			.flush('offline', { status: 500, statusText: 'Unavailable' });
+		fixture.detectChanges();
+		byText('Edit').click();
+		fixture.detectChanges();
+		byText('Cancel').click();
+		fixture.detectChanges();
+
+		app.action.set('current');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Selecting…');
+		app.action.set(null);
+		fixture.detectChanges();
+		byText('Select as current').click();
+		http
+			.expectOne('/api/v1/cars/car-1/setups/setup-old/current')
+			.flush('offline', { status: 500, statusText: 'Unavailable' });
+
+		fixture.componentRef.setInput('availableCars', [
+			{ id: 'car-1', name: 'Red', make: 'Associated', model: 'B6.4' },
+			{ id: 'car-2', name: 'Blue' },
+		]);
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
+		fixture.detectChanges();
+		byText('Create a car from this identity').click();
+		app.action.set('save');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Saving…');
+		app.action.set(null);
+		fixture.detectChanges();
+		byText('Cancel').click();
+		http.expectOne('/api/v1/setup-imports/drafts/draft-1/cancel').flush(null);
+	});
+
+	it('renders loading import and all setup display fallbacks', async () => {
+		const sections = {
+			...currentSetup.sections,
+			vehicle: { rideHeight: '', weight: '1500g' },
+		};
+		const partial = {
+			...currentSetup,
+			id: 'setup-partial',
+			name: 'Partial',
+			current: false,
+			context: { track: '', condition: '', recordedAt: null },
+			sections,
+			source: {
+				pdfUrl: 'https://example.test/raw.pdf',
+				pdfTitle: null,
+				pdfPage: null,
+			},
+			copiedFromSetupId: 'setup-source',
+			unmappedValues: null,
+			rawValues: null,
+		};
+		const bare = {
+			...partial,
+			id: 'setup-bare',
+			name: 'Bare',
+			source: null,
+			copiedFromSetupId: null,
+		};
+		await flushSetups([currentSetup, partial, bare]);
+		const app = fixture.componentInstance as unknown as Harness;
+		const rows = fixture.nativeElement.querySelectorAll('.setup-row');
+		(rows[1] as HTMLButtonElement).click();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Track not recorded');
+		expect(fixture.nativeElement.textContent).toContain('Date not recorded');
+		expect(fixture.nativeElement.textContent).toContain('Copied from');
+		expect(fixture.nativeElement.textContent).toContain('1500g');
+		(rows[2] as HTMLButtonElement).click();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.provenance')).toBeNull();
+		expect(fixture.nativeElement.querySelector('.unmapped')).toBeNull();
+
+		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const pending = new Subject<SoDialedImportPreview>();
+		importer.result = pending;
+		app.updateImportUrl('https://sodialed.com/setup/pending');
+		app.previewImport();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Reading sheet…');
+		pending.next({
+			...preview,
+			carIdentity: {},
+			context: {},
+			source: { ...preview.source, title: null },
+		});
+		pending.complete();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Unknown make');
+		expect(fixture.nativeElement.textContent).toContain('vehicle identity');
+		expect(fixture.nativeElement.textContent).toContain('Track not recorded');
+	});
+
+	it('renders archived empty setup history without a create action', async () => {
+		fixture.componentRef.setInput('archived', true);
+		await flushSetups([]);
+		expect(fixture.nativeElement.textContent).toContain(
+			'No setup snapshots yet',
+		);
+		expect(
+			fixture.nativeElement.querySelector('.empty-state button'),
+		).toBeNull();
+	});
+
+	it('renders a valid server form error and a title-only PDF reference', async () => {
+		const titleOnly = {
+			...currentSetup,
+			id: 'title-only',
+			current: false,
+			source: {
+				url: null,
+				pdfUrl: null,
+				pdfTitle: 'Title only',
+				pdfPage: null,
+			},
+		};
+		await flushSetups([titleOnly]);
+		expect(fixture.nativeElement.textContent).toContain('Title only');
+		const app = fixture.componentInstance as unknown as Harness;
+		app.openAdd();
+		app.formModel.set({ ...emptySetupForm(), name: 'Valid setup' });
+		app.formError.set('The server rejected this setup.');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'The server rejected this setup.',
+		);
+		expect(
+			fixture.nativeElement.querySelector('#setup-form-validation ul'),
+		).toBeNull();
 	});
 });

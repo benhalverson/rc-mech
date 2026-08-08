@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import {
 	NavigationEnd,
 	NavigationError,
+	NavigationCancel,
 	NavigationStart,
 	Router,
 } from '@angular/router';
@@ -10,7 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RouteTransitionAnnouncer } from './route-transition-announcer';
 
 describe('RouteTransitionAnnouncer', () => {
-	let events: Subject<NavigationStart | NavigationEnd | NavigationError>;
+	let events: Subject<
+		NavigationStart | NavigationEnd | NavigationError | NavigationCancel
+	>;
 	const navigateByUrl = vi.fn(async () => true);
 	let transition: RouteTransitionAnnouncer;
 
@@ -78,6 +81,9 @@ describe('RouteTransitionAnnouncer', () => {
 		events.next(new NavigationEnd(3, '/garage', '/garage'));
 		await Promise.resolve();
 		expect(document.activeElement).not.toBe(unfocusable);
+		document.body.append(document.createElement('span'));
+		await Promise.resolve();
+		expect(document.activeElement).not.toBe(unfocusable);
 
 		const focusable = document.createElement('h2');
 		focusable.tabIndex = -1;
@@ -115,6 +121,10 @@ describe('RouteTransitionAnnouncer', () => {
 	});
 
 	it('announces public and unknown routes accurately', async () => {
+		events.next(new NavigationEnd(2, '/settings', '/settings'));
+		await Promise.resolve();
+		expect(transition.announcement()).toBe('Opened Settings.');
+
 		events.next(new NavigationEnd(3, '/sign-in', '/sign-in'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened Sign in.');
@@ -122,5 +132,25 @@ describe('RouteTransitionAnnouncer', () => {
 		events.next(new NavigationEnd(4, '/legal', '/legal'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened page.');
+	});
+
+	it('clears loading after a cancelled navigation', () => {
+		events.next(new NavigationStart(5, '/maintenance'));
+		expect(transition.loading()).toBe(true);
+
+		events.next(new NavigationCancel(5, '/maintenance', 'superseded'));
+
+		expect(transition.loading()).toBe(false);
+	});
+
+	it('does not observe when the document has no MutationObserver', async () => {
+		const defaultView = vi
+			.spyOn(document, 'defaultView', 'get')
+			.mockReturnValue(null);
+		events.next(new NavigationEnd(6, '/garage', '/garage'));
+		await Promise.resolve();
+
+		expect(transition.announcement()).toBe('Opened Garage.');
+		defaultView.mockRestore();
 	});
 });

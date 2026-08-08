@@ -1,0 +1,65 @@
+import { provideHttpClient } from '@angular/common/http';
+import {
+	HttpTestingController,
+	provideHttpClientTesting,
+} from '@angular/common/http/testing';
+import { TestBed } from '@angular/core/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OwnerSessionStore } from './owner-session-store';
+
+describe('OwnerSessionStore', () => {
+	let http: HttpTestingController;
+	let store: OwnerSessionStore;
+
+	beforeEach(() => {
+		TestBed.configureTestingModule({
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				OwnerSessionStore,
+			],
+		});
+		http = TestBed.inject(HttpTestingController);
+		store = TestBed.inject(OwnerSessionStore);
+	});
+
+	afterEach(() => {
+		http.verify();
+		TestBed.resetTestingModule();
+	});
+
+	it('exposes safe computed defaults for incomplete session data', () => {
+		expect(store.hasResolvedSession).toBe(false);
+		store.session.set({});
+		expect(store.authenticated()).toBe(false);
+		expect(store.ownerEmail()).toBe('Owner');
+		store.session.set({ user: {} });
+		expect(store.ownerEmail()).toBe('Owner');
+	});
+
+	it('resolves the current owner', async () => {
+		const resolved = store.resolved();
+		await vi.waitFor(() =>
+			http.expectOne('/api/auth/get-session').flush({
+				session: { id: 'session-1' },
+				user: { email: 'owner@example.test' },
+			}),
+		);
+		expect(await resolved).toEqual({
+			session: { id: 'session-1' },
+			user: { email: 'owner@example.test' },
+		});
+		expect(store.hasResolvedSession).toBe(true);
+		expect(store.authenticated()).toBe(true);
+		expect(store.ownerEmail()).toBe('owner@example.test');
+	});
+
+	it('reuses resolution when a resource reload cannot start', async () => {
+		const resolved = store.resolved();
+		await vi.waitFor(() => http.expectOne('/api/auth/get-session').flush(null));
+		await resolved;
+		vi.spyOn(store.session, 'reload').mockReturnValue(false);
+
+		expect(await store.refresh()).toBeNull();
+	});
+});

@@ -37,7 +37,7 @@ describe('Garage', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Opening the garage ledger',
 		);
-		http.expectOne('/api/v1/cars').flush({ cars: [] });
+		http.expectOne('/api/v1/cars').flush(null);
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
@@ -63,6 +63,25 @@ describe('Garage', () => {
 		fixture.detectChanges();
 		const name = form.querySelector('input') as HTMLInputElement;
 		expect(document.activeElement).toBe(name);
+		name.value = '   ';
+		name.dispatchEvent(new Event('input'));
+		form.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Give this car a name before saving',
+		);
+		const internal = fixture.componentInstance as unknown as {
+			carFields(): { errorSummary(): Array<{ message?: string }> };
+		};
+		Object.defineProperty(internal.carFields(), 'errorSummary', {
+			configurable: true,
+			value: () => [],
+		});
+		form.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Review the car details',
+		);
 
 		name.value = 'Red Runner';
 		name.dispatchEvent(new Event('input'));
@@ -139,5 +158,151 @@ describe('Garage', () => {
 			);
 		});
 		request?.flush({ cars: [{ id: 'car-2', name: 'Retired buggy' }] });
+	});
+
+	it('renders a generic collection failure', async () => {
+		http
+			.expectOne('/api/v1/cars')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'Check the connection and try again',
+		);
+	});
+
+	it('opens and cancels the toolbar create form', async () => {
+		http
+			.expectOne('/api/v1/cars')
+			.flush({ cars: [{ id: 'car-1', name: 'Red Runner' }] });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const button = (label: string): HTMLButtonElement =>
+			[...fixture.nativeElement.querySelectorAll('button')].find(
+				(candidate: HTMLButtonElement) =>
+					candidate.textContent?.trim() === label,
+			) as HTMLButtonElement;
+
+		button('Add a car').click();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.car-form')).toBeTruthy();
+		button('Cancel').click();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('.car-form')).toBeNull();
+	});
+
+	it('submits normalized optional car fields and keeps failures editable', async () => {
+		http.expectOne('/api/v1/cars').flush({ cars: [] });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		(
+			[...fixture.nativeElement.querySelectorAll('button')].find(
+				(button: HTMLButtonElement) =>
+					button.textContent?.trim() === 'Add the first car',
+			) as HTMLButtonElement
+		).click();
+		fixture.detectChanges();
+		const form = fixture.nativeElement.querySelector(
+			'.car-form',
+		) as HTMLFormElement;
+		const values = [
+			' Red Runner ',
+			' Associated ',
+			' B7 ',
+			' 1/10 ',
+			' Buggy ',
+			' Electric ',
+		];
+		for (const [index, input] of [
+			...form.querySelectorAll('input'),
+		].entries()) {
+			input.value = values[index] ?? '';
+			input.dispatchEvent(new Event('input'));
+		}
+		const notes = form.querySelector('textarea') as HTMLTextAreaElement;
+		notes.value = ' Track car ';
+		notes.dispatchEvent(new Event('input'));
+		form.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		expect(form.textContent).toContain('Adding…');
+		const store = TestBed.inject(GarageStore);
+		expect(await store.createCar({ name: 'Blocked duplicate' })).toBeNull();
+		const internal = fixture.componentInstance as unknown as {
+			openCreate(): void;
+			cancelEdit(): void;
+		};
+		internal.openCreate();
+		internal.cancelEdit();
+		form.dispatchEvent(new Event('submit'));
+		const mutation = http.expectOne('/api/v1/cars');
+		expect(mutation.request.body).toEqual({
+			name: 'Red Runner',
+			make: 'Associated',
+			model: 'B7',
+			scale: '1/10',
+			vehicleType: 'Buggy',
+			powerType: 'Electric',
+			notes: 'Track car',
+		});
+		mutation.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('could not be saved');
+		expect(fixture.nativeElement.querySelector('.car-form')).toBeTruthy();
+
+		form.dispatchEvent(new Event('submit'));
+		http
+			.expectOne('/api/v1/cars')
+			.flush('expired', { status: 401, statusText: 'Unauthorized' });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('session has expired');
+	});
+
+	it('renders make and model fallbacks for mixed legacy car records', async () => {
+		http.expectOne('/api/v1/cars').flush({
+			cars: [
+				{ id: 'car-1', name: 'Modern', make: 'Associated', model: 'B7' },
+				{ id: 'car-2', name: 'Legacy', manufacturer: 'Tamiya' },
+				{ id: 'car-3', name: 'Unknown' },
+			],
+		});
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const text = fixture.nativeElement.textContent;
+		expect(text).toContain('Associated · B7');
+		expect(text).toContain('Tamiya · Model not recorded');
+		expect(text).toContain('Make not recorded · Model not recorded');
+	});
+
+	it('shows the archived empty state and toggles back to active cars', async () => {
+		http.expectOne('/api/v1/cars').flush({ cars: [] });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const toggle = (): HTMLButtonElement =>
+			[...fixture.nativeElement.querySelectorAll('button')].find(
+				(button: HTMLButtonElement) =>
+					button.textContent?.includes('archived cars') ||
+					button.textContent?.includes('active cars'),
+			) as HTMLButtonElement;
+		toggle().click();
+		let archived: TestRequest | undefined;
+		await vi.waitFor(() => {
+			archived = http.expectOne(
+				(request) => request.params.get('archived') === 'all',
+			);
+		});
+		archived?.flush({ cars: [] });
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('No archived cars');
+
+		toggle().click();
+		let active: TestRequest | undefined;
+		await vi.waitFor(() => {
+			active = http.expectOne((request) => !request.params.has('archived'));
+		});
+		active?.flush({ cars: [] });
 	});
 });
