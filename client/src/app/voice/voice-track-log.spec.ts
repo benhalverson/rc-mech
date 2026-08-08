@@ -135,7 +135,9 @@ describe('VoiceTrackLog', () => {
 	let recorder: {
 		checking: ReturnType<typeof signal<boolean>>;
 		supported: ReturnType<typeof signal<boolean>>;
+		starting: ReturnType<typeof signal<boolean>>;
 		recording: ReturnType<typeof signal<boolean>>;
+		elapsedSeconds: ReturnType<typeof signal<number>>;
 		detectSupport: ReturnType<typeof vi.fn>;
 		start: ReturnType<typeof vi.fn>;
 		stop: ReturnType<typeof vi.fn>;
@@ -219,7 +221,9 @@ describe('VoiceTrackLog', () => {
 		recorder = {
 			checking: signal(false),
 			supported: signal(true),
+			starting: signal(false),
 			recording: signal(false),
+			elapsedSeconds: signal(0),
 			detectSupport: vi.fn(async () => true),
 			start: vi.fn(async () => undefined),
 			stop: vi.fn(async () => new Blob(['voice'], { type: 'audio/webm' })),
@@ -417,6 +421,48 @@ describe('VoiceTrackLog', () => {
 			fixture.nativeElement.querySelector('#voice-text-note'),
 		).toBeTruthy();
 		internal().hideTextFallback();
+	});
+
+	it('distinguishes microphone startup from live recording and shows elapsed time', async () => {
+		let resolveStart: (() => void) | undefined;
+		recorder.start.mockImplementationOnce(() => {
+			recorder.starting.set(true);
+			return new Promise<void>((resolve) => {
+				resolveStart = resolve;
+			});
+		});
+		await detect();
+
+		const starting = internal().startRecording({ kind: 'capture' });
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Starting microphone');
+		expect(fixture.nativeElement.querySelector('.recording-timer')).toBeNull();
+		expect(
+			[...fixture.nativeElement.querySelectorAll('button')].some(
+				(value: HTMLButtonElement) =>
+					value.textContent?.includes('Stop and keep recording'),
+			),
+		).toBe(false);
+
+		recorder.starting.set(false);
+		recorder.recording.set(true);
+		recorder.elapsedSeconds.set(3);
+		resolveStart?.();
+		await starting;
+		await detect();
+		expect(fixture.nativeElement.textContent).toContain('Recording track note');
+		expect(
+			fixture.nativeElement.querySelector('.recording-timer')?.textContent,
+		).toContain('0:03');
+		expect(button('Stop and keep recording')).toBeTruthy();
+
+		recorder.elapsedSeconds.set(61);
+		await detect();
+		const timer = fixture.nativeElement.querySelector('.recording-timer');
+		expect(timer?.textContent).toContain('1:01');
+		expect(timer?.getAttribute('aria-label')).toBe(
+			'Elapsed recording time: 1 minute, 1 second',
+		);
 	});
 
 	it('renders and controls local, pending, failed, and processing notes', async () => {

@@ -18,12 +18,16 @@ export class VoiceRecorder {
 	private recorder: IMediaRecorder | null = null;
 	private stream: MediaStream | null = null;
 	private chunks: Blob[] = [];
+	private elapsedTimer: ReturnType<typeof setInterval> | null = null;
+	private recordingStartedAt = 0;
 	private readonly availability = signal<'checking' | 'available' | 'missing'>(
 		'checking',
 	);
 	readonly checking = computed(() => this.availability() === 'checking');
 	readonly supported = computed(() => this.availability() === 'available');
+	readonly starting = signal(false);
 	readonly recording = signal(false);
+	readonly elapsedSeconds = signal(0);
 
 	async detectSupport(): Promise<boolean> {
 		if (
@@ -45,28 +49,44 @@ export class VoiceRecorder {
 	}
 
 	async start(): Promise<void> {
-		if (this.recording()) return;
-		if (!this.supported() && !(await this.detectSupport()))
-			throw new Error('Audio recording is not supported in this browser.');
-		this.stream = await navigator.mediaDevices.getUserMedia({
-			audio: {
-				echoCancellation: true,
-				noiseSuppression: true,
-				channelCount: 1,
-			},
-		});
-		this.chunks = [];
-		const { MediaRecorder } = await loadRecorderModule();
-		const mimeType = preferredMimeType(MediaRecorder);
-		this.recorder = new MediaRecorder(
-			this.stream,
-			mimeType ? { mimeType, audioBitsPerSecond: 64_000 } : undefined,
-		);
-		this.recorder.ondataavailable = ({ data }) => {
-			if (data.size) this.chunks.push(data);
-		};
-		this.recorder.start(1000);
-		this.recording.set(true);
+		if (this.starting() || this.recording()) return;
+		this.starting.set(true);
+		try {
+			if (!this.supported() && !(await this.detectSupport()))
+				throw new Error('Audio recording is not supported in this browser.');
+			this.stream = await navigator.mediaDevices.getUserMedia({
+				audio: {
+					echoCancellation: true,
+					noiseSuppression: true,
+					channelCount: 1,
+				},
+			});
+			this.chunks = [];
+			const { MediaRecorder } = await loadRecorderModule();
+			const mimeType = preferredMimeType(MediaRecorder);
+			const recorder = new MediaRecorder(
+				this.stream,
+				mimeType ? { mimeType, audioBitsPerSecond: 64_000 } : undefined,
+			);
+			this.recorder = recorder;
+			recorder.ondataavailable = ({ data }) => {
+				if (data.size) this.chunks.push(data);
+			};
+			await new Promise<void>((resolve, reject) => {
+				recorder.onstart = () => {
+					this.recording.set(true);
+					this.starting.set(false);
+					this.startElapsedTimer();
+					resolve();
+				};
+				recorder.onerror = () =>
+					reject(new Error('The browser could not start the recording.'));
+				recorder.start(1000);
+			});
+		} catch (error) {
+			this.release();
+			throw error;
+		}
 	}
 
 	stop(): Promise<Blob> {
@@ -96,10 +116,25 @@ export class VoiceRecorder {
 	}
 
 	private release(): void {
+		if (this.elapsedTimer !== null) clearInterval(this.elapsedTimer);
+		this.elapsedTimer = null;
+		this.recordingStartedAt = 0;
 		for (const track of this.stream?.getTracks() ?? []) track.stop();
 		this.stream = null;
 		this.recorder = null;
 		this.chunks = [];
+		this.starting.set(false);
 		this.recording.set(false);
+		this.elapsedSeconds.set(0);
+	}
+
+	private startElapsedTimer(): void {
+		this.recordingStartedAt = Date.now();
+		this.elapsedSeconds.set(0);
+		this.elapsedTimer = setInterval(() => {
+			this.elapsedSeconds.set(
+				Math.floor((Date.now() - this.recordingStartedAt) / 1000),
+			);
+		}, 1000);
 	}
 }

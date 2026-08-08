@@ -93,14 +93,64 @@ summary:focus-visible {
 	flex-wrap: wrap;
 	padding: 14px;
 	border: 1px solid #a94d3b;
+	background: #121819;
 }
 
-.recording-state > span {
+.recording-indicator {
 	width: 12px;
 	height: 12px;
+	flex: 0 0 12px;
 	border-radius: 50%;
 	background: #e96950;
 	box-shadow: 0 0 0 5px rgb(233 105 80 / 18%);
+}
+
+.recording-state[data-phase='starting'] {
+	border-color: var(--accent);
+}
+
+.recording-state[data-phase='starting'] .recording-indicator {
+	background: var(--accent);
+	box-shadow: 0 0 0 5px rgb(223 170 81 / 18%);
+}
+
+.recording-copy {
+	display: grid;
+	gap: 3px;
+	min-width: 180px;
+	margin-right: auto;
+}
+
+.recording-copy small {
+	color: var(--muted);
+}
+
+.recording-timer {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	min-width: 118px;
+	padding: 8px 12px;
+	border-left: 3px solid #e96950;
+	background: #202829;
+}
+
+.recording-timer span {
+	color: #ef9b82;
+	font-size: 0.65rem;
+	font-weight: 800;
+	letter-spacing: 0.14em;
+}
+
+.recording-timer time {
+	color: var(--ink);
+	font:
+		700 1.25rem / 1 ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		Consolas,
+		monospace;
+	font-variant-numeric: tabular-nums;
 }
 
 .privacy-note,
@@ -229,7 +279,13 @@ summary {
 
 	.record-button,
 	.capture-actions > *,
-	.card-actions > * {
+	.card-actions > *,
+	.recording-state > button,
+	.recording-timer {
 		width: 100%;
+	}
+
+	.recording-timer {
+		justify-content: space-between;
 	}
 }

@@ -7,6 +7,7 @@ type RecorderHarness = {
 	mimeType: string;
 	ondataavailable: ((event: { data: Blob }) => void) | null;
 	onerror: (() => void) | null;
+	onstart: (() => void) | null;
 	onstop: (() => void) | null;
 	start: ReturnType<typeof vi.fn>;
 	stop: ReturnType<typeof vi.fn>;
@@ -16,6 +17,7 @@ const media = vi.hoisted(() => ({
 	isSupported: vi.fn<() => Promise<boolean>>(),
 	isTypeSupported: vi.fn<(type: string) => boolean>(),
 	instances: [] as RecorderHarness[],
+	autoStart: true,
 	stopMode: 'stop' as 'stop' | 'error',
 }));
 
@@ -26,9 +28,11 @@ vi.mock('extendable-media-recorder', () => ({
 		readonly mimeType: string;
 		ondataavailable: ((event: { data: Blob }) => void) | null = null;
 		onerror: (() => void) | null = null;
+		onstart: (() => void) | null = null;
 		onstop: (() => void) | null = null;
 		readonly start = vi.fn(() => {
 			this.state = 'recording';
+			if (media.autoStart) queueMicrotask(() => this.onstart?.());
 		});
 		readonly stop = vi.fn(() => {
 			this.state = 'inactive';
@@ -63,10 +67,12 @@ describe('VoiceRecorder', () => {
 		media.isSupported.mockReset().mockResolvedValue(true);
 		media.isTypeSupported.mockReset().mockReturnValue(false);
 		media.instances.length = 0;
+		media.autoStart = true;
 		media.stopMode = 'stop';
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 		TestBed.resetTestingModule();
@@ -117,6 +123,59 @@ describe('VoiceRecorder', () => {
 		expect(blob.type).toBe('audio/mp4');
 		expect(blob.size).toBe(5);
 		expect(stopTrack).toHaveBeenCalledOnce();
+		expect(recorder.recording()).toBe(false);
+	});
+
+	it('does not report recording until the recorder start event fires', async () => {
+		media.autoStart = false;
+		const recorder = new VoiceRecorder();
+		let startResolved = false;
+		const starting = recorder.start().then(() => {
+			startResolved = true;
+		});
+		await vi.waitFor(() => expect(media.instances).toHaveLength(1));
+		await Promise.resolve();
+		expect(startResolved).toBe(false);
+		expect(recorder.starting()).toBe(true);
+		expect(recorder.recording()).toBe(false);
+
+		media.instances[0]?.onstart?.();
+		await starting;
+		expect(recorder.starting()).toBe(false);
+		expect(recorder.recording()).toBe(true);
+	});
+
+	it('times live audio from the start event and resets on release', async () => {
+		media.autoStart = false;
+		vi.useFakeTimers({
+			toFake: ['Date', 'setInterval', 'clearInterval'],
+		});
+		vi.setSystemTime(new Date('2026-08-08T01:00:00.000Z'));
+		const recorder = new VoiceRecorder();
+		const starting = recorder.start();
+		await vi.waitFor(() => expect(media.instances).toHaveLength(1));
+		vi.advanceTimersByTime(5_000);
+		expect(recorder.elapsedSeconds()).toBe(0);
+
+		media.instances[0]?.onstart?.();
+		await starting;
+		vi.advanceTimersByTime(2_100);
+		expect(recorder.elapsedSeconds()).toBe(2);
+
+		recorder.cancel();
+		expect(recorder.elapsedSeconds()).toBe(0);
+	});
+
+	it('releases microphone resources when recorder startup fails', async () => {
+		media.autoStart = false;
+		const recorder = new VoiceRecorder();
+		const starting = recorder.start();
+		await vi.waitFor(() => expect(media.instances).toHaveLength(1));
+
+		media.instances[0]?.onerror?.();
+		await expect(starting).rejects.toThrow('could not start');
+		expect(stopTrack).toHaveBeenCalledOnce();
+		expect(recorder.starting()).toBe(false);
 		expect(recorder.recording()).toBe(false);
 	});
 

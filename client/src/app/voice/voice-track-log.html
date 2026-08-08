@@ -35,11 +35,22 @@
 						<p class="capture-error" role="alert">{{ recorderError() }}</p>
 					}
 					@if (recordingMode(); as mode) {
-						<div class="recording-state" role="status" aria-live="polite">
-							<span aria-hidden="true"></span>
-							<strong>{{ mode.kind === 'capture' ? 'Recording track note' : 'Recording correction' }}</strong>
-							<button class="button" type="button" (click)="stopRecording()">Stop and keep recording</button>
-							<button type="button" (click)="cancelRecording()">Cancel</button>
+						<div class="recording-state" [attr.data-phase]="recorder.starting() ? 'starting' : 'live'" [attr.aria-busy]="recorder.starting()">
+							<span class="recording-indicator" aria-hidden="true"></span>
+							<div class="recording-copy">
+								<strong role="status" aria-live="polite">
+									{{ recorder.starting() ? 'Starting microphone…' : (mode.kind === 'capture' ? 'Recording track note' : 'Recording correction') }}
+								</strong>
+								<small>{{ recorder.starting() ? 'Wait for the timer before speaking.' : 'Audio is being captured.' }}</small>
+							</div>
+							@if (!recorder.starting()) {
+								<div class="recording-timer" role="timer" aria-live="off" [attr.aria-label]="recordingDuration().label">
+									<span aria-hidden="true">REC</span>
+									<time aria-hidden="true" [attr.datetime]="recordingDuration().datetime">{{ recordingDuration().clock }}</time>
+								</div>
+								<button class="button" type="button" (click)="stopRecording()">Stop and keep recording</button>
+								<button type="button" (click)="cancelRecording()">Cancel</button>
+							}
 						</div>
 					} @else if (textFallback() || (!recorder.checking() && !recorder.supported())) {
 						<label for="voice-text-note">Track note</label>

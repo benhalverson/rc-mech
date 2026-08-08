@@ -49,6 +49,18 @@ export class VoiceTrackLog {
 			this.voiceStore.localCaptures().length > 0 ||
 			this.voiceStore.updates().length > 0,
 	);
+	protected readonly recordingDuration = computed(() => {
+		const totalSeconds = this.recorder.elapsedSeconds();
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		const spokenMinutes = `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+		const spokenSeconds = `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
+		return {
+			clock: `${minutes}:${seconds.toString().padStart(2, '0')}`,
+			datetime: `PT${totalSeconds}S`,
+			label: `Elapsed recording time: ${spokenMinutes}, ${spokenSeconds}`,
+		};
+	});
 
 	constructor() {
 		effect(() => {
@@ -87,10 +99,11 @@ export class VoiceTrackLog {
 	protected async startRecording(mode: RecordingMode): Promise<void> {
 		if (this.recordingMode()) return;
 		this.recorderError.set('');
+		this.recordingMode.set(mode);
 		try {
 			await this.recorder.start();
-			this.recordingMode.set(mode);
 		} catch (error) {
+			this.recordingMode.set(null);
 			this.recorderError.set(
 				error instanceof DOMException && error.name === 'NotAllowedError'
 					? 'Microphone access was denied. Allow it in browser settings or use the text note fallback.'
