@@ -124,6 +124,12 @@ importers:
       '@angular/router':
         specifier: ^22.1.0
         version: 22.1.1(@angular/common@22.1.1(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2))(@angular/platform-browser@22.1.1(@angular/animations@22.1.1(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2)))(@angular/common@22.1.1(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2)))(rxjs@7.8.2)
+      '@fontsource-variable/commissioner':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/fragment-mono':
+        specifier: 5.3.0
+        version: 5.3.0
       '@ngrx/signals':
         specifier: ^20.1.0
         version: 20.1.0(@angular/core@22.1.1(@angular/compiler@22.1.1)(rxjs@7.8.2))(rxjs@7.8.2)
@@ -1030,6 +1036,12 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource-variable/commissioner@5.3.0':
+    resolution: {integrity: sha512-0IEvi8SO1slc5Pc9tA4OtA01I8UiCcEq/uh12oNjfHuABU9Lnz61l2V8o2cMPUUo3BAo5MbISVK2I/DSpBRw7Q==}
+
+  '@fontsource/fragment-mono@5.3.0':
+    resolution: {integrity: sha512-vpOLZhWq7Z6wUPo1qMl16Y4yjQJiN0d9TXX2oUtiYXmqUrXU23Wuto73Knyak+osdlIuHz46srpBZb2pfhHCIA==}
 
   '@harperfast/extended-iterable@1.0.3':
     resolution: {integrity: sha512-sSAYhQca3rDWtQUHSAPeO7axFIUJOI6hn1gjRC5APVE1a90tuyT8f5WIgRsFhhWA7htNkju2veB9eWL6YHi/Lw==}
@@ -4665,6 +4677,10 @@ snapshots:
   '@exodus/bytes@1.15.1(@noble/hashes@2.3.0)':
     optionalDependencies:
       '@noble/hashes': 2.3.0
+
+  '@fontsource-variable/commissioner@5.3.0': {}
+
+  '@fontsource/fragment-mono@5.3.0': {}
 
   '@harperfast/extended-iterable@1.0.3':
     optional: true

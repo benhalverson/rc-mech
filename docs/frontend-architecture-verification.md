@@ -1,5 +1,7 @@
 # Frontend architecture verification
 
+> Historical verification snapshot for issue #52. Its allowance for imperative component writes is superseded by [ADR 0012](./adr/0012-thin-angular-components-and-feature-boundaries.md) and the [Angular feature architecture](./angular-feature-architecture.md); retain this file only as evidence of the 2026-08-07 state until the architecture migration's final contraction.
+
 **Issue:** #52
 **Verified:** 2026-08-07
 
