@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, computed, inject, linkedSignal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { OwnerSessionStore } from './owner-session-store';
 import { RouteTransitionAnnouncer } from './route-transition-announcer';
@@ -18,7 +18,7 @@ export class App {
 	protected readonly transition = inject(RouteTransitionAnnouncer);
 	private navToggle!: HTMLButtonElement;
 	protected readonly mobileNav = this.responsiveViewport.mobile;
-	protected readonly navOpen = signal(!this.mobileNav());
+	protected readonly navOpen = linkedSignal(() => !this.mobileNav());
 	protected readonly checking = computed(
 		() =>
 			this.sessionStore.session.isLoading() &&
@@ -26,10 +26,6 @@ export class App {
 	);
 	protected readonly signedIn = this.sessionStore.authenticated;
 	protected readonly ownerEmail = this.sessionStore.ownerEmail;
-
-	constructor() {
-		effect(() => this.navOpen.set(!this.mobileNav()));
-	}
 
 	protected openNav(navToggle: HTMLButtonElement): void {
 		this.navToggle = navToggle;
