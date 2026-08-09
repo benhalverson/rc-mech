@@ -9,15 +9,15 @@ import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ShellRouteContext } from '../../shell/shell-route-context';
 import {
-	currentSetupGatewayFailure,
-	CurrentSetupGateway,
-} from './current-setup-gateway';
-import {
 	parseCurrentSetupCollection,
 	parseCurrentSetupMutation,
 	parseCurrentSetupTimezone,
 	type SaveCurrentSetupCommand,
 } from './current-setup.models';
+import {
+	CurrentSetupGateway,
+	currentSetupGatewayFailure,
+} from './current-setup-gateway';
 
 const response = {
 	currentSetupId: 'setup-1',

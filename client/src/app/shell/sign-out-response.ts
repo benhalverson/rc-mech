@@ -1,5 +1,5 @@
-import { literal, object } from 'zod/mini';
 import type * as z from 'zod/mini';
+import { literal, object } from 'zod/mini';
 import { InvalidSignOutResponse } from './sign-out-contract';
 
 const signOutResponseSchema = object({ success: literal(true) });

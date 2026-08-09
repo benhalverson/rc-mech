@@ -7,8 +7,8 @@ import type {
 	SaveCurrentSetupCommand,
 } from './current-setup.models';
 import { CurrentSetupStore } from './current-setup-store';
-import { SetupChangeEditor } from './setup-change-editor';
 import { setupChangeFormFromSnapshot } from './setup-change.rules';
+import { SetupChangeEditor } from './setup-change-editor';
 
 const setup: CurrentSetupSnapshot = {
 	id: 'setup-1',

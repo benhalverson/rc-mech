@@ -12,7 +12,6 @@ import {
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, exhaustMap, from, switchMap, tap } from 'rxjs';
 import { OwnerSessionStore } from '../owner-session-store';
-import { AuthenticationGateway } from './authentication-gateway';
 import type {
 	AuthenticatePasskeyCommand,
 	AuthenticationFailure,
@@ -21,6 +20,7 @@ import type {
 	RegisterCommand,
 	RequestMagicLinkCommand,
 } from './authentication.models';
+import { AuthenticationGateway } from './authentication-gateway';
 import { authenticationRouteContext } from './authentication-route';
 import { PasskeyCapability } from './passkey-capability';
 

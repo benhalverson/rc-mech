@@ -16,7 +16,7 @@
 		"test:invite:request": "bash scripts/invite-request-smoke.sh",
 		"test:browser": "pnpm client:build && playwright test -c playwright.config.ts",
 		"test:invite:browser": "pnpm test:browser",
-		"lint": "biome lint . && tsx tools/angular-architecture-check.ts",
+		"lint": "biome check . && tsx tools/angular-architecture-check.ts",
 		"format": "biome format --write .",
 		"format:check": "biome format --reporter=summary .",
 		"test:backend": "vitest run --coverage",

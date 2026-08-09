@@ -1,4 +1,5 @@
 import { computed, inject } from '@angular/core';
+import { Router } from '@angular/router';
 import {
 	patchState,
 	signalStore,
@@ -8,7 +9,6 @@ import {
 	withState,
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { Router } from '@angular/router';
 import { catchError, exhaustMap, from, of, switchMap, tap } from 'rxjs';
 import { OwnerSessionStore } from '../owner-session-store';
 import type { SignOutGatewayFailure } from './sign-out-contract';

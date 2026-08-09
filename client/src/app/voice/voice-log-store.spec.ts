@@ -1,11 +1,8 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { of, Subject, throwError, type Observable } from 'rxjs';
+import { type Observable, of, Subject, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OwnerSessionStore } from '../owner-session-store';
-import { VoiceConnectivity } from './voice-connectivity';
-import { VoiceGateway } from './voice-gateway';
-import { VoiceLogStore } from './voice-log-store';
 import type {
 	PendingVoiceCapture,
 	VoiceContextCar,
@@ -13,6 +10,9 @@ import type {
 	VoiceMutationResponse,
 	VoiceUpdate,
 } from './voice.models';
+import { VoiceConnectivity } from './voice-connectivity';
+import { VoiceGateway } from './voice-gateway';
+import { VoiceLogStore } from './voice-log-store';
 import { VoiceOfflineQueue } from './voice-offline-queue';
 import { VoiceRecorder } from './voice-recorder';
 

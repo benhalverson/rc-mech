@@ -1,3 +1,4 @@
+import type * as z from 'zod/mini';
 import {
 	array,
 	boolean,
@@ -9,7 +10,6 @@ import {
 	string,
 	union,
 } from 'zod/mini';
-import type * as z from 'zod/mini';
 
 const voiceStatusSchema = union([
 	literal('pending'),

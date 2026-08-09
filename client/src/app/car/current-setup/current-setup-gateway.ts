@@ -4,16 +4,16 @@ import {
 	httpResource,
 } from '@angular/common/http';
 import { inject, Service } from '@angular/core';
-import { catchError, map, throwError, type Observable } from 'rxjs';
+import { catchError, map, type Observable, throwError } from 'rxjs';
 import { minLength, object, string, trim } from 'zod/mini';
 import { ShellRouteContext } from '../../shell/shell-route-context';
 import {
+	type CurrentSetupCollection,
 	type CurrentSetupGatewayFailure,
+	type CurrentSetupSnapshot,
 	parseCurrentSetupCollection,
 	parseCurrentSetupMutation,
 	parseCurrentSetupTimezone,
-	type CurrentSetupCollection,
-	type CurrentSetupSnapshot,
 	type SaveCurrentSetupCommand,
 } from './current-setup.models';
 

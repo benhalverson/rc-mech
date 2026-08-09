@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import Dexie from 'dexie';
-import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
+import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PendingVoiceCapture } from './voice.models';
 import { VOICE_QUEUE_DATABASE, VoiceOfflineQueue } from './voice-offline-queue';

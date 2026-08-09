@@ -10,7 +10,6 @@ import {
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { DRIVE_SESSION_CONTEXT } from '../car/drive-sessions/drive-session-context';
-import { VoiceLogStore } from './voice-log-store';
 import type {
 	VoiceConfidence,
 	VoiceRecordingMode,
@@ -21,6 +20,7 @@ import {
 	voiceRecordingDuration,
 	voiceUpdateHasUncertainty,
 } from './voice.rules';
+import { VoiceLogStore } from './voice-log-store';
 
 @Component({
 	selector: 'app-voice-note-workspace',

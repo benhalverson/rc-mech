@@ -1,8 +1,8 @@
 import { DOCUMENT } from '@angular/common';
 import {
 	DestroyRef,
-	inject,
 	InjectionToken,
+	inject,
 	Service,
 	signal,
 } from '@angular/core';

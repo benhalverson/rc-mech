@@ -1,5 +1,4 @@
 import { computed, inject } from '@angular/core';
-import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import {
 	patchState,
 	signalStore,
@@ -8,13 +7,14 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
+import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, exhaustMap, of, tap } from 'rxjs';
-import { GarageGateway } from './garage-gateway';
 import type {
 	CreateCarCommand,
 	GarageCreateOutcome,
 	GarageGatewayFailure,
 } from './garage.models';
+import { GarageGateway } from './garage-gateway';
 
 export type { GarageCar, GarageCarInput } from './garage.models';
 

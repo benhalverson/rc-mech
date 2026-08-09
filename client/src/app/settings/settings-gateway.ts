@@ -3,17 +3,17 @@ import {
 	HttpErrorResponse,
 	httpResource,
 } from '@angular/common/http';
-import { inject, Injectable } from '@angular/core';
-import { catchError, map, throwError, type Observable } from 'rxjs';
+import { Injectable, inject } from '@angular/core';
+import { catchError, map, type Observable, throwError } from 'rxjs';
 import type { WebAuthnOptions } from './passkey-credentials';
 import {
 	acknowledgedMutationSchema,
-	inviteCodesSchema,
-	inviteMutationSchema,
-	passkeyCollectionSchema,
 	type InviteCode,
 	type InviteCodesResponse,
+	inviteCodesSchema,
+	inviteMutationSchema,
 	type Passkey,
+	passkeyCollectionSchema,
 	type SettingsGatewayFailure,
 	webAuthnOptionsSchema,
 } from './settings.models';

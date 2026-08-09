@@ -1,5 +1,5 @@
-import { array, minLength, nullable, object, optional, string } from 'zod/mini';
 import type * as z from 'zod/mini';
+import { array, minLength, nullable, object, optional, string } from 'zod/mini';
 
 const optionalText = optional(nullable(string()));
 

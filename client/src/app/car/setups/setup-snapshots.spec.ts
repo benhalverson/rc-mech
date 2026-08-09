@@ -10,10 +10,10 @@ import { catchError, Observable, of, Subject, throwError } from 'rxjs';
 import { vi } from 'vitest';
 import { emptySetupForm } from './setup-form';
 import {
+	type SetupSnapshot,
+	SetupSnapshotGateway,
 	SoDialedImportGateway,
 	SoDialedImportPreview,
-	SetupSnapshotGateway,
-	type SetupSnapshot,
 } from './setup-snapshot';
 import {
 	SetupSnapshotStore,

@@ -3,8 +3,8 @@ import {
 	HttpErrorResponse,
 	httpResource,
 } from '@angular/common/http';
-import { inject, Injectable, signal } from '@angular/core';
-import { catchError, map, throwError, type Observable } from 'rxjs';
+import { Injectable, inject, signal } from '@angular/core';
+import { catchError, map, type Observable, throwError } from 'rxjs';
 import {
 	type BuildGatewayFailure,
 	type InstalledComponent,

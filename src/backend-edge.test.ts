@@ -19,13 +19,8 @@ import {
 	canTransitionMaintenance,
 } from './maintenance-policy';
 import { validatePhotoMetadata } from './photo-policy';
-import * as schema from './schema';
-import {
-	defaultImportExtractor,
-	isSupportedPdfReference,
-	resolveSetupImport,
-} from './setup-import-policy';
-import { chooseCopySource, shouldSelectCurrentSetup } from './setup-policy';
+import { required } from './routes/invariant';
+import { jsonText, jsonValue } from './routes/json-values';
 import {
 	consumableInsertValues,
 	publicConsumable,
@@ -41,8 +36,13 @@ import {
 	setupCopyValue,
 	setupInsertValues,
 } from './routes/setups/setup-records';
-import { required } from './routes/invariant';
-import { jsonText, jsonValue } from './routes/json-values';
+import * as schema from './schema';
+import {
+	defaultImportExtractor,
+	isSupportedPdfReference,
+	resolveSetupImport,
+} from './setup-import-policy';
+import { chooseCopySource, shouldSelectCurrentSetup } from './setup-policy';
 import {
 	consumableInput,
 	consumableUpdateInput,

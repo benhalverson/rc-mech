@@ -8,8 +8,8 @@ import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	parseTimezonePreference,
-	timezoneGatewayFailure,
 	TimezoneGateway,
+	timezoneGatewayFailure,
 } from './timezone-gateway';
 
 describe('TimezoneGateway', () => {

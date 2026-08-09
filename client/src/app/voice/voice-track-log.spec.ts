@@ -4,7 +4,6 @@ import { provideRouter, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CarStore } from '../car/car-store';
 import { DRIVE_SESSION_CONTEXT } from '../car/drive-sessions/drive-session-context';
-import { VoiceLogStore } from './voice-log-store';
 import type {
 	PendingVoiceCapture,
 	VoiceDraft,
@@ -12,6 +11,7 @@ import type {
 	VoiceRecordingMode,
 	VoiceUpdate,
 } from './voice.models';
+import { VoiceLogStore } from './voice-log-store';
 import { VoiceNoteWorkspace } from './voice-note-workspace';
 import { VoiceTrackLog } from './voice-track-log';
 

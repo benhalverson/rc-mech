@@ -1,4 +1,4 @@
-import { computed, inject, InjectionToken, type Signal } from '@angular/core';
+import { computed, InjectionToken, inject, type Signal } from '@angular/core';
 import {
 	patchState,
 	signalStore,
@@ -7,8 +7,8 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { DriveSessionGateway } from './drive-session-gateway';
 import type { DriveSession } from './drive-session.models';
+import { DriveSessionGateway } from './drive-session-gateway';
 import { resolveTimezone } from './drive-session-time';
 
 export type DriveSessionContext = {

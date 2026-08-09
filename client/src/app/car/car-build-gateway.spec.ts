@@ -8,8 +8,8 @@ import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstalledComponent, SaveBuildCommand } from './car.models';
 import {
-	CarBuildGateway,
 	buildGatewayFailure,
+	CarBuildGateway,
 	parseBuildCollection,
 	parseBuildMutation,
 } from './car-build-gateway';

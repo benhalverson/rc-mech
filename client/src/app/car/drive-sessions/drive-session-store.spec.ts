@@ -1,8 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Subject, type Observable } from 'rxjs';
+import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DriveSessionGateway } from './drive-session-gateway';
 import type {
 	ArchiveDriveSessionCommand,
 	DriveSession,
@@ -10,6 +9,7 @@ import type {
 	DriveSessionGatewayFailure,
 	SaveDriveSessionCommand,
 } from './drive-session.models';
+import { DriveSessionGateway } from './drive-session-gateway';
 import { DriveSessionStore } from './drive-session-store';
 import { browserTimezone } from './drive-session-time';
 

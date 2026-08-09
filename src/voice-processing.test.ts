@@ -4,8 +4,8 @@ import { createHonoFixture } from './testing/hono-fixture';
 import {
 	createWorkersAiVoiceProcessor,
 	NO_SPEECH_DETECTED_MESSAGE,
-	type VoiceProcessingRequest,
 	VoiceProcessingError,
+	type VoiceProcessingRequest,
 } from './voice-processing';
 
 const emptyDraft = {

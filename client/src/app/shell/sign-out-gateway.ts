@@ -1,12 +1,12 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { inject, InjectionToken, Service } from '@angular/core';
+import { InjectionToken, inject, Service } from '@angular/core';
 import {
 	catchError,
 	defer,
 	map,
+	type Observable,
 	switchMap,
 	throwError,
-	type Observable,
 } from 'rxjs';
 import {
 	InvalidSignOutResponse,

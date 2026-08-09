@@ -1,3 +1,4 @@
+import type * as z from 'zod/mini';
 import {
 	array,
 	boolean,
@@ -10,7 +11,6 @@ import {
 	string,
 	unknown,
 } from 'zod/mini';
-import type * as z from 'zod/mini';
 
 export const currentSetupSectionKeys = [
 	'vehicle',

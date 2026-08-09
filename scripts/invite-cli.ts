@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { Command } from 'commander';
 import { writeFile } from 'node:fs/promises';
+import { Command } from 'commander';
 import { validateInviteCode } from '../src/invite-policy';
 import { createOrReuseInvite } from './invite-cli-support';
 

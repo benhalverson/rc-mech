@@ -3,10 +3,10 @@ import {
 	HttpErrorResponse,
 	httpResource,
 } from '@angular/common/http';
-import { inject, Injectable, signal } from '@angular/core';
-import { catchError, defer, map, throwError, type Observable } from 'rxjs';
-import { minLength, object, safeParse, string, trim } from 'zod/mini';
+import { Injectable, inject, signal } from '@angular/core';
+import { catchError, defer, map, type Observable, throwError } from 'rxjs';
 import type * as z from 'zod/mini';
+import { minLength, object, safeParse, string, trim } from 'zod/mini';
 import type {
 	PendingVoiceCapture,
 	VoiceContextCar,

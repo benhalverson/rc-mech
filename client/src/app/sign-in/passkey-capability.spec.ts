@@ -3,8 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-	passkeyCapabilityFailure,
 	PasskeyCapability,
+	passkeyCapabilityFailure,
 } from './passkey-capability';
 
 class FakePublicKeyCredential {

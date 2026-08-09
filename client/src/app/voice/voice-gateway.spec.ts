@@ -6,14 +6,14 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PendingVoiceCapture, VoiceUpdate } from './voice.models';
 import {
 	parseVoiceContextCars,
 	parseVoiceMutation,
 	parseVoiceUpdates,
-	voiceGatewayFailure,
 	VoiceGateway,
+	voiceGatewayFailure,
 } from './voice-gateway';
-import type { PendingVoiceCapture, VoiceUpdate } from './voice.models';
 
 const update = (overrides: Partial<VoiceUpdate> = {}): VoiceUpdate => ({
 	id: 'voice-1',
