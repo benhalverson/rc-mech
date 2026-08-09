@@ -14,6 +14,7 @@ import {
 	validate,
 } from '@angular/forms/signals';
 import type { GarageCar, GarageCarInput } from '../garage/garage-store';
+import { VoiceNoteWorkspace } from '../voice/voice-note-workspace';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
 import { CurrentSetup } from './current-setup/current-setup';
@@ -60,7 +61,7 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 
 @Component({
 	selector: 'app-car-overview',
-	imports: [CarSectionShell, CurrentSetup, FormField],
+	imports: [CarSectionShell, CurrentSetup, FormField, VoiceNoteWorkspace],
 	template: `
 		@if (store.loading()) {
 			<div class="state-card" role="status">Opening the car overview…</div>
@@ -69,6 +70,7 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 		} @else if (store.car(); as car) {
 			<app-car-section-shell [car]="car" section="overview">
 				<app-current-setup [carId]="car.id" [archived]="!!car.archivedAt" />
+				<app-voice-note-workspace class="mt-6" [carId]="car.id" [archived]="!!car.archivedAt" />
 				@if (editing()) {
 					<form class="car-form" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : null" novalidate>
 						<div class="eyebrow">Edit car</div><h3 id="car-form-title">Update the car record.</h3>

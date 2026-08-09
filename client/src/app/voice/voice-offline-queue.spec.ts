@@ -40,6 +40,7 @@ describe('VoiceOfflineQueue', () => {
 		TestBed.configureTestingModule({ providers: [VoiceOfflineQueue] });
 		const queue = TestBed.inject(VoiceOfflineQueue);
 		database = TestBed.inject(VOICE_QUEUE_DATABASE);
+		expect(queue.createId()).toMatch(/^[0-9a-f-]{36}$/i);
 
 		await queue.put(capture('later', 'owner-a', '2026-08-08T02:00:00.000Z'));
 		await queue.put(

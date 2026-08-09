@@ -8,8 +8,8 @@
 		"client/src/app/car/car-build.ts:117:33:http-client",
 		"client/src/app/car/car-build.ts:265:3:manual-subscribe",
 		"client/src/app/car/car-build.ts:82:2:inline-template",
-		"client/src/app/car/car-overview.ts:175:7:await",
-		"client/src/app/car/car-overview.ts:64:2:inline-template",
+		"client/src/app/car/car-overview.ts:177:7:await",
+		"client/src/app/car/car-overview.ts:65:2:inline-template",
 		"client/src/app/car/car-photos.ts:9:2:inline-template",
 		"client/src/app/car/car-setups.ts:13:2:inline-template",
 		"client/src/app/car/car-setups.ts:31:33:http-client",
@@ -37,14 +37,6 @@
 		"client/src/app/setup-snapshots.ts:306:16:manual-subscribe",
 		"client/src/app/setup-snapshots.ts:407:3:manual-subscribe",
 		"client/src/app/setup-snapshots.ts:446:3:manual-subscribe",
-		"client/src/app/setup-snapshots.ts:476:3:manual-subscribe",
-		"client/src/app/voice/voice-track-log.ts:107:4:await",
-		"client/src/app/voice/voice-track-log.ts:126:17:await",
-		"client/src/app/voice/voice-track-log.ts:128:5:await",
-		"client/src/app/voice/voice-track-log.ts:132:9:await",
-		"client/src/app/voice/voice-track-log.ts:158:3:await",
-		"client/src/app/voice/voice-track-log.ts:183:19:await",
-		"client/src/app/voice/voice-track-log.ts:211:18:await",
-		"client/src/app/voice/voice-track-log.ts:217:4:await"
+		"client/src/app/setup-snapshots.ts:476:3:manual-subscribe"
 	]
 }

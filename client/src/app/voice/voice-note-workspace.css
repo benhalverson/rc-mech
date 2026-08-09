@@ -1,0 +1,15 @@
+.microphone-progress {
+	appearance: none;
+}
+
+.microphone-progress::-webkit-progress-bar {
+	background: var(--alloy-control);
+}
+
+.microphone-progress::-webkit-progress-value {
+	background: var(--alloy-accent);
+}
+
+.microphone-progress::-moz-progress-bar {
+	background: var(--alloy-accent);
+}

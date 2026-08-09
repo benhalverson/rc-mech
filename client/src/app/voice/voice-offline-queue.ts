@@ -21,6 +21,10 @@ export class VoiceOfflineQueue {
 	private readonly captures: Table<PendingVoiceCapture, string> =
 		this.database.table('captures');
 
+	createId(): string {
+		return crypto.randomUUID();
+	}
+
 	async put(capture: PendingVoiceCapture): Promise<void> {
 		await this.captures.put(capture);
 	}

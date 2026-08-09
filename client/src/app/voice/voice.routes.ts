@@ -1,25 +1,11 @@
 import type { Routes } from '@angular/router';
 import { CarStore } from '../car/car-store';
-import {
-	DRIVE_SESSION_CONTEXT,
-	DriveSessionContextStore,
-} from '../car/drive-sessions/drive-session-context';
-import { DriveSessionGateway } from '../car/drive-sessions/drive-session-gateway';
-import { VoiceLogStore } from './voice-log-store';
+import { VOICE_WORKFLOW_PROVIDERS } from './voice.providers';
 
 export const VOICE_ROUTES: Routes = [
 	{
 		path: '',
-		providers: [
-			CarStore,
-			DriveSessionGateway,
-			DriveSessionContextStore,
-			{
-				provide: DRIVE_SESSION_CONTEXT,
-				useExisting: DriveSessionContextStore,
-			},
-			VoiceLogStore,
-		],
+		providers: [CarStore, ...VOICE_WORKFLOW_PROVIDERS],
 		loadComponent: () =>
 			import('./voice-track-log').then(({ VoiceTrackLog }) => VoiceTrackLog),
 	},

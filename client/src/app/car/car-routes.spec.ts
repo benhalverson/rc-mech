@@ -4,6 +4,7 @@ import {
 	provideHttpClientTesting,
 	TestRequest,
 } from '@angular/common/http/testing';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import {
@@ -26,6 +27,9 @@ import { CurrentSetupStore } from './current-setup/current-setup-store';
 import { DriveSessionGateway } from './drive-sessions/drive-session-gateway';
 import { DriveSessionStore } from './drive-sessions/drive-session-store';
 import { DriveSessions } from './drive-sessions/drive-sessions';
+import { DRIVE_SESSION_CONTEXT } from './drive-sessions/drive-session-context';
+import { VoiceLogStore } from '../voice/voice-log-store';
+import type { VoiceOperationOutcome } from '../voice/voice.models';
 
 type TestSignal<T> = (() => T) & { set(value: T): void };
 
@@ -37,6 +41,7 @@ const emptyCurrentSetupStore = {
 	remainingRows: () => [],
 	changes: () => [],
 	timezone: () => 'UTC',
+	timezoneReady: () => true,
 	outcome: () => ({
 		status: 'idle' as const,
 		operation: 'save-current-setup' as const,
@@ -50,6 +55,52 @@ const emptyCurrentSetupStore = {
 	retry: (): void => undefined,
 };
 
+const emptyVoiceOutcome = signal<VoiceOperationOutcome>({
+	status: 'idle',
+	operation: null,
+	operationId: null,
+});
+const emptyVoiceStore = {
+	localCaptures: signal([]),
+	updates: signal([]),
+	cars: signal([]),
+	loading: signal(false),
+	readError: signal(''),
+	error: signal(''),
+	message: signal(''),
+	pending: signal(false),
+	outcome: emptyVoiceOutcome,
+	recorderError: signal(''),
+	recordingMode: signal(null),
+	checking: signal(false),
+	supported: signal(true),
+	starting: signal(false),
+	recording: signal(false),
+	elapsedSeconds: signal(0),
+	inputLevel: signal(0),
+	audioDetected: signal(false),
+	inputMuted: signal(false),
+	selectCar: (): void => undefined,
+	retryQueued: (): void => undefined,
+	detectRecorderSupport: (): void => undefined,
+	startRecording: (): void => undefined,
+	stopRecording: (): void => undefined,
+	cancelRecording: (): void => undefined,
+	captureText: (): void => undefined,
+	correctText: (): void => undefined,
+	updateContext: (): void => undefined,
+	process: (): void => undefined,
+	confirm: (): void => undefined,
+	discardLocal: (): void => undefined,
+	discardServer: (): void => undefined,
+	retryRead: (): void => undefined,
+};
+const emptyDriveSessionContext = {
+	sessions: signal([]),
+	timezone: signal('UTC'),
+	selectCar: (): void => undefined,
+};
+
 const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/overview',
@@ -57,6 +108,8 @@ const testRoutes: Routes = [
 		providers: [
 			CarStore,
 			{ provide: CurrentSetupStore, useValue: emptyCurrentSetupStore },
+			{ provide: VoiceLogStore, useValue: emptyVoiceStore },
+			{ provide: DRIVE_SESSION_CONTEXT, useValue: emptyDriveSessionContext },
 		],
 	},
 	{

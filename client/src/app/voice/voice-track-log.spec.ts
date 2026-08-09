@@ -8,9 +8,11 @@ import { VoiceLogStore } from './voice-log-store';
 import type {
 	PendingVoiceCapture,
 	VoiceDraft,
+	VoiceOperationOutcome,
+	VoiceRecordingMode,
 	VoiceUpdate,
 } from './voice.models';
-import { VoiceRecorder } from './voice-recorder';
+import { VoiceNoteWorkspace } from './voice-note-workspace';
 import { VoiceTrackLog } from './voice-track-log';
 
 const emptyDraft: VoiceDraft = {
@@ -80,59 +82,54 @@ const localCapture = (): PendingVoiceCapture => ({
 	error: null,
 });
 
-type InternalVoiceTrackLog = {
-	startRecording(
-		mode: { kind: 'capture' } | { kind: 'correction'; id: string },
-	): Promise<void>;
-	stopRecording(): Promise<void>;
+const idleOutcome = (): VoiceOperationOutcome => ({
+	status: 'idle',
+	operation: null,
+	operationId: null,
+});
+
+type WorkspaceInternal = {
 	showTextFallback(): void;
 	hideTextFallback(): void;
-	applyTextCorrection(id: string): Promise<void>;
-	hasUncertainty(update: VoiceUpdate): boolean;
+	startRecording(mode: VoiceRecordingMode): void;
+	stopRecording(): void;
+	cancelRecording(): void;
+	submitTextNote(): void;
+	beginCorrection(id: string): void;
+	cancelCorrection(): void;
+	applyTextCorrection(id: string): void;
 	contextCar(update: VoiceUpdate): string;
-	saveContext(update: VoiceUpdate): Promise<void>;
-	confidenceLabel(confidence: string, needsReview: boolean): string;
+	saveContext(update: VoiceUpdate): void;
+	hasUncertainty(update: VoiceUpdate): boolean;
+	confidenceLabel(
+		confidence: 'high' | 'medium' | 'low',
+		review: boolean,
+	): string;
 };
 
-describe('VoiceTrackLog', () => {
-	let fixture: ComponentFixture<VoiceTrackLog>;
-	let carStore: {
-		loading: ReturnType<typeof signal<boolean>>;
-		failure: ReturnType<
-			typeof signal<{ message: string; retryable: boolean } | null>
-		>;
-		car: ReturnType<typeof signal<Record<string, unknown> | null>>;
-		selectCar: ReturnType<typeof vi.fn>;
-		retry: ReturnType<typeof vi.fn>;
-	};
+describe('VoiceNoteWorkspace', () => {
+	let fixture: ComponentFixture<VoiceNoteWorkspace>;
 	let driveSessionContext: {
 		sessions: ReturnType<typeof signal<Array<Record<string, unknown>>>>;
 		timezone: ReturnType<typeof signal<string>>;
 		selectCar: ReturnType<typeof vi.fn>;
 	};
-	let voiceStore: {
+	let store: {
 		localCaptures: ReturnType<typeof signal<PendingVoiceCapture[]>>;
 		updates: ReturnType<typeof signal<VoiceUpdate[]>>;
-		cars: ReturnType<typeof signal<Array<Record<string, unknown>>>>;
+		cars: ReturnType<
+			typeof signal<
+				Array<{ id: string; name: string; archivedAt: string | null }>
+			>
+		>;
 		loading: ReturnType<typeof signal<boolean>>;
 		readError: ReturnType<typeof signal<string>>;
 		error: ReturnType<typeof signal<string>>;
 		message: ReturnType<typeof signal<string>>;
-		action: ReturnType<typeof signal<string | null>>;
-		selectCar: ReturnType<typeof vi.fn>;
-		retryQueued: ReturnType<typeof vi.fn>;
-		retryRead: ReturnType<typeof vi.fn>;
-		discardLocal: ReturnType<typeof vi.fn>;
-		enqueueAudio: ReturnType<typeof vi.fn>;
-		enqueueText: ReturnType<typeof vi.fn>;
-		correctAudio: ReturnType<typeof vi.fn>;
-		correctText: ReturnType<typeof vi.fn>;
-		updateContext: ReturnType<typeof vi.fn>;
-		process: ReturnType<typeof vi.fn>;
-		confirm: ReturnType<typeof vi.fn>;
-		discardServer: ReturnType<typeof vi.fn>;
-	};
-	let recorder: {
+		pending: ReturnType<typeof signal<boolean>>;
+		outcome: ReturnType<typeof signal<VoiceOperationOutcome>>;
+		recorderError: ReturnType<typeof signal<string>>;
+		recordingMode: ReturnType<typeof signal<VoiceRecordingMode | null>>;
 		checking: ReturnType<typeof signal<boolean>>;
 		supported: ReturnType<typeof signal<boolean>>;
 		starting: ReturnType<typeof signal<boolean>>;
@@ -141,28 +138,30 @@ describe('VoiceTrackLog', () => {
 		inputLevel: ReturnType<typeof signal<number>>;
 		audioDetected: ReturnType<typeof signal<boolean>>;
 		inputMuted: ReturnType<typeof signal<boolean>>;
-		detectSupport: ReturnType<typeof vi.fn>;
-		start: ReturnType<typeof vi.fn>;
-		stop: ReturnType<typeof vi.fn>;
-		cancel: ReturnType<typeof vi.fn>;
+		selectCar: ReturnType<typeof vi.fn>;
+		retryQueued: ReturnType<typeof vi.fn>;
+		detectRecorderSupport: ReturnType<typeof vi.fn>;
+		startRecording: ReturnType<typeof vi.fn>;
+		stopRecording: ReturnType<typeof vi.fn>;
+		cancelRecording: ReturnType<typeof vi.fn>;
+		captureText: ReturnType<typeof vi.fn>;
+		correctText: ReturnType<typeof vi.fn>;
+		updateContext: ReturnType<typeof vi.fn>;
+		process: ReturnType<typeof vi.fn>;
+		confirm: ReturnType<typeof vi.fn>;
+		discardLocal: ReturnType<typeof vi.fn>;
+		discardServer: ReturnType<typeof vi.fn>;
+		retryRead: ReturnType<typeof vi.fn>;
 	};
 
-	const car = (overrides: Record<string, unknown> = {}) => ({
-		id: 'car-1',
-		name: 'Buggy',
-		make: 'Associated',
-		model: 'B7',
-		archivedAt: null,
-		...overrides,
-	});
+	const internal = (): WorkspaceInternal =>
+		fixture.componentInstance as unknown as WorkspaceInternal;
 
-	const internal = (): InternalVoiceTrackLog =>
-		fixture.componentInstance as unknown as InternalVoiceTrackLog;
-
-	const detect = async (): Promise<void> => {
+	const detect = async (): Promise<HTMLElement> => {
 		fixture.detectChanges();
 		await fixture.whenStable();
 		fixture.detectChanges();
+		return fixture.nativeElement as HTMLElement;
 	};
 
 	const button = (label: string): HTMLButtonElement => {
@@ -174,20 +173,13 @@ describe('VoiceTrackLog', () => {
 	};
 
 	beforeEach(async () => {
-		carStore = {
-			loading: signal(false),
-			failure: signal(null),
-			car: signal(car()),
-			selectCar: vi.fn(),
-			retry: vi.fn(),
-		};
 		driveSessionContext = {
 			sessions: signal([
 				{
-					id: 'deleted-drive-session',
+					id: 'deleted',
 					startedAt: '2026-08-07T01:00:00.000Z',
 					conditions: null,
-					deletedAt: '2026-08-08T00:00:00.000Z',
+					deletedAt: 'now',
 				},
 				{
 					id: 'drive-1',
@@ -199,29 +191,21 @@ describe('VoiceTrackLog', () => {
 			timezone: signal('UTC'),
 			selectCar: vi.fn(),
 		};
-		voiceStore = {
+		store = {
 			localCaptures: signal([]),
 			updates: signal([]),
-			cars: signal([car(), car({ id: 'car-2', name: 'Truck' })]),
+			cars: signal([
+				{ id: 'car-1', name: 'Buggy', archivedAt: null },
+				{ id: 'car-2', name: 'Truck', archivedAt: null },
+			]),
 			loading: signal(false),
 			readError: signal(''),
 			error: signal(''),
 			message: signal(''),
-			action: signal(null),
-			selectCar: vi.fn(),
-			retryQueued: vi.fn(async () => undefined),
-			retryRead: vi.fn(),
-			discardLocal: vi.fn(async () => undefined),
-			enqueueAudio: vi.fn(async () => undefined),
-			enqueueText: vi.fn(async () => undefined),
-			correctAudio: vi.fn(async () => ({ voiceUpdate: voiceUpdate() })),
-			correctText: vi.fn(async () => ({ voiceUpdate: voiceUpdate() })),
-			updateContext: vi.fn(async () => ({ voiceUpdate: voiceUpdate() })),
-			process: vi.fn(async () => ({ voiceUpdate: voiceUpdate() })),
-			confirm: vi.fn(async () => ({ voiceUpdate: voiceUpdate() })),
-			discardServer: vi.fn(async () => ({ voiceUpdate: voiceUpdate() })),
-		};
-		recorder = {
+			pending: signal(false),
+			outcome: signal(idleOutcome()),
+			recorderError: signal(''),
+			recordingMode: signal(null),
 			checking: signal(false),
 			supported: signal(true),
 			starting: signal(false),
@@ -230,23 +214,32 @@ describe('VoiceTrackLog', () => {
 			inputLevel: signal(0),
 			audioDetected: signal(false),
 			inputMuted: signal(false),
-			detectSupport: vi.fn(async () => true),
-			start: vi.fn(async () => undefined),
-			stop: vi.fn(async () => new Blob(['voice'], { type: 'audio/webm' })),
-			cancel: vi.fn(),
+			selectCar: vi.fn(),
+			retryQueued: vi.fn(),
+			detectRecorderSupport: vi.fn(),
+			startRecording: vi.fn((mode: VoiceRecordingMode) =>
+				store.recordingMode.set(mode),
+			),
+			stopRecording: vi.fn(),
+			cancelRecording: vi.fn(() => store.recordingMode.set(null)),
+			captureText: vi.fn(),
+			correctText: vi.fn(),
+			updateContext: vi.fn(),
+			process: vi.fn(),
+			confirm: vi.fn(),
+			discardLocal: vi.fn(),
+			discardServer: vi.fn(),
+			retryRead: vi.fn(),
 		};
-
 		await TestBed.configureTestingModule({
-			imports: [VoiceTrackLog],
+			imports: [VoiceNoteWorkspace],
 			providers: [
 				provideRouter([]),
-				{ provide: CarStore, useValue: carStore },
 				{ provide: DRIVE_SESSION_CONTEXT, useValue: driveSessionContext },
-				{ provide: VoiceLogStore, useValue: voiceStore },
-				{ provide: VoiceRecorder, useValue: recorder },
+				{ provide: VoiceLogStore, useValue: store },
 			],
 		}).compileComponents();
-		fixture = TestBed.createComponent(VoiceTrackLog);
+		fixture = TestBed.createComponent(VoiceNoteWorkspace);
 		fixture.componentRef.setInput('carId', 'car-1');
 	});
 
@@ -255,426 +248,381 @@ describe('VoiceTrackLog', () => {
 		TestBed.resetTestingModule();
 	});
 
-	it('renders car, loading, failure, archive, and history read states', async () => {
+	it('renders capture first, selects route context, and preserves no-setup independence', async () => {
 		fixture.componentRef.setInput('carId', '');
-		carStore.loading.set(true);
 		await detect();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Opening the car record',
-		);
-		internal().showTextFallback();
-		await Promise.resolve();
-		internal().hideTextFallback();
 		fixture.componentRef.setInput('carId', 'car-1');
-
-		carStore.loading.set(false);
-		carStore.failure.set({ message: 'Car failed', retryable: true });
-		await detect();
-		button('Try again').click();
-		expect(carStore.retry).toHaveBeenCalledOnce();
-
-		carStore.failure.set({ message: 'Session expired', retryable: false });
-		await detect();
+		driveSessionContext.sessions.update((sessions) =>
+			sessions.map((session) =>
+				session['id'] === 'drive-1'
+					? { ...session, conditions: null }
+					: session,
+			),
+		);
+		let root = await detect();
+		expect(root.textContent).toContain('Voice note');
+		expect(root.textContent).toContain('Start voice note');
+		expect(root.textContent).not.toContain('Voice note history');
+		expect(driveSessionContext.selectCar).toHaveBeenCalledWith('car-1');
+		expect(store.selectCar).toHaveBeenCalledWith('car-1');
+		expect(store.retryQueued).not.toHaveBeenCalled();
+		expect(store.detectRecorderSupport).toHaveBeenCalledOnce();
 		expect(
-			fixture.nativeElement.querySelector('[role="alert"] button'),
-		).toBeNull();
+			root.querySelectorAll<HTMLSelectElement>('#voice-drive-session option'),
+		).toHaveLength(2);
+		store.readError.set('History unavailable');
+		root = await detect();
+		expect(root.textContent).toContain('History unavailable');
+		store.readError.set('');
+		store.message.set('Voice update saved to garage history.');
+		root = await detect();
+		expect(root.textContent).toContain('Voice update saved');
+		expect(root.textContent).not.toContain('No voice notes yet');
+		store.message.set('');
 
-		carStore.failure.set(null);
-		carStore.car.set(car());
-		recorder.checking.set(true);
-		voiceStore.loading.set(true);
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Checking microphone');
-		expect(fixture.nativeElement.textContent).toContain(
-			'Opening voice history',
-		);
-
-		recorder.checking.set(false);
-		voiceStore.loading.set(false);
-		voiceStore.readError.set('History unavailable');
-		await detect();
-		button('Try again').click();
-		expect(voiceStore.retryRead).toHaveBeenCalledOnce();
-
-		voiceStore.readError.set('');
-		voiceStore.error.set('Mutation failed');
-		voiceStore.message.set('Mutation worked');
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('No voice notes yet');
-		expect(fixture.nativeElement.textContent).toContain('Mutation failed');
-		expect(fixture.nativeElement.textContent).toContain('Mutation worked');
-		internal().showTextFallback();
-		await Promise.resolve();
-		expect(document.activeElement?.id).toBe('voice-history-title');
-		internal().hideTextFallback();
-
-		carStore.car.set(car({ make: null, manufacturer: 'Tamiya', model: null }));
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Tamiya · Model not recorded',
-		);
-		carStore.car.set(car({ make: null, manufacturer: null }));
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Make not recorded');
-
-		carStore.car.set(car({ archivedAt: '2026-08-08T00:00:00.000Z' }));
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('read-only');
+		fixture.componentRef.setInput('showHistory', true);
+		root = await detect();
+		expect(root.textContent).toContain('No voice notes yet');
+		fixture.componentRef.setInput('archived', true);
+		root = await detect();
+		expect(root.textContent).toContain('read-only');
+		expect(root.textContent).not.toContain('Start voice note');
 	});
 
-	it('supports microphone, text fallback, cancellation, and capture errors', async () => {
-		await detect();
-		expect(carStore.selectCar).toHaveBeenCalledWith('car-1');
-		expect(driveSessionContext.selectCar).toHaveBeenCalledWith('car-1');
-		expect(voiceStore.selectCar).toHaveBeenCalledWith('car-1');
-		expect(recorder.detectSupport).toHaveBeenCalledOnce();
-
-		const select = fixture.nativeElement.querySelector(
+	it('dispatches text, recording, cancellation, and drive-session commands synchronously', async () => {
+		let root = await detect();
+		const select = root.querySelector(
 			'#voice-drive-session',
 		) as HTMLSelectElement;
 		select.value = 'drive-1';
 		select.dispatchEvent(new Event('change'));
-		internal().showTextFallback();
-		await detect();
-
-		const note = fixture.nativeElement.querySelector(
+		button('Type instead').click();
+		root = await detect();
+		const textarea = root.querySelector(
 			'#voice-text-note',
 		) as HTMLTextAreaElement;
-		note.value = '   ';
-		note.dispatchEvent(new Event('input'));
+		expect(document.activeElement).toBe(textarea);
 		button('Keep text note').click();
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Describe the track note',
-		);
-
-		note.value = 'Rear stepped out';
-		note.dispatchEvent(new Event('input'));
+		root = await detect();
+		expect(root.textContent).toContain('Describe the track note');
+		expect(document.activeElement).toBe(textarea);
+		expect(store.captureText).not.toHaveBeenCalled();
+		textarea.value = 'Rear stepped out';
+		textarea.dispatchEvent(new Event('input'));
 		button('Keep text note').click();
-		await detect();
-		expect(voiceStore.enqueueText).toHaveBeenCalledWith(
-			'Rear stepped out',
-			'drive-1',
-		);
-
-		button('Type instead').click();
-		await detect();
+		expect(store.captureText).toHaveBeenCalledWith({
+			text: 'Rear stepped out',
+			driveSessionId: 'drive-1',
+		});
 		button('Use microphone').click();
-		await detect();
-		button('Start voice note').click();
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Recording track note');
-		await internal().startRecording({ kind: 'capture' });
-		button('Cancel').click();
-		await detect();
-		expect(recorder.cancel).toHaveBeenCalledOnce();
+		root = await detect();
+		expect(root.querySelector('#voice-text-note')).toBeNull();
 
 		button('Start voice note').click();
-		await detect();
+		expect(store.startRecording).toHaveBeenCalledWith({ kind: 'capture' });
+		root = await detect();
+		expect(root.textContent).toContain('Recording voice note');
 		button('Stop and keep recording').click();
-		await detect();
-		expect(voiceStore.enqueueAudio).toHaveBeenCalledWith(
-			expect.any(Blob),
-			'drive-1',
-		);
+		expect(store.stopRecording).toHaveBeenCalledWith({
+			driveSessionId: 'drive-1',
+		});
+		button('Cancel').click();
+		expect(store.cancelRecording).toHaveBeenCalledOnce();
 
 		driveSessionContext.sessions.set([]);
-		await detect();
-		button('Start voice note').click();
+		store.recordingMode.set({ kind: 'capture' });
 		await detect();
 		button('Stop and keep recording').click();
-		await detect();
-		expect(voiceStore.enqueueAudio).toHaveBeenLastCalledWith(
-			expect.any(Blob),
-			null,
-		);
+		expect(store.stopRecording).toHaveBeenLastCalledWith({
+			driveSessionId: null,
+		});
+		store.recordingMode.set(null);
 		internal().showTextFallback();
-		await detect();
-		const noteWithoutDriveSession = fixture.nativeElement.querySelector(
+		root = await detect();
+		const noSessionNote = root.querySelector(
 			'#voice-text-note',
 		) as HTMLTextAreaElement;
-		noteWithoutDriveSession.value = 'No drive session selected';
-		noteWithoutDriveSession.dispatchEvent(new Event('input'));
+		noSessionNote.value = 'No session';
+		noSessionNote.dispatchEvent(new Event('input'));
 		button('Keep text note').click();
-		await detect();
-		expect(voiceStore.enqueueText).toHaveBeenLastCalledWith(
-			'No drive session selected',
-			null,
-		);
-
-		await internal().stopRecording();
-		recorder.start.mockRejectedValueOnce(
-			new DOMException('Denied', 'NotAllowedError'),
-		);
-		await internal().startRecording({ kind: 'capture' });
-		expect(fixture.componentInstance).toBeTruthy();
-		recorder.start.mockRejectedValueOnce(new Error('Recorder failed'));
-		await internal().startRecording({ kind: 'capture' });
-		recorder.start.mockRejectedValueOnce('unknown');
-		await internal().startRecording({ kind: 'capture' });
-
-		recorder.start.mockResolvedValue(undefined);
-		await internal().startRecording({ kind: 'capture' });
-		recorder.stop.mockRejectedValueOnce(new Error('Stop failed'));
-		await internal().stopRecording();
-		await internal().startRecording({ kind: 'capture' });
-		recorder.stop.mockRejectedValueOnce('unknown');
-		await internal().stopRecording();
-
-		recorder.supported.set(false);
-		await detect();
-		expect(
-			fixture.nativeElement.querySelector('#voice-text-note'),
-		).toBeTruthy();
-		internal().hideTextFallback();
+		expect(store.captureText).toHaveBeenLastCalledWith({
+			text: 'No session',
+			driveSessionId: null,
+		});
 	});
 
-	it('distinguishes microphone startup from live recording and shows elapsed time', async () => {
-		let resolveStart: (() => void) | undefined;
-		recorder.start.mockImplementationOnce(() => {
-			recorder.starting.set(true);
-			return new Promise<void>((resolve) => {
-				resolveStart = resolve;
-			});
-		});
-		await detect();
+	it('shows checking, startup, live meter, timer, and textual microphone status', async () => {
+		store.recorderError.set('Microphone failed');
+		let root = await detect();
+		expect(root.textContent).toContain('Microphone failed');
+		store.recorderError.set('');
+		store.checking.set(true);
+		root = await detect();
+		expect(root.textContent).toContain('Checking microphone support');
+		store.checking.set(false);
+		store.recordingMode.set({ kind: 'capture' });
+		store.starting.set(true);
+		root = await detect();
+		expect(root.textContent).toContain('Starting microphone');
+		expect(root.textContent).not.toContain('Stop and keep recording');
 
-		const starting = internal().startRecording({ kind: 'capture' });
-		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain('Starting microphone');
-		expect(fixture.nativeElement.querySelector('.recording-timer')).toBeNull();
-		expect(
-			[...fixture.nativeElement.querySelectorAll('button')].some(
-				(value: HTMLButtonElement) =>
-					value.textContent?.includes('Stop and keep recording'),
-			),
-		).toBe(false);
-
-		recorder.starting.set(false);
-		recorder.recording.set(true);
-		recorder.elapsedSeconds.set(3);
-		resolveStart?.();
-		await starting;
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Recording track note');
-		expect(
-			fixture.nativeElement.querySelector('.recording-timer')?.textContent,
-		).toContain('0:03');
-		expect(button('Stop and keep recording')).toBeTruthy();
-		recorder.inputMuted.set(true);
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Microphone muted');
-		recorder.inputMuted.set(false);
-		recorder.audioDetected.set(true);
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Audio detected');
-
-		recorder.elapsedSeconds.set(61);
-		await detect();
-		const timer = fixture.nativeElement.querySelector('.recording-timer');
+		store.starting.set(false);
+		store.elapsedSeconds.set(61);
+		root = await detect();
+		expect(root.textContent).toContain('Speak to test the microphone');
+		const timer = root.querySelector('[role="timer"]');
 		expect(timer?.textContent).toContain('1:01');
 		expect(timer?.getAttribute('aria-label')).toBe(
 			'Elapsed recording time: 1 minute, 1 second',
 		);
+		store.audioDetected.set(true);
+		root = await detect();
+		expect(root.textContent).toContain('Audio detected');
+		store.inputMuted.set(true);
+		root = await detect();
+		expect(root.textContent).toContain('Microphone muted');
+
+		store.recordingMode.set(null);
+		store.supported.set(false);
+		root = await detect();
+		expect(root.querySelector('#voice-text-note')).toBeTruthy();
 	});
 
-	it('renders and controls local, pending, failed, and processing notes', async () => {
-		driveSessionContext.sessions.set([
-			{
-				id: 'drive-1',
-				startedAt: '2026-08-08T01:00:00.000Z',
-				conditions: null,
-				deletedAt: null,
-			},
-		]);
-		voiceStore.localCaptures.set([localCapture()]);
-		voiceStore.updates.set([
+	it('reacts to typed outcomes with focus, reset, fallback, and overview navigation', async () => {
+		const navigate = vi
+			.spyOn(TestBed.inject(Router), 'navigate')
+			.mockResolvedValue(true);
+		await detect();
+		internal().showTextFallback();
+		await Promise.resolve();
+		internal().hideTextFallback();
+		internal().beginCorrection('voice-1');
+		store.outcome.set({
+			status: 'failed',
+			operation: 'start-recording',
+			operationId: 1,
+			subjectId: null,
+			error: { kind: 'recording', message: 'Denied' },
+		});
+		await detect();
+		expect(
+			fixture.nativeElement.querySelector('#voice-text-note'),
+		).toBeTruthy();
+		expect(document.activeElement?.id).toBe('voice-text-note');
+		store.outcome.set({
+			status: 'failed',
+			operation: 'confirm',
+			operationId: 7,
+			subjectId: 'voice-1',
+			error: { kind: 'unavailable' },
+		});
+		await detect();
+
+		store.localCaptures.set([localCapture()]);
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'capture-text',
+			operationId: 2,
+			subjectId: 'local-1',
+			update: null,
+			destinationCarId: null,
+		});
+		await detect();
+		await Promise.resolve();
+		expect(document.activeElement?.id).toBe('voice-review-title');
+
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'correct-text',
+			operationId: 3,
+			subjectId: 'voice-1',
+			update: voiceUpdate(),
+			destinationCarId: null,
+		});
+		await detect();
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'correct-audio',
+			operationId: 4,
+			subjectId: 'voice-1',
+			update: voiceUpdate(),
+			destinationCarId: null,
+		});
+		await detect();
+
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'update-context',
+			operationId: 5,
+			subjectId: 'voice-1',
+			update: voiceUpdate({ carId: 'car-2' }),
+			destinationCarId: 'car-2',
+		});
+		await detect();
+		expect(navigate).toHaveBeenCalledWith(['/garage', 'car-2', 'overview']);
+
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'update-context',
+			operationId: 6,
+			subjectId: 'voice-1',
+			update: voiceUpdate(),
+			destinationCarId: 'car-1',
+		});
+		await detect();
+		expect(navigate).toHaveBeenCalledOnce();
+		window.dispatchEvent(new Event('online'));
+		expect(store.retryQueued).toHaveBeenCalled();
+	});
+
+	it('renders local, pending, failed, processing, and feedback states', async () => {
+		fixture.componentRef.setInput('showHistory', true);
+		store.localCaptures.set([localCapture()]);
+		store.updates.set([
 			voiceUpdate({
 				id: 'pending',
 				audioUrl: '/audio/pending',
-				error: 'Previous processing failed',
+				error: 'Failed',
 			}),
 			voiceUpdate({ id: 'failed', status: 'failed', transcript: null }),
 			voiceUpdate({ id: 'processing', status: 'processing' }),
 		]);
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Pending on this device',
-		);
-		expect(fixture.nativeElement.textContent).toContain('Retry processing');
-		expect(fixture.nativeElement.textContent).toContain('Transcribing');
+		store.error.set('Mutation failed');
+		store.message.set('Mutation worked');
+		let root = await detect();
+		expect(root.textContent).toContain('Pending on this device');
+		expect(root.textContent).toContain('Retry processing');
+		expect(root.textContent).toContain('Transcribing');
+		expect(root.textContent).toContain('Mutation failed');
+		expect(root.textContent).toContain('Mutation worked');
 		button('Retry now').click();
 		button('Discard local recording').click();
-		expect(voiceStore.retryQueued).toHaveBeenCalled();
-		expect(voiceStore.discardLocal).toHaveBeenCalledWith('local-1');
+		expect(store.discardLocal).toHaveBeenCalledWith('local-1');
 
-		const context = fixture.nativeElement.querySelector(
+		const context = root.querySelector(
 			'#context-car-pending',
 		) as HTMLSelectElement;
 		context.value = 'car-2';
 		context.dispatchEvent(new Event('change'));
 		await detect();
 		expect(internal().contextCar(voiceUpdate({ id: 'pending' }))).toBe('car-2');
-		const navigate = vi
-			.spyOn(TestBed.inject(Router), 'navigate')
-			.mockResolvedValue(true);
 		button('Update context').click();
-		await fixture.whenStable();
-		expect(voiceStore.updateContext).toHaveBeenCalledWith(
-			'pending',
-			'car-2',
-			null,
-		);
-		expect(navigate).toHaveBeenCalledWith(['/garage', 'car-2', 'voice']);
-
-		voiceStore.updateContext.mockResolvedValueOnce(null);
-		await internal().saveContext(voiceUpdate({ id: 'same-car' }));
-		driveSessionContext.sessions.set([]);
-		await detect();
-		await internal().saveContext(
-			voiceUpdate({ id: 'same-car-no-drive-session' }),
-		);
+		expect(store.updateContext).toHaveBeenCalledWith({
+			id: 'pending',
+			carId: 'car-2',
+			driveSessionId: null,
+		});
 		expect(internal().contextCar(voiceUpdate({ id: 'unmapped' }))).toBe(
 			'car-1',
 		);
-
+		internal().saveContext(voiceUpdate({ id: 'same-car' }));
+		expect(store.updateContext).toHaveBeenLastCalledWith({
+			id: 'same-car',
+			carId: 'car-1',
+			driveSessionId: 'drive-1',
+		});
+		driveSessionContext.sessions.set([]);
+		await detect();
+		internal().saveContext(voiceUpdate({ id: 'same-car-no-session' }));
+		expect(store.updateContext).toHaveBeenLastCalledWith({
+			id: 'same-car-no-session',
+			carId: 'car-1',
+			driveSessionId: null,
+		});
 		button('Process note').click();
 		button('Discard recording').click();
-		expect(voiceStore.process).toHaveBeenCalledWith('pending');
-		expect(voiceStore.discardServer).toHaveBeenCalledWith('pending', false);
+		expect(store.process).toHaveBeenCalledWith('pending');
+		expect(store.discardServer).toHaveBeenCalledWith('pending', false);
 
-		voiceStore.action.set('busy');
-		await detect();
-		expect(
-			fixture.nativeElement.querySelector('button[disabled]'),
-		).toBeTruthy();
-		window.dispatchEvent(new Event('online'));
-		expect(voiceStore.retryQueued).toHaveBeenCalled();
+		store.loading.set(true);
+		root = await detect();
+		expect(root.textContent).toContain('Opening voice history');
+		store.loading.set(false);
+		store.readError.set('History unavailable');
+		root = await detect();
+		button('Try again').click();
+		expect(store.retryRead).toHaveBeenCalledOnce();
+		store.pending.set(true);
+		store.readError.set('');
+		root = await detect();
+		expect(root.querySelector('button[disabled]')).toBeTruthy();
 	});
 
-	it('reviews extracted facts, uncertainty, and text or voice corrections', async () => {
-		const uncertain = voiceUpdate({
-			id: 'review',
-			status: 'needs-review',
-			audioUrl: '/audio/review',
-			draft: fullDraft,
-			clarificationPrompt: 'Which axle?',
-		});
-		voiceStore.updates.set([uncertain]);
-		await detect();
-		const text = fixture.nativeElement.textContent;
-		expect(text).toContain('Club clay');
-		expect(text).toContain('Motor sounded different');
-		expect(text).toContain('Spring color was unclear');
+	it('keeps transcript beside every proposed fact and requires explicit confirmation', async () => {
+		store.updates.set([
+			voiceUpdate({
+				id: 'review',
+				status: 'needs-review',
+				audioUrl: '/audio/review',
+				transcript: null,
+				draft: {
+					...fullDraft,
+					consumables: [...fullDraft.consumables, { ...fact, kind: 'fluid' }],
+				},
+				clarificationPrompt: 'Which axle?',
+			}),
+		]);
+		let root = await detect();
+		expect(
+			root.querySelector('[aria-label="Transcript"]')?.textContent,
+		).toContain('No transcript was retained');
+		const proposed = root.querySelector(
+			'[aria-label="Proposed garage records"]',
+		);
+		expect(proposed?.textContent).toContain('Proposed Setup change');
+		expect(proposed?.textContent).toContain('Club clay');
+		expect(proposed?.textContent).toContain('Motor sounded different');
+		expect(proposed?.textContent).toContain('Spring color was unclear');
+		expect(root.textContent).not.toMatch(/recommend|try next|you should/i);
 		button('Keep uncertain wording').click();
-		expect(voiceStore.confirm).toHaveBeenCalledWith('review', true);
+		expect(store.confirm).toHaveBeenCalledWith('review', true);
 
 		button('Correct or answer').click();
-		await detect();
-		const correction = fixture.nativeElement.querySelector(
+		root = await detect();
+		const correction = root.querySelector(
 			'#correction-review',
 		) as HTMLInputElement;
-		correction.value = '   ';
-		correction.dispatchEvent(new Event('input'));
 		button('Apply correction').click();
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Say or type');
-
+		root = await detect();
+		expect(root.textContent).toContain('Say or type the correction');
+		expect(document.activeElement).toBe(correction);
+		expect(store.correctText).not.toHaveBeenCalled();
 		correction.value = 'Rear diff, not front';
 		correction.dispatchEvent(new Event('input'));
 		button('Apply correction').click();
-		await fixture.whenStable();
-		expect(voiceStore.correctText).toHaveBeenCalledWith(
-			'review',
-			'Rear diff, not front',
-		);
-
-		button('Correct or answer').click();
-		await detect();
-		recorder.supported.set(false);
-		await detect();
-		expect(fixture.nativeElement.textContent).not.toContain('Speak correction');
-		recorder.supported.set(true);
+		expect(store.correctText).toHaveBeenCalledWith({
+			id: 'review',
+			text: 'Rear diff, not front',
+		});
+		store.supported.set(false);
+		root = await detect();
+		expect(root.textContent).not.toContain('Speak correction');
+		store.supported.set(true);
 		await detect();
 		button('Speak correction').click();
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain('Recording correction');
-		button('Stop and keep recording').click();
-		await fixture.whenStable();
-		await detect();
-		expect(voiceStore.correctAudio).toHaveBeenCalledWith(
-			'review',
-			expect.any(Blob),
-		);
-
-		button('Cancel').click();
-		await detect();
-		voiceStore.correctText.mockResolvedValueOnce(null);
-		button('Correct or answer').click();
-		await detect();
-		const nextCorrection = fixture.nativeElement.querySelector(
-			'#correction-review',
-		) as HTMLInputElement;
-		nextCorrection.value = 'Keep form open';
-		nextCorrection.dispatchEvent(new Event('input'));
-		await internal().applyTextCorrection('review');
-
-		const certain = voiceUpdate({
-			id: 'certain',
-			status: 'needs-review',
-			draft: emptyDraft,
+		expect(store.startRecording).toHaveBeenCalledWith({
+			kind: 'correction',
+			id: 'review',
 		});
-		voiceStore.updates.set([certain]);
-		await detect();
-		button('Confirm and save').click();
-		expect(voiceStore.confirm).toHaveBeenCalledWith('certain', false);
+		root = await detect();
+		expect(root.textContent).toContain('Recording correction');
+		button('Cancel').click();
+		root = await detect();
+		button('Cancel').click();
 
+		store.updates.set([
+			voiceUpdate({ id: 'certain', status: 'needs-review', draft: emptyDraft }),
+		]);
+		root = await detect();
+		button('Confirm and save').click();
+		expect(store.confirm).toHaveBeenCalledWith('certain', false);
 		expect(internal().hasUncertainty(voiceUpdate({ draft: null }))).toBe(false);
-		for (const draft of [
-			{ ...emptyDraft, unresolvedNotes: ['unclear'] },
-			{
-				...emptyDraft,
-				setupChanges: [
-					{
-						...fact,
-						section: 'vehicle' as const,
-						field: 'x',
-						value: 1,
-						needsReview: true,
-					},
-				],
-			},
-			{ ...emptyDraft, problems: [{ ...fact, text: 'x', needsReview: true }] },
-			{
-				...emptyDraft,
-				conditions: [
-					{ ...fact, field: 'track' as const, value: 'x', needsReview: true },
-				],
-			},
-			{
-				...emptyDraft,
-				driveSessionNotes: [{ ...fact, text: 'x', needsReview: true }],
-			},
-			{
-				...emptyDraft,
-				consumables: [
-					{
-						...fact,
-						kind: 'tires' as const,
-						axle: 'both' as const,
-						needsReview: true,
-					},
-				],
-			},
-		])
-			expect(internal().hasUncertainty(voiceUpdate({ draft }))).toBe(true);
-		expect(internal().hasUncertainty(certain)).toBe(false);
 		expect(internal().confidenceLabel('low', true)).toContain('review');
 		expect(internal().confidenceLabel('high', false)).toBe('high confidence');
 	});
 
-	it('keeps saved provenance and artifact deletion consequences visible', async () => {
-		voiceStore.updates.set([
+	it('keeps full saved provenance secondary to selected-car capture', async () => {
+		store.updates.set([
 			voiceUpdate({
 				id: 'saved-audio',
 				status: 'saved',
@@ -686,7 +634,7 @@ describe('VoiceTrackLog', () => {
 						recordId: 'setup-1',
 						label: 'New setup snapshot',
 						url: '/garage/car-1/setups',
-						createdAt: '2026-08-08T01:00:00.000Z',
+						createdAt: 'now',
 					},
 				],
 				corrections: [
@@ -695,44 +643,127 @@ describe('VoiceTrackLog', () => {
 						kind: 'voice',
 						transcript: 'Rear, not front',
 						audioUrl: '/audio/correction',
-						createdAt: '2026-08-08T01:00:00.000Z',
+						createdAt: 'now',
 					},
 					{
 						id: 'correction-text',
 						kind: 'text',
-						transcript: '7k fluid',
+						transcript: '35 wt',
 						audioUrl: null,
-						createdAt: '2026-08-08T01:00:00.000Z',
+						createdAt: 'now',
 					},
 				],
 			}),
 			voiceUpdate({
 				id: 'saved-deleted',
 				status: 'saved',
-				transcript: null,
-				draft: null,
-				artifactDeletedAt: '2026-08-08T02:00:00.000Z',
-			}),
-			voiceUpdate({
-				id: 'saved-text',
-				status: 'saved',
-				transcript: null,
-				draft: null,
+				audioUrl: null,
+				artifactDeletedAt: 'now',
 			}),
 			voiceUpdate({ id: 'discarded', status: 'discarded', draft: null }),
 		]);
-		await detect();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Discarded voice update',
-		);
-		expect(fixture.nativeElement.textContent).toContain('New setup snapshot');
-		expect(fixture.nativeElement.textContent).toContain(
-			'Correction provenance',
-		);
-		expect(fixture.nativeElement.textContent).toContain(
-			'Original audio was removed',
-		);
+		let root = await detect();
+		expect(root.textContent).not.toContain('Saved voice update');
+		fixture.componentRef.setInput('showHistory', true);
+		root = await detect();
+		expect(root.textContent).toContain('Saved voice update');
+		expect(root.textContent).toContain('Discarded voice update');
+		expect(root.textContent).toContain('New setup snapshot');
+		expect(root.textContent).toContain('Correction provenance');
+		expect(root.textContent).toContain('Original audio was removed');
 		button('Remove original audio').click();
-		expect(voiceStore.discardServer).toHaveBeenCalledWith('saved-audio', true);
+		expect(store.discardServer).toHaveBeenCalledWith('saved-audio', true);
+	});
+});
+
+describe('VoiceTrackLog route', () => {
+	afterEach(() => TestBed.resetTestingModule());
+
+	it('owns car loading, retry, terminal failure, and selected route shell', async () => {
+		const carStore = {
+			loading: signal(true),
+			failure: signal<{ message: string; retryable: boolean } | null>(null),
+			car: signal<Record<string, unknown> | null>(null),
+			selectCar: vi.fn(),
+			retry: vi.fn(),
+		};
+		const workspaceStore = {
+			localCaptures: signal([]),
+			updates: signal([]),
+			cars: signal([]),
+			loading: signal(false),
+			readError: signal(''),
+			error: signal(''),
+			message: signal(''),
+			pending: signal(false),
+			outcome: signal(idleOutcome()),
+			recorderError: signal(''),
+			recordingMode: signal(null),
+			checking: signal(false),
+			supported: signal(true),
+			starting: signal(false),
+			recording: signal(false),
+			elapsedSeconds: signal(0),
+			inputLevel: signal(0),
+			audioDetected: signal(false),
+			inputMuted: signal(false),
+			selectCar: vi.fn(),
+			retryQueued: vi.fn(),
+			detectRecorderSupport: vi.fn(),
+			startRecording: vi.fn(),
+			stopRecording: vi.fn(),
+			cancelRecording: vi.fn(),
+			captureText: vi.fn(),
+			correctText: vi.fn(),
+			updateContext: vi.fn(),
+			process: vi.fn(),
+			confirm: vi.fn(),
+			discardLocal: vi.fn(),
+			discardServer: vi.fn(),
+			retryRead: vi.fn(),
+		};
+		await TestBed.configureTestingModule({
+			imports: [VoiceTrackLog],
+			providers: [
+				provideRouter([]),
+				{ provide: CarStore, useValue: carStore },
+				{ provide: VoiceLogStore, useValue: workspaceStore },
+				{
+					provide: DRIVE_SESSION_CONTEXT,
+					useValue: {
+						sessions: signal([]),
+						timezone: signal('UTC'),
+						selectCar: vi.fn(),
+					},
+				},
+			],
+		}).compileComponents();
+		const fixture = TestBed.createComponent(VoiceTrackLog);
+		fixture.componentRef.setInput('carId', '');
+		fixture.detectChanges();
+		fixture.componentRef.setInput('carId', 'car-1');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Opening the car record',
+		);
+		expect(carStore.selectCar).toHaveBeenCalledWith('car-1');
+
+		carStore.loading.set(false);
+		carStore.failure.set({ message: 'Car failed', retryable: true });
+		fixture.detectChanges();
+		(
+			fixture.nativeElement.querySelector('button') as HTMLButtonElement
+		).click();
+		expect(carStore.retry).toHaveBeenCalledOnce();
+		carStore.failure.set({ message: 'Expired', retryable: false });
+		fixture.detectChanges();
+		expect(
+			fixture.nativeElement.querySelector('[role="alert"] button'),
+		).toBeNull();
+
+		carStore.failure.set(null);
+		carStore.car.set({ id: 'car-1', name: 'Buggy', archivedAt: null });
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Voice note history');
 	});
 });
