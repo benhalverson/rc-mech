@@ -6,11 +6,8 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-	parseSignOutResponse,
-	SignOutGateway,
-	signOutGatewayFailure,
-} from './sign-out-gateway';
+import { SignOutGateway, signOutGatewayFailure } from './sign-out-gateway';
+import { parseSignOutResponse } from './sign-out-response';
 
 describe('SignOutGateway', () => {
 	let gateway: SignOutGateway;
