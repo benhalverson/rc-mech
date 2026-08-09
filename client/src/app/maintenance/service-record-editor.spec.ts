@@ -12,8 +12,8 @@ import {
 	type ServiceRecordForm,
 } from './service-record-editor';
 import {
-	ServiceRecordStore,
 	type ServiceRecordOutcome,
+	ServiceRecordStore,
 } from './service-record-store';
 
 const car: MaintenanceCar = { id: 'car-1', name: 'Buggy', archivedAt: null };

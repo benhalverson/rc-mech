@@ -16,12 +16,12 @@ import {
 	switchMap,
 	tap,
 } from 'rxjs';
-import { MaintenanceGateway } from './maintenance-gateway';
 import type {
 	MaintenanceComponent,
 	MaintenanceGatewayFailure,
 	MaintenancePlanDraft,
 } from './maintenance.models';
+import { MaintenanceGateway } from './maintenance-gateway';
 
 export type MaintenancePlanCommand =
 	| {

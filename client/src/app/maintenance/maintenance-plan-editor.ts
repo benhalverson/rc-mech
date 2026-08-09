@@ -19,15 +19,15 @@ import {
 	validate,
 } from '@angular/forms/signals';
 import { LucideSave, LucideTriangleAlert } from '@lucide/angular';
+import type {
+	MaintenancePlan,
+	MaintenancePlanDraft,
+} from './maintenance.models';
 import { localDateTime, localDateTimeToIso } from './maintenance-plan.rules';
 import {
 	type MaintenancePlanFailure,
 	MaintenancePlanStore,
 } from './maintenance-plan-store';
-import type {
-	MaintenancePlan,
-	MaintenancePlanDraft,
-} from './maintenance.models';
 
 export type MaintenancePlanEditorRequest =
 	| { readonly kind: 'create' }

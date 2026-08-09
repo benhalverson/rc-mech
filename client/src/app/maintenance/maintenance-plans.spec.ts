@@ -1,16 +1,16 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MaintenancePlans } from './maintenance-plans';
-import {
-	MaintenancePlanStore,
-	type MaintenancePlanOutcome,
-} from './maintenance-plan-store';
 import type {
 	MaintenanceCar,
 	MaintenancePlan,
 	PlanState,
 } from './maintenance.models';
+import {
+	type MaintenancePlanOutcome,
+	MaintenancePlanStore,
+} from './maintenance-plan-store';
+import { MaintenancePlans } from './maintenance-plans';
 
 const car: MaintenanceCar = { id: 'car-1', name: 'Buggy', archivedAt: null };
 const component = {

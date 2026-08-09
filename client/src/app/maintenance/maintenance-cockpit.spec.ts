@@ -2,19 +2,19 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConsumableStore } from './consumables/consumable-store';
-import { MaintenanceCockpit } from './maintenance-cockpit';
-import {
-	MaintenancePlanStore,
-	type MaintenancePlanOutcome,
-} from './maintenance-plan-store';
 import type {
 	MaintenanceCar,
 	MaintenancePlan,
 	ServiceRecord,
 } from './maintenance.models';
+import { MaintenanceCockpit } from './maintenance-cockpit';
 import {
-	ServiceRecordStore,
+	type MaintenancePlanOutcome,
+	MaintenancePlanStore,
+} from './maintenance-plan-store';
+import {
 	type ServiceRecordOutcome,
+	ServiceRecordStore,
 } from './service-record-store';
 
 const car: MaintenanceCar = { id: 'car-1', name: 'Buggy', archivedAt: null };

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { MaintenancePlan } from './maintenance.models';
 import {
 	calculatePlanState,
 	calendarDays,
 	localDateTime,
 	localDateTimeToIso,
 } from './maintenance-plan.rules';
-import type { MaintenancePlan } from './maintenance.models';
 
 const plan: MaintenancePlan = {
 	id: 'plan-1',

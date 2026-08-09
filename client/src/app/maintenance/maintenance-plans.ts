@@ -16,9 +16,9 @@ import {
 	LucidePlus,
 	LucideTriangleAlert,
 } from '@lucide/angular';
+import type { MaintenancePlan, PlanState } from './maintenance.models';
 import { calculatePlanState } from './maintenance-plan.rules';
 import { MaintenancePlanStore } from './maintenance-plan-store';
-import type { MaintenancePlan, PlanState } from './maintenance.models';
 
 @Component({
 	selector: 'app-maintenance-plans',

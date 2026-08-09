@@ -2,8 +2,8 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ServiceRecord } from './maintenance.models';
-import { ServiceRecordTotals } from './service-record-totals';
 import { ServiceRecordStore } from './service-record-store';
+import { ServiceRecordTotals } from './service-record-totals';
 
 const record: ServiceRecord = {
 	id: 'record-1',

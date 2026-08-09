@@ -6,11 +6,11 @@ import type {
 	MaintenanceCar,
 	ServiceRecord,
 } from './maintenance.models';
-import { ServiceRecords } from './service-records';
 import {
-	ServiceRecordStore,
 	type ServiceRecordOutcome,
+	ServiceRecordStore,
 } from './service-record-store';
+import { ServiceRecords } from './service-records';
 
 const car: MaintenanceCar = { id: 'car-1', name: 'Buggy', archivedAt: null };
 const component = {

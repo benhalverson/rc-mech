@@ -6,25 +6,25 @@ import {
 	LucideWrench,
 } from '@lucide/angular';
 import { ConsumableMaintenance } from './consumables/consumable-maintenance';
-import {
-	MaintenancePlanEditor,
-	type MaintenancePlanEditorRequest,
-} from './maintenance-plan-editor';
-import { calculatePlanState } from './maintenance-plan.rules';
-import { MaintenancePlans } from './maintenance-plans';
-import { MaintenancePlanStore } from './maintenance-plan-store';
 import type {
 	MaintenancePlan,
 	PlanState,
 	ServiceRecord,
 } from './maintenance.models';
+import { calculatePlanState } from './maintenance-plan.rules';
+import {
+	MaintenancePlanEditor,
+	type MaintenancePlanEditorRequest,
+} from './maintenance-plan-editor';
+import { MaintenancePlanStore } from './maintenance-plan-store';
+import { MaintenancePlans } from './maintenance-plans';
 import {
 	ServiceRecordEditor,
 	type ServiceRecordEditorRequest,
 } from './service-record-editor';
+import { ServiceRecordStore } from './service-record-store';
 import { ServiceRecordTotals } from './service-record-totals';
 import { ServiceRecords } from './service-records';
-import { ServiceRecordStore } from './service-record-store';
 
 type ActiveEditor =
 	| {
