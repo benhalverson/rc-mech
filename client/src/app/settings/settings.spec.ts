@@ -536,7 +536,14 @@ describe('Settings workspace', () => {
 				{ error: 'That timezone is disabled.' },
 				{ status: 422, statusText: 'Unprocessable Content' },
 			);
-		expect(store.error()).toBe('The timezone setting could not be loaded.');
+		fixture.detectChanges();
+		expect(store.error()).toBe('That timezone is disabled.');
+		expect(
+			[...fixture.nativeElement.querySelectorAll('[role="alert"]')].some(
+				(element: HTMLElement) =>
+					element.textContent?.includes('That timezone is disabled.'),
+			),
+		).toBe(true);
 
 		store.saveTimezone({ timezone: 'UTC' });
 		http

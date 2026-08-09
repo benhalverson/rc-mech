@@ -12,6 +12,7 @@ import type { TimezonePreference } from './settings.models';
 const timezoneResponseSchema = z.object({
 	timezone: z.string().nullable().optional(),
 });
+const apiErrorSchema = z.object({ error: z.string().trim().min(1) });
 
 export type TimezoneGatewayFailure =
 	| { kind: 'http'; status: number; message: string }
@@ -33,6 +34,12 @@ export const timezoneGatewayFailure = (
 	if (error instanceof HttpErrorResponse) {
 		if (error.status === 0)
 			return { kind: 'unavailable', message: failureMessage };
+		const rejected = apiErrorSchema.safeParse(error.error);
+		if (rejected.success)
+			return {
+				kind: 'rejected-response',
+				message: rejected.data.error,
+			};
 		return {
 			kind: 'http',
 			status: error.status,

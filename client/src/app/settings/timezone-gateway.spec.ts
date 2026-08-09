@@ -4,6 +4,7 @@ import {
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	parseTimezonePreference,
@@ -86,5 +87,19 @@ describe('TimezoneGateway', () => {
 				expect(error).toMatchObject({ kind: 'invalid-response' }),
 		});
 		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 42 });
+	});
+
+	it('preserves a structured server validation message', async () => {
+		const result = firstValueFrom(gateway.saveTimezone({ timezone: 'UTC' }));
+		http
+			.expectOne('/api/v1/preferences/timezone')
+			.flush(
+				{ error: 'That timezone is disabled.' },
+				{ status: 422, statusText: 'Unprocessable Content' },
+			);
+		await expect(result).rejects.toMatchObject({
+			kind: 'rejected-response',
+			message: 'That timezone is disabled.',
+		});
 	});
 });
