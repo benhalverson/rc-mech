@@ -80,6 +80,21 @@ describe('Settings workspace', () => {
 		navigator,
 		'clipboard',
 	);
+	const configureWorkspace = async (): Promise<void> => {
+		await TestBed.configureTestingModule({
+			imports: [Settings],
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				SettingsStore,
+				{ provide: AppearanceService, useValue: appearanceService },
+				{ provide: TimezoneStore, useValue: timezoneStore },
+			],
+		}).compileComponents();
+		http = TestBed.inject(HttpTestingController);
+		fixture = TestBed.createComponent(Settings);
+		fixture.detectChanges();
+	};
 
 	beforeEach(async () => {
 		timezoneStore = new FakeTimezoneStore();
@@ -94,19 +109,7 @@ describe('Settings workspace', () => {
 			configurable: true,
 			value: { writeText: writeClipboardText },
 		});
-		await TestBed.configureTestingModule({
-			imports: [Settings],
-			providers: [
-				provideHttpClient(),
-				provideHttpClientTesting(),
-				SettingsStore,
-				{ provide: AppearanceService, useValue: appearanceService },
-				{ provide: TimezoneStore, useValue: timezoneStore },
-			],
-		}).compileComponents();
-		http = TestBed.inject(HttpTestingController);
-		fixture = TestBed.createComponent(Settings);
-		fixture.detectChanges();
+		await configureWorkspace();
 	});
 
 	afterEach(() => {
@@ -158,6 +161,58 @@ describe('Settings workspace', () => {
 		expect(
 			fixture.nativeElement.querySelector('[data-route-focus][tabindex="-1"]'),
 		).toBeTruthy();
+	});
+
+	it('explains when this browser cannot register a passkey', async () => {
+		flushInitialReads();
+		await fixture.whenStable();
+		fixture.destroy();
+		TestBed.resetTestingModule();
+		timezoneStore = new FakeTimezoneStore();
+		timezoneStore.resolve();
+		const unavailableStore = {
+			copyInviteCode: vi.fn(),
+			createInviteCode: vi.fn().mockResolvedValue(false),
+			inviteAction: signal<string | null>(null),
+			inviteActionError: signal(''),
+			inviteAllowance: signal({ allowance: 5, used: 0, remaining: 5 }),
+			inviteCodes: signal([]),
+			inviteError: signal(''),
+			inviteLoading: signal(false),
+			inviteMessage: signal(''),
+			passkeyAction: signal<string | null>(null),
+			passkeyActionError: signal(''),
+			passkeyError: signal(''),
+			passkeys: signal([]),
+			passkeysLoading: signal(false),
+			passkeyMessage: signal(''),
+			registerPasskey: vi.fn().mockResolvedValue(false),
+			renamePasskey: vi.fn().mockResolvedValue(false),
+			retryInvites: vi.fn(),
+			retryPasskeys: vi.fn(),
+			revokeInviteCode: vi.fn(),
+			revokePasskey: vi.fn(),
+			webAuthnAvailable: signal(false),
+		};
+		await TestBed.configureTestingModule({
+			imports: [Settings],
+			providers: [
+				{ provide: AppearanceService, useValue: appearanceService },
+				{ provide: SettingsStore, useValue: unavailableStore },
+				{ provide: TimezoneStore, useValue: timezoneStore },
+			],
+		}).compileComponents();
+		fixture = TestBed.createComponent(Settings);
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(fixture.nativeElement.textContent).toContain(
+			'Passkey registration is unavailable in this browser',
+		);
+		expect(
+			fixture.nativeElement.querySelector('#passkey-name + button')?.disabled,
+		).toBe(true);
 	});
 
 	it('renders an invite read error and retries that resource', async () => {
@@ -360,7 +415,8 @@ describe('Settings workspace', () => {
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(input.value).toBe('');
-		expect(input.getAttribute('aria-describedby')).toBeNull();
+		expect(input.getAttribute('aria-describedby')).toBe('invite-help');
+		expect(fixture.nativeElement.querySelector('#invite-help')).toBeTruthy();
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Enter an invite code.',
 		);
@@ -411,13 +467,17 @@ describe('Settings workspace', () => {
 		) as HTMLButtonElement;
 		rename.click();
 		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
 		let input = fixture.nativeElement.querySelector(
 			'#rename-passkey-1',
 		) as HTMLInputElement;
+		expect(document.activeElement).toBe(input);
 		input.value = '';
 		input.dispatchEvent(new Event('input'));
 		input.closest('form')?.dispatchEvent(new Event('submit'));
 		fixture.detectChanges();
+		expect(document.activeElement).toBe(input);
 		expect(input.getAttribute('aria-describedby')).toBe(
 			'rename-validation-passkey-1',
 		);
@@ -427,6 +487,11 @@ describe('Settings workspace', () => {
 		) as HTMLButtonElement;
 		cancel.click();
 		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(document.activeElement).toBe(
+			fixture.nativeElement.querySelector('#rename-launcher-passkey-1'),
+		);
 		(
 			[...fixture.nativeElement.querySelectorAll('button')].find(
 				(button: HTMLButtonElement) => button.textContent?.trim() === 'Rename',
@@ -476,7 +541,8 @@ describe('Settings workspace', () => {
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(input.value).toBe('');
-		expect(input.getAttribute('aria-describedby')).toBeNull();
+		expect(input.getAttribute('aria-describedby')).toBe('passkey-help');
+		expect(fixture.nativeElement.querySelector('#passkey-help')).toBeTruthy();
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Name this passkey.',
 		);
@@ -540,6 +606,7 @@ describe('Settings workspace', () => {
 			input.value = '';
 			input.dispatchEvent(new Event('input'));
 			input.closest('form')?.dispatchEvent(new Event('submit'));
+			expect(document.activeElement).toBe(input);
 		}
 		await fixture.whenStable();
 		fixture.detectChanges();

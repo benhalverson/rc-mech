@@ -12,6 +12,7 @@ import {
 
 @Component({
 	selector: 'app-appearance-selector',
+	host: { class: 'block min-w-0 w-full max-w-full' },
 	imports: [LucideMonitor, LucideMoon, LucideSun, LucideTriangleAlert],
 	templateUrl: './appearance-selector.html',
 })
