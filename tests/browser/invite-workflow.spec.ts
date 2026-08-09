@@ -128,6 +128,24 @@ test('invite registration, management, isolation, and accessible states', async 
 	await page.getByRole('button', { name: 'Archive' }).click();
 	await expect(page.getByRole('button', { name: 'Archive' })).toHaveCount(0);
 	await expect(page.getByText('0 recorded')).toBeVisible();
+	let archivedSession = page.locator('.session-row').filter({
+		hasText: 'Updated through the browser workflow.',
+	});
+	await expect(archivedSession).toBeVisible();
+	await expect(archivedSession.getByRole('button')).toHaveCount(0);
+	violations = await scan(page);
+	expect(violations).toEqual([]);
+
+	await page.reload();
+	await expect(
+		page.getByRole('heading', { name: 'Drive sessions', exact: true }),
+	).toBeVisible();
+	archivedSession = page.locator('.session-row').filter({
+		hasText: 'Updated through the browser workflow.',
+	});
+	await expect(archivedSession).toBeVisible();
+	await expect(archivedSession.getByRole('button')).toHaveCount(0);
+	await expect(page.getByText('0 recorded')).toBeVisible();
 	violations = await scan(page);
 	expect(violations).toEqual([]);
 	for (const destination of [

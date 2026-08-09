@@ -204,6 +204,20 @@ describe('DriveSessionGateway', () => {
 		expect(request.request.withCredentials).toBe(true);
 		request.flush({ driveSession: { ...session, deletedAt: 'now' } });
 		await expect(archiveResult).resolves.toMatchObject({ deletedAt: 'now' });
+
+		const archiveFailure = firstValueFrom(
+			gateway.archiveDriveSession({
+				carId: 'car/one',
+				sessionId: 'drive/one',
+			}),
+		);
+		http
+			.expectOne('/api/v1/cars/car%2Fone/drives/drive%2Fone')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		await expect(archiveFailure).rejects.toEqual({
+			kind: 'http',
+			status: 503,
+		});
 	});
 
 	it('maps invalid and rejected mutation responses', async () => {

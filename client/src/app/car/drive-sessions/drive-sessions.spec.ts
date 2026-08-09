@@ -130,6 +130,27 @@ describe('DriveSessions', () => {
 		expect(root.querySelector('[role="alert"] button')).toBeNull();
 	});
 
+	it('resets local editor state when the reused route selects another car', () => {
+		const root = detect();
+		button('Record the first drive session').click();
+		detect();
+		const component = fixture.componentInstance as unknown as {
+			formError: { set(value: string): void };
+			message: { set(value: string): void };
+		};
+		component.formError.set('Old drive session error');
+		component.message.set('Old drive session message');
+		detect();
+		expect(root.querySelector('form')).toBeTruthy();
+
+		fixture.componentRef.setInput('carId', 'car-2');
+		detect();
+		expect(root.querySelector('form')).toBeNull();
+		expect(root.textContent).not.toContain('Old drive session');
+		expect(carStore.selectCar).toHaveBeenLastCalledWith('car-2');
+		expect(store.selectCar).toHaveBeenLastCalledWith('car-2');
+	});
+
 	it('validates and focuses local Signal Form fields', () => {
 		const root = detect();
 		button('Record the first drive session').click();
@@ -268,6 +289,9 @@ describe('DriveSessions', () => {
 		root = detect();
 		expect(root.textContent).not.toContain('Record a drive session');
 		expect(root.querySelector('.session-row .form-actions')).toBeNull();
+		store.sessions.set([driveSession({ durationMinutes: null })]);
+		root = detect();
+		expect(root.querySelector('.session-row span')).toBeNull();
 		store.sessions.set([]);
 		root = detect();
 		expect(root.textContent).toContain('No drive sessions recorded');

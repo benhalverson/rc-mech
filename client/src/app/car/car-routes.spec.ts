@@ -413,41 +413,6 @@ describe('Car section routes', () => {
 			.flush({ components: [] });
 	});
 
-	it('resets drive session editor state when a reused route changes cars', async () => {
-		await harness.navigateByUrl('/garage/car-1/drive-sessions');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			openAdd(): void;
-			formError: TestSignal<string>;
-			message: TestSignal<string>;
-		};
-		component.openAdd();
-		component.formError.set('Old drive session error');
-		component.message.set('Old drive session message');
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
-
-		await harness.navigateByUrl('/garage/car-2/drive-sessions');
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
-		expect(harness.routeNativeElement?.textContent).not.toContain(
-			'Old drive session',
-		);
-		http
-			.expectOne('/api/v1/cars/car-2')
-			.flush({ car: { ...car, id: 'car-2' } });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-2/drives')
-			.flush({ driveSessions: [] });
-	});
-
 	it('resets setup creation state when a reused route changes cars', async () => {
 		await harness.navigateByUrl('/garage/car-1/setups');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
@@ -608,32 +573,6 @@ describe('Car section routes', () => {
 			harness.detectChanges();
 		},
 	);
-
-	it('encodes reserved identifiers for drive mutations', async () => {
-		const session = {
-			id: 'drive/one',
-			carId: 'car/one',
-			startedAt: '2026-08-07T00:00:00.000Z',
-		};
-		await harness.navigateByUrl('/garage/car%2Fone/drive-sessions');
-		http.expectOne('/api/v1/cars/car%2Fone').flush({
-			car: { ...car, id: 'car/one' },
-		});
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car%2Fone/drives')
-			.flush({ driveSessions: [session] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			archive(value: typeof session): void;
-		};
-		component.archive(session);
-		const request = http.expectOne('/api/v1/cars/car%2Fone/drives/drive%2Fone');
-		expect(request.request.method).toBe('DELETE');
-		request.flush('offline', { status: 503, statusText: 'Unavailable' });
-	});
 
 	it('blocks build editor entry while a mutation is in flight', async () => {
 		const installed = {
