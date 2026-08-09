@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import { writeFile } from 'node:fs/promises';
 import { validateInviteCode } from '../src/invite-policy';
+import { createOrReuseInvite } from './invite-cli-support';
 
 const program = new Command()
 	.name('rc-mech-invite')
@@ -15,6 +16,14 @@ const program = new Command()
 		'Deterministic local magic-link token',
 		'local-test-token',
 	)
+	.option(
+		'--reuse-existing',
+		'Reuse an available invite already owned by this local account',
+	)
+	.option(
+		'--client-id <client-id>',
+		'Local identity used to isolate authentication rate limits',
+	)
 	.option('--cookie-file <path>', 'Write the session cookie to this file')
 	.parse();
 
@@ -23,6 +32,8 @@ const options = program.opts<{
 	ownerEmail: string;
 	code: string;
 	token: string;
+	reuseExisting?: boolean;
+	clientId?: string;
 	cookieFile?: string;
 }>();
 const parsed = validateInviteCode(options.code);
@@ -45,7 +56,11 @@ const cookieFrom = (response: Response): string => {
 
 const request = await fetch(`${base}/api/auth/sign-in/magic-link`, {
 	method: 'POST',
-	headers: { 'content-type': 'application/json', origin: base },
+	headers: {
+		'content-type': 'application/json',
+		origin: base,
+		...(options.clientId ? { 'CF-Connecting-IP': options.clientId } : {}),
+	},
 	body: JSON.stringify({
 		email: options.ownerEmail,
 		callbackURL: `${base}/settings`,
@@ -62,21 +77,26 @@ if (verify.status !== 302)
 	throw new Error(`Owner magic-link verification failed (${verify.status})`);
 const cookie = cookieFrom(verify);
 
-const create = await fetch(`${base}/api/v1/invite-codes`, {
-	method: 'POST',
-	headers: { 'content-type': 'application/json', cookie },
-	body: JSON.stringify({ code: parsed.code }),
+const { invite, reused } = await createOrReuseInvite({
+	code: parsed.code,
+	create: () =>
+		fetch(`${base}/api/v1/invite-codes`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', cookie },
+			body: JSON.stringify({ code: parsed.code }),
+		}),
+	list: () =>
+		fetch(`${base}/api/v1/invite-codes`, {
+			headers: { cookie },
+		}),
+	reuseExisting: options.reuseExisting ?? false,
 });
-if (!create.ok)
-	throw new Error(
-		`Invite creation failed (${create.status}): ${await create.text()}`,
-	);
-const invite = await create.json();
 if (options.cookieFile)
 	await writeFile(options.cookieFile, `${cookie}\n`, { mode: 0o600 });
 console.log(
 	JSON.stringify({
 		invite,
+		...(reused ? { reused } : {}),
 		...(options.cookieFile ? { cookieFile: options.cookieFile } : {}),
 	}),
 );

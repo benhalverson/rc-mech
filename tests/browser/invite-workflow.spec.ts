@@ -23,7 +23,7 @@ const expectSingleShell = async (page: Page) => {
 	await expect(page.locator('main')).toHaveCount(1);
 };
 
-const seedOwnerInvites = () => {
+const seedOwnerInvites = (workerIdentity: string) => {
 	for (const code of ['OWNER-SHELL', 'OWNER-INVITES']) {
 		execFileSync('pnpm', [
 			'exec',
@@ -35,11 +35,16 @@ const seedOwnerInvites = () => {
 			'owner@example.com',
 			'--code',
 			code,
+			'--reuse-existing',
+			'--client-id',
+			`invite-seed-${workerIdentity}-${code}`,
 		]);
 	}
 };
 
-test.beforeAll(seedOwnerInvites);
+test.beforeAll(({ browserName }, workerInfo) =>
+	seedOwnerInvites(`${browserName}-${workerInfo.workerIndex}`),
+);
 
 let ownerAuthentication = 0;
 
