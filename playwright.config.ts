@@ -17,9 +17,8 @@ export default defineConfig({
 			reuseExistingServer: false,
 		},
 		{
-			command:
-				'NG_PERSISTENT_BUILD_CACHE=0 pnpm --dir client exec ng serve --host 127.0.0.1 --port 4201',
-			url: 'http://127.0.0.1:4201/sign-in',
+			command: 'bash scripts/browser-client.sh',
+			url: 'http://127.0.0.1:4201/api/v1/health',
 			reuseExistingServer: false,
 		},
 	],

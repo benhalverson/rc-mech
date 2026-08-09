@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import { TestBed } from '@angular/core/testing';
 import {
 	NavigationEnd,
@@ -8,25 +9,29 @@ import {
 } from '@angular/router';
 import { Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RouteTransitionAnnouncer } from './route-transition-announcer';
+import {
+	ROUTE_RELOADER,
+	RouteTransitionAnnouncer,
+} from './route-transition-announcer';
 
 describe('RouteTransitionAnnouncer', () => {
 	let events: Subject<
 		NavigationStart | NavigationEnd | NavigationError | NavigationCancel
 	>;
-	const navigateByUrl = vi.fn(async () => true);
+	const reloadRoute = vi.fn();
 	let transition: RouteTransitionAnnouncer;
 
 	beforeEach(() => {
 		events = new Subject();
-		navigateByUrl.mockClear();
+		reloadRoute.mockClear();
 		TestBed.configureTestingModule({
 			providers: [
 				RouteTransitionAnnouncer,
 				{
 					provide: Router,
-					useValue: { events: events.asObservable(), navigateByUrl },
+					useValue: { events: events.asObservable() },
 				},
+				{ provide: ROUTE_RELOADER, useValue: reloadRoute },
 			],
 		});
 		transition = TestBed.inject(RouteTransitionAnnouncer);
@@ -117,7 +122,28 @@ describe('RouteTransitionAnnouncer', () => {
 		expect(transition.announcement()).toBe('');
 
 		transition.retry();
-		expect(navigateByUrl).toHaveBeenCalledWith('/settings');
+		expect(reloadRoute).toHaveBeenCalledWith('/settings');
+	});
+
+	it('reloads through the browser location by default and remains server-safe', () => {
+		const assign = vi.fn();
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({
+			providers: [
+				{
+					provide: DOCUMENT,
+					useValue: { defaultView: { location: { assign } } },
+				},
+			],
+		});
+		TestBed.inject(ROUTE_RELOADER)('/garage');
+		expect(assign).toHaveBeenCalledWith('/garage');
+
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({
+			providers: [{ provide: DOCUMENT, useValue: { defaultView: null } }],
+		});
+		expect(() => TestBed.inject(ROUTE_RELOADER)('/garage')).not.toThrow();
 	});
 
 	it('announces public and unknown routes accurately', async () => {

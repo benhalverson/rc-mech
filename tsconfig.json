@@ -23,7 +23,13 @@
 		"types": ["./worker-configuration.d.ts", "@types/node"]
 	},
 	"exclude": ["node_modules", "dist", "tests", "client"],
-	"include": ["src", "worker-configuration.d.ts"],
+	"include": [
+		"src",
+		"scripts/browser-client.ts",
+		"scripts/browser-http.ts",
+		"scripts/browser-worker.ts",
+		"worker-configuration.d.ts"
+	],
 	"angularCompilerOptions": {
 		"strictTemplates": true
 	}
