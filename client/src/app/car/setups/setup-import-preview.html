@@ -1,0 +1,17 @@
+<form class="import-strip alloy-panel mb-0 grid gap-4" (submit)="previewImport($event)" aria-labelledby="import-setup-title" novalidate>
+	<div>
+		<div class="alloy-section-heading">Reviewed source import</div>
+		<h4 id="import-setup-title" class="m-0 mt-1 text-lg font-semibold text-alloy-text">Bring a So Dialed sheet to the bench</h4>
+		<p class="alloy-supporting-text mb-0 mt-2">Paste a supported setup URL. The importer returns a draft for you to check; it never writes a snapshot by itself.</p>
+	</div>
+	<div class="import-controls grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+		<label class="wide grid gap-1" for="sodialed-url"><span class="text-sm font-semibold text-alloy-text">So Dialed setup URL</span><input id="sodialed-url" class="alloy-field w-full" type="url" placeholder="https://sodialed.com/…" [formField]="importUrlForm.url" [attr.aria-describedby]="importUrlForm.url().touched() && importUrlForm.url().invalid() ? 'import-url-validation' : null" /></label>
+		<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="submit" [disabled]="loading()"><svg lucideFileInput size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ loading() ? 'Reading sheet…' : 'Review setup' }}</button>
+	</div>
+	@if (importUrlForm.url().touched() && importUrlForm.url().invalid()) {
+		<p id="import-url-validation" class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ importUrlForm.url().errors()[0]?.message }}</span></p>
+	}
+	@if (importError()) {
+		<p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ importError() }}</span></p>
+	}
+</form>

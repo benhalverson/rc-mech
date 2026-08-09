@@ -1,0 +1,15 @@
+<div class="review-banner grid gap-3 border-b border-alloy-separator pb-5">
+	<div>
+		<div class="alloy-section-heading">Import review draft</div>
+		<h4 id="setup-editor-title" class="m-0 mt-1 text-lg font-semibold text-alloy-text">Check the sheet before saving a new snapshot</h4>
+		<p class="alloy-supporting-text mb-0 mt-2"><strong>{{ preview().carIdentity.make || 'Unknown make' }} {{ preview().carIdentity.model || 'vehicle identity' }}</strong> · {{ preview().context.track || 'Track not recorded' }} · {{ preview().context.condition || 'Condition not recorded' }}</p>
+	</div>
+	@if (preview().duplicate; as duplicate) {
+		<p class="duplicate-notice alloy-state alloy-attention-state mt-0"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Existing source</strong></span><span>This source was already imported as “{{ duplicate.name }}”. Saving will create another snapshot and will not change that record.</span></p>
+	}
+	<div class="import-car-choice flex flex-col items-start gap-3 sm:flex-row sm:items-end">
+		<label class="grid w-full min-w-0 gap-1 sm:max-w-sm"><span class="text-sm font-semibold text-alloy-text">Save to car</span><select class="alloy-field w-full" [formField]="targetForm.carId">@for (car of availableCars(); track car.id) { <option [value]="car.id">{{ car.name }}{{ car.make || car.model ? ' · ' + (car.make || '') + ' ' + (car.model || '') : '' }}</option> }</select></label>
+		<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="requestCreateCar()">Create a car from this identity</button>
+	</div>
+	<div class="review-counts alloy-technical flex flex-wrap gap-x-4 gap-y-1 text-sm text-alloy-text-secondary"><span>{{ mappedValueCount() }} mapped values</span><span>{{ importValueCount(preview().uncertainValues) }} uncertain</span><span>{{ importValueCount(preview().unmappedValues) }} unmapped</span></div>
+</div>

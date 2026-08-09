@@ -13,23 +13,10 @@
 		<p class="archive-note alloy-state alloy-attention-state mt-0"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Archived car</strong></span><span>This car is archived. Setup history remains available, but snapshots cannot be changed.</span></p>
 	}
 	@if (!archived()) {
-		<form class="import-strip alloy-panel mb-0 grid gap-4" (submit)="previewImport($event)" aria-labelledby="import-setup-title" novalidate>
-			<div>
-				<div class="alloy-section-heading">Reviewed source import</div>
-				<h4 id="import-setup-title" class="m-0 mt-1 text-lg font-semibold text-alloy-text">Bring a So Dialed sheet to the bench</h4>
-				<p class="alloy-supporting-text mb-0 mt-2">Paste a supported setup URL. The importer returns a draft for you to check; it never writes a snapshot by itself.</p>
-			</div>
-			<div class="import-controls grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-				<label class="wide grid gap-1" for="sodialed-url"><span class="text-sm font-semibold text-alloy-text">So Dialed setup URL</span><input id="sodialed-url" class="alloy-field w-full" type="url" placeholder="https://sodialed.com/…" [formField]="importUrlForm.url" [attr.aria-describedby]="importUrlForm.url().touched() && importUrlForm.url().invalid() ? 'import-url-validation' : null" /></label>
-				<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="submit" [disabled]="importState() === 'loading'"><svg lucideFileInput size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ importState() === 'loading' ? 'Reading sheet…' : 'Review setup' }}</button>
-			</div>
-			@if (importUrlForm.url().touched() && importUrlForm.url().invalid()) {
-				<p id="import-url-validation" class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ importUrlForm.url().errors()[0]?.message }}</span></p>
-			}
-			@if (importError()) {
-				<p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ importError() }}</span></p>
-			}
-		</form>
+		<app-setup-import-preview
+			[carId]="carId()"
+			[archived]="archived()"
+		/>
 	}
 	@if (actionError()) {
 		<p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ actionError() }}</span></p>
@@ -67,54 +54,22 @@
 				}
 			</section>
 
-			@if (editing()) {
-				<form class="setup-editor alloy-panel mb-0 grid min-w-0 gap-5" (submit)="save($event)" aria-labelledby="setup-editor-title" [attr.aria-describedby]="formError() ? 'setup-form-validation' : null" novalidate>
-					@if (importPreview(); as preview) {
-						<div class="review-banner grid gap-3 border-b border-alloy-separator pb-5">
-							<div><div class="alloy-section-heading">Import review draft</div><h4 id="setup-editor-title" class="m-0 mt-1 text-lg font-semibold text-alloy-text">Check the sheet before saving a new snapshot</h4><p class="alloy-supporting-text mb-0 mt-2"><strong>{{ preview.carIdentity.make || 'Unknown make' }} {{ preview.carIdentity.model || 'vehicle identity' }}</strong> · {{ preview.context.track || 'Track not recorded' }} · {{ preview.context.condition || 'Condition not recorded' }}</p></div>
-							@if (preview.duplicate; as duplicate) { <p class="duplicate-notice alloy-state alloy-attention-state mt-0"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Existing source</strong></span><span>This source was already imported as “{{ duplicate.name }}”. Saving will create another snapshot and will not change that record.</span></p> }
-							<div class="import-car-choice flex flex-col items-start gap-3 sm:flex-row sm:items-end">
-								<label class="grid w-full min-w-0 gap-1 sm:max-w-sm"><span class="text-sm font-semibold text-alloy-text">Save to car</span><select class="alloy-field w-full" [formField]="importCarForm.carId">@for (car of availableCars(); track car.id) { <option [value]="car.id">{{ car.name }}{{ car.make || car.model ? ' · ' + (car.make || '') + ' ' + (car.model || '') : '' }}</option> }</select></label>
-								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="requestCreateCar()">Create a car from this identity</button>
-							</div>
-							<div class="review-counts alloy-technical flex flex-wrap gap-x-4 gap-y-1 text-sm text-alloy-text-secondary"><span>{{ importValueCount(preview.sections.vehicle) + importValueCount(preview.sections.drivetrain) + importValueCount(preview.sections.electronics) + importValueCount(preview.sections.tires) + importValueCount(preview.sections.shocks) + importValueCount(preview.sections.frontSuspension) + importValueCount(preview.sections.rearSuspension) }} mapped values</span><span>{{ importValueCount(preview.uncertainValues) }} uncertain</span><span>{{ importValueCount(preview.unmappedValues) }} unmapped</span></div>
-						</div>
-					} @else {
-						<div><div class="alloy-section-heading">{{ mode() === 'edit' ? 'Correct record' : 'New snapshot' }}</div><h4 id="setup-editor-title" class="alloy-screen-title mb-0">{{ mode() === 'edit' ? 'Repair a recording mistake' : 'Put a baseline on the bench' }}</h4></div>
-					}
-					@if (formError()) { <div id="setup-form-validation" class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><p class="m-0">{{ formError() }}</p>@if (setupForm().invalid()) { <ul class="m-0 pl-5">@for (validationError of setupForm().errorSummary(); track $index) { <li>{{ validationError.message }}</li> }</ul> }</div> }
-					<div class="form-grid grid gap-4 sm:grid-cols-2">
-						<label class="wide grid gap-1 sm:col-span-2"><span class="text-sm font-semibold text-alloy-text">Setup name</span><input class="alloy-field w-full" placeholder="Outdoor clay baseline" [formField]="setupForm.name" [attr.aria-describedby]="formError() && setupForm.name().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Date</span><input class="alloy-field w-full" type="date" [formField]="setupForm.recordedAt" [attr.aria-describedby]="formError() && setupForm.recordedAt().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Track</span><input class="alloy-field w-full" placeholder="The home track" [formField]="setupForm.track" [attr.aria-describedby]="formError() && setupForm.track().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Event</span><input class="alloy-field w-full" placeholder="Club race" [formField]="setupForm.event" [attr.aria-describedby]="formError() && setupForm.event().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Surface</span><input class="alloy-field w-full" placeholder="Dry clay" [formField]="setupForm.surface" [attr.aria-describedby]="formError() && setupForm.surface().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Traction / grip</span><input class="alloy-field w-full" placeholder="Medium" [formField]="setupForm.traction" [attr.aria-describedby]="formError() && setupForm.traction().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Moisture</span><input class="alloy-field w-full" placeholder="Damp" [formField]="setupForm.moisture" [attr.aria-describedby]="formError() && setupForm.moisture().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Condition</span><input class="alloy-field w-full" placeholder="Qualifying" [formField]="setupForm.condition" [attr.aria-describedby]="formError() && setupForm.condition().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Temperature</span><input class="alloy-field w-full font-technical" placeholder="72°F" [formField]="setupForm.temperature" [attr.aria-describedby]="formError() && setupForm.temperature().invalid() ? 'setup-form-validation' : null" /></label>
-					</div>
-
-					<div class="setup-sections grid gap-4 xl:grid-cols-2">
-						@for (section of sectionKeys; track section) {
-							<fieldset class="setup-section min-w-0 border border-alloy-separator p-4"><legend class="alloy-section-heading px-2">{{ sectionLabels[section] }}</legend><div class="form-grid mt-2 grid gap-4">@for (field of sectionFields[section]; track field) { <label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">{{ displayName(field) }}</span><input class="alloy-field w-full" [placeholder]="'Optional ' + displayName(field).toLowerCase()" [formField]="setupForm.sections[section][field]" [attr.aria-describedby]="formError() && setupForm.sections[section][field]().invalid() ? 'setup-form-validation' : null" /></label> }</div></fieldset>
-						}
-					</div>
-
-					<fieldset class="source-fields min-w-0 border border-alloy-separator p-4"><legend class="alloy-section-heading px-2">Source and provenance</legend><p class="hint alloy-supporting-text mt-0">Keep the source link and retained PDF reference when this setup came from an external sheet. Nothing here is required for a manual baseline.</p><div class="form-grid grid gap-4 sm:grid-cols-2">
-						<label class="wide grid gap-1 sm:col-span-2"><span class="text-sm font-semibold text-alloy-text">Source URL</span><input class="alloy-field w-full" type="url" placeholder="https://…" [formField]="setupForm.sourceUrl" [attr.aria-describedby]="formError() && setupForm.sourceUrl().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">PDF title / reference</span><input class="alloy-field w-full" placeholder="Setup sheet, page 2" [formField]="setupForm.pdfTitle" [attr.aria-describedby]="formError() && setupForm.pdfTitle().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">PDF page</span><input class="alloy-field w-full font-technical" type="text" inputmode="numeric" placeholder="Optional" [formField]="setupForm.pdfPage" [attr.aria-describedby]="formError() && setupForm.pdfPage().invalid() ? 'setup-form-validation' : null" /></label>
-						<label class="wide grid gap-1 sm:col-span-2"><span class="text-sm font-semibold text-alloy-text">Uncertain or unmapped values</span><textarea class="alloy-field min-h-32 w-full py-3 font-technical" rows="5" placeholder="Values that still need review…" [formField]="setupForm.unmappedValues" [attr.aria-describedby]="formError() && setupForm.unmappedValues().invalid() ? 'setup-form-validation' : null"></textarea></label>
-						<label class="wide grid gap-1 sm:col-span-2"><span class="text-sm font-semibold text-alloy-text">Raw source values</span><textarea class="alloy-field min-h-32 w-full py-3 font-technical" rows="5" placeholder="The original extracted values are retained here…" [formField]="setupForm.rawValues" [attr.aria-describedby]="formError() && setupForm.rawValues().invalid() ? 'setup-form-validation' : null"></textarea></label>
-					</div></fieldset>
-					<div class="form-actions flex flex-col gap-2 sm:flex-row"><button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action() !== null"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ action() === 'save' ? 'Saving…' : importPreview() ? 'Save as new snapshot' : 'Save snapshot' }}</button><button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="importPreview() ? cancelImport() : cancelEdit()" [disabled]="action() !== null">Cancel</button></div>
-				</form>
+			@if (editor(); as activeEditor) {
+				<app-setup-editor
+					[carId]="carId()"
+					[mode]="activeEditor.mode"
+					[setup]="activeEditor.setup"
+					[importPreview]="activeEditor.importPreview"
+					[importSourceUrl]="activeEditor.importSourceUrl"
+					[availableCars]="availableCars()"
+					(cancelled)="closeEditor()"
+					(createCarFromImport)="requestCreateCar($event)"
+				/>
 			} @else if (selected(); as setup) {
 				<article class="setup-detail grid min-w-0 gap-5 border-t-2 border-alloy-accent pt-5 lg:border-t-0 lg:border-l-2 lg:pt-0 lg:pl-5" aria-labelledby="selected-setup-title">
 					<header><div class="detail-topline flex items-center justify-between gap-3"><div class="alloy-section-heading">{{ setup.current ? 'Current setup' : 'Historical snapshot' }}</div>@if (setup.current) { <span class="status-pill text-xs font-semibold uppercase tracking-wider text-alloy-accent">Current</span> }</div><h4 id="selected-setup-title" class="alloy-screen-title mb-0 mt-2">{{ setup.name }}</h4><p class="setup-context m-0 mt-2 text-sm text-alloy-text-secondary">{{ setup.context?.track || 'Track not recorded' }} <span>·</span> {{ setup.context?.condition || 'Condition not recorded' }} <span>·</span> <time class="alloy-technical" [attr.datetime]="setup.context?.recordedAt || null">{{ setup.context?.recordedAt ? (setup.context?.recordedAt | date:'mediumDate') : 'Date not recorded' }}</time></p></header>
 					<div class="setup-actions flex flex-col gap-2 sm:flex-row sm:flex-wrap">@if (!archived()) { <button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="copy()" [disabled]="action() !== null"><svg lucideCopy size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ action() === 'copy' ? 'Copying…' : 'Copy setup' }}</button><button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="openEdit()">Correct record</button>@if (!setup.current) { <button class="text-button alloy-control alloy-control-tertiary alloy-focus-ring" type="button" (click)="makeCurrent()" [disabled]="action() !== null">{{ action() === 'current' ? 'Selecting…' : 'Select as current' }}</button> } }</div>
-					<div class="setup-readout grid gap-4 xl:grid-cols-2">@for (section of sectionKeys; track section) { @if (sectionHasValues(setup.sections[section])) { <section class="border-t border-alloy-separator pt-3"><h5 class="alloy-section-heading m-0 mb-2">{{ sectionLabels[section] }}</h5><dl class="m-0">@for (entry of setup.sections[section] | keyvalue; track entry.key) { @if (entry.value) { <div class="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-dotted border-alloy-separator py-1"><dt class="text-sm text-alloy-text-secondary">{{ displayName(entry.key) }}</dt><dd class="alloy-technical m-0 text-right text-alloy-text">{{ entry.value }}</dd></div> } }</dl></section> } }</div>
+					<div class="setup-readout grid gap-4 xl:grid-cols-2">@for (section of sectionKeys; track section) { @if (sectionHasValues(setup.sections[section])) { <section class="border-t border-alloy-separator pt-3"><h5 class="alloy-section-heading m-0 mb-2">{{ sectionLabels[section] }}</h5><dl class="m-0">@for (entry of setup.sections[section] | keyvalue; track entry.key) { @if (entry.value) { <div class="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-dotted border-alloy-separator py-1"><dt class="text-sm text-alloy-text-secondary">{{ fieldLabel(entry.key) }}</dt><dd class="alloy-technical m-0 text-right text-alloy-text">{{ entry.value }}</dd></div> } }</dl></section> } }</div>
 					@if (setup.source?.url || setup.source?.pdfUrl || setup.source?.pdfTitle || setup.source?.pdfPage || setup.copiedFromSetupId) { <aside class="provenance alloy-panel mb-0 grid gap-2"><h5 class="alloy-section-heading m-0">Source trail</h5>@if (setup.source?.url) { <a class="alloy-focus-ring inline-flex min-h-12 w-fit items-center gap-2 text-alloy-accent" [href]="setup.source?.url" target="_blank" rel="noreferrer">Open source link<svg lucideExternalLink size="16" strokeWidth="1.8" aria-hidden="true"></svg></a> }@if (setup.source?.pdfUrl || setup.source?.pdfTitle) { <span class="text-sm text-alloy-text-secondary">Original PDF reference retained{{ setup.source?.pdfTitle ? ': ' + setup.source?.pdfTitle : '' }}{{ setup.source?.pdfPage ? ' · page ' + setup.source?.pdfPage : '' }}</span> }@if (setup.copiedFromSetupId) { <span class="text-sm text-alloy-text-secondary">Copied from an earlier snapshot</span> }</aside> }
 					@if (setup.unmappedValues || setup.rawValues) { <details class="unmapped border-t border-alloy-separator pt-3"><summary class="alloy-focus-ring flex min-h-12 cursor-pointer items-center text-sm font-semibold text-alloy-accent">Unmapped / raw values</summary><pre class="alloy-technical max-h-60 overflow-auto whitespace-pre-wrap text-sm text-alloy-text-secondary">{{ { unmapped: setup.unmappedValues, raw: setup.rawValues } | json }}</pre></details> }
 				</article>

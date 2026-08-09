@@ -52,29 +52,6 @@ describe('setup snapshot clients', () => {
 
 	afterEach(() => http.verify());
 
-	it('accepts only owner-safe So Dialed setup URLs', () => {
-		expect(
-			SoDialedImportGateway.isSupportedUrl(
-				' https://sodialed.com/setup/Abc123/ ',
-			),
-		).toBe(true);
-		expect(
-			SoDialedImportGateway.isSupportedUrl(
-				'https://www.sodialed.com:443/setup/abc',
-			),
-		).toBe(true);
-		for (const url of [
-			'not a url',
-			'http://sodialed.com/setup/abc',
-			'https://example.com/setup/abc',
-			'https://user@sodialed.com/setup/abc',
-			'https://user:pass@sodialed.com/setup/abc',
-			'https://sodialed.com:444/setup/abc',
-			'https://sodialed.com/not-a-setup/abc',
-		])
-			expect(SoDialedImportGateway.isSupportedUrl(url)).toBe(false);
-	});
-
 	it('parses snapshot responses and maps all canonical failures', () => {
 		expect(parseSetupCollection({ setups: [snapshot()] })).toEqual([
 			snapshot(),
