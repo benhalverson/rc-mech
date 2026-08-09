@@ -1,9 +1,12 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import {
+	afterNextRender,
 	Component,
 	computed,
+	ElementRef,
 	inject,
+	Injector,
 	linkedSignal,
 	signal,
 } from '@angular/core';
@@ -14,6 +17,19 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
+import {
+	LucideArchive,
+	LucideArchiveRestore,
+	LucideCircleCheck,
+	LucideClock,
+	LucidePencil,
+	LucidePlus,
+	LucideRefreshCw,
+	LucideRotateCcw,
+	LucideSave,
+	LucideTriangleAlert,
+	LucideWrench,
+} from '@lucide/angular';
 import { ConsumableMaintenance } from './consumable-maintenance';
 import type {
 	MaintenanceActivity,
@@ -108,14 +124,33 @@ export const calculatePlanState = (
 
 @Component({
 	selector: 'app-maintenance-cockpit',
-	imports: [CommonModule, ConsumableMaintenance, DatePipe, FormField],
+	imports: [
+		CommonModule,
+		ConsumableMaintenance,
+		DatePipe,
+		FormField,
+		LucideArchive,
+		LucideArchiveRestore,
+		LucideCircleCheck,
+		LucideClock,
+		LucidePencil,
+		LucidePlus,
+		LucideRefreshCw,
+		LucideRotateCcw,
+		LucideSave,
+		LucideTriangleAlert,
+		LucideWrench,
+	],
 	templateUrl: './maintenance-cockpit.html',
-	styleUrl: './maintenance-cockpit.css',
+	host: { class: 'block' },
 })
 export class MaintenanceCockpit {
 	private readonly http = inject(HttpClient);
 	private readonly lookups = inject(MaintenanceLookups);
 	private readonly store = inject(MaintenanceStore);
+	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+	private readonly injector = inject(Injector);
+	private returnFocusSelector = '[data-maintenance-launcher="new-plan"]';
 	protected readonly garage = linkedSignal(() => this.store.cars());
 	protected readonly plans = linkedSignal(() => this.store.plans());
 	protected readonly activity = this.store.activity;
@@ -166,6 +201,24 @@ export class MaintenanceCockpit {
 					? undefined
 					: { kind: 'minimum', message: 'Intervals must be at least one.' };
 			});
+		validate(path.calendarValue, (context) =>
+			!context.value().trim() && !context.valueOf(path.sessionInterval).trim()
+				? {
+						kind: 'intervalRequired',
+						message:
+							'Add a calendar interval, a drive-session threshold, or both.',
+					}
+				: undefined,
+		);
+		validate(path.sessionInterval, (context) =>
+			!context.value().trim() && !context.valueOf(path.calendarValue).trim()
+				? {
+						kind: 'intervalRequired',
+						message:
+							'Add a calendar interval, a drive-session threshold, or both.',
+					}
+				: undefined,
+		);
 		validate(path.baselineSessions, ({ value }) =>
 			!value().trim() || /^\d+$/.test(value().trim())
 				? undefined
@@ -281,6 +334,7 @@ export class MaintenanceCockpit {
 
 	protected openCreate(): void {
 		if (!this.hasActiveCars()) return;
+		this.returnFocusSelector = '[data-maintenance-launcher="new-plan"]';
 		const firstCar = this.garage().find((car) => !car.archivedAt);
 		this.planFields().reset({
 			...emptyForm(),
@@ -291,10 +345,12 @@ export class MaintenanceCockpit {
 		this.formError.set('');
 		this.loadComponents(this.form().carId);
 		this.editing.set(true);
+		this.focusAfterRender('#maintenance-form-title');
 	}
 
 	protected openEdit(plan: MaintenancePlan): void {
 		if (this.isReadOnly(plan)) return;
+		this.returnFocusSelector = `[data-maintenance-launcher="plan:${plan.id}"]`;
 		this.planFields().reset({
 			...emptyForm(),
 			carId: plan.carId,
@@ -324,6 +380,7 @@ export class MaintenanceCockpit {
 		this.formError.set('');
 		this.loadComponents(plan.carId);
 		this.editing.set(true);
+		this.focusAfterRender('#maintenance-form-title');
 	}
 
 	protected cancelEdit(): void {
@@ -331,8 +388,10 @@ export class MaintenanceCockpit {
 		this.editingId.set(null);
 		this.formError.set('');
 		this.planFields().reset();
+		this.restoreLauncherFocusAfterRender();
 	}
 	protected openServiceCreate(): void {
+		this.returnFocusSelector = '[data-maintenance-launcher="service"]';
 		const firstCar = this.garage().find((car) => !car.archivedAt);
 		this.serviceFields().reset({
 			...emptyServiceForm(),
@@ -344,10 +403,12 @@ export class MaintenanceCockpit {
 		this.serviceError.set('');
 		this.loadComponents(firstCar?.id ?? '');
 		this.serviceEditing.set(true);
+		this.focusAfterRender('#service-form-title');
 	}
 
 	protected openServiceEdit(record: ServiceRecord): void {
 		if (this.isRecordReadOnly(record)) return;
+		this.returnFocusSelector = `[data-maintenance-launcher="record:${record.id}"]`;
 		this.serviceFields().reset({
 			carId: record.carId,
 			componentId: record.componentId ?? '',
@@ -362,10 +423,12 @@ export class MaintenanceCockpit {
 		this.serviceError.set('');
 		this.loadComponents(record.carId);
 		this.serviceEditing.set(true);
+		this.focusAfterRender('#service-form-title');
 	}
 
 	protected openCompletion(plan: MaintenancePlan): void {
 		if (this.isReadOnly(plan)) return;
+		this.returnFocusSelector = `[data-maintenance-launcher="complete:${plan.id}"]`;
 		this.serviceFields().reset({
 			...emptyServiceForm(),
 			carId: plan.carId,
@@ -378,6 +441,7 @@ export class MaintenanceCockpit {
 		this.serviceError.set('');
 		this.loadComponents(plan.carId);
 		this.serviceEditing.set(true);
+		this.focusAfterRender('#service-form-title');
 	}
 
 	protected cancelServiceEdit(): void {
@@ -386,6 +450,7 @@ export class MaintenanceCockpit {
 		this.servicePlanId.set(null);
 		this.serviceError.set('');
 		this.serviceFields().reset();
+		this.restoreLauncherFocusAfterRender();
 	}
 	protected updateService(field: keyof ServiceForm, value: string): void {
 		this.serviceForm.update((current) => ({ ...current, [field]: value }));
@@ -462,6 +527,7 @@ export class MaintenanceCockpit {
 			next: () => {
 				this.store.refreshServiceRecords();
 				this.store.refreshPlans();
+				this.returnFocusSelector = '#maintenance-title';
 				this.cancelServiceEdit();
 				this.serviceAction.set(null);
 			},
@@ -558,6 +624,7 @@ export class MaintenanceCockpit {
 		request.subscribe({
 			next: () => {
 				this.store.refreshPlans();
+				this.returnFocusSelector = '#maintenance-title';
 				this.cancelEdit();
 				this.action.set(null);
 			},
@@ -775,5 +842,17 @@ export class MaintenanceCockpit {
 		return event.target instanceof HTMLSelectElement
 			? event.target.value
 			: null;
+	}
+
+	private focusAfterRender(selector: string): void {
+		afterNextRender(
+			() =>
+				this.host.nativeElement.querySelector<HTMLElement>(selector)?.focus(),
+			{ injector: this.injector },
+		);
+	}
+
+	private restoreLauncherFocusAfterRender(): void {
+		this.focusAfterRender(this.returnFocusSelector);
 	}
 }

@@ -240,7 +240,7 @@ describe('ConsumableMaintenance', () => {
 				button.textContent?.trim() === 'Record change',
 		) as HTMLButtonElement[];
 
-		expect(creationButtons).toHaveLength(2);
+		expect(creationButtons).toHaveLength(1);
 		expect(creationButtons.every((button) => button.disabled)).toBe(true);
 		app.openCreate();
 		fixture.detectChanges();
@@ -652,16 +652,24 @@ describe('ConsumableMaintenance', () => {
 
 	it('covers form validation focus paths, tire detail validation, and action guard', () => {
 		const app = fixture.componentInstance as unknown as Harness;
+		const expectFieldError = (selector: string, message: string): void => {
+			fixture.detectChanges();
+			expect(
+				fixture.nativeElement.querySelector(selector)?.textContent,
+			).toContain(message);
+		};
 		const preventDefault = vi.fn();
 		app.openCreate();
 		app.form.set({ ...app.form(), carId: '', performedAt: '' });
 		app.save({ preventDefault } as unknown as Event);
 		expect(preventDefault).toHaveBeenCalled();
 		expect(app.formError()).toContain('Choose a car');
+		expectFieldError('#entry-car-error', 'Choose a car');
 
 		app.form.set({ ...app.form(), carId: 'car-1', performedAt: '' });
 		app.save();
 		expect(app.formError()).toContain('change date');
+		expectFieldError('#entry-date-error', 'change date');
 
 		app.form.set({
 			...app.form(),
@@ -670,12 +678,26 @@ describe('ConsumableMaintenance', () => {
 		});
 		app.save();
 		expect(app.formError()).toContain('Costs');
+		expectFieldError('#entry-front-cost-error', 'Costs');
+		app.form.set({
+			...app.form(),
+			kind: 'tires',
+			axle: 'both',
+			frontDetails: 'Front',
+			frontCost: '-1',
+			rearDetails: 'Rear',
+			rearCost: '',
+		});
+		app.save();
+		expectFieldError('#entry-front-cost-error', 'Costs');
 		app.form.set({ ...app.form(), frontCost: '', rearCost: 'NaN' });
 		app.save();
 		expect(app.formError()).toContain('Costs');
+		expectFieldError('#entry-rear-cost-error', 'Costs');
 		app.form.set({ ...app.form(), rearCost: '', notes: 'x'.repeat(4001) });
 		app.save();
 		expect(app.formError()).toContain('4,000');
+		expectFieldError('#entry-notes-error', '4,000');
 
 		app.form.set({
 			...app.form(),
@@ -686,7 +708,11 @@ describe('ConsumableMaintenance', () => {
 			frontCost: '',
 		});
 		app.save();
-		expect(app.formError()).toContain('front or rear tire details');
+		expect(app.formError()).toContain('front tire details or cost');
+		expectFieldError(
+			'#entry-front-details-error',
+			'front tire details or cost',
+		);
 		app.form.set({
 			...app.form(),
 			axle: 'rear',
@@ -694,7 +720,8 @@ describe('ConsumableMaintenance', () => {
 			rearCost: '',
 		});
 		app.save();
-		expect(app.formError()).toContain('front or rear tire details');
+		expect(app.formError()).toContain('rear tire details or cost');
+		expectFieldError('#entry-rear-details-error', 'rear tire details or cost');
 
 		expect(app.optionalCost('')).toBeNull();
 		expect(app.optionalCost('-2')).toBe('invalid');
@@ -714,6 +741,24 @@ describe('ConsumableMaintenance', () => {
 			...app.form(),
 			carId: 'car-1',
 			performedAt: '2026-08-05T10:00',
+			kind: 'tires',
+			axle: 'front',
+			frontDetails: '',
+			frontCost: '',
+		});
+		app.save();
+		expect(app.formError()).toContain('front or rear tire details');
+		app.form.set({
+			...app.form(),
+			axle: 'rear',
+			rearDetails: '',
+			rearCost: '',
+		});
+		app.save();
+		expect(app.formError()).toContain('front or rear tire details');
+		app.form.set({
+			...app.form(),
+			kind: 'shock-fluid',
 			frontCost: '-1',
 		});
 		app.save();

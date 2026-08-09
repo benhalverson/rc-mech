@@ -1,31 +1,270 @@
-<section class="maintenance-cockpit" aria-labelledby="maintenance-title">
-  <div class="maintenance-heading section-heading">
-    <div><div class="eyebrow">Care ledger</div><h2 id="maintenance-title" data-route-focus tabindex="-1">Maintenance cockpit</h2><p class="section-intro">A quiet view of what the garage needs next. Calendar and drive-session thresholds share one baseline, so either one can call a plan due.</p></div>
-    @if (state() === 'ready' && !editing()) { <button class="button" type="button" (click)="openCreate()" [disabled]="!hasActiveCars()">New plan</button> }
-  </div>
-  @if (mutationError()) { <p class="message" role="alert">{{ mutationError() }}</p> }
-  @if (state() === 'loading') { <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Reading the care ledger…</p></div> }
-  @else if (state() === 'error') { <div class="state-card error-state" role="alert"><span class="state-mark">!</span><p>{{ error() }}</p><button class="text-button" type="button" (click)="load()">Try again</button></div> }
-  @else if (editing()) {
-    <form class="maintenance-form" (submit)="save($event)" aria-labelledby="maintenance-form-title" novalidate><div class="eyebrow">{{ editingId() ? 'Edit plan' : 'New maintenance plan' }}</div><h3 id="maintenance-form-title">Set the care rule.</h3><p class="section-intro">Use a calendar interval, a drive-session threshold, or both. The first service date and prior drive-session count become the baseline.</p>
-      @if (formError()) { <p class="message" role="alert">{{ formError() }}</p> }
-      <div class="form-grid"><label>Car <select [formField]="planFields.carId" (change)="changePlanCar($event)">@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }</select></label><label>Installed component <select [formField]="planFields.componentId"><option value="">Car-level plan</option>@for (component of components(); track component.id) { <option [value]="component.id">{{ component.slot }} · {{ component.name }}</option> }</select></label><label class="wide">Plan name <input placeholder="Clean and re-oil bearings" [formField]="planFields.name" /></label><label>Calendar interval <input type="text" inputmode="numeric" placeholder="Optional" [formField]="planFields.calendarValue" /></label><label>Calendar unit <select [formField]="planFields.calendarUnit"><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select></label><label>Drive-session threshold <input type="text" inputmode="numeric" placeholder="Optional" [formField]="planFields.sessionInterval" /></label><label>Last service <input type="datetime-local" [formField]="planFields.baselineAt" /></label><label>Prior drive sessions <input type="text" inputmode="numeric" [formField]="planFields.baselineSessions" /></label></div>
-      <p class="hint">Dates are entered in <strong>{{ timezone() }}</strong>. Completing this plan starts a fresh baseline.</p><div class="form-actions"><button class="button" type="submit" [disabled]="action()">{{ action() === 'create' ? 'Creating…' : action() === 'edit' ? 'Saving…' : 'Save plan' }}</button><button class="button quiet" type="button" (click)="cancelEdit()" [disabled]="action()">Cancel</button></div>
-    </form>
-  } @else if (serviceEditing()) {
-    <form class="maintenance-form service-form" (submit)="saveService($event)" aria-labelledby="service-form-title" novalidate><div class="eyebrow">{{ servicePlanId() ? 'Scheduled service' : serviceEditingId() ? 'Correct service record' : 'Ad hoc service' }}</div><h3 id="service-form-title">Put the work in the ledger.</h3><p class="section-intro">Record what happened, when it happened, and what it cost. A scheduled completion also advances its plan baseline.</p>
-      @if (serviceError()) { <p class="message" role="alert">{{ serviceError() }}</p> }
-      <div class="form-grid"><label>Car <select [formField]="serviceFields.carId" (change)="changeServiceCar($event)">@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }</select></label><label>Installed component <select [formField]="serviceFields.componentId"><option value="">Garage-level service</option>@for (component of components(); track component.id) { <option [value]="component.id">{{ component.slot }} · {{ component.name }}</option> }</select></label><label class="wide">Completed work <textarea rows="4" placeholder="Cleaned, inspected, and re-oiled the bearings" [formField]="serviceFields.description"></textarea></label><label class="wide">Technician notes <textarea rows="3" placeholder="Parts used, measurements, or correction context" [formField]="serviceFields.notes"></textarea></label><label>Completion date <input type="datetime-local" [formField]="serviceFields.performedAt" /></label><label>Cost <input type="text" inputmode="decimal" placeholder="Optional" [formField]="serviceFields.cost" /></label><label>Currency <input placeholder="USD" [formField]="serviceFields.currency" /></label></div>
-      <p class="hint">Dates are entered in <strong>{{ timezone() }}</strong>. Costs are optional and stay with this service record.</p><div class="form-actions"><button class="button" type="submit" [disabled]="serviceAction()">{{ serviceAction() === 'complete' ? 'Completing…' : serviceAction() === 'edit' ? 'Saving…' : serviceAction() === 'create' ? 'Recording…' : 'Save service' }}</button><button class="button quiet" type="button" (click)="cancelServiceEdit()" [disabled]="serviceAction()">Cancel</button></div>
-    </form>
-  } @else {
-    <div class="service-totals" role="list" aria-label="Service totals by currency">@for (total of serviceTotals(); track total.currency) { <span role="listitem">{{ total.currency }} {{ total.total | number:'1.2-2' }}</span> }</div>
-    <div class="maintenance-totals"><div><strong>{{ grouped().overdue.length }}</strong><span>Overdue</span></div><div><strong>{{ grouped().due.length }}</strong><span>Due now</span></div><div><strong>{{ grouped().upcoming.length }}</strong><span>Upcoming</span></div><div><strong>{{ activeCount() }}</strong><span>Active plans</span></div></div>
-    <div class="cockpit-toolbar"><span>Show</span>@for (filter of filterOptions; track filter) { <button type="button" class="filter-button" [class.selected]="selectedFilter() === filter" (click)="setFilter(filter)">{{ filterLabel(filter) }}</button> }<span class="toolbar-spacer"></span><button class="button quiet" type="button" (click)="openServiceCreate()" [disabled]="!garage().some((car) => !car.archivedAt)">Log ad hoc service</button></div>
-    @if (!visiblePlans().length) { <div class="state-card empty-state"><span class="state-mark">＋</span><h3>No plans in this view</h3><p>Start with a component that needs attention on a regular cadence.</p><button class="button" type="button" (click)="openCreate()" [disabled]="!hasActiveCars()">Create a plan</button></div> } @else { <div class="plan-list" aria-label="Maintenance plans">@for (plan of visiblePlans(); track plan.id) { <article class="plan-row" [class]="'plan-' + planState(plan)"><div class="plan-mark" aria-hidden="true"></div><div class="plan-copy"><div class="plan-kicker"><span class="plan-state">{{ stateLabel(planState(plan)) }}</span><span>{{ carName(plan.carId) }} · {{ componentName(plan.componentId) }}</span></div><h3>{{ plan.name }}</h3><p>{{ dueText(plan) }}@if (plan.intervalValue) { · every {{ plan.intervalValue }} {{ plan.intervalUnit || 'days' }} }@if (plan.intervalSessions) { · every {{ plan.intervalSessions }} sessions }</p></div><div class="plan-actions"><button class="text-button" type="button" (click)="openEdit(plan)" [disabled]="isReadOnly(plan)">Edit</button>@if (plan.status === 'active') { <button class="text-button muted" type="button" (click)="transition(plan, 'pause')" [disabled]="isReadOnly(plan)">Pause</button><button class="text-button" type="button" (click)="openCompletion(plan)" [disabled]="isReadOnly(plan)">Complete</button> } @else if (plan.status === 'paused') { <button class="text-button" type="button" (click)="transition(plan, 'resume')" [disabled]="isReadOnly(plan)">Resume</button> } @if (plan.status !== 'archived') { <button class="text-button danger" type="button" (click)="transition(plan, 'archive')" [disabled]="isReadOnly(plan)">Archive</button> }</div></article> } </div> }
-    <section class="service-history" aria-labelledby="service-history-title"><div class="section-heading"><div><div class="eyebrow">Service history</div><h3 id="service-history-title">The work, kept honest.</h3></div><span class="history-total">{{ visibleServiceRecords().length }} records</span></div><div class="history-toolbar"><button type="button" class="filter-button" [class.selected]="historyFilter() === 'active'" (click)="setHistoryFilter('active')">Current ledger</button><button type="button" class="filter-button" [class.selected]="historyFilter() === 'deleted'" (click)="setHistoryFilter('deleted')">Archived corrections</button></div>@if (serviceError()) { <p class="message" role="alert">{{ serviceError() }}</p> } @if (!visibleServiceRecords().length) { <p class="hint">{{ historyFilter() === 'deleted' ? 'No archived service records.' : 'No service recorded yet. Complete a plan or log an ad hoc repair.' }}</p> } @else { <div class="service-list">@for (record of visibleServiceRecords(); track record.id) { <article class="service-row" [class.service-deleted]="record.deletedAt"><div class="service-date"><time [dateTime]="record.performedAt">{{ record.performedAt | date:'mediumDate':timezone() }}</time><span>{{ recordCarName(record) }}</span></div><div class="service-detail"><strong>{{ record.planId ? 'Scheduled completion' : 'Ad hoc service' }}</strong><span>{{ recordComponentName(record) }} · {{ recordCost(record) }}</span><p>{{ record.description }}</p></div><div class="plan-actions">@if (!record.deletedAt) { <button class="text-button" type="button" (click)="openServiceEdit(record)" [disabled]="isRecordReadOnly(record)">Correct</button><button class="text-button danger" type="button" (click)="deleteService(record)" [disabled]="isRecordReadOnly(record)">Archive</button> } @else { <span class="deleted-label">Archived</span><button class="text-button" type="button" (click)="restoreService(record)" [disabled]="serviceAction()">Undo</button> }</div></article> } </div> }</section>
-    <div class="activity-feed"><div class="eyebrow">Recent activity</div><h3>What changed lately</h3>@if (!activity().length) { <p class="hint">Completed plans and baseline changes will appear here.</p> } @else { @for (item of activity(); track item.id) { <p><time [dateTime]="item.occurredAt">{{ item.occurredAt | date:'mediumDate':timezone() }}</time><span>{{ item.action }}</span>@if (item.note) { <small>{{ item.note }}</small> }<button class="text-button" type="button" (click)="undoActivity(item)">Undo completion</button></p> } }</div>
-    <div class="service-notes"><div class="eyebrow">Record notes</div>@for (record of visibleServiceRecords(); track record.id) { @if (record.notes) { <p><strong>{{ record.performedAt | date:'mediumDate':timezone() }}</strong> · {{ record.notes }}</p> } }</div>
-  }
+<section class="maintenance-cockpit grid gap-6 border-t border-alloy-separator pt-6" aria-labelledby="maintenance-title">
+	<header class="maintenance-heading grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+		<div>
+			<div class="alloy-section-heading">Care ledger</div>
+			<h2 id="maintenance-title" class="alloy-screen-title" data-route-focus tabindex="-1">Maintenance cockpit</h2>
+			<p class="alloy-supporting-text mb-0 max-w-3xl">A quiet view of what the garage needs next. Calendar and drive-session thresholds share one baseline, so either one can call a plan due.</p>
+		</div>
+		@if (state() === 'ready' && !editing() && !serviceEditing() && visiblePlans().length) {
+			<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-maintenance-launcher="new-plan" (click)="openCreate()" [disabled]="!hasActiveCars()">
+				<svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+				New plan
+			</button>
+		}
+	</header>
+
+	@if (mutationError()) {
+		<p class="message alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+			<span>{{ mutationError() }}</span>
+		</p>
+	}
+
+	@if (state() === 'loading') {
+		<div class="state-card alloy-state alloy-live-state mt-0" role="status">
+			<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening care ledger</strong></span>
+			<span>Reading the care ledger…</span>
+		</div>
+	} @else if (state() === 'error') {
+		<div class="state-card error-state alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+			<span>{{ error() }}</span>
+			<button class="text-button alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="load()">
+				<svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+				Try again
+			</button>
+		</div>
+	} @else if (editing()) {
+		<form class="maintenance-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="maintenance-form-title" [attr.aria-describedby]="formError() ? 'maintenance-form-error' : 'maintenance-form-intro'" novalidate>
+			<div>
+				<div class="alloy-section-heading">{{ editingId() ? 'Edit plan' : 'New maintenance plan' }}</div>
+				<h3 id="maintenance-form-title" class="alloy-screen-title" tabindex="-1">Set the care rule</h3>
+				<p id="maintenance-form-intro" class="alloy-supporting-text mb-0 max-w-3xl">Use a calendar interval, a drive-session threshold, or both. The first service date and prior drive-session count become the baseline.</p>
+			</div>
+			@if (formError()) {
+				<p id="maintenance-form-error" class="message alloy-state alloy-error-state mt-0" role="alert">
+					<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+					<span>{{ formError() }}</span>
+				</p>
+			}
+			<div class="form-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Car</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="planFields.carId" (change)="changePlanCar($event)" [attr.aria-describedby]="planFields.carId().touched() && planFields.carId().invalid() ? 'plan-car-error' : null">
+						@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }
+					</select>
+					@if (planFields.carId().touched() && planFields.carId().invalid()) { <span id="plan-car-error" class="text-sm text-alloy-text">{{ planFields.carId().errors()[0]?.message }}</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Installed component</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="planFields.componentId">
+						<option value="">Car-level plan</option>
+						@for (component of components(); track component.id) { <option [value]="component.id">{{ component.slot }} · {{ component.name }}</option> }
+					</select>
+				</label>
+				<label class="wide grid gap-1 sm:col-span-2 lg:col-span-3">
+					<span class="text-sm font-semibold text-alloy-text">Plan name</span>
+					<input class="alloy-field alloy-focus-ring w-full" placeholder="Clean and re-oil bearings" [formField]="planFields.name" [attr.aria-describedby]="planFields.name().touched() && planFields.name().invalid() ? 'plan-name-error' : null" />
+					@if (planFields.name().touched() && planFields.name().invalid()) { <span id="plan-name-error" class="text-sm text-alloy-text">{{ planFields.name().errors()[0]?.message }}</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Calendar interval</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" placeholder="Optional" [formField]="planFields.calendarValue" [attr.aria-describedby]="planFields.calendarValue().touched() && planFields.calendarValue().invalid() ? 'plan-calendar-error' : 'plan-calendar-help'" />
+					@if (planFields.calendarValue().touched() && planFields.calendarValue().invalid()) { <span id="plan-calendar-error" class="text-sm text-alloy-text">{{ planFields.calendarValue().errors()[0]?.message }}</span> } @else { <span id="plan-calendar-help" class="text-sm text-alloy-text-secondary">Whole days, weeks, or months.</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Calendar unit</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="planFields.calendarUnit"><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select>
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Drive-session threshold</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" placeholder="Optional" [formField]="planFields.sessionInterval" [attr.aria-describedby]="planFields.sessionInterval().touched() && planFields.sessionInterval().invalid() ? 'plan-session-error' : 'plan-session-help'" />
+					@if (planFields.sessionInterval().touched() && planFields.sessionInterval().invalid()) { <span id="plan-session-error" class="text-sm text-alloy-text">{{ planFields.sessionInterval().errors()[0]?.message }}</span> } @else { <span id="plan-session-help" class="text-sm text-alloy-text-secondary">Whole drive sessions.</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Last service</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="planFields.baselineAt" />
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Prior drive sessions</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" [formField]="planFields.baselineSessions" [attr.aria-describedby]="planFields.baselineSessions().touched() && planFields.baselineSessions().invalid() ? 'plan-baseline-error' : null" />
+					@if (planFields.baselineSessions().touched() && planFields.baselineSessions().invalid()) { <span id="plan-baseline-error" class="text-sm text-alloy-text">{{ planFields.baselineSessions().errors()[0]?.message }}</span> }
+				</label>
+			</div>
+			<p class="hint alloy-technical m-0 text-alloy-text-secondary">Dates are entered in <strong class="font-normal text-alloy-text">{{ timezone() }}</strong>. Completing this plan starts a fresh baseline.</p>
+			<div class="form-actions flex flex-col gap-2 sm:flex-row">
+				<button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action()">
+					<svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+					{{ action() === 'create' ? 'Creating…' : action() === 'edit' ? 'Saving…' : 'Save plan' }}
+				</button>
+				<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelEdit()" [disabled]="action()">Cancel</button>
+			</div>
+		</form>
+	} @else if (serviceEditing()) {
+		<form class="maintenance-form service-form alloy-panel mb-0 grid gap-5" (submit)="saveService($event)" aria-labelledby="service-form-title" [attr.aria-describedby]="serviceError() ? 'service-form-error' : 'service-form-intro'" novalidate>
+			<div>
+				<div class="alloy-section-heading">{{ servicePlanId() ? 'Scheduled service' : serviceEditingId() ? 'Correct service record' : 'Ad hoc service' }}</div>
+				<h3 id="service-form-title" class="alloy-screen-title" tabindex="-1">Put the work in the ledger</h3>
+				<p id="service-form-intro" class="alloy-supporting-text mb-0 max-w-3xl">Record what happened, when it happened, and what it cost. A scheduled completion also advances its plan baseline.</p>
+			</div>
+			@if (serviceError()) {
+				<p id="service-form-error" class="message alloy-state alloy-error-state mt-0" role="alert">
+					<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+					<span>{{ serviceError() }}</span>
+				</p>
+			}
+			<div class="form-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Car</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="serviceFields.carId" (change)="changeServiceCar($event)" [attr.aria-describedby]="serviceFields.carId().touched() && serviceFields.carId().invalid() ? 'service-car-error' : null">
+						@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }
+					</select>
+					@if (serviceFields.carId().touched() && serviceFields.carId().invalid()) { <span id="service-car-error" class="text-sm text-alloy-text">{{ serviceFields.carId().errors()[0]?.message }}</span> }
+				</label>
+				<label class="grid gap-1 sm:col-span-1 lg:col-span-2">
+					<span class="text-sm font-semibold text-alloy-text">Installed component</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="serviceFields.componentId"><option value="">Garage-level service</option>@for (component of components(); track component.id) { <option [value]="component.id">{{ component.slot }} · {{ component.name }}</option> }</select>
+				</label>
+				<label class="wide grid gap-1 sm:col-span-2 lg:col-span-3">
+					<span class="text-sm font-semibold text-alloy-text">Completed work</span>
+					<textarea class="alloy-field alloy-focus-ring min-h-28 w-full resize-y py-3" rows="4" placeholder="Cleaned, inspected, and re-oiled the bearings" [formField]="serviceFields.description" [attr.aria-describedby]="serviceFields.description().touched() && serviceFields.description().invalid() ? 'service-description-error' : null"></textarea>
+					@if (serviceFields.description().touched() && serviceFields.description().invalid()) { <span id="service-description-error" class="text-sm text-alloy-text">{{ serviceFields.description().errors()[0]?.message }}</span> }
+				</label>
+				<label class="wide grid gap-1 sm:col-span-2 lg:col-span-3">
+					<span class="text-sm font-semibold text-alloy-text">Technician notes</span>
+					<textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" placeholder="Parts used, measurements, or correction context" [formField]="serviceFields.notes" [attr.aria-describedby]="serviceFields.notes().touched() && serviceFields.notes().invalid() ? 'service-notes-error' : null"></textarea>
+					@if (serviceFields.notes().touched() && serviceFields.notes().invalid()) { <span id="service-notes-error" class="text-sm text-alloy-text">{{ serviceFields.notes().errors()[0]?.message }}</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Completion date</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="serviceFields.performedAt" [attr.aria-describedby]="serviceFields.performedAt().touched() && serviceFields.performedAt().invalid() ? 'service-date-error' : null" />
+					@if (serviceFields.performedAt().touched() && serviceFields.performedAt().invalid()) { <span id="service-date-error" class="text-sm text-alloy-text">{{ serviceFields.performedAt().errors()[0]?.message }}</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Cost</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" placeholder="Optional" [formField]="serviceFields.cost" [attr.aria-describedby]="serviceFields.cost().touched() && serviceFields.cost().invalid() ? 'service-cost-error' : 'service-cost-help'" />
+					@if (serviceFields.cost().touched() && serviceFields.cost().invalid()) { <span id="service-cost-error" class="text-sm text-alloy-text">{{ serviceFields.cost().errors()[0]?.message }}</span> } @else { <span id="service-cost-help" class="text-sm text-alloy-text-secondary">Amount in the selected currency.</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Currency</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full uppercase" placeholder="USD" [formField]="serviceFields.currency" [attr.aria-describedby]="serviceFields.currency().touched() && serviceFields.currency().invalid() ? 'service-currency-error' : null" />
+					@if (serviceFields.currency().touched() && serviceFields.currency().invalid()) { <span id="service-currency-error" class="text-sm text-alloy-text">{{ serviceFields.currency().errors()[0]?.message }}</span> }
+				</label>
+			</div>
+			<p class="hint alloy-technical m-0 text-alloy-text-secondary">Dates are entered in <strong class="font-normal text-alloy-text">{{ timezone() }}</strong>. Costs are optional and stay with this service record.</p>
+			<div class="form-actions flex flex-col gap-2 sm:flex-row">
+				<button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="serviceAction()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ serviceAction() === 'complete' ? 'Completing…' : serviceAction() === 'edit' ? 'Saving…' : serviceAction() === 'create' ? 'Recording…' : 'Save service' }}</button>
+				<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelServiceEdit()" [disabled]="serviceAction()">Cancel</button>
+			</div>
+		</form>
+	} @else {
+		@if (serviceTotals().length) {
+			<div class="service-totals flex flex-wrap gap-x-6 gap-y-2 border-y border-alloy-separator py-3" role="list" aria-label="Service totals by currency">
+				@for (total of serviceTotals(); track total.currency) { <span class="alloy-technical text-alloy-text-secondary" role="listitem"><strong class="font-normal text-alloy-text">{{ total.currency }} {{ total.total | number:'1.2-2' }}</strong> recorded service</span> }
+			</div>
+		}
+		<div class="maintenance-totals grid grid-cols-2 divide-x divide-y divide-alloy-separator border-y border-alloy-separator sm:grid-cols-4 sm:divide-y-0" aria-label="Maintenance plan totals">
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().overdue.length }}</strong><span class="text-sm text-alloy-text-secondary">Overdue</span></div>
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().due.length }}</strong><span class="text-sm text-alloy-text-secondary">Due now</span></div>
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().upcoming.length }}</strong><span class="text-sm text-alloy-text-secondary">Upcoming</span></div>
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ activeCount() }}</strong><span class="text-sm text-alloy-text-secondary">Active plans</span></div>
+		</div>
+		<div class="cockpit-toolbar grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+			<div>
+				<span class="alloy-section-heading mb-2 block">Show plans</span>
+				<div class="flex flex-wrap gap-2" role="group" aria-label="Filter maintenance plans">
+					@for (filter of filterOptions; track filter) {
+						<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="selectedFilter() === filter" [class.text-alloy-text]="selectedFilter() === filter" [attr.aria-pressed]="selectedFilter() === filter" (click)="setFilter(filter)">{{ filterLabel(filter) }}</button>
+					}
+				</div>
+			</div>
+			<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-maintenance-launcher="service" (click)="openServiceCreate()" [disabled]="!garage().some((car) => !car.archivedAt)"><svg lucideWrench size="18" strokeWidth="1.8" aria-hidden="true"></svg>Log ad hoc service</button>
+		</div>
+
+		@if (!visiblePlans().length) {
+			<div class="state-card empty-state alloy-empty-state grid gap-3">
+				<svg lucideClock size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+				<div><h3 class="m-0 text-base font-semibold text-alloy-text">No plans in this view</h3><p class="m-0 mt-1">Start with a component that needs attention on a regular cadence.</p></div>
+				<button class="button alloy-control alloy-focus-ring inline-flex w-fit items-center gap-2" type="button" data-maintenance-launcher="new-plan" (click)="openCreate()" [disabled]="!hasActiveCars()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Create a plan</button>
+			</div>
+		} @else {
+			<div class="plan-list border-y border-alloy-separator" aria-label="Maintenance plans">
+				@for (plan of visiblePlans(); track plan.id) {
+					<article class="plan-row grid gap-3 border-b border-alloy-separator py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center" [class.plan-overdue]="planState(plan) === 'overdue'" [class.plan-due]="planState(plan) === 'due'" [class.plan-upcoming]="planState(plan) === 'upcoming'" [class.plan-paused]="planState(plan) === 'paused'" [class.plan-archived]="planState(plan) === 'archived'">
+						<div class="plan-copy min-w-0 border-l-4 pl-4" [class.border-alloy-text]="planState(plan) === 'overdue' || planState(plan) === 'due'" [class.border-alloy-separator]="planState(plan) !== 'overdue' && planState(plan) !== 'due'">
+							<div class="plan-kicker flex flex-wrap gap-x-3 gap-y-1 text-[12px] font-semibold tracking-[0.08em] text-alloy-text-secondary uppercase">
+								<span class="plan-state inline-flex items-center gap-1 text-alloy-text">@if (planState(plan) === 'overdue' || planState(plan) === 'due') { <svg lucideTriangleAlert size="16" strokeWidth="1.8" aria-hidden="true"></svg>Attention · }{{ stateLabel(planState(plan)) }}</span>
+								<span>{{ carName(plan.carId) }} · {{ componentName(plan.componentId) }}</span>
+							</div>
+							<h3 class="m-0 mt-1 break-words text-base font-semibold text-alloy-text">{{ plan.name }}</h3>
+							<p class="m-0 mt-1 text-sm text-alloy-text-secondary">{{ dueText(plan) }}@if (plan.intervalValue) { · every {{ plan.intervalValue }} {{ plan.intervalUnit || 'days' }} }@if (plan.intervalSessions) { · every {{ plan.intervalSessions }} sessions }</p>
+						</div>
+						<div class="plan-actions flex flex-wrap gap-2 md:justify-end" role="group" [attr.aria-label]="plan.name + ' actions'">
+							<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'plan:' + plan.id" (click)="openEdit(plan)" [disabled]="isReadOnly(plan)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button>
+							@if (plan.status === 'active') {
+								<button class="text-button muted alloy-control alloy-control-tertiary alloy-focus-ring" type="button" (click)="transition(plan, 'pause')" [disabled]="isReadOnly(plan)">Pause</button>
+								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'complete:' + plan.id" (click)="openCompletion(plan)" [disabled]="isReadOnly(plan)"><svg lucideCircleCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg>Complete</button>
+							} @else if (plan.status === 'paused') {
+								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="transition(plan, 'resume')" [disabled]="isReadOnly(plan)">Resume</button>
+							}
+							@if (plan.status !== 'archived') { <button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="transition(plan, 'archive')" [disabled]="isReadOnly(plan)"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> }
+						</div>
+					</article>
+				}
+			</div>
+		}
+
+		<section class="service-history grid gap-4 border-t border-alloy-separator pt-6" aria-labelledby="service-history-title">
+			<header class="section-heading flex flex-wrap items-end justify-between gap-3">
+				<div><div class="alloy-section-heading">Service history</div><h3 id="service-history-title" class="alloy-screen-title">The work, kept honest</h3></div>
+				<span class="history-total alloy-technical text-alloy-text-secondary">{{ visibleServiceRecords().length }} records</span>
+			</header>
+			<div class="history-toolbar flex flex-wrap gap-2" role="group" aria-label="Filter service records">
+				<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="historyFilter() === 'active'" [attr.aria-pressed]="historyFilter() === 'active'" (click)="setHistoryFilter('active')">Current ledger</button>
+				<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="historyFilter() === 'deleted'" [attr.aria-pressed]="historyFilter() === 'deleted'" (click)="setHistoryFilter('deleted')">Archived corrections</button>
+			</div>
+			@if (serviceError()) { <p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ serviceError() }}</span></p> }
+			@if (!visibleServiceRecords().length) {
+				<p class="hint m-0 text-sm text-alloy-text-secondary">{{ historyFilter() === 'deleted' ? 'No archived service records.' : 'No service recorded yet. Complete a plan or log an ad hoc repair.' }}</p>
+			} @else {
+				<div class="service-list border-y border-alloy-separator">
+					@for (record of visibleServiceRecords(); track record.id) {
+						<article class="service-row grid gap-3 border-b border-alloy-separator py-4 last:border-b-0 md:grid-cols-[150px_minmax(0,1fr)_auto]" [class.service-deleted]="record.deletedAt">
+							<div class="service-date"><time class="alloy-technical block text-alloy-text" [dateTime]="record.performedAt">{{ record.performedAt | date:'mediumDate':timezone() }}</time><span class="mt-1 block text-sm text-alloy-text-secondary">{{ recordCarName(record) }}</span></div>
+							<div class="service-detail min-w-0"><strong class="block text-sm font-semibold text-alloy-text">{{ record.planId ? 'Scheduled completion' : 'Ad hoc service' }}</strong><span class="mt-1 block text-sm text-alloy-text-secondary">{{ recordComponentName(record) }} · {{ recordCost(record) }}</span><p class="m-0 mt-2 break-words whitespace-pre-wrap text-alloy-text-secondary">{{ record.description }}</p></div>
+							<div class="plan-actions flex flex-wrap gap-2 md:justify-end" role="group" aria-label="Service record actions">
+								@if (!record.deletedAt) {
+									<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'record:' + record.id" (click)="openServiceEdit(record)" [disabled]="isRecordReadOnly(record)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Correct</button>
+									<button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="deleteService(record)" [disabled]="isRecordReadOnly(record)"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button>
+								} @else {
+									<span class="deleted-label self-center text-sm text-alloy-text-secondary">Archived</span>
+									<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="restoreService(record)" [disabled]="serviceAction()"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>Undo</button>
+								}
+							</div>
+						</article>
+					}
+				</div>
+			}
+		</section>
+
+		<section class="activity-feed grid gap-3 border-t border-alloy-separator pt-6" aria-labelledby="activity-title">
+			<div><div class="alloy-section-heading">Recent activity</div><h3 id="activity-title" class="alloy-screen-title">What changed lately</h3></div>
+			@if (!activity().length) { <p class="hint m-0 text-sm text-alloy-text-secondary">Completed plans and baseline changes will appear here.</p> } @else {
+				<ul class="m-0 list-none divide-y divide-alloy-separator border-y border-alloy-separator p-0">
+					@for (item of activity(); track item.id) {
+						<li class="grid min-h-12 gap-2 py-3 sm:grid-cols-[140px_minmax(0,1fr)_auto] sm:items-center"><time class="alloy-technical text-alloy-text" [dateTime]="item.occurredAt">{{ item.occurredAt | date:'mediumDate':timezone() }}</time><span class="min-w-0"><strong class="block text-alloy-text">{{ item.action }}</strong>@if (item.note) { <small class="mt-1 block text-sm text-alloy-text-secondary">{{ item.note }}</small> }</span><button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="undoActivity(item)"><svg lucideRotateCcw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Undo completion</button></li>
+					}
+				</ul>
+			}
+		</section>
+
+		@if (visibleServiceRecords().some((record) => record.notes)) {
+			<section class="service-notes grid gap-2 border-t border-alloy-separator pt-6" aria-labelledby="record-notes-title">
+				<div id="record-notes-title" class="alloy-section-heading">Record notes</div>
+				@for (record of visibleServiceRecords(); track record.id) { @if (record.notes) { <p class="m-0 border-b border-alloy-separator py-3 text-alloy-text-secondary"><strong class="alloy-technical font-normal text-alloy-text">{{ record.performedAt | date:'mediumDate':timezone() }}</strong> · {{ record.notes }}</p> } }
+			</section>
+		}
+	}
 </section>
+
 <app-consumable-maintenance />
