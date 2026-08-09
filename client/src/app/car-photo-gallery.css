@@ -24,7 +24,7 @@
 }
 .photo-card {
 	border: 1px solid var(--line);
-	background: #20211c;
+	background: var(--alloy-control);
 }
 .primary-photo {
 	border-color: var(--accent);

@@ -28,7 +28,7 @@
 	gap: 4px;
 	min-height: 86px;
 	padding: 15px;
-	background: #20211c;
+	background: var(--alloy-control);
 }
 .maintenance-totals strong {
 	color: var(--accent);
@@ -222,7 +222,7 @@
 	resize: vertical;
 	border: 1px solid var(--line);
 	border-radius: 0;
-	background: #20211c;
+	background: var(--alloy-control);
 	color: var(--ink);
 	padding: 13px 14px;
 	font: inherit;

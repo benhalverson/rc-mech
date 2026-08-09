@@ -9,13 +9,14 @@ import {
 	required,
 	validate,
 } from '@angular/forms/signals';
+import { AppearanceSelector } from './appearance-selector';
 import { isValidTimezone, type Passkey } from './settings.models';
 import { SettingsStore } from './settings-store';
 import { TimezoneStore } from './timezone-store';
 
 @Component({
 	selector: 'app-settings',
-	imports: [DatePipe, FormField],
+	imports: [AppearanceSelector, DatePipe, FormField],
 	templateUrl: './settings.html',
 	styleUrl: '../garage-pages.css',
 })

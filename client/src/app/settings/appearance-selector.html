@@ -1,0 +1,29 @@
+<section class="alloy-panel" aria-labelledby="appearance-title">
+	<div class="alloy-section-heading">Display settings</div>
+	<h2 id="appearance-title" class="alloy-screen-title" data-route-focus tabindex="-1">Appearance</h2>
+	<p class="alloy-supporting-text">Choose the instrument finish for this device. System follows your operating-system setting as it changes.</p>
+	<fieldset>
+		<legend class="alloy-visually-hidden">Choose an appearance</legend>
+		<div class="alloy-segment-grid">
+			<label class="alloy-segment">
+				<input class="alloy-choice-input" type="radio" name="appearance" value="system" [checked]="appearance.preference() === 'system'" (change)="setAppearance('system')" />
+				<svg lucideMonitor size="20" strokeWidth="1.8" aria-hidden="true"></svg>
+				<span>System</span>
+			</label>
+			<label class="alloy-segment">
+				<input class="alloy-choice-input" type="radio" name="appearance" value="light" [checked]="appearance.preference() === 'light'" (change)="setAppearance('light')" />
+				<svg lucideSun size="20" strokeWidth="1.8" aria-hidden="true"></svg>
+				<span>Light</span>
+			</label>
+			<label class="alloy-segment">
+				<input class="alloy-choice-input" type="radio" name="appearance" value="dark" [checked]="appearance.preference() === 'dark'" (change)="setAppearance('dark')" />
+				<svg lucideMoon size="20" strokeWidth="1.8" aria-hidden="true"></svg>
+				<span>Dark</span>
+			</label>
+		</div>
+	</fieldset>
+	<p class="alloy-supporting-text" role="status">Currently using {{ appearance.resolved() }} appearance.</p>
+	@if (!appearance.persistenceAvailable()) {
+		<p class="alloy-state" role="status"><strong>Storage unavailable</strong><span>Your choice works for this visit but cannot be saved on this device.</span></p>
+	}
+</section>

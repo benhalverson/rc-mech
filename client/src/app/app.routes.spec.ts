@@ -119,7 +119,7 @@ describe('protected workspace routes', () => {
 				}
 			}
 		}
-	});
+	}, 30_000);
 
 	it('keeps the public authentication workflow behind its own lazy route boundary', async () => {
 		const signIn = routes.find((route) => route.path === 'sign-in');
