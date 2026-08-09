@@ -81,6 +81,22 @@ describe('TimezoneGateway', () => {
 		gateway.refresh();
 	});
 
+	it('rejects malformed read responses through the resource parser', async () => {
+		gateway.preference.value();
+		let read: ReturnType<HttpTestingController['expectOne']> | undefined;
+		await vi.waitFor(() => {
+			read = http.expectOne('/api/v1/preferences/timezone');
+		});
+		if (!read) throw new Error('The timezone read was not issued.');
+		read.flush({ timezone: 42 });
+
+		await vi.waitFor(() =>
+			expect(gateway.preference.error()).toMatchObject({
+				message: 'The timezone response was invalid.',
+			}),
+		);
+	});
+
 	it('maps invalid mutation responses through the cold Observable', () => {
 		gateway.saveTimezone({ timezone: 'UTC' }).subscribe({
 			error: (error: unknown) =>
