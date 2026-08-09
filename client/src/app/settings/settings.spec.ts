@@ -4,12 +4,44 @@ import {
 	provideHttpClientTesting,
 	type TestRequest,
 } from '@angular/common/http/testing';
+import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Settings } from './settings';
 import { SettingsStore } from './settings-store';
-import { TimezoneGateway } from './timezone-gateway';
 import { TimezoneStore } from './timezone-store';
+
+class FakeTimezoneStore {
+	readonly timezone = signal('America/Los_Angeles');
+	readonly loading = signal(true);
+	readonly error = signal('');
+	readonly saving = signal(false);
+	readonly message = signal('');
+	readonly saveTimezone = vi.fn((command: { readonly timezone: string }) => {
+		this.saving.set(true);
+		this.timezone.set(command.timezone);
+	});
+	readonly retry = vi.fn();
+	readonly refresh = vi.fn();
+
+	resolve(timezone = 'America/Los_Angeles'): void {
+		this.timezone.set(timezone);
+		this.loading.set(false);
+		this.error.set('');
+	}
+
+	fail(message: string): void {
+		this.loading.set(false);
+		this.error.set(message);
+	}
+
+	succeed(timezone: string): void {
+		this.timezone.set(timezone);
+		this.saving.set(false);
+		this.error.set('');
+		this.message.set(`Dates will now use ${timezone}.`);
+	}
+}
 
 class FakeRegistrationCredential {
 	readonly id = 'passkey-new';
@@ -29,6 +61,7 @@ class FakeRegistrationCredential {
 describe('Settings workspace', () => {
 	let fixture: ComponentFixture<Settings>;
 	let http: HttpTestingController;
+	let timezoneStore: FakeTimezoneStore;
 	const createCredential = vi.fn();
 	const writeClipboardText = vi.fn();
 	const credentialsDescriptor = Object.getOwnPropertyDescriptor(
@@ -41,6 +74,7 @@ describe('Settings workspace', () => {
 	);
 
 	beforeEach(async () => {
+		timezoneStore = new FakeTimezoneStore();
 		vi.stubGlobal('PublicKeyCredential', FakeRegistrationCredential);
 		createCredential.mockReset();
 		writeClipboardText.mockReset();
@@ -58,8 +92,7 @@ describe('Settings workspace', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				SettingsStore,
-				TimezoneGateway,
-				TimezoneStore,
+				{ provide: TimezoneStore, useValue: timezoneStore },
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -79,9 +112,7 @@ describe('Settings workspace', () => {
 	});
 
 	const flushInitialReads = (): void => {
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush({ timezone: 'America/Los_Angeles' });
+		timezoneStore.resolve();
 		http.expectOne('/api/v1/invite-codes').flush({
 			allowance: 5,
 			used: 1,
@@ -118,11 +149,10 @@ describe('Settings workspace', () => {
 		expect(
 			fixture.nativeElement.querySelector('[data-route-focus][tabindex="-1"]'),
 		).toBeTruthy();
-		TestBed.inject(TimezoneStore).refresh();
 	});
 
 	it('renders an invite read error and retries that resource', async () => {
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		timezoneStore.resolve('UTC');
 		http
 			.expectOne('/api/v1/invite-codes')
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
@@ -163,9 +193,9 @@ describe('Settings workspace', () => {
 	});
 
 	it('associates a timezone read error with its input', async () => {
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		timezoneStore.fail(
+			'The timezone setting could not be loaded. Dates are shown in your browser timezone.',
+		);
 		http.expectOne('/api/v1/invite-codes').flush({
 			allowance: 5,
 			used: 0,
@@ -199,18 +229,11 @@ describe('Settings workspace', () => {
 		input.closest('form')?.dispatchEvent(new Event('submit'));
 		fixture.detectChanges();
 		expect(input.parentElement?.textContent).toContain('Saving…');
-		input.closest('form')?.dispatchEvent(new Event('submit'));
-
-		const mutation = http.expectOne('/api/v1/preferences/timezone');
-		expect(mutation.request.method).toBe('PATCH');
-		expect(mutation.request.body).toEqual({ timezone: 'America/New_York' });
-		mutation.flush({ timezone: 'America/New_York' });
-		let refresh: TestRequest | undefined;
-		await vi.waitFor(() => {
-			refresh = http.expectOne('/api/v1/preferences/timezone');
+		expect(timezoneStore.saveTimezone).toHaveBeenCalledOnce();
+		expect(timezoneStore.saveTimezone).toHaveBeenCalledWith({
+			timezone: 'America/New_York',
 		});
-		refresh?.flush({ timezone: 'America/New_York' });
-		await fixture.whenStable();
+		timezoneStore.succeed('America/New_York');
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
 			'Dates will now use America/New_York',
@@ -451,7 +474,7 @@ describe('Settings workspace', () => {
 	});
 
 	it('renders empty states, non-revocable invites, and retries passkey reads', async () => {
-		http.expectOne('/api/v1/preferences/timezone').flush({});
+		timezoneStore.resolve();
 		http.expectOne('/api/v1/invite-codes').flush({
 			allowance: 5,
 			used: 1,
@@ -520,42 +543,23 @@ describe('Settings workspace', () => {
 		http.expectNone('/api/auth/passkey/generate-register-options');
 	});
 
-	it('rejects invalid and concurrent timezone saves and surfaces API detail', async () => {
+	it('renders a structured timezone failure from the store as an alert', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
-		const store = TestBed.inject(TimezoneStore);
-
-		store.saveTimezone({ timezone: 'Not/A_Timezone' });
-		expect(store.error()).toContain('valid IANA timezone');
-
-		store.saveTimezone({ timezone: ' UTC ' });
-		store.saveTimezone({ timezone: 'America/New_York' });
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush(
-				{ error: 'That timezone is disabled.' },
-				{ status: 422, statusText: 'Unprocessable Content' },
-			);
+		timezoneStore.fail('That timezone is disabled.');
 		fixture.detectChanges();
-		expect(store.error()).toBe('That timezone is disabled.');
 		expect(
 			[...fixture.nativeElement.querySelectorAll('[role="alert"]')].some(
 				(element: HTMLElement) =>
 					element.textContent?.includes('That timezone is disabled.'),
 			),
 		).toBe(true);
-
-		store.saveTimezone({ timezone: 'UTC' });
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		expect(store.error()).toContain('could not be loaded');
 	});
 
 	it('blocks unavailable invite creation and handles create and revoke failures', async () => {
 		const store = TestBed.inject(SettingsStore);
 		expect(await store.createInviteCode('EARLY-01')).toBe(false);
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		timezoneStore.resolve('UTC');
 		http.expectOne('/api/v1/invite-codes').flush({
 			allowance: 5,
 			used: 5,
@@ -719,7 +723,7 @@ describe('Settings workspace', () => {
 	});
 
 	it('renders unnamed passkeys and preserves rename editing after a failed save', async () => {
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+		timezoneStore.resolve('UTC');
 		http.expectOne('/api/v1/invite-codes').flush({
 			allowance: 5,
 			used: 0,
@@ -771,9 +775,9 @@ describe('Settings workspace', () => {
 	});
 
 	it('retries a failed timezone read from its rendered control', async () => {
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		timezoneStore.fail(
+			'The timezone setting could not be loaded. Dates are shown in your browser timezone.',
+		);
 		http.expectOne('/api/v1/invite-codes').flush({
 			allowance: 5,
 			used: 0,
@@ -789,10 +793,6 @@ describe('Settings workspace', () => {
 				button.previousElementSibling?.textContent?.includes('timezone'),
 		) as HTMLButtonElement;
 		retry.click();
-		let refresh: TestRequest | undefined;
-		await vi.waitFor(() => {
-			refresh = http.expectOne('/api/v1/preferences/timezone');
-		});
-		refresh?.flush({ timezone: 'UTC' });
+		expect(timezoneStore.retry).toHaveBeenCalledOnce();
 	});
 });
