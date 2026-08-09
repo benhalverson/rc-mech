@@ -1,0 +1,5 @@
+@if (totals().length) {
+	<div class="service-totals flex flex-wrap gap-x-6 gap-y-2 border-y border-alloy-separator py-3" role="list" aria-label="Service totals by currency">
+		@for (total of totals(); track total.currency) { <span class="alloy-technical text-alloy-text-secondary" role="listitem"><strong class="font-normal text-alloy-text">{{ total.currency }} {{ total.total | number:'1.2-2' }}</strong> recorded service</span> }
+	</div>
+}

@@ -1,0 +1,50 @@
+@if (request()) {
+	<form class="maintenance-form service-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="service-form-title" [attr.aria-describedby]="error() ? 'service-form-error' : 'service-form-intro'" novalidate>
+		<div>
+			<div class="alloy-section-heading">{{ editorLabel() }}</div>
+			<h3 id="service-form-title" class="alloy-screen-title" tabindex="-1">Put the work in the ledger</h3>
+			<p id="service-form-intro" class="alloy-supporting-text mb-0 max-w-3xl">Record what happened, when it happened, and what it cost. A scheduled completion also advances its plan baseline.</p>
+		</div>
+		@if (error()) {
+			<p id="service-form-error" class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ error() }}</span></p>
+		}
+		<div class="form-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Car</span>
+				<select class="alloy-field alloy-focus-ring w-full" [formField]="fields.carId" (change)="changeCar($event)" [attr.aria-describedby]="fields.carId().touched() && fields.carId().invalid() ? 'service-car-error' : null">@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }</select>
+				@if (fields.carId().touched() && fields.carId().invalid()) { <span id="service-car-error" class="text-sm text-alloy-text">{{ fields.carId().errors()[0]?.message }}</span> }
+			</label>
+			<label class="grid gap-1 sm:col-span-1 lg:col-span-2"><span class="text-sm font-semibold text-alloy-text">Installed component</span><select class="alloy-field alloy-focus-ring w-full" [formField]="fields.componentId"><option value="">Garage-level service</option>@for (component of components(); track component.id) { <option [value]="component.id">{{ component.slot }} · {{ component.name }}</option> }</select></label>
+			<label class="wide grid gap-1 sm:col-span-2 lg:col-span-3">
+				<span class="text-sm font-semibold text-alloy-text">Completed work</span>
+				<textarea class="alloy-field alloy-focus-ring min-h-28 w-full resize-y py-3" rows="4" placeholder="Cleaned, inspected, and re-oiled the bearings" [formField]="fields.description" [attr.aria-describedby]="fields.description().touched() && fields.description().invalid() ? 'service-description-error' : null"></textarea>
+				@if (fields.description().touched() && fields.description().invalid()) { <span id="service-description-error" class="text-sm text-alloy-text">{{ fields.description().errors()[0]?.message }}</span> }
+			</label>
+			<label class="wide grid gap-1 sm:col-span-2 lg:col-span-3">
+				<span class="text-sm font-semibold text-alloy-text">Technician notes</span>
+				<textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" placeholder="Parts used, measurements, or correction context" [formField]="fields.notes" [attr.aria-describedby]="fields.notes().touched() && fields.notes().invalid() ? 'service-notes-error' : null"></textarea>
+				@if (fields.notes().touched() && fields.notes().invalid()) { <span id="service-notes-error" class="text-sm text-alloy-text">{{ fields.notes().errors()[0]?.message }}</span> }
+			</label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Completion date</span>
+				<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="fields.performedAt" [attr.aria-describedby]="fields.performedAt().touched() && fields.performedAt().invalid() ? 'service-date-error' : null" />
+				@if (fields.performedAt().touched() && fields.performedAt().invalid()) { <span id="service-date-error" class="text-sm text-alloy-text">{{ fields.performedAt().errors()[0]?.message }}</span> }
+			</label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Cost</span>
+				<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" placeholder="Optional" [formField]="fields.cost" [attr.aria-describedby]="fields.cost().touched() && fields.cost().invalid() ? 'service-cost-error' : 'service-cost-help'" />
+				@if (fields.cost().touched() && fields.cost().invalid()) { <span id="service-cost-error" class="text-sm text-alloy-text">{{ fields.cost().errors()[0]?.message }}</span> } @else { <span id="service-cost-help" class="text-sm text-alloy-text-secondary">Amount in the selected currency.</span> }
+			</label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Currency</span>
+				<input class="alloy-field alloy-focus-ring alloy-technical w-full uppercase" placeholder="USD" [formField]="fields.currency" [attr.aria-describedby]="fields.currency().touched() && fields.currency().invalid() ? 'service-currency-error' : null" />
+				@if (fields.currency().touched() && fields.currency().invalid()) { <span id="service-currency-error" class="text-sm text-alloy-text">{{ fields.currency().errors()[0]?.message }}</span> }
+			</label>
+		</div>
+		<p class="hint alloy-technical m-0 text-alloy-text-secondary">Dates are entered in <strong class="font-normal text-alloy-text">{{ timezone() }}</strong>. Costs are optional and stay with this service record.</p>
+		<div class="form-actions flex flex-col gap-2 sm:flex-row">
+			<button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ action() === 'complete' ? 'Completing…' : action() === 'edit' ? 'Saving…' : action() === 'create' ? 'Recording…' : 'Save service' }}</button>
+			<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancel()" [disabled]="action()">Cancel</button>
+		</div>
+	</form>
+}

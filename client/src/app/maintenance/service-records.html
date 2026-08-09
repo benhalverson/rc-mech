@@ -1,0 +1,50 @@
+<section class="service-history grid gap-4 border-t border-alloy-separator pt-6" aria-labelledby="service-history-title">
+	<header class="section-heading flex flex-wrap items-end justify-between gap-3">
+		<div><div class="alloy-section-heading">Service history</div><h3 id="service-history-title" class="alloy-screen-title">The work, kept honest</h3></div>
+		<span class="history-total alloy-technical text-alloy-text-secondary">{{ visibleRecords().length }} records</span>
+	</header>
+	<div class="history-toolbar flex flex-wrap gap-2" role="group" aria-label="Filter service records">
+		<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="filter() === 'active'" [attr.aria-pressed]="filter() === 'active'" (click)="filter.set('active')">Current ledger</button>
+		<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="filter() === 'deleted'" [attr.aria-pressed]="filter() === 'deleted'" (click)="filter.set('deleted')">Archived corrections</button>
+	</div>
+	@if (error()) { <p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ error() }}</span></p> }
+	@if (!visibleRecords().length) {
+		<p class="hint m-0 text-sm text-alloy-text-secondary">{{ filter() === 'deleted' ? 'No archived service records.' : 'No service recorded yet. Complete a plan or log an ad hoc repair.' }}</p>
+	} @else {
+		<div class="service-list border-y border-alloy-separator">
+			@for (record of visibleRecords(); track record.id) {
+				<article class="service-row grid gap-3 border-b border-alloy-separator py-4 last:border-b-0 md:grid-cols-[150px_minmax(0,1fr)_auto]" [class.service-deleted]="record.deletedAt">
+					<div class="service-date"><time class="alloy-technical block text-alloy-text" [dateTime]="record.performedAt">{{ record.performedAt | date:'mediumDate':timezone() }}</time><span class="mt-1 block text-sm text-alloy-text-secondary">{{ carName(record.carId) }}</span></div>
+					<div class="service-detail min-w-0"><strong class="block text-sm font-semibold text-alloy-text">{{ record.planId ? 'Scheduled completion' : 'Ad hoc service' }}</strong><span class="mt-1 block text-sm text-alloy-text-secondary">{{ componentName(record) }} · {{ recordCost(record) }}</span><p class="m-0 mt-2 break-words whitespace-pre-wrap text-alloy-text-secondary">{{ record.description }}</p></div>
+					<div class="plan-actions flex flex-wrap gap-2 md:justify-end" role="group" aria-label="Service record actions">
+						@if (!record.deletedAt) {
+							<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'record:' + record.id" (click)="editRequested.emit(record)" [disabled]="isReadOnly(record) || action()"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Correct</button>
+							<button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="archive(record)" [disabled]="isReadOnly(record) || action()"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button>
+						} @else {
+							<span class="deleted-label self-center text-sm text-alloy-text-secondary">Archived</span>
+							<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="restore(record)" [disabled]="action()"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>Undo</button>
+						}
+					</div>
+				</article>
+			}
+		</div>
+	}
+</section>
+
+<section class="activity-feed grid gap-3 border-t border-alloy-separator pt-6" aria-labelledby="activity-title">
+	<div><div class="alloy-section-heading">Recent activity</div><h3 id="activity-title" class="alloy-screen-title">What changed lately</h3></div>
+	@if (!activity().length) { <p class="hint m-0 text-sm text-alloy-text-secondary">Completed plans and baseline changes will appear here.</p> } @else {
+		<ul class="m-0 list-none divide-y divide-alloy-separator border-y border-alloy-separator p-0">
+			@for (item of activity(); track item.id) {
+			<li class="grid min-h-12 gap-2 py-3 sm:grid-cols-[140px_minmax(0,1fr)_auto] sm:items-center"><time class="alloy-technical text-alloy-text" [dateTime]="item.occurredAt">{{ item.occurredAt | date:'mediumDate':timezone() }}</time><span class="min-w-0"><strong class="block text-alloy-text">{{ item.action }}</strong>@if (item.note) { <small class="mt-1 block text-sm text-alloy-text-secondary">{{ item.note }}</small> }</span><button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="undo(item)" [disabled]="action()"><svg lucideRotateCcw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Undo completion</button></li>
+			}
+		</ul>
+	}
+</section>
+
+@if (visibleRecords().some((record) => record.notes)) {
+	<section class="service-notes grid gap-2 border-t border-alloy-separator pt-6" aria-labelledby="record-notes-title">
+		<div id="record-notes-title" class="alloy-section-heading">Record notes</div>
+		@for (record of visibleRecords(); track record.id) { @if (record.notes) { <p class="m-0 border-b border-alloy-separator py-3 text-alloy-text-secondary"><strong class="alloy-technical font-normal text-alloy-text">{{ record.performedAt | date:'mediumDate':timezone() }}</strong> · {{ record.notes }}</p> } }
+	</section>
+}

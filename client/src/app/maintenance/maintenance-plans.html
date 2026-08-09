@@ -1,0 +1,53 @@
+<ng-content select="[service-totals]" />
+
+<div class="maintenance-totals grid grid-cols-2 divide-x divide-y divide-alloy-separator border-y border-alloy-separator sm:grid-cols-4 sm:divide-y-0" aria-label="Maintenance plan totals">
+	<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().overdue.length }}</strong><span class="text-sm text-alloy-text-secondary">Overdue</span></div>
+	<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().due.length }}</strong><span class="text-sm text-alloy-text-secondary">Due now</span></div>
+	<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().upcoming.length }}</strong><span class="text-sm text-alloy-text-secondary">Upcoming</span></div>
+	<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ activeCount() }}</strong><span class="text-sm text-alloy-text-secondary">Active plans</span></div>
+</div>
+
+<div class="cockpit-toolbar grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+	<div>
+		<span class="alloy-section-heading mb-2 block">Show plans</span>
+		<div class="flex flex-wrap gap-2" role="group" aria-label="Filter maintenance plans">
+			@for (option of filterOptions; track option) {
+				<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="filter() === option" [class.text-alloy-text]="filter() === option" [attr.aria-pressed]="filter() === option" (click)="filter.set(option)">{{ filterLabel(option) }}</button>
+			}
+		</div>
+	</div>
+	<ng-content select="[service-launcher]" />
+</div>
+
+@if (!visiblePlans().length) {
+	<div class="state-card empty-state alloy-empty-state grid gap-3">
+		<svg lucideClock size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+		<div><h3 class="m-0 text-base font-semibold text-alloy-text">No plans in this view</h3><p class="m-0 mt-1">Start with a component that needs attention on a regular cadence.</p></div>
+		<button class="button alloy-control alloy-focus-ring inline-flex w-fit items-center gap-2" type="button" data-maintenance-launcher="new-plan" (click)="createRequested.emit()" [disabled]="!hasActiveCars()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Create a plan</button>
+	</div>
+} @else {
+	<div class="plan-list border-y border-alloy-separator" aria-label="Maintenance plans">
+		@for (plan of visiblePlans(); track plan.id) {
+			<article class="plan-row grid gap-3 border-b border-alloy-separator py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center" [class.plan-overdue]="planState(plan) === 'overdue'" [class.plan-due]="planState(plan) === 'due'" [class.plan-upcoming]="planState(plan) === 'upcoming'" [class.plan-paused]="planState(plan) === 'paused'" [class.plan-archived]="planState(plan) === 'archived'">
+				<div class="plan-copy min-w-0 border-l-4 pl-4" [class.border-alloy-text]="planState(plan) === 'overdue' || planState(plan) === 'due'" [class.border-alloy-separator]="planState(plan) !== 'overdue' && planState(plan) !== 'due'">
+					<div class="plan-kicker flex flex-wrap gap-x-3 gap-y-1 text-[12px] font-semibold tracking-[0.08em] text-alloy-text-secondary uppercase">
+						<span class="plan-state inline-flex items-center gap-1 text-alloy-text">@if (planState(plan) === 'overdue' || planState(plan) === 'due') { <svg lucideTriangleAlert size="16" strokeWidth="1.8" aria-hidden="true"></svg>Attention · }{{ stateLabel(planState(plan)) }}</span>
+						<span>{{ carName(plan.carId) }} · {{ componentName(plan.componentId) }}</span>
+					</div>
+					<h3 class="m-0 mt-1 break-words text-base font-semibold text-alloy-text">{{ plan.name }}</h3>
+					<p class="m-0 mt-1 text-sm text-alloy-text-secondary">{{ dueText(plan) }}@if (plan.intervalValue) { · every {{ plan.intervalValue }} {{ plan.intervalUnit || 'days' }} }@if (plan.intervalSessions) { · every {{ plan.intervalSessions }} sessions }</p>
+				</div>
+				<div class="plan-actions flex flex-wrap gap-2 md:justify-end" role="group" [attr.aria-label]="plan.name + ' actions'">
+					<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'plan:' + plan.id" (click)="editRequested.emit(plan)" [disabled]="isReadOnly(plan) || action()"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button>
+					@if (plan.status === 'active') {
+						<button class="text-button muted alloy-control alloy-control-tertiary alloy-focus-ring" type="button" (click)="transition(plan, 'pause')" [disabled]="isReadOnly(plan) || action()">Pause</button>
+						<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'complete:' + plan.id" (click)="completionRequested.emit(plan)" [disabled]="isReadOnly(plan) || action()"><svg lucideCircleCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg>Complete</button>
+					} @else if (plan.status === 'paused') {
+						<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="transition(plan, 'resume')" [disabled]="isReadOnly(plan) || action()">Resume</button>
+					}
+					@if (plan.status !== 'archived') { <button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="transition(plan, 'archive')" [disabled]="isReadOnly(plan) || action()"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> }
+				</div>
+			</article>
+		}
+	</div>
+}

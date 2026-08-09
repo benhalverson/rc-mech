@@ -16,12 +16,12 @@ import {
 	switchMap,
 	tap,
 } from 'rxjs';
-import { MaintenanceGateway } from './maintenance-gateway';
 import type {
 	MaintenanceComponent,
 	MaintenanceGatewayFailure,
 	ServiceRecordDraft,
 } from './maintenance.models';
+import { MaintenanceGateway } from './maintenance-gateway';
 
 export type ServiceRecordCommand =
 	| {
@@ -38,6 +38,14 @@ export type ServiceRecordCommand =
 	  }
 	| { readonly kind: 'undo-activity'; readonly recordId: string };
 
+export type ServiceRecordFailure =
+	| 'session-expired'
+	| 'car-archived'
+	| 'save-failed'
+	| 'archive-failed'
+	| 'restore-failed'
+	| 'undo-failed';
+
 export type ServiceRecordOutcome =
 	| { readonly status: 'idle'; readonly operationId: null }
 	| {
@@ -49,7 +57,7 @@ export type ServiceRecordOutcome =
 			readonly status: 'failed';
 			readonly operationId: number;
 			readonly command: ServiceRecordCommand;
-			readonly error: MaintenanceGatewayFailure;
+			readonly failure: ServiceRecordFailure;
 	  };
 
 const idleOutcome = (): ServiceRecordOutcome => ({
@@ -76,6 +84,19 @@ const requestFor = (
 	}
 };
 
+const mutationFailure = (
+	command: ServiceRecordCommand,
+	failure: MaintenanceGatewayFailure,
+): ServiceRecordFailure => {
+	if (command.kind === 'undo-activity') return 'undo-failed';
+	if (command.kind === 'change-service')
+		return command.action === 'archive' ? 'archive-failed' : 'restore-failed';
+	if (failure.kind === 'http' && failure.status === 401)
+		return 'session-expired';
+	if (failure.kind === 'http' && failure.status === 409) return 'car-archived';
+	return 'save-failed';
+};
+
 const resourceMessage = (failure: MaintenanceGatewayFailure | null): string => {
 	if (failure?.kind === 'http' && failure.status === 401)
 		return 'Your garage session has expired. Sign in again to continue.';
@@ -96,20 +117,52 @@ export const ServiceRecordStore = signalStore(
 			store.gateway.services.hasValue() ? store.gateway.services.value() : [],
 		);
 		return {
+			cars: computed(() =>
+				store.gateway.cars.hasValue() ? store.gateway.cars.value() : [],
+			),
+			timezone: computed(() =>
+				store.gateway.timezone.hasValue()
+					? store.gateway.timezone.value()
+					: 'UTC',
+			),
 			records,
-			loading: computed(() => store.gateway.services.isLoading()),
+			activity: computed(() => {
+				const activity = store.gateway.plans.hasValue()
+					? store.gateway.plans.value().activity
+					: [];
+				if (activity.length) return activity;
+				return records()
+					.filter((record) => !record.deletedAt)
+					.map((record) => ({
+						id: record.id,
+						planId: record.planId ?? undefined,
+						action: record.planId ? 'Scheduled service' : 'Ad hoc service',
+						occurredAt: record.performedAt,
+						note: record.description,
+					}));
+			}),
+			loading: computed(
+				() =>
+					store.gateway.services.isLoading() &&
+					!store.gateway.services.hasValue(),
+			),
 			error: computed(() =>
 				resourceMessage(store.gateway.failure(store.gateway.services.error())),
 			),
 			action: computed(() => {
 				const outcome = store.outcome();
-				if (outcome.status !== 'pending') return null;
-				const command = outcome.command;
-				return command.kind === 'save-service'
-					? command.mode
-					: command.kind === 'change-service'
-						? `${command.action === 'archive' ? 'delete' : 'restore'}:${command.recordId}`
-						: null;
+				if (outcome.status === 'pending') {
+					const command = outcome.command;
+					return command.kind === 'save-service'
+						? command.mode
+						: command.kind === 'change-service'
+							? `${command.action === 'archive' ? 'delete' : 'restore'}:${command.recordId}`
+							: `undo:${command.recordId}`;
+				}
+				return store.gateway.services.isLoading() ||
+					store.gateway.plans.isLoading()
+					? 'refresh'
+					: null;
 			}),
 		};
 	}),
@@ -131,7 +184,12 @@ export const ServiceRecordStore = signalStore(
 						}),
 						catchError((error: MaintenanceGatewayFailure) => {
 							patchState(store, {
-								outcome: { status: 'failed', operationId, command, error },
+								outcome: {
+									status: 'failed',
+									operationId,
+									command,
+									failure: mutationFailure(command, error),
+								},
 							});
 							return of(null);
 						}),

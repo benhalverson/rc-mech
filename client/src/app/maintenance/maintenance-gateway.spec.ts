@@ -19,6 +19,23 @@ const plan = {
 	name: 'Inspect bearings',
 	status: 'active' as const,
 };
+const planDraft = {
+	carId: 'car-1',
+	name: 'Inspect bearings',
+	intervalUnit: 'days' as const,
+	intervalValue: 7,
+	baselineSessionCount: 0,
+};
+const service = {
+	id: 'record-1',
+	carId: 'car-1',
+	performedAt: '2026-08-09T18:00:00.000Z',
+	description: 'Serviced bearings',
+};
+const serviceDraft = {
+	performedAt: service.performedAt,
+	description: service.description,
+};
 
 describe('MaintenanceGateway', () => {
 	let gateway: MaintenanceGateway;
@@ -206,15 +223,99 @@ describe('MaintenanceGateway', () => {
 		}
 	});
 
+	it('sends plan mutations to their credentialed endpoints', async () => {
+		let result = firstValueFrom(gateway.savePlan('create', null, planDraft));
+		let request = http.expectOne(
+			(candidate) =>
+				candidate.method === 'POST' &&
+				candidate.url === '/api/v1/maintenance-plans',
+		);
+		expect(request.request.body).toEqual(planDraft);
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ maintenancePlan: plan });
+		await expect(result).resolves.toEqual(plan);
+
+		result = firstValueFrom(gateway.savePlan('edit', 'plan/1', planDraft));
+		request = http.expectOne({
+			method: 'PATCH',
+			url: '/api/v1/maintenance-plans/plan%2F1',
+		});
+		expect(request.request.body).toEqual(planDraft);
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ maintenancePlan: plan });
+		await expect(result).resolves.toEqual(plan);
+
+		result = firstValueFrom(gateway.transitionPlan('plan/1', 'pause'));
+		request = http.expectOne({
+			method: 'POST',
+			url: '/api/v1/maintenance-plans/plan%2F1/pause',
+		});
+		expect(request.request.body).toEqual({});
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ maintenancePlan: plan });
+		await expect(result).resolves.toEqual(plan);
+	});
+
+	it('sends service mutations to their credentialed endpoints', async () => {
+		let result = firstValueFrom(
+			gateway.saveService('create', 'car/1', null, serviceDraft),
+		);
+		let request = http.expectOne({
+			method: 'POST',
+			url: '/api/v1/cars/car%2F1/service-records',
+		});
+		expect(request.request.body).toEqual(serviceDraft);
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ serviceRecord: service });
+		await expect(result).resolves.toEqual(service);
+
+		result = firstValueFrom(
+			gateway.saveService('edit', 'car-1', 'record/1', serviceDraft),
+		);
+		request = http.expectOne({
+			method: 'PATCH',
+			url: '/api/v1/service-records/record%2F1',
+		});
+		expect(request.request.body).toEqual(serviceDraft);
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ serviceRecord: service });
+		await expect(result).resolves.toEqual(service);
+
+		result = firstValueFrom(
+			gateway.saveService('complete', 'car-1', 'plan/1', serviceDraft),
+		);
+		request = http.expectOne({
+			method: 'POST',
+			url: '/api/v1/maintenance-plans/plan%2F1/complete',
+		});
+		expect(request.request.body).toEqual(serviceDraft);
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ serviceRecord: service });
+		await expect(result).resolves.toEqual(service);
+
+		result = firstValueFrom(gateway.changeService('record/1', 'archive'));
+		request = http.expectOne({
+			method: 'DELETE',
+			url: '/api/v1/service-records/record%2F1',
+		});
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ serviceRecord: service });
+		await expect(result).resolves.toEqual(service);
+
+		result = firstValueFrom(gateway.changeService('record/1', 'restore'));
+		request = http.expectOne({
+			method: 'POST',
+			url: '/api/v1/service-records/record%2F1/restore',
+		});
+		expect(request.request.body).toEqual({});
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ serviceRecord: service });
+		await expect(result).resolves.toEqual(service);
+	});
+
 	it('maps malformed mutations and component lookups canonically', async () => {
 		const malformedPlan = firstValueFrom(
-			gateway.savePlan('create', null, {
-				carId: 'car-1',
-				name: 'Inspect',
-				intervalUnit: 'days',
-				intervalValue: 7,
-				baselineSessionCount: 0,
-			}),
+			gateway.savePlan('create', null, planDraft),
 		);
 		http
 			.expectOne('/api/v1/maintenance-plans')
