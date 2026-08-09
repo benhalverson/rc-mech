@@ -2,8 +2,17 @@ import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { routes } from './app.routes';
+
+// Route tests verify lazy wiring; component specs and the production build
+// exercise Lucide without evaluating its 12 MB barrel in this architecture test.
+vi.mock('@lucide/angular', () => ({
+	LucideMonitor: class {},
+	LucideMoon: class {},
+	LucideSun: class {},
+	LucideTriangleAlert: class {},
+}));
 
 @Component({ template: '' })
 class RedirectTarget {}
@@ -119,7 +128,7 @@ describe('protected workspace routes', () => {
 				}
 			}
 		}
-	}, 30_000);
+	});
 
 	it('keeps the public authentication workflow behind its own lazy route boundary', async () => {
 		const signIn = routes.find((route) => route.path === 'sign-in');
