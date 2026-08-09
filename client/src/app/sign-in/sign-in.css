@@ -1,5 +1,14 @@
 :host {
 	display: block;
+	--paper: #111719;
+	--ink: #e5e0d0;
+	--muted: #89a9a6;
+	--accent: #c8a15a;
+	--line: #3d4b4c;
+	font:
+		16px / 1.5 ui-monospace,
+		SFMono-Regular,
+		monospace;
 }
 
 main {
@@ -12,6 +21,8 @@ main {
 	min-height: 100vh;
 	display: grid;
 	place-items: center;
+	background: var(--paper);
+	color: var(--ink);
 }
 
 .access-card {

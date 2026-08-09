@@ -39,8 +39,13 @@
 
 .capture-panel,
 .voice-card {
+	--ink: #e5e0d0;
+	--muted: #89a9a6;
+	--accent: #c8a15a;
+	--line: #3d4b4c;
 	border: 1px solid var(--line);
 	background: #171d1e;
+	color: var(--ink);
 	padding: 20px;
 }
 

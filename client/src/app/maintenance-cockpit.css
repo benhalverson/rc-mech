@@ -28,7 +28,7 @@
 	gap: 4px;
 	min-height: 86px;
 	padding: 15px;
-	background: #20211c;
+	background: var(--alloy-control);
 }
 .maintenance-totals strong {
 	color: var(--accent);
@@ -81,10 +81,10 @@
 	min-height: 58px;
 }
 .plan-overdue .plan-mark {
-	background: #df8a72;
+	background: var(--ink);
 }
 .plan-due .plan-mark {
-	background: #d5a94f;
+	background: var(--accent);
 }
 .plan-paused .plan-mark,
 .plan-archived .plan-mark {
@@ -100,7 +100,8 @@
 	color: var(--accent);
 }
 .plan-overdue .plan-state {
-	color: #df8a72;
+	color: var(--ink);
+	font-weight: 700;
 }
 .plan-copy h3 {
 	margin: 5px 0 0;
@@ -214,7 +215,7 @@
 	opacity: 0.55;
 }
 .deleted-label {
-	color: #df8a72;
+	color: var(--muted);
 	font-size: 0.76rem;
 }
 .service-form textarea {
@@ -222,7 +223,7 @@
 	resize: vertical;
 	border: 1px solid var(--line);
 	border-radius: 0;
-	background: #20211c;
+	background: var(--alloy-control);
 	color: var(--ink);
 	padding: 13px 14px;
 	font: inherit;

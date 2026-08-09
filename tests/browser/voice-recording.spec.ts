@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 test('uploads one finalized recording containing audio through the end', async ({
 	page,
 }) => {
+	let voiceBytes: Buffer | undefined;
 	execFileSync('pnpm', [
 		'exec',
 		'tsx',
@@ -28,23 +29,6 @@ test('uploads one finalized recording containing audio through the end', async (
 			oscillator.start();
 			return destination.stream;
 		};
-
-		const send = XMLHttpRequest.prototype.send;
-		XMLHttpRequest.prototype.send = function (body) {
-			if (body instanceof FormData) {
-				const file = body.get('file');
-				if (file instanceof File) {
-					void file.arrayBuffer().then((buffer) => {
-						const bytes = new Uint8Array(buffer);
-						let binary = '';
-						for (const byte of bytes) binary += String.fromCharCode(byte);
-						(window as Window & { voiceBytes?: string }).voiceBytes =
-							btoa(binary);
-					});
-				}
-			}
-			return send.call(this, body);
-		};
 	});
 
 	await page.goto('/garage/private-car/voice');
@@ -54,7 +38,9 @@ test('uploads one finalized recording containing audio through the end', async (
 	await page.goto(
 		'/api/auth/magic-link/verify?token=local-test-token&callbackURL=%2Fgarage',
 	);
-	await expect(page.getByText('The garage is waiting')).toBeVisible();
+	await expect(
+		page.getByRole('heading', { name: 'The garage', exact: true }),
+	).toBeVisible();
 
 	const carResponse = await page.request.post('/api/v1/cars', {
 		data: { name: 'Voice regression buggy', make: 'Test', model: '1' },
@@ -84,6 +70,19 @@ test('uploads one finalized recording containing audio through the end', async (
 	};
 	await page.route('**/api/v1/cars/*/voice-updates', async (route) => {
 		if (route.request().method() !== 'POST') return route.continue();
+		const request = route.request();
+		const contentType = request.headers()['content-type'] ?? '';
+		const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(contentType);
+		const body = request.postDataBuffer();
+		const fileHeader = body?.indexOf(Buffer.from('name="file"')) ?? -1;
+		const dataStart = body?.indexOf(Buffer.from('\r\n\r\n'), fileHeader) ?? -1;
+		const boundaryValue = boundary?.[1] ?? boundary?.[2];
+		const dataEnd =
+			body && boundaryValue
+				? body.indexOf(Buffer.from(`\r\n--${boundaryValue}`), dataStart + 4)
+				: -1;
+		if (body && fileHeader >= 0 && dataStart >= 0 && dataEnd > dataStart)
+			voiceBytes = body.subarray(dataStart + 4, dataEnd);
 		await route.fulfill({ json: { voiceUpdate: update } });
 	});
 	await page.route('**/api/v1/voice-updates/*/process', async (route) => {
@@ -101,16 +100,9 @@ test('uploads one finalized recording containing audio through the end', async (
 	await page.waitForTimeout(1_000);
 	await page.getByRole('button', { name: 'Stop and keep recording' }).click();
 
-	await expect
-		.poll(() =>
-			page.evaluate(() =>
-				Boolean((window as Window & { voiceBytes?: string }).voiceBytes),
-			),
-		)
-		.toBe(true);
-	const decoded = await page.evaluate(async () => {
-		const encoded = (window as Window & { voiceBytes?: string }).voiceBytes;
-		if (!encoded) throw new Error('No captured upload');
+	await expect.poll(() => Boolean(voiceBytes)).toBe(true);
+	if (!voiceBytes) throw new Error('No captured upload');
+	const decoded = await page.evaluate(async (encoded) => {
 		const binary = atob(encoded);
 		const bytes = Uint8Array.from(binary, (value) => value.charCodeAt(0));
 		const context = new AudioContext();
@@ -123,7 +115,7 @@ test('uploads one finalized recording containing audio through the end', async (
 		for (let index = start; index < audio.length; index += 1)
 			peak = Math.max(peak, Math.abs(audio.getChannelData(0)[index] ?? 0));
 		return { duration: audio.duration, peak };
-	});
+	}, voiceBytes.toString('base64'));
 	expect(decoded.duration).toBeGreaterThan(0.8);
 	expect(decoded.peak).toBeGreaterThan(0.01);
 });

@@ -2,48 +2,334 @@
 @import '@fontsource/fragment-mono';
 @import 'tailwindcss';
 
-@theme {
-	--color-graphite: #111719;
-	--color-workbench: #1d2526;
-	--color-bone: #e5e0d0;
-	--color-brass: #c8a15a;
-	--color-pit-orange: #d66f4b;
-	--color-oxidized-teal: #89a9a6;
+@theme inline {
+	--color-graphite: #171b1d;
+	--color-workbench: var(--alloy-control);
+	--color-bone: var(--alloy-text);
+	--color-brass: var(--alloy-accent);
+	--color-oxidized-teal: var(--alloy-text-secondary);
+	--color-alloy-canvas: var(--alloy-canvas);
+	--color-alloy-surface: var(--alloy-surface);
+	--color-alloy-control: var(--alloy-control);
+	--color-alloy-text: var(--alloy-text);
+	--color-alloy-text-secondary: var(--alloy-text-secondary);
+	--color-alloy-separator: var(--alloy-separator);
+	--color-alloy-accent: var(--alloy-accent);
+	--color-alloy-focus: var(--alloy-focus);
+	--color-alloy-overlay: var(--alloy-overlay);
+	--font-interface: 'Commissioner Variable', ui-sans-serif, sans-serif;
+	--font-technical: 'Fragment Mono', ui-monospace, monospace;
+	--radius-alloy-control: 0.25rem;
+	--radius-alloy-panel: 0.5rem;
+	--shadow-alloy-floating: 0 16px 36px rgb(0 0 0 / 0.24);
 }
 
 :root {
-	--color-graphite: #111719;
-	--color-workbench: #1d2526;
-	--color-bone: #e5e0d0;
-	--color-brass: #c8a15a;
-	--color-pit-orange: #d66f4b;
-	--color-oxidized-teal: #89a9a6;
+	color-scheme: light;
+	--alloy-canvas: #c8cccd;
+	--alloy-surface: #d9dcdd;
+	--alloy-control: #edf0ef;
+	--alloy-text: #171b1d;
+	--alloy-text-secondary: #4f5c5b;
+	--alloy-separator: #a8b1af;
+	--alloy-accent: #294d58;
+	--alloy-focus: #294d58;
+	--alloy-overlay: rgb(23 27 29 / 0.68);
+	--alloy-on-accent: #edf0ef;
+	--alloy-command-text: #e6e9e8;
+	--alloy-command-secondary: #a6b0ae;
+	--alloy-command-separator: #3d494b;
+	--alloy-command-accent: #78a4ad;
+	--alloy-command-control: #22292b;
+	--alloy-text-on-canvas-secondary: #465251;
+	--alloy-space-related: 0.5rem;
+	--alloy-space-group: 1rem;
+	--alloy-space-section: 1.5rem;
+	--alloy-space-page: 2rem;
+	--alloy-control-height: 3rem;
+	--alloy-motion-feedback: 120ms;
+	--alloy-motion-exit: 170ms;
+	--alloy-motion-spatial: 220ms;
+	--paper: var(--alloy-canvas);
+	--ink: var(--alloy-text);
+	--muted: var(--alloy-text-on-canvas-secondary);
+	--accent: var(--alloy-accent);
+	--line: var(--alloy-separator);
 }
-:root {
+
+:root[data-appearance='dark'] {
 	color-scheme: dark;
-	--paper: #111719;
-	--ink: #e5e0d0;
-	--muted: #89a9a6;
-	--accent: #c8a15a;
-	--line: #3d4b4c;
+	--alloy-canvas: #111516;
+	--alloy-surface: #191f21;
+	--alloy-control: #22292b;
+	--alloy-text: #e6e9e8;
+	--alloy-text-secondary: #a6b0ae;
+	--alloy-separator: #3d494b;
+	--alloy-accent: #78a4ad;
+	--alloy-focus: #78a4ad;
+	--alloy-overlay: rgb(0 0 0 / 0.72);
+	--alloy-on-accent: #111516;
+	--alloy-text-on-canvas-secondary: var(--alloy-text-secondary);
 }
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-appearance]) {
+		color-scheme: dark;
+		--alloy-canvas: #111516;
+		--alloy-surface: #191f21;
+		--alloy-control: #22292b;
+		--alloy-text: #e6e9e8;
+		--alloy-text-secondary: #a6b0ae;
+		--alloy-separator: #3d494b;
+		--alloy-accent: #78a4ad;
+		--alloy-focus: #78a4ad;
+		--alloy-overlay: rgb(0 0 0 / 0.72);
+		--alloy-on-accent: #111516;
+		--alloy-text-on-canvas-secondary: var(--alloy-text-secondary);
+	}
+}
+
 * {
 	box-sizing: border-box;
 }
+
 body {
 	margin: 0;
-	background: var(--paper);
-	color: var(--ink);
-	font:
-		16px / 1.5 ui-monospace,
-		SFMono-Regular,
-		monospace;
+	background: var(--alloy-canvas);
+	color: var(--alloy-text);
+	font-family: 'Commissioner Variable', ui-sans-serif, sans-serif;
+	font-size: 15px;
+	font-weight: 450;
+	line-height: 22px;
+	transition:
+		background-color var(--alloy-motion-feedback) ease-out,
+		color var(--alloy-motion-feedback) ease-out;
+}
+
+@layer components {
+	.alloy-screen-title {
+		margin: 0 0 var(--alloy-space-related);
+		color: var(--alloy-text);
+		font-family: 'Commissioner Variable', ui-sans-serif, sans-serif;
+		font-size: 26px;
+		font-weight: 650;
+		line-height: 30px;
+	}
+
+	.alloy-section-heading {
+		color: var(--alloy-text-secondary);
+		font-family: 'Commissioner Variable', ui-sans-serif, sans-serif;
+		font-size: 12px;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		line-height: 16px;
+		text-transform: uppercase;
+	}
+
+	.alloy-supporting-text {
+		margin: var(--alloy-space-related) 0 var(--alloy-space-group);
+		color: var(--alloy-text-secondary);
+		font-size: 13px;
+		line-height: 20px;
+	}
+
+	.alloy-technical {
+		font-family: 'Fragment Mono', ui-monospace, monospace;
+		font-size: 15px;
+		font-weight: 400;
+		line-height: 20px;
+	}
+
+	.alloy-panel {
+		margin-bottom: var(--alloy-space-section);
+		border: 1px solid var(--alloy-separator);
+		border-radius: var(--radius-alloy-panel);
+		background: var(--alloy-surface);
+		padding: var(--alloy-space-group);
+	}
+
+	.alloy-segment-grid {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: var(--alloy-space-related);
+	}
+
+	.alloy-segment {
+		display: grid;
+		min-height: var(--alloy-control-height);
+		grid-template-columns: 20px minmax(0, 1fr);
+		align-items: center;
+		gap: var(--alloy-space-related);
+		border: 1px solid var(--alloy-separator);
+		border-radius: var(--radius-alloy-control);
+		background: var(--alloy-control);
+		color: var(--alloy-text);
+		padding: 10px 12px;
+		font-size: 14px;
+		font-weight: 600;
+		line-height: 20px;
+		cursor: pointer;
+		transition:
+			background-color var(--alloy-motion-feedback) ease-out,
+			border-color var(--alloy-motion-feedback) ease-out,
+			color var(--alloy-motion-feedback) ease-out;
+	}
+
+	.alloy-segment:has(input:checked) {
+		border-color: var(--alloy-accent);
+		background: var(--alloy-accent);
+		color: var(--alloy-on-accent);
+	}
+
+	.alloy-segment:has(input:focus-visible),
+	.alloy-focus-ring:focus-visible,
+	.alloy-control:focus-visible,
+	.alloy-field:focus-visible {
+		outline: 2px solid var(--alloy-focus);
+		outline-offset: 2px;
+	}
+
+	.alloy-choice-input,
+	.alloy-visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+		clip-path: inset(50%);
+	}
+
+	.alloy-control,
+	.alloy-field {
+		min-height: var(--alloy-control-height);
+		border: 1px solid var(--alloy-separator);
+		border-radius: var(--radius-alloy-control);
+		padding-inline: 12px;
+		font:
+			600 14px / 20px 'Commissioner Variable',
+			ui-sans-serif,
+			sans-serif;
+	}
+
+	.alloy-control {
+		background: var(--alloy-accent);
+		color: var(--alloy-on-accent);
+	}
+
+	.alloy-control-secondary {
+		background: transparent;
+		color: var(--alloy-text);
+	}
+
+	.alloy-control-tertiary {
+		border-color: transparent;
+		background: transparent;
+		color: var(--alloy-accent);
+	}
+
+	.alloy-field {
+		background: var(--alloy-control);
+		color: var(--alloy-text);
+		font-weight: 550;
+	}
+
+	.alloy-state {
+		display: grid;
+		gap: 4px;
+		margin: var(--alloy-space-group) 0 0;
+		border-inline-start: 3px solid var(--alloy-text-secondary);
+		padding: 8px 12px;
+		color: var(--alloy-text);
+		font-size: 13px;
+		line-height: 20px;
+	}
+
+	.alloy-state span {
+		color: var(--alloy-text-secondary);
+	}
+
+	.alloy-state .alloy-state-heading {
+		display: flex;
+		align-items: center;
+		gap: var(--alloy-space-related);
+		color: var(--alloy-text);
+	}
+
+	.alloy-live-state {
+		border-inline-start-color: var(--alloy-accent);
+	}
+
+	.alloy-attention-state {
+		border: 1px solid var(--alloy-text);
+		border-inline-start-width: 4px;
+		background: var(--alloy-surface);
+	}
+
+	.alloy-error-state {
+		border: 1px solid var(--alloy-command-separator);
+		border-inline-start-width: 4px;
+		background: #171b1d;
+		color: var(--alloy-command-text);
+	}
+
+	.alloy-error-state span {
+		color: var(--alloy-command-secondary);
+	}
+
+	.alloy-empty-state {
+		min-height: var(--alloy-control-height);
+		border: 1px dashed var(--alloy-separator);
+		padding: var(--alloy-space-group);
+		color: var(--alloy-text-secondary);
+		font-size: 13px;
+		line-height: 20px;
+	}
+
+	.alloy-overlay {
+		background: var(--alloy-overlay);
+	}
+
+	.alloy-floating {
+		border-radius: var(--radius-alloy-panel);
+		background: var(--alloy-surface);
+		box-shadow: var(--shadow-alloy-floating);
+	}
+
+	.alloy-instrument-table {
+		width: 100%;
+		border-collapse: collapse;
+		background: var(--alloy-surface);
+	}
+
+	.alloy-instrument-table :is(th, td) {
+		height: 48px;
+		border-bottom: 1px solid var(--alloy-separator);
+		padding: 8px 12px;
+		text-align: start;
+	}
+
+	.alloy-instrument-table td:last-child {
+		font-family: 'Fragment Mono', ui-monospace, monospace;
+		text-align: end;
+	}
+
+	.alloy-spatial-motion {
+		transition-duration: var(--alloy-motion-spatial);
+		transition-timing-function: ease-out;
+	}
+}
+
+@media (max-width: 28rem) {
+	.alloy-segment-grid {
+		grid-template-columns: 1fr;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	*,
-	*::before,
-	*::after {
+	:root:root:root *,
+	:root:root:root *::before,
+	:root:root:root *::after {
 		animation: none;
 		scroll-behavior: auto;
 		transition: none;

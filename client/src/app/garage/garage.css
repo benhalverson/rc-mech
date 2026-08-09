@@ -172,8 +172,10 @@
 	outline-offset: 3px;
 }
 .car-overview button.danger {
-	border-color: var(--danger, #a33);
-	color: var(--danger, #a33);
+	border-color: var(--muted);
+	color: var(--ink);
+	text-decoration: underline;
+	text-underline-offset: 3px;
 }
 @media (max-width: 650px) {
 	.overview-grid {

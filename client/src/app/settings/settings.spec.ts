@@ -7,6 +7,7 @@ import {
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AppearanceService } from '../appearance.service';
 import { Settings } from './settings';
 import { SettingsStore } from './settings-store';
 import { TimezoneStore } from './timezone-store';
@@ -42,6 +43,13 @@ class FakeTimezoneStore {
 		this.message.set(`Dates will now use ${timezone}.`);
 	}
 }
+
+const appearanceService = {
+	preference: signal<'system' | 'light' | 'dark'>('system'),
+	resolved: signal<'light' | 'dark'>('light'),
+	persistenceAvailable: signal(true),
+	setAppearance: vi.fn(),
+};
 
 class FakeRegistrationCredential {
 	readonly id = 'passkey-new';
@@ -92,6 +100,7 @@ describe('Settings workspace', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				SettingsStore,
+				{ provide: AppearanceService, useValue: appearanceService },
 				{ provide: TimezoneStore, useValue: timezoneStore },
 			],
 		}).compileComponents();
