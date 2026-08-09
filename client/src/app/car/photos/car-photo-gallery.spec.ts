@@ -6,7 +6,7 @@ import {
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import type { CarPhoto } from './car/car.models';
+import type { CarPhoto } from '../car.models';
 import { CarPhotoGallery } from './car-photo-gallery';
 import { CarPhotoStore } from './car-photo-store';
 

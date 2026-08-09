@@ -6,8 +6,8 @@ import {
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import { MaintenanceLookups } from './maintenance/maintenance-lookups';
-import { MaintenanceStore } from './maintenance/maintenance-store';
+import { MaintenanceLookups } from './maintenance-lookups';
+import { MaintenanceStore } from './maintenance-store';
 import {
 	calculatePlanState,
 	calendarDays,

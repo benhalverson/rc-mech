@@ -31,14 +31,11 @@ import type {
 	ConsumableEntry,
 	FluidArea,
 	TireAxle,
-} from './maintenance/maintenance.models';
-import { MaintenanceLookups } from './maintenance/maintenance-lookups';
-import {
-	type MaintenanceReport,
-	MaintenanceStore,
-} from './maintenance/maintenance-store';
+} from '../maintenance.models';
+import { MaintenanceLookups } from '../maintenance-lookups';
+import { type MaintenanceReport, MaintenanceStore } from '../maintenance-store';
 
-export type { ConsumableEntry } from './maintenance/maintenance.models';
+export type { ConsumableEntry } from '../maintenance.models';
 
 export type ConsumableCar = {
 	id: string;
