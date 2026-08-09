@@ -6,7 +6,6 @@ import {
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { BreakpointObserver } from '@angular/cdk/layout';
-import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import {
 	provideRouter,
 	Router,
@@ -31,7 +30,6 @@ describe('App workspace shell', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter([], withDisabledInitialNavigation()),
-				provideNoopAnimations(),
 				OwnerSessionStore,
 				{
 					provide: BreakpointObserver,

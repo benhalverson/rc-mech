@@ -20,18 +20,12 @@ import {
 	webAuthnError,
 } from './passkey-credentials';
 import {
-	defaultTimezone,
 	type InviteCode,
 	type InviteCodesResponse,
-	isValidTimezone,
 	type Passkey,
-	type TimezoneResponse,
 } from './settings.models';
 
 type SettingsState = {
-	timezoneSaving: boolean;
-	timezoneMessage: string;
-	timezoneMutationError: string;
 	inviteAction: string | null;
 	inviteMessage: string;
 	inviteMutationError: string;
@@ -41,9 +35,6 @@ type SettingsState = {
 };
 
 const initialState: SettingsState = {
-	timezoneSaving: false,
-	timezoneMessage: '',
-	timezoneMutationError: '',
 	inviteAction: null,
 	inviteMessage: '',
 	inviteMutationError: '',
@@ -68,10 +59,6 @@ export const SettingsStore = signalStore(
 	withState(initialState),
 	withProps(() => ({
 		http: inject(HttpClient),
-		timezoneResource: httpResource<TimezoneResponse>(() => ({
-			url: '/api/v1/preferences/timezone',
-			withCredentials: true,
-		})),
 		inviteResource: httpResource<InviteCodesResponse>(() => ({
 			url: '/api/v1/invite-codes',
 			withCredentials: true,
@@ -82,20 +69,6 @@ export const SettingsStore = signalStore(
 		})),
 	})),
 	withComputed((store) => ({
-		timezone: computed(() => {
-			const value = store.timezoneResource.hasValue()
-				? store.timezoneResource.value().timezone
-				: undefined;
-			return value && isValidTimezone(value) ? value : defaultTimezone();
-		}),
-		timezoneLoading: computed(() => store.timezoneResource.isLoading()),
-		timezoneError: computed(() =>
-			store.timezoneMutationError()
-				? store.timezoneMutationError()
-				: store.timezoneResource.error()
-					? 'The timezone setting could not be loaded. Dates are shown in your browser timezone.'
-					: '',
-		),
 		inviteCodes: computed(() =>
 			store.inviteResource.hasValue() ? store.inviteResource.value().codes : [],
 		),
@@ -137,50 +110,6 @@ export const SettingsStore = signalStore(
 		),
 	})),
 	withMethods((store) => ({
-		retryTimezone(): void {
-			patchState(store, { timezoneMutationError: '' });
-			store.timezoneResource.reload();
-		},
-		async saveTimezone(value: string): Promise<boolean> {
-			if (store.timezoneSaving()) return false;
-			const timezone = value.trim();
-			if (!isValidTimezone(timezone)) {
-				patchState(store, {
-					timezoneMutationError:
-						'Use a valid IANA timezone, such as America/Los_Angeles.',
-				});
-				return false;
-			}
-			patchState(store, {
-				timezoneSaving: true,
-				timezoneMessage: '',
-				timezoneMutationError: '',
-			});
-			try {
-				await firstValueFrom(
-					store.http.patch<TimezoneResponse>(
-						'/api/v1/preferences/timezone',
-						{ timezone },
-						{ withCredentials: true },
-					),
-				);
-				store.timezoneResource.reload();
-				patchState(store, {
-					timezoneSaving: false,
-					timezoneMessage: `Dates will now use ${timezone}.`,
-				});
-				return true;
-			} catch (error) {
-				patchState(store, {
-					timezoneSaving: false,
-					timezoneMutationError: apiMessage(
-						error,
-						'The timezone could not be saved. Check the name and try again.',
-					),
-				});
-				return false;
-			}
-		},
 		retryInvites(): void {
 			patchState(store, { inviteMutationError: '' });
 			store.inviteResource.reload();

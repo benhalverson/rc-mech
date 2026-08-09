@@ -1,4 +1,4 @@
-export type TimezoneResponse = { timezone?: string };
+export type TimezonePreference = { timezone: string | null };
 
 export type Passkey = {
 	id: string;

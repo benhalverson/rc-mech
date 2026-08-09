@@ -6,7 +6,6 @@ import {
 } from '@angular/common/http/testing';
 import { Injectable } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { Observable, of, Subject, throwError } from 'rxjs';
 import { vi } from 'vitest';
 import { emptySetupForm } from './setup-form';
@@ -88,7 +87,6 @@ describe('SetupSnapshots', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				provideNoopAnimations(),
 				SetupSnapshotStore,
 				{ provide: SoDialedImporterClient, useClass: MockImporter },
 			],

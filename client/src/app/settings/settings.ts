@@ -11,6 +11,7 @@ import {
 } from '@angular/forms/signals';
 import { isValidTimezone, type Passkey } from './settings.models';
 import { SettingsStore } from './settings-store';
+import { TimezoneStore } from './timezone-store';
 
 @Component({
 	selector: 'app-settings',
@@ -20,8 +21,9 @@ import { SettingsStore } from './settings-store';
 })
 export class Settings {
 	protected readonly store = inject(SettingsStore);
+	protected readonly timezoneStore = inject(TimezoneStore);
 	protected readonly timezoneModel = linkedSignal(() => ({
-		timezone: this.store.timezone(),
+		timezone: this.timezoneStore.timezone(),
 	}));
 	protected readonly timezoneForm = form(this.timezoneModel, (path) => {
 		required(path.timezone, { message: 'Enter a timezone.' });
@@ -56,11 +58,13 @@ export class Settings {
 	});
 	protected readonly editingPasskeyId = signal<string | null>(null);
 
-	protected async saveTimezone(event: SubmitEvent): Promise<void> {
+	protected saveTimezone(event: SubmitEvent): void {
 		event.preventDefault();
 		this.timezoneForm.timezone().markAsTouched();
 		if (this.timezoneForm().invalid()) return;
-		await this.store.saveTimezone(this.timezoneModel().timezone);
+		this.timezoneStore.saveTimezone({
+			timezone: this.timezoneModel().timezone,
+		});
 	}
 
 	protected async createInviteCode(event: SubmitEvent): Promise<void> {

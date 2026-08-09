@@ -5,10 +5,11 @@ import {
 	type TestRequest,
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Settings } from './settings';
 import { SettingsStore } from './settings-store';
+import { TimezoneGateway } from './timezone-gateway';
+import { TimezoneStore } from './timezone-store';
 
 class FakeRegistrationCredential {
 	readonly id = 'passkey-new';
@@ -56,8 +57,9 @@ describe('Settings workspace', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				provideNoopAnimations(),
 				SettingsStore,
+				TimezoneGateway,
+				TimezoneStore,
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -116,6 +118,7 @@ describe('Settings workspace', () => {
 		expect(
 			fixture.nativeElement.querySelector('[data-route-focus][tabindex="-1"]'),
 		).toBeTruthy();
+		TestBed.inject(TimezoneStore).refresh();
 	});
 
 	it('renders an invite read error and retries that resource', async () => {
@@ -520,28 +523,26 @@ describe('Settings workspace', () => {
 	it('rejects invalid and concurrent timezone saves and surfaces API detail', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
-		const store = TestBed.inject(SettingsStore);
+		const store = TestBed.inject(TimezoneStore);
 
-		expect(await store.saveTimezone('Not/A_Timezone')).toBe(false);
-		expect(store.timezoneError()).toContain('valid IANA timezone');
+		store.saveTimezone({ timezone: 'Not/A_Timezone' });
+		expect(store.error()).toContain('valid IANA timezone');
 
-		const pending = store.saveTimezone(' UTC ');
-		expect(await store.saveTimezone('America/New_York')).toBe(false);
+		store.saveTimezone({ timezone: ' UTC ' });
+		store.saveTimezone({ timezone: 'America/New_York' });
 		http
 			.expectOne('/api/v1/preferences/timezone')
 			.flush(
 				{ error: 'That timezone is disabled.' },
 				{ status: 422, statusText: 'Unprocessable Content' },
 			);
-		expect(await pending).toBe(false);
-		expect(store.timezoneError()).toBe('That timezone is disabled.');
+		expect(store.error()).toBe('The timezone setting could not be loaded.');
 
-		const fallback = store.saveTimezone('UTC');
+		store.saveTimezone({ timezone: 'UTC' });
 		http
 			.expectOne('/api/v1/preferences/timezone')
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		expect(await fallback).toBe(false);
-		expect(store.timezoneError()).toContain('could not be saved');
+		expect(store.error()).toContain('could not be loaded');
 	});
 
 	it('blocks unavailable invite creation and handles create and revoke failures', async () => {

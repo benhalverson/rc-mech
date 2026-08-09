@@ -5,7 +5,6 @@ import {
 	TestRequest,
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { ActivatedRoute, provideRouter, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OwnerSessionStore } from './owner-session-store';
@@ -50,7 +49,6 @@ describe('SignIn', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				provideNoopAnimations(),
 				provideRouter([]),
 				OwnerSessionStore,
 				{

@@ -45,7 +45,6 @@ describe('SettingsStore computed defaults', () => {
 		vi.stubGlobal('window', browserWindow);
 
 		await vi.waitFor(() => {
-			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
 			http.expectOne('/api/v1/invite-codes').flush({
 				allowance: 5,
 				used: 0,
