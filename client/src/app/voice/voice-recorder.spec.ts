@@ -20,7 +20,7 @@ const harness = vi.hoisted(() => ({
 	instances: [] as RecorderHarness[],
 	tracks: [] as TrackHarness[],
 	samples: 0.1,
-	startMode: 'start' as 'start' | 'error',
+	startMode: 'start' as 'start' | 'error' | 'pending',
 	stopMode: 'stop' as 'stop' | 'error',
 	emitFinal: true,
 	contextMode: 'works' as 'works' | 'error',
@@ -60,6 +60,7 @@ class FakeMediaRecorder {
 	start = vi.fn((...args: unknown[]) => {
 		this.state = 'recording';
 		if (args.length) throw new Error('timeslice must not be used');
+		if (harness.startMode === 'pending') return;
 		queueMicrotask(() =>
 			harness.startMode === 'error' ? this.onerror?.() : this.onstart?.(),
 		);
@@ -223,6 +224,50 @@ describe('VoiceRecorder', () => {
 		recorder.cancel();
 		expect(harness.tracks[0]?.stop).toHaveBeenCalledOnce();
 		expect(recorder.recording()).toBe(false);
+	});
+
+	it('releases the microphone when its route-scoped provider is destroyed', async () => {
+		const recorder = TestBed.inject(VoiceRecorder);
+		await recorder.start();
+		recorder.ngOnDestroy();
+		expect(harness.tracks[0]?.stop).toHaveBeenCalledOnce();
+		expect(recorder.recording()).toBe(false);
+	});
+
+	it('cancels every pending microphone startup stage on route teardown', async () => {
+		const supportCheckRecorder = TestBed.inject(VoiceRecorder);
+		const supportCheckStart = supportCheckRecorder.start();
+		supportCheckRecorder.ngOnDestroy();
+		await expect(supportCheckStart).rejects.toThrow('cancelled');
+		expect(getUserMedia).not.toHaveBeenCalled();
+
+		const mediaRecorder = TestBed.inject(VoiceRecorder);
+		await mediaRecorder.detectSupport();
+		let resolveStream: ((stream: MediaStream) => void) | undefined;
+		getUserMedia.mockImplementationOnce(
+			() =>
+				new Promise<MediaStream>((resolve) => {
+					resolveStream = resolve;
+				}),
+		);
+		const mediaStart = mediaRecorder.start();
+		await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalledOnce());
+		mediaRecorder.ngOnDestroy();
+		const pendingTrack = createTrack();
+		harness.tracks.push(pendingTrack);
+		resolveStream?.({
+			getTracks: () => [pendingTrack],
+			getAudioTracks: () => [pendingTrack],
+		} as unknown as MediaStream);
+		await expect(mediaStart).rejects.toThrow('cancelled');
+		expect(pendingTrack.stop).toHaveBeenCalledOnce();
+
+		harness.startMode = 'pending';
+		const nativeStart = mediaRecorder.start();
+		await vi.waitFor(() => expect(harness.instances).toHaveLength(1));
+		mediaRecorder.ngOnDestroy();
+		await expect(nativeStart).rejects.toThrow('cancelled');
+		expect(mediaRecorder.starting()).toBe(false);
 	});
 
 	it.each([

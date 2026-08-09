@@ -1,4 +1,4 @@
-import { computed, inject, Service } from '@angular/core';
+import { computed, inject, type OnDestroy, Service } from '@angular/core';
 import { patchState, signalStore, withMethods, withState } from '@ngrx/signals';
 
 const preferredMimeType = (
@@ -56,7 +56,7 @@ type AudioContextConstructor = typeof AudioContext & {
 };
 
 @Service()
-export class VoiceRecorder {
+export class VoiceRecorder implements OnDestroy {
 	private readonly state = inject(VoiceRecorderStore);
 	private recorder: MediaRecorder | null = null;
 	private stream: MediaStream | null = null;
@@ -68,6 +68,8 @@ export class VoiceRecorder {
 	private elapsedTimer: ReturnType<typeof setInterval> | null = null;
 	private recordingStartedAt = 0;
 	private aboveThresholdSince: number | null = null;
+	private startGeneration = 0;
+	private rejectStart: ((error: Error) => void) | null = null;
 	private readonly trackHandlers = new Map<
 		MediaStreamTrack,
 		{
@@ -103,17 +105,25 @@ export class VoiceRecorder {
 
 	async start(): Promise<void> {
 		if (this.starting() || this.recording()) return;
+		const generation = ++this.startGeneration;
 		this.state.set({ starting: true });
 		try {
 			if (!this.supported() && !(await this.detectSupport()))
 				throw new Error('Audio recording is not supported in this browser.');
-			this.stream = await navigator.mediaDevices.getUserMedia({
+			if (generation !== this.startGeneration)
+				throw new Error('The recording was cancelled.');
+			const stream = await navigator.mediaDevices.getUserMedia({
 				audio: {
 					echoCancellation: true,
 					noiseSuppression: true,
 					channelCount: 1,
 				},
 			});
+			if (generation !== this.startGeneration) {
+				for (const track of stream.getTracks()) track.stop();
+				throw new Error('The recording was cancelled.');
+			}
+			this.stream = stream;
 			this.chunks = [];
 			const audioTracks = this.stream.getAudioTracks();
 			this.state.set({
@@ -145,17 +155,21 @@ export class VoiceRecorder {
 				if (data.size) this.chunks.push(data);
 			};
 			await new Promise<void>((resolve, reject) => {
+				this.rejectStart = reject;
 				recorder.onstart = () => {
+					this.rejectStart = null;
 					this.state.set({ recording: true, starting: false });
 					this.startElapsedTimer();
 					resolve();
 				};
-				recorder.onerror = () =>
+				recorder.onerror = () => {
+					this.rejectStart = null;
 					reject(new Error('The browser could not start the recording.'));
+				};
 				recorder.start();
 			});
 		} catch (error) {
-			this.release();
+			if (generation === this.startGeneration) this.release();
 			throw error;
 		}
 	}
@@ -190,14 +204,22 @@ export class VoiceRecorder {
 	}
 
 	cancel(): void {
+		this.startGeneration += 1;
+		this.rejectStart?.(new Error('The recording was cancelled.'));
+		this.rejectStart = null;
 		const recorder = this.recorder;
 		if (recorder && recorder.state !== 'inactive') {
 			recorder.ondataavailable = null;
+			recorder.onstart = null;
 			recorder.onstop = null;
 			recorder.onerror = null;
 			recorder.stop();
 		}
 		this.release();
+	}
+
+	ngOnDestroy(): void {
+		this.cancel();
 	}
 
 	private setupLevelMonitor(stream: MediaStream): void {

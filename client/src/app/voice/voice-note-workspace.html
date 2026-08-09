@@ -1,0 +1,230 @@
+<section class="rounded-alloy-panel border border-alloy-separator bg-alloy-control" aria-labelledby="voice-title">
+	<header class="flex flex-wrap items-start justify-between gap-4 border-b border-alloy-separator p-4">
+		<div class="max-w-2xl">
+			<span class="alloy-section-heading">Trackside capture</span>
+			<h3 id="voice-title" class="m-0 mt-1 font-interface text-[22px] font-[650] leading-7">Voice note</h3>
+			<p class="m-0 mt-2 text-[13px] leading-5 text-alloy-text-secondary">Record what changed, what the car did, or what the track felt like. You review every proposed record before anything is applied.</p>
+		</div>
+		<a class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-h-12 items-center justify-center no-underline" [routerLink]="['/garage', carId(), 'drive-sessions']">Drive session history</a>
+	</header>
+
+	@if (!archived()) {
+		<div class="grid gap-4 p-4">
+			<label class="grid gap-2 text-sm font-semibold" for="voice-drive-session">
+				Drive-session context
+				<select class="alloy-field w-full" id="voice-drive-session" [value]="selectedDriveSessionId()" (change)="setDriveSession($event)">
+					<option value="">No specific drive session</option>
+					@for (session of driveSessionContext.sessions(); track session.id) {
+						@if (!session.deletedAt) {
+							<option [value]="session.id">{{ session.startedAt | date: 'short':driveSessionContext.timezone() }} · {{ session.conditions || 'Conditions not recorded' }}</option>
+						}
+					}
+				</select>
+			</label>
+
+			@if (voiceStore.recorderError()) {
+				<p class="alloy-state alloy-error-state m-0" role="alert">{{ voiceStore.recorderError() }}</p>
+			}
+			@if (voiceStore.recordingMode(); as mode) {
+				<div class="grid gap-4 border border-alloy-accent bg-alloy-surface p-4 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto] lg:items-center" [attr.data-phase]="voiceStore.starting() ? 'starting' : 'live'" [attr.aria-busy]="voiceStore.starting()">
+					<div class="flex items-start gap-3">
+						<span class="mt-1 block size-3 shrink-0 rounded-full bg-alloy-accent ring-4 ring-alloy-accent/15" aria-hidden="true"></span>
+						<div>
+							<strong class="block" role="status" aria-live="polite">{{ voiceStore.starting() ? 'Starting microphone…' : (mode.kind === 'capture' ? 'Recording voice note' : 'Recording correction') }}</strong>
+							<small class="mt-1 block text-alloy-text-secondary">{{ voiceStore.starting() ? 'Wait for the timer before speaking.' : 'Audio is being captured.' }}</small>
+						</div>
+					</div>
+					<div class="grid gap-2">
+						<progress class="microphone-progress block h-2 w-full border border-alloy-separator bg-alloy-control" max="1" [value]="voiceStore.inputLevel()" aria-label="Live microphone level"></progress>
+						<small class="text-alloy-text-secondary">{{ voiceStore.inputMuted() ? 'Microphone muted' : (voiceStore.audioDetected() ? 'Audio detected' : 'Speak to test the microphone') }}</small>
+					</div>
+					@if (!voiceStore.starting()) {
+						<div class="flex flex-wrap items-center gap-2 lg:justify-end">
+							<div class="flex min-h-12 items-center gap-3 border-l-4 border-alloy-accent bg-alloy-control px-3" role="timer" aria-live="off" [attr.aria-label]="recordingDuration().label">
+								<span class="text-[11px] font-bold tracking-[0.16em] text-alloy-accent" aria-hidden="true">REC</span>
+								<time class="font-technical text-lg" aria-hidden="true" [attr.datetime]="recordingDuration().datetime">{{ recordingDuration().clock }}</time>
+							</div>
+							<button class="alloy-control alloy-control-primary" type="button" (click)="stopRecording()">Stop and keep recording</button>
+							<button class="alloy-control alloy-control-secondary" type="button" (click)="cancelRecording()">Cancel</button>
+						</div>
+					}
+				</div>
+			} @else if (textFallback() || (!voiceStore.checking() && !voiceStore.supported())) {
+				<label class="grid gap-2 text-sm font-semibold" for="voice-text-note">
+					Track note
+				<textarea class="alloy-field min-h-28 w-full py-3" id="voice-text-note" rows="4" [value]="textNote()" (input)="updateTextNote($event)" [attr.aria-describedby]="textNoteError() ? 'voice-text-note-error' : null" placeholder="The rear stepped out on corner entry, so I changed the rear shock oil from 30 wt to 35 wt."></textarea>
+			</label>
+			@if (textNoteError()) {
+				<p id="voice-text-note-error" class="alloy-state alloy-error-state m-0" role="alert">{{ textNoteError() }}</p>
+			}
+				<div class="flex flex-wrap gap-2">
+					<button class="alloy-control alloy-control-primary" type="button" (click)="submitTextNote()" [disabled]="voiceStore.pending()">Keep text note</button>
+					@if (voiceStore.supported()) {
+						<button class="alloy-control alloy-control-secondary" type="button" (click)="hideTextFallback()">Use microphone</button>
+					}
+				</div>
+			} @else if (voiceStore.checking()) {
+				<p class="alloy-state alloy-live-state m-0" role="status">Checking microphone support…</p>
+			} @else {
+				<div class="flex flex-wrap gap-3">
+					<button class="alloy-control alloy-control-primary inline-flex min-h-14 items-center gap-2 px-5 text-[15px]" type="button" (click)="startRecording({ kind: 'capture' })">
+						<span class="font-technical text-xs" aria-hidden="true">REC</span> Start voice note
+					</button>
+					<button class="alloy-control alloy-control-secondary" type="button" (click)="showTextFallback()">Type instead</button>
+				</div>
+			}
+			<p class="m-0 text-[12px] leading-5 text-alloy-text-secondary">Microphone access starts only after you press record. Pending audio stays on this device until it can be uploaded privately.</p>
+		</div>
+	} @else {
+		<p class="alloy-state m-4">This voice history is read-only while the car is archived.</p>
+	}
+</section>
+
+@if (showHistory() || hasReview() || voiceStore.message() || voiceStore.error() || voiceStore.readError()) {
+	<section class="mt-6 border-t border-alloy-separator pt-5" aria-labelledby="voice-review-title">
+		<header class="mb-4 flex flex-wrap items-end justify-between gap-3">
+			<div>
+				<span class="alloy-section-heading">{{ showHistory() ? 'Review and provenance' : 'Inline review' }}</span>
+				<h3 id="voice-review-title" class="m-0 mt-1 font-interface text-[22px] font-[650] leading-7" tabindex="-1">{{ showHistory() ? 'Voice note history' : 'Review this voice note' }}</h3>
+			</div>
+			<span class="font-technical text-[13px] text-alloy-text-secondary">{{ voiceStore.localCaptures().length + visibleUpdates().length }} captured</span>
+		</header>
+		@if (voiceStore.error()) {
+			<p class="alloy-state alloy-error-state" role="alert">{{ voiceStore.error() }}</p>
+		}
+		@if (voiceStore.message()) {
+			<p class="alloy-state alloy-live-state" role="status">{{ voiceStore.message() }}</p>
+		}
+		@if (voiceStore.loading()) {
+			<div class="alloy-state" role="status">Opening voice history…</div>
+		} @else if (voiceStore.readError()) {
+			<div class="alloy-state alloy-error-state" role="alert">
+				<p class="m-0">{{ voiceStore.readError() }}</p>
+				<button class="alloy-control alloy-control-secondary mt-3" type="button" (click)="voiceStore.retryRead()">Try again</button>
+			</div>
+		} @else if (!hasReview()) {
+			@if (showHistory()) {
+				<div class="alloy-empty-state"><strong class="block text-alloy-text">No voice notes yet</strong><span>Your first recording will appear here for review.</span></div>
+			}
+		} @else {
+			<div class="grid gap-4">
+				@for (capture of voiceStore.localCaptures(); track capture.id) {
+					<article class="border border-dashed border-alloy-separator bg-alloy-control p-4">
+						<header class="flex flex-wrap items-start justify-between gap-3 border-b border-alloy-separator pb-3">
+							<div><span class="font-technical text-[11px] uppercase tracking-[0.1em] text-alloy-text-secondary">{{ capture.status }}</span><h4 class="m-0 mt-1 text-base font-[650]">Pending on this device</h4></div>
+							<time class="text-[12px] text-alloy-text-secondary" [dateTime]="capture.createdAt">{{ capture.createdAt | date: 'short' }}</time>
+						</header>
+						<p>{{ capture.error || 'This note is safely queued for upload.' }}</p>
+						<div class="flex flex-wrap gap-2">
+							<button class="alloy-control alloy-control-secondary" type="button" (click)="retryQueued()" [disabled]="voiceStore.pending()">Retry now</button>
+							<button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardLocal(capture.id)" [disabled]="voiceStore.pending()">Discard local recording</button>
+						</div>
+						<p class="mb-0 text-[12px] text-alloy-text-secondary">Discarding removes the only copy of this pending note.</p>
+					</article>
+				}
+
+				@for (update of visibleUpdates(); track update.id) {
+					<article class="border border-alloy-separator bg-alloy-control">
+						<header class="flex flex-wrap items-start justify-between gap-3 border-b border-alloy-separator p-4">
+							<div>
+								<span class="font-technical text-[11px] uppercase tracking-[0.1em] text-alloy-text-secondary">{{ update.status }}</span>
+								<h4 class="m-0 mt-1 text-base font-[650]">{{ update.status === 'saved' ? 'Saved voice update' : update.status === 'discarded' ? 'Discarded voice update' : 'Voice update draft' }}</h4>
+							</div>
+							<time class="text-[12px] text-alloy-text-secondary" [dateTime]="update.createdAt">{{ update.createdAt | date: 'short' }}</time>
+						</header>
+
+						<div class="grid gap-4 p-4">
+							@if (update.audioUrl) {
+								<!-- biome-ignore lint/a11y/useMediaCaption: The verbatim transcript is rendered next to the review after processing. -->
+								<audio class="w-full" controls preload="metadata" [src]="update.audioUrl" aria-label="Original voice recording"></audio>
+							}
+							@if (update.status === 'pending' || update.status === 'failed') {
+								@if (update.error) { <p class="alloy-state alloy-error-state m-0" role="alert">{{ update.error }}</p> }
+								<div class="grid gap-2">
+									<label class="text-sm font-semibold" [for]="'context-car-' + update.id">Car context</label>
+									<select class="alloy-field w-full" [id]="'context-car-' + update.id" [value]="contextCar(update)" (change)="changeContextCar(update, $event)">
+										@for (contextCarOption of voiceStore.cars(); track contextCarOption.id) {
+											<option [value]="contextCarOption.id">{{ contextCarOption.name }}</option>
+										}
+									</select>
+									<button class="alloy-control alloy-control-secondary justify-self-start" type="button" (click)="saveContext(update)" [disabled]="voiceStore.pending()">Update context</button>
+								</div>
+								<div class="flex flex-wrap gap-2">
+									<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.process(update.id)" [disabled]="voiceStore.pending()">{{ update.status === 'failed' ? 'Retry processing' : 'Process note' }}</button>
+									<button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardServer(update.id, false)" [disabled]="voiceStore.pending()">Discard recording</button>
+								</div>
+							} @else if (update.status === 'processing') {
+								<p class="alloy-state alloy-live-state m-0" role="status">Transcribing and preparing a review draft…</p>
+							} @else {
+								<div class="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+									<section aria-label="Transcript">
+										<span class="alloy-section-heading">Transcript</span>
+										<p class="mt-2 whitespace-pre-wrap text-sm">{{ update.transcript || 'No transcript was retained.' }}</p>
+									</section>
+									<section aria-label="Proposed garage records">
+										<span class="alloy-section-heading">Proposed records · not yet applied</span>
+										@if (update.clarificationPrompt) {
+											<div class="alloy-state alloy-attention-state mt-3" role="status"><strong>One focused clarification</strong><p class="m-0">{{ update.clarificationPrompt }}</p></div>
+										}
+										@if (update.draft; as draft) {
+											<div class="mt-3 divide-y divide-alloy-separator border-y border-alloy-separator">
+												@for (item of draft.setupChanges; track $index) {
+													<div class="grid gap-1 py-3"><span class="text-[12px] text-alloy-text-secondary">Proposed Setup change · {{ item.section }}</span><strong>{{ item.field }}: {{ item.value }}</strong><small [class.text-alloy-accent]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
+												}
+												@for (item of draft.conditions; track $index) {
+													<div class="grid gap-1 py-3"><span class="text-[12px] text-alloy-text-secondary">Proposed conditions record</span><strong>{{ item.field }}: {{ item.value }}</strong><small [class.text-alloy-accent]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
+												}
+												@for (item of draft.problems; track $index) {
+													<div class="grid gap-1 py-3"><span class="text-[12px] text-alloy-text-secondary">Proposed Trackside observation</span><strong>{{ item.text }}</strong><small [class.text-alloy-accent]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
+												}
+												@for (item of draft.driveSessionNotes; track $index) {
+													<div class="grid gap-1 py-3"><span class="text-[12px] text-alloy-text-secondary">Proposed Drive session note</span><strong>{{ item.text }}</strong><small [class.text-alloy-accent]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
+												}
+												@for (item of draft.consumables; track $index) {
+													<div class="grid gap-1 py-3"><span class="text-[12px] text-alloy-text-secondary">Proposed maintenance record</span><strong>{{ item.kind }} {{ item.axle || item.fluidArea || '' }} · {{ item.details || item.notes || item.sourceText }}</strong><small [class.text-alloy-accent]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
+												}
+												@for (note of draft.unmappedNotes; track $index) { <div class="grid gap-1 py-3"><span class="text-[12px] text-alloy-text-secondary">Proposed free-form note</span><strong>{{ note }}</strong></div> }
+												@for (note of draft.unresolvedNotes; track $index) { <div class="grid gap-1 py-3"><span class="text-[12px] font-semibold text-alloy-accent">Unresolved · needs review</span><strong>{{ note }}</strong></div> }
+											</div>
+										}
+									</section>
+								</div>
+
+								@if (update.status === 'needs-review') {
+									@if (correctingId() === update.id) {
+										<div class="grid gap-3 border-t border-alloy-separator pt-4">
+										<label class="grid gap-2 text-sm font-semibold" [for]="'correction-' + update.id">Short correction or clarification<input class="alloy-field w-full" [id]="'correction-' + update.id" [value]="correctionText()" (input)="updateCorrection($event)" [attr.aria-describedby]="correctionError() ? 'correction-error-' + update.id : null" placeholder="Rear diff, not front — use 7k" /></label>
+										@if (correctionError()) { <p class="alloy-state alloy-error-state m-0" [id]="'correction-error-' + update.id" role="alert">{{ correctionError() }}</p> }
+											<div class="flex flex-wrap gap-2"><button class="alloy-control alloy-control-primary" type="button" (click)="applyTextCorrection(update.id)" [disabled]="voiceStore.pending()">Apply correction</button>@if (voiceStore.supported()) { <button class="alloy-control alloy-control-secondary" type="button" (click)="startRecording({ kind: 'correction', id: update.id })">Speak correction</button> }<button class="alloy-control alloy-control-tertiary" type="button" (click)="cancelCorrection()">Cancel</button></div>
+										</div>
+									} @else {
+										<div class="flex flex-wrap gap-2 border-t border-alloy-separator pt-4">
+											<button class="alloy-control alloy-control-secondary" type="button" (click)="beginCorrection(update.id)">Correct or answer</button>
+											@if (hasUncertainty(update)) {
+												<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.confirm(update.id, true)" [disabled]="voiceStore.pending()">Keep uncertain wording as notes and save</button>
+											} @else {
+												<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.confirm(update.id, false)" [disabled]="voiceStore.pending()">Confirm and save</button>
+											}
+										</div>
+									}
+								} @else if (update.status === 'saved') {
+									@if (update.results.length) {
+										<nav class="flex flex-wrap gap-2" aria-label="Records created from this voice update">@for (result of update.results; track result.id) { <a class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center no-underline" [routerLink]="result.url">{{ result.label }}</a> }</nav>
+									}
+									@if (update.corrections.length) {
+										<details><summary class="alloy-focus-ring min-h-12 cursor-pointer py-3 font-semibold">Correction provenance</summary>@for (correction of update.corrections; track correction.id) { <p><strong>{{ correction.kind }}</strong> · {{ correction.transcript }}</p>@if (correction.audioUrl) { <!-- biome-ignore lint/a11y/useMediaCaption: The correction transcript is rendered immediately before its audio. --><audio class="w-full" controls preload="none" [src]="correction.audioUrl" aria-label="Voice correction recording"></audio> } }</details>
+									}
+									@if (update.audioUrl) {
+										<div class="border-t border-alloy-separator pt-4"><p class="mt-0 text-[13px] text-alloy-text-secondary">Removing the original audio keeps the transcript, draft, corrections, and garage history.</p><button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardServer(update.id, true)" [disabled]="voiceStore.pending()">Remove original audio</button></div>
+									} @else if (update.artifactDeletedAt) {
+										<p class="text-[13px] text-alloy-text-secondary">Original audio was removed; derived garage history remains.</p>
+									}
+								}
+							}
+						</div>
+					</article>
+				}
+			</div>
+		}
+	</section>
+}
