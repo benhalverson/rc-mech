@@ -107,11 +107,11 @@
 	font-size: 0.86rem;
 }
 .error-state {
-	border-color: #8d5748;
+	border-color: var(--alloy-text);
 }
 .archive-note {
-	color: #df8a72;
-	border-left: 2px solid #df8a72;
+	color: var(--ink);
+	border-left: 2px solid var(--muted);
 	padding-left: 12px;
 	font-size: 0.84rem;
 	line-height: 1.5;
@@ -124,7 +124,9 @@
 	font-size: 0.7rem;
 }
 .text-button.danger {
-	color: #df8a72;
+	color: var(--ink);
+	text-decoration: underline;
+	text-underline-offset: 3px;
 }
 .visually-hidden {
 	position: absolute;

@@ -279,7 +279,9 @@
 	font-size: 0.78rem;
 }
 .text-button.danger {
-	color: #df8a72;
+	color: var(--ink);
+	text-decoration: underline;
+	text-underline-offset: 3px;
 }
 .deleted-label {
 	color: var(--muted);

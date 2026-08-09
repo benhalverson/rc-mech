@@ -74,6 +74,9 @@ describe('AppearanceSelector', () => {
 		appearance.persistenceAvailable.set(false);
 		fixture.detectChanges();
 
+		expect(root.querySelector('.alloy-attention-state')).not.toBeNull();
+		expect(root.querySelector('svg[lucidetrianglealert]')).not.toBeNull();
+		expect(root.textContent).toContain('Attention');
 		expect(root.textContent).toContain('Storage unavailable');
 		expect(root.textContent).toContain('cannot be saved on this device');
 	});

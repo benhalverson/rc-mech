@@ -220,10 +220,10 @@ form .button {
 		monospace;
 }
 .error-state {
-	border-color: #8d5748;
+	border-color: var(--alloy-text);
 }
 .error-state .state-mark {
-	color: #df8a72;
+	color: var(--alloy-text);
 }
 .car-list {
 	border-top: 1px solid var(--line);
@@ -296,7 +296,7 @@ form .button {
 	font-size: 1rem;
 }
 .car-status.archived-status {
-	color: #df8a72;
+	color: var(--muted);
 }
 .car-form,
 .car-detail {
@@ -352,7 +352,9 @@ textarea {
 	text-transform: uppercase;
 }
 .archived-pill {
-	background: #df8a72;
+	border: 1px solid var(--alloy-command-separator);
+	background: var(--alloy-command-control);
+	color: var(--alloy-command-text);
 }
 .detail-subtitle {
 	color: var(--muted);
@@ -402,8 +404,8 @@ textarea {
 	white-space: pre-wrap;
 }
 .archive-note {
-	color: #df8a72;
-	border-left: 2px solid #df8a72;
+	color: var(--ink);
+	border-left: 2px solid var(--muted);
 	padding-left: 12px;
 	margin-top: 24px;
 	font-size: 0.84rem;
@@ -411,8 +413,10 @@ textarea {
 }
 .danger-button {
 	background: transparent;
-	border: 1px solid #8d5748;
-	color: #df8a72;
+	border: 1px solid var(--muted);
+	color: var(--ink);
+	text-decoration: underline;
+	text-underline-offset: 3px;
 }
 .build-sheet {
 	border-top: 1px solid var(--line);
@@ -520,7 +524,7 @@ textarea {
 	opacity: 0.55;
 }
 .deleted-label {
-	color: #df8a72;
+	color: var(--muted);
 }
 .session-state {
 	margin-top: 8px;

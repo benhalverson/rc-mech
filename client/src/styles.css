@@ -7,7 +7,6 @@
 	--color-workbench: var(--alloy-control);
 	--color-bone: var(--alloy-text);
 	--color-brass: var(--alloy-accent);
-	--color-pit-orange: #d66f4b;
 	--color-oxidized-teal: var(--alloy-text-secondary);
 	--color-alloy-canvas: var(--alloy-canvas);
 	--color-alloy-surface: var(--alloy-surface);
@@ -182,7 +181,7 @@ body {
 		color: var(--alloy-on-accent);
 	}
 
-	.alloy-segment:focus-within,
+	.alloy-segment:has(input:focus-visible),
 	.alloy-focus-ring:focus-visible,
 	.alloy-control:focus-visible,
 	.alloy-field:focus-visible {
@@ -250,6 +249,13 @@ body {
 		color: var(--alloy-text-secondary);
 	}
 
+	.alloy-state .alloy-state-heading {
+		display: flex;
+		align-items: center;
+		gap: var(--alloy-space-related);
+		color: var(--alloy-text);
+	}
+
 	.alloy-live-state {
 		border-inline-start-color: var(--alloy-accent);
 	}
@@ -311,6 +317,12 @@ body {
 	.alloy-spatial-motion {
 		transition-duration: var(--alloy-motion-spatial);
 		transition-timing-function: ease-out;
+	}
+}
+
+@media (max-width: 28rem) {
+	.alloy-segment-grid {
+		grid-template-columns: 1fr;
 	}
 }
 

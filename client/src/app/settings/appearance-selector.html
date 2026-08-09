@@ -24,6 +24,6 @@
 	</fieldset>
 	<p class="alloy-supporting-text" role="status">Currently using {{ appearance.resolved() }} appearance.</p>
 	@if (!appearance.persistenceAvailable()) {
-		<p class="alloy-state" role="status"><strong>Storage unavailable</strong><span>Your choice works for this visit but cannot be saved on this device.</span></p>
+		<p class="alloy-state alloy-attention-state" role="status"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span><strong>Storage unavailable.</strong> Your choice works for this visit but cannot be saved on this device.</span></p>
 	}
 </section>

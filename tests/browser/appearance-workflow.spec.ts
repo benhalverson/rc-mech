@@ -16,6 +16,55 @@ const scan = async (page: import('@playwright/test').Page) => {
 	return getViolations(page);
 };
 
+test('applies a persisted override before Angular can render', async ({
+	page,
+}) => {
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.addInitScript(() => {
+		localStorage.setItem('rc-mech.appearance', 'light');
+	});
+	await page.route('**/*', async (route) => {
+		if (route.request().resourceType() === 'script') await route.abort();
+		else await route.continue();
+	});
+
+	await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });
+	const root = page.locator('html');
+	await expect(root).toHaveAttribute('data-appearance-preference', 'light');
+	await expect(root).toHaveAttribute('data-appearance', 'light');
+	await expect
+		.poll(() =>
+			page.evaluate(() => getComputedStyle(document.body).backgroundColor),
+		)
+		.toBe('rgb(200, 204, 205)');
+});
+
+test('keeps the pre-render bootstrap safe when storage fails', async ({
+	page,
+}) => {
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.addInitScript(() => {
+		Object.defineProperty(Storage.prototype, 'getItem', {
+			configurable: true,
+			value: () => {
+				throw new DOMException('Storage blocked');
+			},
+		});
+	});
+	await page.route('**/*', async (route) => {
+		if (route.request().resourceType() === 'script') await route.abort();
+		else await route.continue();
+	});
+
+	await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });
+	await expect(page.locator('html')).not.toHaveAttribute('data-appearance');
+	await expect
+		.poll(() =>
+			page.evaluate(() => getComputedStyle(document.body).backgroundColor),
+		)
+		.toBe('rgb(17, 21, 22)');
+});
+
 test('appearance resolves before the workspace, persists, follows the system, and respects reduced motion', async ({
 	page,
 }) => {
@@ -120,5 +169,105 @@ test('appearance resolves before the workspace, persists, follows the system, an
 	expect(
 		await page.evaluate(() => getComputedStyle(document.body).transition),
 	).toBe('none');
+	expect(await scan(page)).toEqual([]);
+});
+
+test('recomposes the selector and distinguishes pointer selection from keyboard focus', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 320, height: 800 });
+	await authenticateOwner(page);
+
+	const segments = page.locator('.alloy-segment');
+	await expect(segments).toHaveCount(3);
+	const boxes = await segments.evaluateAll((elements) =>
+		elements.map((element) => {
+			const box = element.getBoundingClientRect();
+			return {
+				bottom: box.bottom,
+				height: box.height,
+				left: box.left,
+				right: box.right,
+				top: box.top,
+			};
+		}),
+	);
+	for (const box of boxes) {
+		expect(box.height).toBeGreaterThanOrEqual(48);
+		expect(box.left).toBeGreaterThanOrEqual(0);
+		expect(box.right).toBeLessThanOrEqual(320);
+	}
+	expect(boxes[1]?.top).toBeGreaterThanOrEqual(boxes[0]?.bottom ?? 0);
+	expect(boxes[2]?.top).toBeGreaterThanOrEqual(boxes[1]?.bottom ?? 0);
+
+	await expect(page.locator('#appearance-title')).toBeFocused();
+	await page.keyboard.press('Tab');
+	const system = page.getByRole('radio', { name: 'System' });
+	await expect(system).toBeFocused();
+	expect(
+		await system.locator('..').evaluate((element) => {
+			const style = getComputedStyle(element);
+			return `${style.outlineStyle} ${style.outlineWidth}`;
+		}),
+	).toBe('solid 2px');
+
+	const dark = page.getByRole('radio', { name: 'Dark' });
+	await dark.click();
+	expect(
+		await dark
+			.locator('..')
+			.evaluate((element) => getComputedStyle(element).outlineStyle),
+	).toBe('none');
+	expect(await scan(page)).toEqual([]);
+});
+
+test('keeps overdue and archived states accessible in the light appearance', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	await page.getByRole('radio', { name: 'Light' }).click();
+	const carResponse = await page.request.post('/api/v1/cars', {
+		data: {
+			make: 'Review fixture',
+			model: 'Contrast',
+			name: 'Alloy state fixture',
+		},
+	});
+	expect(carResponse.ok()).toBe(true);
+	const created = (await carResponse.json()) as { car: { id: string } };
+	const planResponse = await page.request.post('/api/v1/maintenance-plans', {
+		data: {
+			baselineAt: '2020-01-01T00:00:00.000Z',
+			carId: created.car.id,
+			intervalDays: 1,
+			name: 'Review overdue state',
+		},
+	});
+	expect(planResponse.ok()).toBe(true);
+
+	await page.goto('/maintenance');
+	const overdue = page.locator('.plan-overdue').filter({
+		hasText: 'Review overdue state',
+	});
+	await expect(overdue).toBeVisible();
+	expect(
+		await overdue
+			.locator('.plan-state')
+			.evaluate((element) => getComputedStyle(element).color),
+	).toBe('rgb(23, 27, 29)');
+	expect(await scan(page)).toEqual([]);
+
+	const archiveResponse = await page.request.post(
+		`/api/v1/cars/${created.car.id}/archive`,
+	);
+	expect(archiveResponse.ok()).toBe(true);
+	await page.goto(`/garage/${created.car.id}/photos`);
+	const archiveNote = page.getByText(
+		'This car is archived. Its photos remain visible, but photo changes are disabled until the car is restored.',
+	);
+	await expect(archiveNote).toBeVisible();
+	expect(
+		await archiveNote.evaluate((element) => getComputedStyle(element).color),
+	).toBe('rgb(23, 27, 29)');
 	expect(await scan(page)).toEqual([]);
 });
