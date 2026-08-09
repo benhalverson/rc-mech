@@ -3,6 +3,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CurrentSetup } from './current-setup';
 import type {
 	CurrentSetupChange,
 	CurrentSetupReadoutRow,
@@ -11,7 +12,6 @@ import type {
 	SaveCurrentSetupCommand,
 } from './current-setup.models';
 import { CurrentSetupStore } from './current-setup-store';
-import { CurrentSetup } from './current-setup';
 import { SetupChangeEditor } from './setup-change-editor';
 
 const setup: CurrentSetupSnapshot = {

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import {
-	PHOTO_MAX_BYTES,
 	isCompletePhotoOrder,
 	isSupportedPhotoType,
 	normalizePhotoOrder,
+	PHOTO_MAX_BYTES,
 	photoObjectKey,
 	primaryAfterDelete,
 	validatePhotoMetadata,

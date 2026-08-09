@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { Subject, type Observable } from 'rxjs';
+import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OwnerSessionStore } from '../owner-session-store';
 import { type SignOutGatewayFailure } from './sign-out-contract';

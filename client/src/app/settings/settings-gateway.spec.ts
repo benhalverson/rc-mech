@@ -6,8 +6,8 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SettingsGateway, settingsGatewayFailure } from './settings-gateway';
 import type { InviteCode, Passkey } from './settings.models';
+import { SettingsGateway, settingsGatewayFailure } from './settings-gateway';
 
 const invite: InviteCode = {
 	id: 'invite/1',

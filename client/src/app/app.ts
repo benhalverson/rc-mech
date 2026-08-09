@@ -3,8 +3,8 @@ import {
 	Component,
 	computed,
 	ElementRef,
-	inject,
 	Injector,
+	inject,
 	linkedSignal,
 	viewChild,
 } from '@angular/core';

@@ -2,21 +2,21 @@ import { DatePipe } from '@angular/common';
 import {
 	afterNextRender,
 	Component,
-	effect,
 	ElementRef,
-	inject,
+	effect,
 	Injector,
+	inject,
 	input,
 	signal,
 } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { CurrentSetupStore } from './current-setup-store';
 import type { CurrentSetupSnapshot } from './current-setup.models';
-import { SetupChangeEditor } from './setup-change-editor';
+import { CurrentSetupStore } from './current-setup-store';
 import {
-	setupChangeFormFromSnapshot,
 	type SetupChangeFormModel,
+	setupChangeFormFromSnapshot,
 } from './setup-change.rules';
+import { SetupChangeEditor } from './setup-change-editor';
 
 type SetupChangeSession = {
 	readonly setup: CurrentSetupSnapshot;

@@ -4,8 +4,8 @@ import {
 	Component,
 	ElementRef,
 	effect,
-	inject,
 	Injector,
+	inject,
 	linkedSignal,
 	signal,
 } from '@angular/core';
@@ -32,8 +32,8 @@ import {
 } from '@lucide/angular';
 import { AppearanceSelector } from './appearance-selector';
 import { InviteStore } from './invite-store';
-import { isValidTimezone, type Passkey } from './settings.models';
 import { PasskeyStore } from './passkey-store';
+import { isValidTimezone, type Passkey } from './settings.models';
 import { TimezoneStore } from './timezone-store';
 
 @Component({

@@ -2,8 +2,8 @@ import { Scalar } from '@scalar/hono-api-reference';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
-	defaultAppDependencies,
 	type AppDependencies,
+	defaultAppDependencies,
 } from './app-dependencies';
 import { isAllowedOrigin } from './auth-policy';
 import { openApi } from './openapi';

@@ -2,8 +2,8 @@ import {
 	afterNextRender,
 	Component,
 	computed,
-	effect,
 	ElementRef,
+	effect,
 	inject,
 	input,
 	OnInit,
@@ -21,9 +21,9 @@ import type { CurrentSetupSnapshot } from './current-setup.models';
 import { CurrentSetupStore } from './current-setup-store';
 import {
 	emptySetupChangeForm,
+	type SetupChangeFormModel,
 	setupChangeDraftFromForm,
 	setupChangeRemainingGroups,
-	type SetupChangeFormModel,
 } from './setup-change.rules';
 
 const validationMessage = 'Review the highlighted setup fields before saving.';

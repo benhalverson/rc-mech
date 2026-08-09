@@ -6,8 +6,8 @@ import {
 	voiceTextCaptureInput,
 } from './types';
 import {
-	validateVoiceMetadata,
 	VOICE_MAX_BYTES,
+	validateVoiceMetadata,
 	voiceObjectKey,
 } from './voice-policy';
 

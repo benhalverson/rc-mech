@@ -6,8 +6,8 @@ import {
 	LucideTriangleAlert,
 } from '@lucide/angular';
 import {
-	AppearanceService,
 	type AppearancePreference,
+	AppearanceService,
 } from '../appearance.service';
 
 @Component({

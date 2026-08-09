@@ -7,8 +7,8 @@ import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-	driveSessionGatewayFailure,
 	DriveSessionGateway,
+	driveSessionGatewayFailure,
 	parseDriveSessionCollection,
 	parseDriveSessionMutation,
 	parseDriveSessionTimezone,

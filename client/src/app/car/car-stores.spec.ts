@@ -5,13 +5,13 @@ import {
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CarBuildStore } from './car-build-store';
+import { GarageGateway } from '../garage/garage-gateway';
 import { CarBuildGateway } from './car-build-gateway';
+import { CarBuildStore } from './car-build-store';
 import { CarGateway } from './car-gateway';
 import { carReadFailure } from './car-read-failure';
-import { CarSetupsStore } from './setups/car-setups-store';
-import { GarageGateway } from '../garage/garage-gateway';
 import { CarStore } from './car-store';
+import { CarSetupsStore } from './setups/car-setups-store';
 
 describe('car route stores', () => {
 	let http: HttpTestingController | undefined;

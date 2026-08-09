@@ -1,5 +1,4 @@
 import { computed, inject } from '@angular/core';
-import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import {
 	patchState,
 	signalStore,
@@ -8,10 +7,9 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
+import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, exhaustMap, of, tap } from 'rxjs';
 import type { GarageCarInput } from '../garage/garage-store';
-import { CarGateway } from './car-gateway';
-import { carReadFailure, type CarReadFailure } from './car-read-failure';
 import type {
 	CarGatewayFailure,
 	CarLifecycleOutcome,
@@ -19,6 +17,8 @@ import type {
 	ChangeCarLifecycleCommand,
 	UpdateCarCommand,
 } from './car.models';
+import { CarGateway } from './car-gateway';
+import { type CarReadFailure, carReadFailure } from './car-read-failure';
 
 type CarState = {
 	carId: string | null;

@@ -9,8 +9,6 @@ import {
 } from '@ngrx/signals';
 import { firstValueFrom, type Observable } from 'rxjs';
 import { OwnerSessionStore } from '../owner-session-store';
-import { VoiceConnectivity } from './voice-connectivity';
-import { VoiceGateway } from './voice-gateway';
 import type {
 	CaptureTextCommand,
 	CorrectVoiceTextCommand,
@@ -25,6 +23,8 @@ import type {
 	VoiceUpdate,
 	VoiceWorkflowFailure,
 } from './voice.models';
+import { VoiceConnectivity } from './voice-connectivity';
+import { VoiceGateway } from './voice-gateway';
 import { VoiceOfflineQueue } from './voice-offline-queue';
 import { VoiceRecorder } from './voice-recorder';
 

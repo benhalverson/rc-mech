@@ -1,18 +1,18 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { DOCUMENT } from '@angular/common';
-import { inject, Injectable, InjectionToken } from '@angular/core';
-import { catchError, map, throwError, type Observable } from 'rxjs';
-import { safeParse } from 'zod/mini';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Injectable, InjectionToken, inject } from '@angular/core';
+import { catchError, map, type Observable, throwError } from 'rxjs';
 import type * as z from 'zod/mini';
+import { safeParse } from 'zod/mini';
 import {
-	accessResponseSchema,
 	type AuthenticationGatewayFailure,
-	passkeyRequestOptionsSchema,
+	accessResponseSchema,
 	type PasskeyRequestOptions,
+	passkeyRequestOptionsSchema,
 	type RegisterCommand,
 	type RequestMagicLinkCommand,
-	verifiedAuthenticationSchema,
 	type VerifyPasskeyCommand,
+	verifiedAuthenticationSchema,
 } from './authentication.models';
 
 class InvalidAuthenticationResponse extends Error {}

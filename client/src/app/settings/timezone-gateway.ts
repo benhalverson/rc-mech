@@ -3,11 +3,11 @@ import {
 	HttpErrorResponse,
 	httpResource,
 } from '@angular/common/http';
-import { inject, Injectable } from '@angular/core';
-import { catchError, map, throwError, type Observable } from 'rxjs';
+import { Injectable, inject } from '@angular/core';
+import { catchError, map, type Observable, throwError } from 'rxjs';
 import { minLength, nullable, object, optional, string, trim } from 'zod/mini';
-import type { SaveTimezoneCommand } from './timezone-store';
 import type { TimezonePreference } from './settings.models';
+import type { SaveTimezoneCommand } from './timezone-store';
 
 const timezoneResponseSchema = object({
 	timezone: optional(nullable(string())),

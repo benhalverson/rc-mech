@@ -1,4 +1,4 @@
-import { inject, InjectionToken, Service } from '@angular/core';
+import { InjectionToken, inject, Service } from '@angular/core';
 import Dexie, { type Table } from 'dexie';
 import type { LocalVoiceStatus, PendingVoiceCapture } from './voice.models';
 

@@ -1,12 +1,12 @@
 import { DOCUMENT } from '@angular/common';
-import { inject, Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import {
 	catchError,
 	defer,
 	from,
 	map,
-	throwError,
 	type Observable,
+	throwError,
 } from 'rxjs';
 import type {
 	PasskeyAssertion,

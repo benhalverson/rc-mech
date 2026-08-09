@@ -1,3 +1,4 @@
+import type * as z from 'zod/mini';
 import {
 	array,
 	email,
@@ -12,7 +13,6 @@ import {
 	string,
 	unknown,
 } from 'zod/mini';
-import type * as z from 'zod/mini';
 
 const authenticatorTransportSchema = enumSchema([
 	'ble',

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { createEmailSender } from './email.ts';
 import {
 	hasEmailDelivery,
 	hasMagicLinkConfiguration,
@@ -9,6 +8,7 @@ import {
 	isLocalDevelopment,
 	normalizeEmail,
 } from './auth-policy.ts';
+import { createEmailSender } from './email.ts';
 
 test('owner matching is case-insensitive and trims whitespace', () => {
 	assert.equal(normalizeEmail('  Owner@Example.com '), 'owner@example.com');

@@ -2,15 +2,13 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router } from '@angular/router';
 import {
 	BehaviorSubject,
+	type Observable,
 	of,
 	Subject,
 	throwError,
-	type Observable,
 } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OwnerSessionStore } from '../owner-session-store';
-import { AuthenticationGateway } from './authentication-gateway';
-import { AuthenticationStore } from './authentication-store';
 import type {
 	PasskeyAssertion,
 	PasskeyRequestOptions,
@@ -18,6 +16,8 @@ import type {
 	RequestMagicLinkCommand,
 	VerifyPasskeyCommand,
 } from './authentication.models';
+import { AuthenticationGateway } from './authentication-gateway';
+import { AuthenticationStore } from './authentication-store';
 import { PasskeyCapability } from './passkey-capability';
 
 const assertion: PasskeyAssertion = {

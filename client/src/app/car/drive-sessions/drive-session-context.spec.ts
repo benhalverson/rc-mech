@@ -1,9 +1,9 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DriveSessionCollection } from './drive-session.models';
 import { DriveSessionContextStore } from './drive-session-context';
 import { DriveSessionGateway } from './drive-session-gateway';
-import type { DriveSessionCollection } from './drive-session.models';
 import { browserTimezone } from './drive-session-time';
 
 class FakeDriveSessionGateway {

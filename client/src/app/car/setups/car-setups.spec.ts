@@ -18,8 +18,8 @@ import { CarGateway } from '../car-gateway';
 import { CarStore } from '../car-store';
 import { CarSetups } from './car-setups';
 import { CarSetupsStore } from './car-setups-store';
-import { SetupSnapshotStore } from './setup-snapshot-store';
 import { SetupSnapshotGateway, SoDialedImportGateway } from './setup-snapshot';
+import { SetupSnapshotStore } from './setup-snapshot-store';
 
 const testRoutes: Routes = [
 	{

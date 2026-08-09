@@ -10,9 +10,9 @@ import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	AUTHENTICATION_ORIGIN,
+	AuthenticationGateway,
 	authenticationCallbackUrl,
 	authenticationGatewayFailure,
-	AuthenticationGateway,
 	parseAccessResponse,
 	parsePasskeyRequestOptions,
 	parseVerifiedAuthentication,

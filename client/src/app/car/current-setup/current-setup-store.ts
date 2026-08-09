@@ -9,7 +9,6 @@ import {
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, exhaustMap, Subject, takeUntil, tap } from 'rxjs';
-import { CurrentSetupGateway } from './current-setup-gateway';
 import type {
 	CurrentSetupGatewayFailure,
 	CurrentSetupSaveFailure,
@@ -22,6 +21,7 @@ import {
 	currentSetupPriorityRows,
 	currentSetupRemainingRows,
 } from './current-setup.rules';
+import { CurrentSetupGateway } from './current-setup-gateway';
 import { resolveSetupTimezone } from './setup-change.rules';
 
 export type CurrentSetupFailure = {

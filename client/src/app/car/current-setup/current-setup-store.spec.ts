@@ -1,16 +1,16 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Subject, type Observable } from 'rxjs';
+import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	type CurrentSetupGatewayFailure,
-	CurrentSetupGateway,
-} from './current-setup-gateway';
 import type {
 	CurrentSetupCollection,
 	CurrentSetupSnapshot,
 	SaveCurrentSetupCommand,
 } from './current-setup.models';
+import {
+	CurrentSetupGateway,
+	type CurrentSetupGatewayFailure,
+} from './current-setup-gateway';
 import { CurrentSetupStore } from './current-setup-store';
 
 const snapshot = (

@@ -1,5 +1,4 @@
 import { computed, inject } from '@angular/core';
-import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import {
 	patchState,
 	signalStore,
@@ -8,15 +7,16 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
+import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, exhaustMap, of, tap } from 'rxjs';
-import { CarBuildGateway } from './car-build-gateway';
-import { carReadFailure } from './car-read-failure';
 import type {
 	BuildGatewayFailure,
 	BuildSaveOutcome,
 	InstalledComponent,
 	SaveBuildCommand,
 } from './car.models';
+import { CarBuildGateway } from './car-build-gateway';
+import { carReadFailure } from './car-read-failure';
 
 const installationTime = (component: InstalledComponent): number => {
 	const timestamp = component.installedAt

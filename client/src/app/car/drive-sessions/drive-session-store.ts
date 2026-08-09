@@ -10,7 +10,6 @@ import {
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, exhaustMap, Subject, takeUntil, tap } from 'rxjs';
 import type { CarReadFailure } from '../car-read-failure';
-import { DriveSessionGateway } from './drive-session-gateway';
 import {
 	type ArchiveDriveSessionCommand,
 	type DriveSessionGatewayFailure,
@@ -18,6 +17,7 @@ import {
 	type DriveSessionOutcome,
 	type SaveDriveSessionCommand,
 } from './drive-session.models';
+import { DriveSessionGateway } from './drive-session-gateway';
 import { resolveTimezone } from './drive-session-time';
 
 type DriveSessionState = {

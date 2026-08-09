@@ -1,9 +1,9 @@
 import {
-	currentSetupSectionKeys,
 	type CurrentSetupChange,
 	type CurrentSetupReadoutRow,
 	type CurrentSetupSectionKey,
 	type CurrentSetupSnapshot,
+	currentSetupSectionKeys,
 } from './current-setup.models';
 
 const NOT_RECORDED = 'Not recorded';

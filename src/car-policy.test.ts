@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import {
-	carListMode,
 	canArchive,
 	canRestore,
 	canWrite,
+	carListMode,
 	ownsCar,
 } from './car-policy.ts';
 

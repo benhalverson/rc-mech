@@ -1,3 +1,4 @@
+import type * as z from 'zod/mini';
 import {
 	array,
 	nullable,
@@ -9,7 +10,6 @@ import {
 	string,
 	transform,
 } from 'zod/mini';
-import type * as z from 'zod/mini';
 
 const nullableString = pipe(
 	optional(nullable(string())),

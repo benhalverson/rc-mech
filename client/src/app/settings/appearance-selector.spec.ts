@@ -2,8 +2,8 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-	AppearanceService,
 	type AppearancePreference,
+	AppearanceService,
 } from '../appearance.service';
 import { AppearanceSelector } from './appearance-selector';
 

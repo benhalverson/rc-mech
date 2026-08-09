@@ -1,11 +1,11 @@
-import { test } from 'vitest';
 import assert from 'node:assert/strict';
+import { test } from 'vitest';
 import {
-	STANDARD_COMPONENT_SLOTS,
 	canEditComponent,
 	componentSlotType,
 	normalizeComponentSlot,
 	ownsComponent,
+	STANDARD_COMPONENT_SLOTS,
 } from './component-policy.ts';
 
 test('standard component slots classify common RC components', () => {
