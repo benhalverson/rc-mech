@@ -186,6 +186,11 @@ test('recomposes the selector and distinguishes pointer selection from keyboard 
 
 	const segments = page.locator('.alloy-segment');
 	await expect(segments).toHaveCount(3);
+	expect(
+		await segments.evaluateAll((elements) =>
+			elements.map((element) => getComputedStyle(element).transitionProperty),
+		),
+	).toEqual(['border-color', 'border-color', 'border-color']);
 	const boxes = await segments.evaluateAll((elements) =>
 		elements.map((element) => {
 			const box = element.getBoundingClientRect();
