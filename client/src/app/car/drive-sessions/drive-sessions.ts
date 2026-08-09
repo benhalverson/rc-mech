@@ -1,5 +1,14 @@
 import { DatePipe } from '@angular/common';
-import { Component, effect, inject, input, signal } from '@angular/core';
+import {
+	afterNextRender,
+	Component,
+	effect,
+	ElementRef,
+	inject,
+	Injector,
+	input,
+	signal,
+} from '@angular/core';
 import {
 	FormField,
 	form as signalForm,
@@ -7,6 +16,16 @@ import {
 	validate,
 } from '@angular/forms/signals';
 import { RouterLink } from '@angular/router';
+import {
+	LucideArchive,
+	LucideClock,
+	LucideMic,
+	LucidePencil,
+	LucidePlus,
+	LucideRefreshCw,
+	LucideSave,
+	LucideTriangleAlert,
+} from '@lucide/angular';
 import { CarSectionShell } from '../car-section-shell';
 import { CarStore } from '../car-store';
 import type { DriveSession } from './drive-session.models';
@@ -29,14 +48,29 @@ const emptyForm = (): DriveSessionForm => ({
 
 @Component({
 	selector: 'app-drive-sessions',
-	imports: [CarSectionShell, DatePipe, FormField, RouterLink],
+	imports: [
+		CarSectionShell,
+		DatePipe,
+		FormField,
+		LucideArchive,
+		LucideClock,
+		LucideMic,
+		LucidePencil,
+		LucidePlus,
+		LucideRefreshCw,
+		LucideSave,
+		LucideTriangleAlert,
+		RouterLink,
+	],
 	templateUrl: './drive-sessions.html',
-	styleUrl: '../../garage-pages.css',
+	host: { class: 'block' },
 })
 export class DriveSessions {
 	readonly carId = input('');
 	protected readonly carStore = inject(CarStore);
 	protected readonly driveSessionStore = inject(DriveSessionStore);
+	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+	private readonly injector = inject(Injector);
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
 	protected readonly form = signal(emptyForm());
@@ -57,6 +91,7 @@ export class DriveSessions {
 	});
 	protected readonly formError = signal('');
 	protected readonly message = signal('');
+	private returnFocusTarget = 'record';
 	private lastHandledOperationId = 0;
 
 	constructor() {
@@ -87,6 +122,11 @@ export class DriveSessions {
 			}
 			if (outcome.operation === 'save-drive-session') {
 				this.editing.set(false);
+				this.focusAfterRender(() =>
+					this.host.nativeElement.querySelector<HTMLElement>(
+						'#drive-sessions-title',
+					),
+				);
 				this.formError.set('');
 				this.message.set(
 					this.editingId()
@@ -97,17 +137,45 @@ export class DriveSessions {
 		});
 	}
 
+	private focusAfterRender(target: () => HTMLElement | null): void {
+		afterNextRender(() => target()?.focus(), { injector: this.injector });
+	}
+
+	private focusEditorAfterRender(): void {
+		this.focusAfterRender(() =>
+			this.host.nativeElement.querySelector<HTMLElement>(
+				'#drive-session-form-title',
+			),
+		);
+	}
+
+	private restoreLauncherFocusAfterRender(): void {
+		this.focusAfterRender(() => {
+			const controls = this.host.nativeElement.querySelectorAll<HTMLElement>(
+				'[data-drive-session-launcher]',
+			);
+			return (
+				[...controls].find(
+					(control) =>
+						control.dataset['driveSessionLauncher'] === this.returnFocusTarget,
+				) ?? null
+			);
+		});
+	}
+
 	private resetRouteState(): void {
 		this.editing.set(false);
 		this.editingId.set(null);
 		this.driveSessionForm().reset(emptyForm());
 		this.formError.set('');
 		this.message.set('');
+		this.returnFocusTarget = 'record';
 	}
 
 	protected openAdd(): void {
 		if (this.carStore.car()?.archivedAt || this.driveSessionStore.pending())
 			return;
+		this.returnFocusTarget = 'record';
 		this.editingId.set(null);
 		this.driveSessionForm().reset({
 			...emptyForm(),
@@ -117,6 +185,7 @@ export class DriveSessions {
 			),
 		});
 		this.editing.set(true);
+		this.focusEditorAfterRender();
 	}
 
 	protected openEdit(session: DriveSession): void {
@@ -126,6 +195,7 @@ export class DriveSessions {
 			this.driveSessionStore.pending()
 		)
 			return;
+		this.returnFocusTarget = session.id;
 		this.editingId.set(session.id);
 		this.driveSessionForm().reset({
 			startedAt: localDateTime(
@@ -139,6 +209,7 @@ export class DriveSessions {
 			notes: session.notes ?? '',
 		});
 		this.editing.set(true);
+		this.focusEditorAfterRender();
 	}
 
 	protected cancel(): void {
@@ -146,6 +217,7 @@ export class DriveSessions {
 		this.editing.set(false);
 		this.formError.set('');
 		this.driveSessionForm().reset();
+		this.restoreLauncherFocusAfterRender();
 	}
 
 	protected save(event?: Event): void {
@@ -164,10 +236,7 @@ export class DriveSessions {
 			? Number(form.durationMinutes)
 			: null;
 		if (this.driveSessionForm().invalid()) {
-			this.formError.set(
-				this.driveSessionForm().errorSummary()[0]?.message ??
-					'Review the drive session fields.',
-			);
+			this.formError.set('Review the highlighted drive session fields.');
 			if (this.driveSessionForm.startedAt().invalid())
 				this.driveSessionForm.startedAt().focusBoundControl();
 			else this.driveSessionForm.durationMinutes().focusBoundControl();

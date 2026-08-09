@@ -115,7 +115,7 @@ describe('DriveSessions', () => {
 
 		store.loading.set(true);
 		root = detect();
-		expect(root.textContent).toContain('Opening drive session history');
+		expect(root.textContent).toContain('Opening drive sessions');
 		store.loading.set(false);
 		store.failure.set({ message: 'History failed.', retryable: true });
 		root = detect();
@@ -134,6 +134,9 @@ describe('DriveSessions', () => {
 		const root = detect();
 		button('Record the first drive session').click();
 		detect();
+		expect(document.activeElement).toBe(
+			root.querySelector('#drive-session-form-title'),
+		);
 		const component = fixture.componentInstance as unknown as {
 			formError: { set(value: string): void };
 			message: { set(value: string): void };
@@ -170,7 +173,13 @@ describe('DriveSessions', () => {
 		);
 		detect();
 		expect(root.querySelector('[role="alert"]')?.textContent).toContain(
-			'Add when this drive session started',
+			'Review the highlighted drive session fields',
+		);
+		expect(
+			root.querySelector('#drive-session-started-error')?.textContent,
+		).toContain('Add when this drive session started');
+		expect(startedAt.getAttribute('aria-describedby')).toBe(
+			'drive-session-started-error',
 		);
 		expect(document.activeElement).toBe(startedAt);
 		expect(store.saveDriveSession).not.toHaveBeenCalled();
@@ -182,20 +191,11 @@ describe('DriveSessions', () => {
 		);
 		detect();
 		expect(document.activeElement).toBe(duration);
-
-		const component = fixture.componentInstance as unknown as {
-			driveSessionForm(): { errorSummary(): Array<{ message?: string }> };
-		};
-		Object.defineProperty(component.driveSessionForm(), 'errorSummary', {
-			configurable: true,
-			value: () => [],
-		});
-		(root.querySelector('form') as HTMLFormElement).dispatchEvent(
-			new Event('submit'),
-		);
-		detect();
-		expect(root.querySelector('[role="alert"]')?.textContent).toContain(
-			'Review the drive session fields',
+		expect(
+			root.querySelector('#drive-session-duration-error')?.textContent,
+		).toContain('Duration must be between 1 and 1,440 minutes');
+		expect(duration.getAttribute('aria-describedby')).toBe(
+			'drive-session-duration-error',
 		);
 	});
 
@@ -228,7 +228,7 @@ describe('DriveSessions', () => {
 			operationId: 1,
 		});
 		detect();
-		expect(button('Save session').disabled).toBe(true);
+		expect(button('Saving…').disabled).toBe(true);
 		store.outcome.set({
 			status: 'succeeded',
 			operation: 'save-drive-session',
@@ -238,6 +238,9 @@ describe('DriveSessions', () => {
 		detect();
 		expect(root.querySelector('form')).toBeNull();
 		expect(root.textContent).toContain('Drive session recorded');
+		expect(document.activeElement).toBe(
+			root.querySelector('#drive-sessions-title'),
+		);
 	});
 
 	it('renders save and archive failures from store outcomes', () => {
@@ -264,9 +267,11 @@ describe('DriveSessions', () => {
 			error: { kind: 'unavailable' },
 		});
 		detect();
-		expect(root.querySelector('[role="status"]')?.textContent).toContain(
-			'could not be archived',
-		);
+		expect(
+			[...root.querySelectorAll('[role="alert"]')].some((alert) =>
+				alert.textContent?.includes('could not be archived'),
+			),
+		).toBe(true);
 	});
 
 	it('dispatches archive intent and keeps archived cars read-only', () => {
@@ -278,24 +283,35 @@ describe('DriveSessions', () => {
 			sessionId: 'drive-1',
 		});
 		store.outcome.set({
+			status: 'pending',
+			operation: 'archive-drive-session',
+			operationId: 1,
+		});
+		root = detect();
+		expect(root.textContent).toContain('Archiving the drive session');
+		store.outcome.set({
 			status: 'succeeded',
 			operation: 'archive-drive-session',
 			operationId: 1,
 			session: driveSession({ deletedAt: 'now' }),
 		});
-		detect();
+		store.sessions.set([driveSession({ deletedAt: 'now' })]);
+		root = detect();
+		expect(root.textContent).toContain('Archived drive session');
 
 		carStore.car.update((car) => (car ? { ...car, archivedAt: 'now' } : car));
 		root = detect();
 		expect(root.textContent).not.toContain('Record a drive session');
-		expect(root.querySelector('.session-row .form-actions')).toBeNull();
+		expect(
+			root.querySelector('.session-row .drive-session-actions'),
+		).toBeNull();
 		store.sessions.set([driveSession({ durationMinutes: null })]);
 		root = detect();
 		expect(root.querySelector('.session-row span')).toBeNull();
 		store.sessions.set([]);
 		root = detect();
 		expect(root.textContent).toContain('No drive sessions recorded');
-		expect(root.querySelector('.state-card button')).toBeNull();
+		expect(root.querySelector('.alloy-empty-state button')).toBeNull();
 	});
 
 	it('edits, clears, cancels, and completes an existing drive session', () => {
@@ -308,10 +324,17 @@ describe('DriveSessions', () => {
 		const root = detect();
 		button('Record a drive session').click();
 		detect();
+		expect(document.activeElement).toBe(
+			root.querySelector('#drive-session-form-title'),
+		);
 		button('Cancel').click();
 		detect();
+		expect(document.activeElement).toBe(button('Record a drive session'));
 		button('Edit').click();
 		detect();
+		expect(document.activeElement).toBe(
+			root.querySelector('#drive-session-form-title'),
+		);
 		expect(
 			root.querySelector('#drive-session-form-title')?.textContent,
 		).toContain('Edit drive session');
@@ -345,12 +368,16 @@ describe('DriveSessions', () => {
 		});
 		detect();
 		expect(root.textContent).toContain('Drive session updated');
+		expect(document.activeElement).toBe(
+			root.querySelector('#drive-sessions-title'),
+		);
 
 		button('Edit').click();
 		detect();
 		button('Cancel').click();
 		detect();
 		expect(root.querySelector('form')).toBeNull();
+		expect(document.activeElement).toBe(button('Edit drive session'));
 
 		const component = fixture.componentInstance as unknown as {
 			openEdit(session: DriveSession): void;
