@@ -1,3 +1,6 @@
+@if (changeSession(); as change) {
+	<app-setup-change-editor [carId]="carId()" [setup]="change.setup" [initialForm]="change.form" [initialFocus]="change.focusField" (cancelled)="cancelChange()" (completed)="completeChange()" />
+} @else {
 <section class="current-setup-sheet rounded-alloy-panel border border-alloy-separator bg-alloy-control" aria-labelledby="current-setup-title">
 	<header class="flex items-center justify-between gap-4 border-b border-alloy-separator p-4">
 		<div>
@@ -5,9 +8,15 @@
 			<h3 id="current-setup-title" class="m-0 mt-1 font-interface text-[22px] font-[650] leading-7">Current setup</h3>
 		</div>
 		@if (!archived() && store.current()) {
-			<a class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-h-12 items-center justify-center no-underline" [routerLink]="setupRoute()">Open setup</a>
+			<div class="flex flex-wrap justify-end gap-2">
+				<button class="alloy-control alloy-control-primary" data-change-trigger="name" type="button" (click)="beginChange('name')" [disabled]="!store.timezoneReady()">{{ store.timezoneReady() ? 'Change setup' : 'Loading garage time…' }}</button>
+				<a class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-h-12 items-center justify-center no-underline" [routerLink]="setupRoute()">Setup history</a>
+			</div>
 		}
 	</header>
+	@if (saveMessage()) {
+		<p class="alloy-state alloy-live-state m-4" role="status">{{ saveMessage() }}</p>
+	}
 
 	@if (store.loading()) {
 		<div class="alloy-state m-0 p-4" role="status">Reading the current setup…</div>
@@ -31,7 +40,22 @@
 			@for (row of store.priorityRows(); track row.id) {
 				<div class="instrument-row flex min-h-[50px] items-center justify-between gap-3 border-b border-alloy-separator px-4 py-2.5 max-[480px]:items-start">
 					<dt class="min-w-[116px] text-sm font-semibold leading-5 text-alloy-text-secondary max-[480px]:min-w-[96px]">{{ row.label }}</dt>
-					<dd class="m-0 min-w-0 [overflow-wrap:anywhere] text-right font-technical text-[15px] leading-5" [class.text-alloy-text-secondary]="row.value.includes('Not recorded')">{{ row.value }}</dd>
+					<dd class="m-0 min-w-0 text-right font-technical text-[15px] leading-5" [class.text-alloy-text-secondary]="row.value.includes('Not recorded')">
+						@if (archived()) {
+							{{ row.value }}
+						} @else {
+						@if (row.segments; as segments) {
+							<span class="flex flex-wrap items-center justify-end gap-x-1">
+								@for (segment of segments; track segment.focusField) {
+									@if (!$first) { <span aria-hidden="true">&nbsp;/&nbsp;</span> }
+									<button class="alloy-focus-ring -my-2.5 min-h-[50px] border-0 bg-transparent p-0 font-inherit text-inherit [overflow-wrap:anywhere]" [class.text-alloy-text-secondary]="segment.value.includes('Not recorded')" type="button" [attr.data-change-trigger]="segment.focusField" [attr.aria-label]="'Change setup: ' + segment.label + ', ' + segment.value" (click)="beginChange(segment.focusField)" [disabled]="!store.timezoneReady()">{{ segment.value }}</button>
+								}
+							</span>
+						} @else {
+							<button class="alloy-focus-ring -my-2.5 flex min-h-[50px] max-w-full items-center justify-end border-0 bg-transparent p-0 text-right font-inherit text-inherit [overflow-wrap:anywhere]" type="button" [attr.data-change-trigger]="row.focusField" [attr.aria-label]="'Change setup: ' + row.label + ', ' + row.value" (click)="beginChange(row.focusField)" [disabled]="!store.timezoneReady()">{{ row.value }}</button>
+						}
+						}
+					</dd>
 				</div>
 			}
 		</dl>
@@ -57,7 +81,13 @@
 					@for (row of store.remainingRows(); track row.id) {
 						<div class="instrument-row flex min-h-[50px] items-center justify-between gap-3 border-b border-alloy-separator px-4 py-2.5 max-[480px]:items-start">
 							<dt class="min-w-[116px] text-sm font-semibold leading-5 text-alloy-text-secondary max-[480px]:min-w-[96px]">{{ row.label }}</dt>
-							<dd class="m-0 min-w-0 [overflow-wrap:anywhere] text-right font-technical text-[15px] leading-5" [class.text-alloy-text-secondary]="row.value === 'Not recorded'">{{ row.value }}</dd>
+							<dd class="m-0 min-w-0 text-right font-technical text-[15px] leading-5" [class.text-alloy-text-secondary]="row.value === 'Not recorded'">
+								@if (archived()) {
+									{{ row.value }}
+								} @else {
+									<button class="alloy-focus-ring -my-2.5 flex min-h-[50px] max-w-full items-center justify-end border-0 bg-transparent p-0 text-right font-inherit text-inherit [overflow-wrap:anywhere]" type="button" [attr.data-change-trigger]="row.focusField" [attr.aria-label]="'Change setup: ' + row.label + ', ' + row.value" (click)="beginChange(row.focusField)" [disabled]="!store.timezoneReady()">{{ row.value }}</button>
+								}
+							</dd>
 						</div>
 					}
 				</dl>
@@ -82,3 +112,4 @@
 		</div>
 	}
 </section>
+}

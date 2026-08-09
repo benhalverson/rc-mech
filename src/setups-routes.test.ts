@@ -376,6 +376,91 @@ describe('setup routes', () => {
 		expect(response.status).toBe(201);
 	});
 
+	test('atomically copies the expected unchanged Current setup', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'first', value: setup() },
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'batch' },
+			{ kind: 'first', value: setup({ id: 'setup-copy' }) },
+		);
+		const response = await request(
+			'/api/v1/cars/car-1/setups/setup-1/copy',
+			json('POST', {
+				name: 'Changed setup',
+				makeCurrent: true,
+				expectedCurrentSetupId: 'setup-1',
+				expectedSourceUpdatedAt: '2026-01-01T00:00:00.000Z',
+			}),
+		);
+
+		expect(response.status).toBe(201);
+		expect(d1.batches.at(-1)?.[0]).toContain(
+			'inner join "setup" "guarded_source"',
+		);
+		expect(d1.batches.at(-1)?.[0]).toContain(
+			'"guarded_source"."updated_at" = ?',
+		);
+		expect(d1.batches.at(-1)?.[1]).toContain('exists (select');
+	});
+
+	test('rejects a stale guarded Current setup without creating a copy', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'first', value: setup() },
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'batch' },
+			{ kind: 'first', value: null },
+		);
+		const response = await request(
+			'/api/v1/cars/car-1/setups/setup-1/copy',
+			json('POST', {
+				makeCurrent: true,
+				expectedCurrentSetupId: 'setup-1',
+				expectedSourceUpdatedAt: '2026-01-01T00:00:00.000Z',
+			}),
+		);
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toEqual({
+			error: 'The Current setup changed while you were editing',
+		});
+	});
+
+	test.each([
+		[
+			'mismatched Current setup',
+			{
+				makeCurrent: true,
+				expectedCurrentSetupId: 'setup-2',
+				expectedSourceUpdatedAt: '2026-01-01T00:00:00.000Z',
+			},
+			409,
+		],
+		[
+			'incomplete stale-write precondition',
+			{ makeCurrent: true, expectedCurrentSetupId: 'setup-1' },
+			400,
+		],
+	] as const)(
+		'rejects %s for a requested setup copy',
+		async (_case, body, status) => {
+			const { d1, request } = fixture();
+			d1.queue(
+				{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+				{ kind: 'first', value: setup() },
+				{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			);
+			const response = await request(
+				'/api/v1/cars/car-1/setups/setup-1/copy',
+				json('POST', body),
+			);
+			expect(response.status).toBe(status);
+		},
+	);
+
 	test('selects an owned setup as current', async () => {
 		const { d1, request } = fixture();
 		d1.queue(

@@ -30,12 +30,31 @@ export type SetupFormModel = {
 
 export const setupSectionFields = {
 	vehicle: ['rideHeight', 'weight', 'wheelbase'],
-	drivetrain: ['motor', 'pinion', 'spur', 'diffOil'],
+	drivetrain: [
+		'motor',
+		'pinion',
+		'spur',
+		'driveType',
+		'gearDiffOil',
+		'gearDiffHeight',
+		'diffOil',
+		'frontDiffOil',
+		'centerDiffOil',
+		'rearDiffOil',
+		'centerSlipper',
+	],
 	electronics: ['esc', 'escSettings', 'servo', 'battery'],
 	tires: ['front', 'rear', 'insert', 'wheels'],
 	shocks: ['frontOil', 'rearOil', 'frontSpring', 'rearSpring'],
 	frontSuspension: ['camber', 'caster', 'toe', 'swayBar'],
-	rearSuspension: ['camber', 'toe', 'swayBar', 'antiSquat'],
+	rearSuspension: [
+		'camber',
+		'toe',
+		'cBlockPill',
+		'dBlockPill',
+		'swayBar',
+		'antiSquat',
+	],
 	notes: ['setupNotes'],
 } as const;
 
