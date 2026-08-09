@@ -10,21 +10,21 @@
 	<form class="timezone-form" (submit)="saveTimezone($event)" novalidate>
 		<label for="garage-timezone">IANA timezone</label>
 		<div class="inline-form">
-			<input id="garage-timezone" type="text" autocomplete="off" placeholder="America/Los_Angeles" [formField]="timezoneForm.timezone" [attr.aria-describedby]="(timezoneForm.timezone().touched() && timezoneForm.timezone().invalid()) || store.timezoneError() ? 'timezone-validation' : 'timezone-status'" />
-			<button class="button" type="submit" [disabled]="store.timezoneLoading() || store.timezoneSaving()">{{ store.timezoneSaving() ? 'Saving…' : 'Save timezone' }}</button>
+		<input id="garage-timezone" type="text" autocomplete="off" placeholder="America/Los_Angeles" [formField]="timezoneForm.timezone" [attr.aria-describedby]="(timezoneForm.timezone().touched() && timezoneForm.timezone().invalid()) || timezoneStore.error() ? 'timezone-validation' : 'timezone-status'" />
+		<button class="button" type="submit" [disabled]="timezoneStore.loading() || timezoneStore.saving()">{{ timezoneStore.saving() ? 'Saving…' : 'Save timezone' }}</button>
 		</div>
 	</form>
 	@if (timezoneForm.timezone().touched() && timezoneForm.timezone().invalid()) {
 		<p id="timezone-validation" class="hint" role="alert">{{ timezoneForm.timezone().errors()[0]?.message }}</p>
-	} @else if (store.timezoneError()) {
-		<p id="timezone-validation" class="hint" role="alert">{{ store.timezoneError() }}</p>
-		<button class="text-button" type="button" (click)="store.retryTimezone()">Try again</button>
-	} @else if (store.timezoneLoading()) {
+	} @else if (timezoneStore.error()) {
+		<p id="timezone-validation" class="hint" role="alert">{{ timezoneStore.error() }}</p>
+		<button class="text-button" type="button" (click)="timezoneStore.retry()">Try again</button>
+	} @else if (timezoneStore.loading()) {
 		<p id="timezone-status" class="hint" role="status">Loading the garage timezone…</p>
 	} @else {
-		<p id="timezone-status" class="hint" role="status">Currently displaying dates in <strong>{{ store.timezone() }}</strong>.</p>
+		<p id="timezone-status" class="hint" role="status">Currently displaying dates in <strong>{{ timezoneStore.timezone() }}</strong>.</p>
 	}
-	@if (store.timezoneMessage()) { <p class="message" role="status">{{ store.timezoneMessage() }}</p> }
+	@if (timezoneStore.message()) { <p class="message" role="status">{{ timezoneStore.message() }}</p> }
 
 	<div class="section-heading passkey-heading">
 		<div><div class="eyebrow">Invite access</div><h2 id="invite-codes-title">Your invite codes</h2></div>

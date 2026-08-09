@@ -3,7 +3,6 @@ import {
 	ApplicationConfig,
 	provideBrowserGlobalErrorListeners,
 } from '@angular/core';
-import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 
 import { routes } from './app.routes';
@@ -14,6 +13,5 @@ export const appConfig: ApplicationConfig = {
 		provideBrowserGlobalErrorListeners(),
 		provideHttpClient(withInterceptors([ownerSessionExpiryInterceptor])),
 		provideRouter(routes, withComponentInputBinding()),
-		provideAnimations(),
 	],
 };
