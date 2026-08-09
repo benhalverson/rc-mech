@@ -4,136 +4,144 @@ import {
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MaintenanceStore } from './maintenance-store';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MaintenanceGateway } from './maintenance-gateway';
+import { MaintenancePlanStore } from './maintenance-plan-store';
+import { ServiceRecordStore } from './service-record-store';
 
-describe('MaintenanceStore', () => {
-	let http: HttpTestingController | undefined;
+const car = { id: 'car-1', name: 'Red Runner' };
+const plan = {
+	id: 'plan-1',
+	carId: 'car-1',
+	componentId: null,
+	name: 'Inspect',
+	status: 'active' as const,
+};
+const record = {
+	id: 'record-1',
+	carId: 'car-1',
+	planId: 'plan-1',
+	performedAt: '2026-08-01T00:00:00.000Z',
+	description: 'Scheduled work',
+};
+const planDraft = (name: string) => ({
+	carId: 'car-1',
+	name,
+	intervalUnit: 'days' as const,
+	intervalValue: 7,
+	baselineSessionCount: 0,
+});
+const serviceDraft = (description: string) => ({
+	performedAt: '2026-08-09T18:00:00.000Z',
+	description,
+});
+const report = {
+	tires: {
+		frequency: {
+			front: { eventCount: 0, averageIntervalDays: null },
+			rear: { eventCount: 0, averageIntervalDays: null },
+		},
+		spend: {
+			front: { total: 0 },
+			rear: { total: 0 },
+			combined: { total: 0 },
+		},
+	},
+	fluidHistory: [],
+};
 
-	const configure = (): InstanceType<typeof MaintenanceStore> => {
+describe('maintenance workflow stores', () => {
+	let http: HttpTestingController;
+	let planStore: InstanceType<typeof MaintenancePlanStore>;
+	let serviceStore: InstanceType<typeof ServiceRecordStore>;
+
+	beforeEach(() => {
 		TestBed.configureTestingModule({
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				MaintenanceStore,
+				MaintenanceGateway,
+				MaintenancePlanStore,
+				ServiceRecordStore,
 			],
 		});
 		http = TestBed.inject(HttpTestingController);
-		return TestBed.inject(MaintenanceStore);
-	};
+		planStore = TestBed.inject(MaintenancePlanStore);
+		serviceStore = TestBed.inject(ServiceRecordStore);
+	});
 
-	const flushReads = async (responses?: {
+	afterEach(() => http.verify());
+
+	const flushReads = async (options?: {
 		plans?: object;
-		service?: object;
-		consumables?: object;
-		timezone?: object;
+		services?: object;
+		carsStatus?: number;
+		servicesStatus?: number;
 	}): Promise<void> => {
 		await vi.waitFor(() => {
+			const cars = http.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			);
+			if (options?.carsStatus)
+				cars.flush('failed', {
+					status: options.carsStatus,
+					statusText: 'Failed',
+				});
+			else cars.flush({ cars: [car] });
+			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
 			http
-				?.expectOne(
-					(request) =>
-						request.url === '/api/v1/cars' &&
-						request.params.get('archived') === 'all',
-				)
-				.flush({ cars: [{ id: 'car-1', name: 'Red Runner' }] });
+				.expectOne('/api/v1/maintenance-plans')
+				.flush(options?.plans ?? { maintenancePlans: [plan], activity: [] });
+			const services = http.expectOne('/api/v1/service-records');
+			if (options?.servicesStatus)
+				services.flush('failed', {
+					status: options.servicesStatus,
+					statusText: 'Failed',
+				});
+			else services.flush(options?.services ?? { serviceRecords: [record] });
 			http
-				?.expectOne('/api/v1/preferences/timezone')
-				.flush(responses?.timezone ?? { timezone: 'UTC' });
-			http
-				?.expectOne('/api/v1/maintenance-plans')
-				.flush(responses?.plans ?? { maintenancePlans: [], activity: [] });
-			http
-				?.expectOne('/api/v1/service-records')
-				.flush(responses?.service ?? { serviceRecords: [] });
-			http
-				?.expectOne('/api/v1/consumable-maintenance')
-				.flush(responses?.consumables ?? { consumableMaintenance: [] });
-			http?.expectOne('/api/v1/consumables/report').flush({ report: {} });
+				.expectOne('/api/v1/consumable-maintenance')
+				.flush({ consumableMaintenance: [] });
+			http.expectOne('/api/v1/consumables/report').flush({ report });
 		});
 	};
 
-	afterEach(() => {
-		try {
-			http?.verify();
-		} finally {
-			http = undefined;
-			vi.unstubAllGlobals();
-			TestBed.resetTestingModule();
-		}
-	});
-
-	it('normalizes legacy collections and derives activity from service history', async () => {
-		const store = configure();
-		expect(store.cars()).toEqual([]);
-		expect(store.plans()).toEqual([]);
-		expect(store.serviceRecords()).toEqual([]);
-		expect(store.activity()).toEqual([]);
-		expect(store.consumableEntries()).toEqual([]);
-		expect(store.report()).toBeNull();
-		expect(store.timezone()).toBeTruthy();
-		expect(store.loading()).toBe(true);
-		expect(store.cockpitLoading()).toBe(true);
-		expect(store.consumablesLoading()).toBe(true);
+	it('normalizes reads and derives activity when the server omits it', async () => {
+		expect(planStore.loading()).toBe(true);
+		expect(serviceStore.loading()).toBe(true);
+		expect(planStore.cars()).toEqual([]);
+		expect(planStore.timezone()).toBe('UTC');
+		expect(planStore.plans()).toEqual([]);
+		expect(serviceStore.records()).toEqual([]);
+		expect(planStore.activity()).toEqual([]);
+		expect(planStore.action()).toBeNull();
+		expect(serviceStore.action()).toBeNull();
 		await flushReads({
-			plans: {
-				plans: [
-					{
-						id: 'plan-1',
-						carId: 'car-1',
-						componentId: null,
-						name: 'Inspect',
-						status: 'active',
-					},
-				],
-			},
-			service: {
+			plans: { plans: [plan] },
+			services: {
 				serviceRecords: [
-					{
-						id: 'record-1',
-						carId: 'car-1',
-						planId: 'plan-1',
-						performedAt: '2026-08-01T00:00:00.000Z',
-						description: 'Scheduled work',
-					},
-					{
-						id: 'record-2',
-						carId: 'car-1',
-						planId: null,
-						performedAt: '2026-08-02T00:00:00.000Z',
-						description: 'Cleaned car',
-					},
-					{
-						id: 'record-deleted',
-						carId: 'car-1',
-						performedAt: '2026-08-03T00:00:00.000Z',
-						description: 'Removed',
-						deletedAt: '2026-08-04T00:00:00.000Z',
-					},
+					record,
+					{ ...record, id: 'record-2', planId: null },
+					{ ...record, id: 'deleted', deletedAt: '2026-08-02' },
 				],
 			},
-			consumables: {},
 		});
-		await vi.waitFor(() => expect(store.loading()).toBe(false));
-		expect(store.cars()[0]?.id).toBe('car-1');
-		expect(store.timezone()).toBe('UTC');
-		expect(store.plans()[0]?.id).toBe('plan-1');
-		expect(store.activity()).toEqual([
-			expect.objectContaining({
-				action: 'Scheduled service',
-				planId: 'plan-1',
-			}),
-			expect.objectContaining({ action: 'Ad hoc service' }),
+		await vi.waitFor(() => expect(planStore.loading()).toBe(false));
+		expect(serviceStore.loading()).toBe(false);
+		expect(planStore.cars()).toEqual([car]);
+		expect(planStore.plans()).toEqual([plan]);
+		expect(planStore.timezone()).toBe('UTC');
+		expect(planStore.activity().map((item) => item.action)).toEqual([
+			'Scheduled service',
+			'Ad hoc service',
 		]);
-		expect(store.consumableEntries()).toEqual([]);
-		expect(store.report()).toEqual({});
-		expect(store.cockpitError()).toBe('');
-		expect(store.consumablesError()).toBe('');
-		expect(store.error()).toBe('');
+		expect(planStore.error()).toBe('');
+		expect(serviceStore.error()).toBe('');
 	});
 
-	it('prefers server activity and supports every reload boundary', async () => {
-		const store = configure();
-		store.activity();
+	it('prefers server activity and maps protected read failures', async () => {
 		await flushReads({
 			plans: {
 				maintenancePlans: [],
@@ -141,146 +149,247 @@ describe('MaintenanceStore', () => {
 					{
 						id: 'activity-1',
 						action: 'Server activity',
-						occurredAt: '2026-08-01T00:00:00.000Z',
+						occurredAt: '2026-08-01',
 					},
 				],
 			},
-			service: {},
+			carsStatus: 401,
 		});
+		await vi.waitFor(() => expect(planStore.loading()).toBe(false));
+		expect(planStore.activity()[0]?.action).toBe('Server activity');
+		expect(planStore.error()).toContain('session has expired');
+	});
+
+	it('maps a generic read failure when the session is still active', async () => {
+		await flushReads({ carsStatus: 503 });
+		await vi.waitFor(() => expect(planStore.loading()).toBe(false));
+		expect(planStore.error()).toContain('could not be loaded');
+	});
+
+	it('maps protected and generic service-record read failures', async () => {
+		await flushReads({ servicesStatus: 401 });
+		await vi.waitFor(() => expect(serviceStore.loading()).toBe(false));
+		expect(serviceStore.error()).toContain('session has expired');
+
+		serviceStore.retry();
 		await vi.waitFor(() =>
-			expect(store.activity()[0]?.action).toBe('Server activity'),
+			http
+				.expectOne('/api/v1/service-records')
+				.flush('offline', { status: 503, statusText: 'Unavailable' }),
 		);
+		expect(serviceStore.error()).toContain('could not be loaded');
+	});
 
-		store.retryCockpit();
-		await vi.waitFor(() => {
-			http
-				?.expectOne((request) => request.url === '/api/v1/cars')
-				.flush({ cars: [] });
-			http?.expectOne('/api/v1/preferences/timezone').flush({});
-			http?.expectOne('/api/v1/maintenance-plans').flush({});
-			http?.expectOne('/api/v1/service-records').flush({});
-		});
-		expect(store.plans()).toEqual([]);
-		expect(store.serviceRecords()).toEqual([]);
-
-		store.retryConsumables();
-		await vi.waitFor(() => {
-			http
-				?.expectOne((request) => request.url === '/api/v1/cars')
-				.flush({ cars: [] });
-			http?.expectOne('/api/v1/preferences/timezone').flush({ timezone: '' });
-			http?.expectOne('/api/v1/consumable-maintenance').flush({});
-			http?.expectOne('/api/v1/consumables/report').flush({ report: {} });
-		});
-
-		store.retryAll();
+	it('retries and refreshes each cockpit read boundary', async () => {
 		await flushReads();
-		store.refreshPlans();
-		await vi.waitFor(() =>
-			http
-				?.expectOne('/api/v1/maintenance-plans')
-				.flush({ maintenancePlans: [] }),
-		);
-		store.refreshServiceRecords();
-		await vi.waitFor(() =>
-			http?.expectOne('/api/v1/service-records').flush({ serviceRecords: [] }),
-		);
-		store.refreshConsumables();
+		planStore.retry();
+		serviceStore.retry();
 		await vi.waitFor(() => {
 			http
-				?.expectOne('/api/v1/consumable-maintenance')
-				.flush({ consumableMaintenance: [] });
-			http?.expectOne('/api/v1/consumables/report').flush({ report: {} });
-		});
-	});
-
-	it('separates generic cockpit and consumable errors', async () => {
-		const store = configure();
-		store.error();
-		await vi.waitFor(() => {
-			http
-				?.expectOne((request) => request.url === '/api/v1/cars')
+				.expectOne((request) => request.url === '/api/v1/cars')
 				.flush({ cars: [] });
-			http
-				?.expectOne('/api/v1/preferences/timezone')
-				.flush({ timezone: 'UTC' });
-			http
-				?.expectOne('/api/v1/maintenance-plans')
-				.flush('offline', { status: 503, statusText: 'Unavailable' });
-			http?.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
-			http
-				?.expectOne('/api/v1/consumable-maintenance')
-				.flush('offline', { status: 503, statusText: 'Unavailable' });
-			http
-				?.expectOne('/api/v1/consumables/report')
-				.flush('offline', { status: 503, statusText: 'Unavailable' });
+			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+			http.expectOne('/api/v1/maintenance-plans').flush({ plans: [] });
+			http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
 		});
-		await vi.waitFor(() => expect(store.loading()).toBe(false));
-		expect(store.cockpitError()).toBe(
-			'The maintenance ledger could not be loaded.',
+		planStore.refresh();
+		await vi.waitFor(() =>
+			http.expectOne('/api/v1/maintenance-plans').flush({ plans: [] }),
 		);
-		expect(store.consumablesError()).toBe(
-			'Consumable history could not be loaded.',
+		serviceStore.refresh();
+		await vi.waitFor(() =>
+			http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] }),
 		);
-		expect(store.error()).toBe('The maintenance ledger could not be loaded.');
 	});
 
-	it('maps a shared unauthorized resource to every protected view', async () => {
-		const store = configure();
-		store.error();
-		await vi.waitFor(() => {
-			http
-				?.expectOne((request) => request.url === '/api/v1/cars')
-				.flush('expired', { status: 401, statusText: 'Unauthorized' });
-			http
-				?.expectOne('/api/v1/preferences/timezone')
-				.flush({ timezone: 'UTC' });
-			http
-				?.expectOne('/api/v1/maintenance-plans')
-				.flush({ maintenancePlans: [] });
-			http?.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
-			http
-				?.expectOne('/api/v1/consumable-maintenance')
-				.flush({ consumableMaintenance: [] });
-			http?.expectOne('/api/v1/consumables/report').flush({ report: {} });
+	it('serializes plan commands and publishes success and failure outcomes', async () => {
+		await flushReads();
+		planStore.mutate({
+			kind: 'save-plan',
+			mode: 'create',
+			id: null,
+			plan: planDraft('Bearings'),
 		});
-		await vi.waitFor(() => expect(store.loading()).toBe(false));
-		expect(store.cockpitError()).toContain('session has expired');
-		expect(store.consumablesError()).toContain('session has expired');
-		expect(store.error()).toContain('session has expired');
+		planStore.mutate({
+			kind: 'save-plan',
+			mode: 'create',
+			id: null,
+			plan: planDraft('Ignored'),
+		});
+		expect(planStore.action()).toBe('create');
+		expect(serviceStore.action()).toBeNull();
+		const create = http.expectOne('/api/v1/maintenance-plans');
+		expect(create.request.body).toEqual(planDraft('Bearings'));
+		create.flush({ maintenancePlan: plan });
+		await vi.waitFor(() =>
+			http.expectOne('/api/v1/maintenance-plans').flush({ plans: [plan] }),
+		);
+		expect(planStore.outcome().status).toBe('succeeded');
+
+		planStore.mutate({
+			kind: 'save-plan',
+			mode: 'edit',
+			id: 'plan/1',
+			plan: planDraft('Updated'),
+		});
+		http
+			.expectOne('/api/v1/maintenance-plans/plan%2F1')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		expect(planStore.outcome().status).toBe('failed');
+		planStore.clearOutcome();
+		expect(planStore.outcome().status).toBe('idle');
 	});
 
-	it('uses UTC when browser timezone discovery is unavailable', async () => {
-		vi.stubGlobal('Intl', {
-			DateTimeFormat: class {
-				constructor() {
-					throw new Error('Intl unavailable');
-				}
+	it('runs transition and service commands through their gateway contracts', async () => {
+		await flushReads();
+		planStore.mutate({
+			kind: 'transition-plan',
+			planId: 'plan/1',
+			action: 'pause',
+		});
+		expect(planStore.action()).toBe('pause:plan/1');
+		expect(serviceStore.action()).toBeNull();
+		http
+			.expectOne('/api/v1/maintenance-plans/plan%2F1/pause')
+			.flush({ maintenancePlan: plan });
+		await vi.waitFor(() =>
+			http.expectOne('/api/v1/maintenance-plans').flush({ plans: [plan] }),
+		);
+
+		for (const command of [
+			{
+				kind: 'save-service' as const,
+				mode: 'create' as const,
+				carId: 'car/1',
+				id: null,
+				service: serviceDraft('Cleaned'),
 			},
+			{
+				kind: 'save-service' as const,
+				mode: 'edit' as const,
+				carId: 'car/1',
+				id: 'record/1',
+				service: serviceDraft('Updated'),
+			},
+			{
+				kind: 'save-service' as const,
+				mode: 'complete' as const,
+				carId: 'car/1',
+				id: 'plan/1',
+				service: serviceDraft('Complete'),
+			},
+		]) {
+			serviceStore.mutate(command);
+			expect(planStore.action()).toBeNull();
+			expect(serviceStore.action()).toBe(command.mode);
+			const request = http.expectOne((candidate) =>
+				candidate.url.includes(
+					command.mode === 'create'
+						? '/cars/car%2F1/service-records'
+						: command.mode === 'edit'
+							? '/service-records/record%2F1'
+							: '/maintenance-plans/plan%2F1/complete',
+				),
+			);
+			request.flush({ serviceRecord: record });
+			await vi.waitFor(() => {
+				http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+				http.expectOne('/api/v1/maintenance-plans').flush({ plans: [] });
+			});
+		}
+
+		for (const [kind, action, path] of [
+			['change-service', 'archive', '/api/v1/service-records/record%2F1'],
+			[
+				'change-service',
+				'restore',
+				'/api/v1/service-records/record%2F1/restore',
+			],
+			['undo-activity', '', '/api/v1/service-records/record%2F1'],
+		] as const) {
+			serviceStore.mutate(
+				kind === 'change-service'
+					? { kind, recordId: 'record/1', action }
+					: { kind, recordId: 'record/1' },
+			);
+			expect(planStore.action()).toBeNull();
+			expect(serviceStore.action()).toBe(
+				kind === 'change-service'
+					? `${action === 'archive' ? 'delete' : 'restore'}:record/1`
+					: null,
+			);
+			http.expectOne(path).flush({ serviceRecord: record });
+			await vi.waitFor(() => {
+				http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
+				http.expectOne('/api/v1/maintenance-plans').flush({ plans: [] });
+			});
+		}
+
+		serviceStore.mutate({
+			kind: 'save-service',
+			mode: 'create',
+			carId: 'car-1',
+			id: null,
+			service: serviceDraft('Fails'),
 		});
-		const store = configure();
-		expect(store.timezone()).toBe('UTC');
-		await flushReads({ timezone: {} });
-		await vi.waitFor(() => expect(store.loading()).toBe(false));
-		expect(store.timezone()).toBe('UTC');
+		serviceStore.mutate({
+			kind: 'save-service',
+			mode: 'create',
+			carId: 'car-1',
+			id: null,
+			service: serviceDraft('Ignored while pending'),
+		});
+		http
+			.expectOne('/api/v1/cars/car-1/service-records')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		expect(serviceStore.outcome().status).toBe('failed');
 	});
 
-	it('uses UTC when browser timezone discovery is empty or stored data is invalid', async () => {
-		const browserIntl = Intl;
-		const browserOptions = Intl.DateTimeFormat().resolvedOptions();
-		const resolvedOptions = vi
-			.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
-			.mockReturnValue({
-				...browserOptions,
-				timeZone: '',
-			});
-		const store = configure();
-		expect(store.timezone()).toBe('UTC');
-		resolvedOptions.mockRestore();
-		await flushReads({ timezone: { timezone: 'Not/A-Timezone' } });
-		await vi.waitFor(() => expect(store.loading()).toBe(false));
-		expect(store.timezone()).toBe(
-			browserIntl.DateTimeFormat().resolvedOptions().timeZone,
-		);
+	it('loads only the latest car component lookup and clears failures', async () => {
+		await flushReads();
+		planStore.loadComponents('car-1');
+		const first = http.expectOne('/api/v1/cars/car-1/components');
+		planStore.loadComponents('car-2');
+		http.expectOne('/api/v1/cars/car-2/components').flush({
+			components: [
+				{ id: 'component-2', carId: 'car-2', slot: 'motor', name: 'Motor' },
+			],
+		});
+		expect(first.cancelled).toBe(true);
+		expect(planStore.components()[0]?.id).toBe('component-2');
+		planStore.loadComponents('');
+		expect(planStore.components()).toEqual([]);
+		planStore.loadComponents('car-3');
+		http
+			.expectOne('/api/v1/cars/car-3/components')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		expect(planStore.components()).toEqual([]);
+	});
+
+	it('owns service component lookups and outcome reset independently', async () => {
+		await flushReads();
+		serviceStore.loadComponents('car-1');
+		const first = http.expectOne('/api/v1/cars/car-1/components');
+		serviceStore.loadComponents('car-2');
+		http.expectOne('/api/v1/cars/car-2/components').flush({
+			components: [
+				{ id: 'component-2', carId: 'car-2', slot: 'motor', name: 'Motor' },
+			],
+		});
+		expect(first.cancelled).toBe(true);
+		expect(serviceStore.components()[0]?.id).toBe('component-2');
+
+		serviceStore.loadComponents('');
+		expect(serviceStore.components()).toEqual([]);
+		serviceStore.loadComponents('car-3');
+		http
+			.expectOne('/api/v1/cars/car-3/components')
+			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		expect(serviceStore.components()).toEqual([]);
+		serviceStore.clearOutcome();
+		expect(serviceStore.outcome()).toEqual({
+			status: 'idle',
+			operationId: null,
+		});
 	});
 });

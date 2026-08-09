@@ -3,15 +3,15 @@ import {
 	emptySetupForm,
 	importKnownValues,
 	parseSetupJsonObject,
+	setupDraftFromForm,
 	setupFormFromImport,
 	setupFormFromSnapshot,
-	setupPayloadFromForm,
 } from './setup-form';
 import {
-	setupSectionKeys,
 	type SetupSections,
 	type SetupSnapshot,
 	type SoDialedImportPreview,
+	setupSectionKeys,
 } from './setup-snapshot';
 
 const emptySections = (): SetupSections =>
@@ -179,7 +179,7 @@ describe('setup form mapping', () => {
 		expect(parseSetupJsonObject('   ')).toEqual({});
 	});
 
-	it('builds a complete payload while dropping empty optional values', () => {
+	it('builds a complete draft while dropping empty optional values', () => {
 		const form = emptySetupForm();
 		form.name = '  Race setup  ';
 		form.recordedAt = '2026-08-01';
@@ -200,8 +200,8 @@ describe('setup form mapping', () => {
 		form.sections.drivetrain['motor'] = ' ';
 		form.sections.notes['setupNotes'] = ' Notes ';
 		Reflect.set(form.sections.vehicle, 'unknown', undefined);
-		const payload = setupPayloadFromForm(form);
-		expect(payload).toMatchObject({
+		const draft = setupDraftFromForm(form);
+		expect(draft).toMatchObject({
 			name: 'Race setup',
 			setupDate: '2026-08-01T00:00:00.000Z',
 			track: 'Home',
@@ -222,14 +222,14 @@ describe('setup form mapping', () => {
 			unmappedValues: { diagram: true },
 			rawValues: { source: 'raw' },
 		});
-		expect(
-			importKnownValues({ ...payload, makeCurrent: true }).makeCurrent,
-		).toBe(undefined);
+		expect(importKnownValues({ ...draft, makeCurrent: true }).makeCurrent).toBe(
+			undefined,
+		);
 	});
 
-	it('uses nulls for every empty payload option', () => {
-		const payload = setupPayloadFromForm(emptySetupForm());
-		expect(payload).toMatchObject({
+	it('uses nulls for every empty draft option', () => {
+		const draft = setupDraftFromForm(emptySetupForm());
+		expect(draft).toMatchObject({
 			setupDate: null,
 			track: null,
 			event: null,

@@ -6,21 +6,26 @@ import {
 } from '@angular/common/http/testing';
 import { Injectable } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Observable, of, Subject, throwError } from 'rxjs';
+import { catchError, Observable, of, Subject, throwError } from 'rxjs';
 import { vi } from 'vitest';
 import { emptySetupForm } from './setup-form';
 import {
-	SoDialedImporterClient,
+	SoDialedImportGateway,
 	SoDialedImportPreview,
+	SetupSnapshotGateway,
 	type SetupSnapshot,
 } from './setup-snapshot';
-import { SetupSnapshotStore } from './setup-snapshot-store';
+import {
+	SetupSnapshotStore,
+	type SetupWorkflowCommand,
+	type SetupWorkflowResult,
+} from './setup-snapshot-store';
 import { SetupSnapshots } from './setup-snapshots';
 
 type Harness = {
 	formModel: { set(value: unknown): void };
 	importCarModel: { set(value: { carId: string }): void };
-	setups: (() => SetupSnapshot[]) & { set(value: SetupSnapshot[]): void };
+	setups(): SetupSnapshot[];
 	selectedId: (() => string | null) & { set(value: string | null): void };
 	action: (() => string | null) & { set(value: string | null): void };
 	actionError: (() => string) & { set(value: string): void };
@@ -69,11 +74,21 @@ const preview: SoDialedImportPreview = {
 };
 
 @Injectable()
-class MockImporter extends SoDialedImporterClient {
+class MockImporter extends SoDialedImportGateway {
 	result: Observable<SoDialedImportPreview> = of(preview);
 
 	override preview(): Observable<SoDialedImportPreview> {
-		return this.result;
+		return this.result.pipe(
+			catchError((error: unknown) =>
+				throwError(() =>
+					typeof error === 'object' && error !== null && 'status' in error
+						? { kind: 'http', status: Number(error.status) }
+						: error instanceof Error
+							? { kind: 'rejected', message: error.message }
+							: { kind: 'unavailable' },
+				),
+			),
+		);
 	}
 }
 
@@ -87,8 +102,9 @@ describe('SetupSnapshots', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
+				SetupSnapshotGateway,
 				SetupSnapshotStore,
-				{ provide: SoDialedImporterClient, useClass: MockImporter },
+				{ provide: SoDialedImportGateway, useClass: MockImporter },
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -119,6 +135,35 @@ describe('SetupSnapshots', () => {
 
 		expect(() => fixture.detectChanges()).not.toThrow();
 		http.expectNone((request) => request.url.includes('/setups'));
+	});
+
+	it('uses the entered source URL fallback and ignores cancel cleanup failures', async () => {
+		await flushSetups();
+		const app = fixture.componentInstance as unknown as Harness;
+		const internal = fixture.componentInstance as unknown as {
+			formModel(): { sourceUrl: string };
+			handleSuccess(result: SetupWorkflowResult): void;
+			handleFailure(
+				command: SetupWorkflowCommand,
+				error: { kind: 'unavailable' },
+			): void;
+		};
+		app.updateImportUrl(' https://sodialed.com/setup/fallback ');
+		internal.handleSuccess({
+			kind: 'preview',
+			preview: {
+				...preview,
+				source: { ...preview.source, url: null },
+			},
+		});
+		expect(internal.formModel().sourceUrl).toBe(
+			'https://sodialed.com/setup/fallback',
+		);
+		internal.handleFailure(
+			{ kind: 'cancel-import', draftId: 'draft-1' },
+			{ kind: 'unavailable' },
+		);
+		expect(app.actionError()).toBe('');
 	});
 
 	const currentSetup = {
@@ -271,7 +316,7 @@ describe('SetupSnapshots', () => {
 
 	it('resets local state and ignores a stale import preview after route reuse', async () => {
 		await flushSetups();
-		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
 		const pendingPreview = new Subject<SoDialedImportPreview>();
 		importer.result = pendingPreview;
 		const app = fixture.componentInstance as unknown as Harness;
@@ -530,7 +575,7 @@ describe('SetupSnapshots', () => {
 
 	it('shows a source review draft with mapped, uncertain, raw, and duplicate data', async () => {
 		await flushSetups();
-		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
 		importer.result = of({
 			...preview,
 			duplicate: { setupId: 'setup-old', name: 'Earlier import' },
@@ -602,6 +647,7 @@ describe('SetupSnapshots', () => {
 		const app = fixture.componentInstance as unknown as Harness;
 		app.updateImportUrl('https://sodialed.com/setup/abc');
 		app.previewImport();
+		fixture.detectChanges();
 		app.importCarModel.set({ carId: 'car-2' });
 		app.save();
 		const update = http.expectOne('/api/v1/setup-imports/drafts/draft-1');
@@ -643,7 +689,7 @@ describe('SetupSnapshots', () => {
 
 	it('reports an unavailable source without opening a review form', () => {
 		http.expectOne('/api/v1/cars/car-1/setups').flush({ setups: [] });
-		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
 		importer.result = throwError(() => new Error('Source is unavailable.'));
 		const app = fixture.componentInstance as unknown as Harness;
 		app.updateImportUrl('https://sodialed.com/setup/missing');
@@ -659,7 +705,7 @@ describe('SetupSnapshots', () => {
 
 	it('explains when the garage session expires during source review', async () => {
 		await flushSetups();
-		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
 		importer.result = throwError(() => ({ status: 401 }));
 		const app = fixture.componentInstance as unknown as Harness;
 		app.updateImportUrl('https://sodialed.com/setup/expired');
@@ -714,13 +760,20 @@ describe('SetupSnapshots', () => {
 		app.openEdit();
 		http.expectNone((request) => request.method !== 'GET');
 
-		app.setups.set([currentSetup]);
+		TestBed.inject(SetupSnapshotStore).refresh();
+		await flushSetups([currentSetup]);
 		app.select(currentSetup);
 		app.makeCurrent();
-		app.action.set('save');
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
+		const pending = new Subject<SoDialedImportPreview>();
+		importer.result = pending;
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
 		app.copy();
 		app.makeCurrent();
-		app.action.set(null);
+		pending.next(preview);
+		pending.complete();
+		fixture.detectChanges();
 		fixture.componentRef.setInput('archived', true);
 		fixture.detectChanges();
 		app.copy();
@@ -764,9 +817,14 @@ describe('SetupSnapshots', () => {
 			sourceUrl: 'https://example.test/setup',
 			pdfPage: '2',
 		});
-		app.action.set('save');
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
+		const pending = new Subject<SoDialedImportPreview>();
+		importer.result = pending;
+		app.updateImportUrl('https://sodialed.com/setup/abc');
+		app.previewImport();
 		app.save();
 		http.expectNone((request) => request.method === 'POST');
+		pending.complete();
 	});
 
 	it('maps current and generic setup save failures', async () => {
@@ -782,6 +840,7 @@ describe('SetupSnapshots', () => {
 			http
 				.expectOne('/api/v1/cars/car-1/setups')
 				.flush('failed', { status, statusText: 'Failed' });
+			fixture.detectChanges();
 			expect(app.formError()).toContain(message);
 		}
 	});
@@ -814,6 +873,7 @@ describe('SetupSnapshots', () => {
 			http
 				.expectOne('/api/v1/cars/car-1/setups/setup-1/copy')
 				.flush('failed', { status, statusText: 'Failed' });
+			fixture.detectChanges();
 			expect(app.actionError()).toContain(message);
 		}
 
@@ -838,6 +898,7 @@ describe('SetupSnapshots', () => {
 			http
 				.expectOne('/api/v1/cars/car-1/setups/setup-old/current')
 				.flush('failed', { status, statusText: 'Failed' });
+			fixture.detectChanges();
 			expect(app.actionError()).toContain(message);
 		}
 
@@ -852,7 +913,7 @@ describe('SetupSnapshots', () => {
 
 	it('ignores stale preview errors and stale save errors', async () => {
 		await flushSetups();
-		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
 		const pending = new Subject<SoDialedImportPreview>();
 		importer.result = pending;
 		const app = fixture.componentInstance as unknown as Harness;
@@ -876,7 +937,7 @@ describe('SetupSnapshots', () => {
 
 	it('maps generic preview errors and cancels without a draft', async () => {
 		await flushSetups();
-		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
 		importer.result = throwError(() => ({ status: 500 }));
 		const app = fixture.componentInstance as unknown as Harness;
 		app.updateImportUrl('https://sodialed.com/setup/unavailable');
@@ -971,12 +1032,9 @@ describe('SetupSnapshots', () => {
 		byText('Cancel').click();
 		fixture.detectChanges();
 
-		app.action.set('copy');
+		byText('Copy previous').click();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Copying…');
-		app.action.set(null);
-		fixture.detectChanges();
-		byText('Copy previous').click();
 		http
 			.expectOne('/api/v1/cars/car-1/setups/setup-1/copy')
 			.flush('offline', { status: 500, statusText: 'Unavailable' });
@@ -999,12 +1057,9 @@ describe('SetupSnapshots', () => {
 		byText('Cancel').click();
 		fixture.detectChanges();
 
-		app.action.set('current');
+		byText('Select as current').click();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Selecting…');
-		app.action.set(null);
-		fixture.detectChanges();
-		byText('Select as current').click();
 		http
 			.expectOne('/api/v1/cars/car-1/setups/setup-old/current')
 			.flush('offline', { status: 500, statusText: 'Unavailable' });
@@ -1017,10 +1072,12 @@ describe('SetupSnapshots', () => {
 		app.previewImport();
 		fixture.detectChanges();
 		byText('Create a car from this identity').click();
-		app.action.set('save');
+		byText('Save as new snapshot').click();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Saving…');
-		app.action.set(null);
+		http
+			.expectOne('/api/v1/setup-imports/drafts/draft-1')
+			.flush('offline', { status: 500, statusText: 'Unavailable' });
 		fixture.detectChanges();
 		byText('Cancel').click();
 		http.expectOne('/api/v1/setup-imports/drafts/draft-1/cancel').flush(null);
@@ -1068,7 +1125,7 @@ describe('SetupSnapshots', () => {
 		expect(fixture.nativeElement.querySelector('.provenance')).toBeNull();
 		expect(fixture.nativeElement.querySelector('.unmapped')).toBeNull();
 
-		const importer = TestBed.inject(SoDialedImporterClient) as MockImporter;
+		const importer = TestBed.inject(SoDialedImportGateway) as MockImporter;
 		const pending = new Subject<SoDialedImportPreview>();
 		importer.result = pending;
 		app.updateImportUrl('https://sodialed.com/setup/pending');

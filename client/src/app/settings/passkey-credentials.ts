@@ -9,20 +9,20 @@ type WebAuthnOptions = {
 	[key: string]: unknown;
 };
 
-const base64UrlToBytes = (value: string): Uint8Array => {
+const base64UrlToBytes = (value: string, view: Window): Uint8Array => {
 	const normalized = value
 		.replace(/-/g, '+')
 		.replace(/_/g, '/')
 		.padEnd(Math.ceil(value.length / 4) * 4, '=');
-	return Uint8Array.from(window.atob(normalized), (character) =>
+	return Uint8Array.from(view.atob(normalized), (character) =>
 		character.charCodeAt(0),
 	);
 };
 
-const bytesToBase64Url = (value: ArrayBuffer): string => {
+const bytesToBase64Url = (value: ArrayBuffer, view: Window): string => {
 	let binary = '';
 	for (const byte of new Uint8Array(value)) binary += String.fromCharCode(byte);
-	return window
+	return view
 		.btoa(binary)
 		.replace(/\+/g, '-')
 		.replace(/\//g, '_')
@@ -31,29 +31,31 @@ const bytesToBase64Url = (value: ArrayBuffer): string => {
 
 export const registrationOptions = (
 	options: WebAuthnOptions,
+	view: Window = window,
 ): PublicKeyCredentialCreationOptions =>
 	({
 		...options,
-		challenge: base64UrlToBytes(options.challenge),
+		challenge: base64UrlToBytes(options.challenge, view),
 		user: options.user
-			? { ...options.user, id: base64UrlToBytes(options.user.id) }
+			? { ...options.user, id: base64UrlToBytes(options.user.id, view) }
 			: undefined,
 		excludeCredentials: options.excludeCredentials?.map((item) => ({
 			...item,
-			id: base64UrlToBytes(item.id),
+			id: base64UrlToBytes(item.id, view),
 		})),
 	}) as unknown as PublicKeyCredentialCreationOptions;
 
 export const registrationResponse = (
 	credential: PublicKeyCredential,
+	view: Window = window,
 ): Record<string, unknown> => {
 	const response = credential.response as AuthenticatorAttestationResponse;
 	return {
 		id: credential.id,
-		rawId: bytesToBase64Url(credential.rawId),
+		rawId: bytesToBase64Url(credential.rawId, view),
 		response: {
-			clientDataJSON: bytesToBase64Url(response.clientDataJSON),
-			attestationObject: bytesToBase64Url(response.attestationObject),
+			clientDataJSON: bytesToBase64Url(response.clientDataJSON, view),
+			attestationObject: bytesToBase64Url(response.attestationObject, view),
 			transports: response.getTransports?.(),
 		},
 		type: credential.type,

@@ -1,12 +1,12 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
 import {
 	afterNextRender,
 	Component,
 	computed,
 	ElementRef,
-	inject,
+	effect,
 	Injector,
+	inject,
 	linkedSignal,
 	signal,
 } from '@angular/core';
@@ -33,13 +33,20 @@ import {
 import { ConsumableMaintenance } from './consumables/consumable-maintenance';
 import type {
 	MaintenanceActivity,
-	MaintenanceComponent,
+	MaintenanceGatewayFailure,
 	MaintenancePlan,
+	MaintenancePlanDraft,
 	PlanState,
 	ServiceRecord,
 } from './maintenance.models';
-import { MaintenanceLookups } from './maintenance-lookups';
-import { MaintenanceStore } from './maintenance-store';
+import {
+	type MaintenancePlanCommand,
+	MaintenancePlanStore,
+} from './maintenance-plan-store';
+import {
+	type ServiceRecordCommand,
+	ServiceRecordStore,
+} from './service-record-store';
 
 export type {
 	MaintenancePlan,
@@ -66,8 +73,6 @@ export type ServiceForm = {
 	cost: string;
 	currency: string;
 };
-
-type PlanResponse = { maintenancePlan: MaintenancePlan };
 
 const emptyForm = (): MaintenanceForm => ({
 	carId: '',
@@ -145,35 +150,40 @@ export const calculatePlanState = (
 	host: { class: 'block' },
 })
 export class MaintenanceCockpit {
-	private readonly http = inject(HttpClient);
-	private readonly lookups = inject(MaintenanceLookups);
-	private readonly store = inject(MaintenanceStore);
+	private readonly planStore = inject(MaintenancePlanStore);
+	private readonly serviceStore = inject(ServiceRecordStore);
 	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 	private readonly injector = inject(Injector);
 	private returnFocusSelector = '[data-maintenance-launcher="new-plan"]';
-	protected readonly garage = linkedSignal(() => this.store.cars());
-	protected readonly plans = linkedSignal(() => this.store.plans());
-	protected readonly activity = this.store.activity;
+	protected readonly garage = linkedSignal(() => this.planStore.cars());
+	protected readonly plans = linkedSignal(() => this.planStore.plans());
+	protected readonly activity = this.planStore.activity;
 	protected readonly serviceRecords = linkedSignal(() =>
-		this.store.serviceRecords(),
+		this.serviceStore.records(),
 	);
-	protected readonly timezone = this.store.timezone;
-	protected readonly components = signal<MaintenanceComponent[]>([]);
+	protected readonly timezone = this.planStore.timezone;
+	protected readonly components = computed(() =>
+		this.serviceEditing()
+			? this.serviceStore.components()
+			: this.planStore.components(),
+	);
 	protected readonly mutationError = signal('');
 	protected readonly state = computed(() =>
-		this.store.cockpitLoading()
+		this.planStore.loading() || this.serviceStore.loading()
 			? 'loading'
-			: this.store.cockpitError()
+			: this.planStore.error() || this.serviceStore.error()
 				? 'error'
 				: 'ready',
 	);
-	protected readonly error = this.store.cockpitError;
+	protected readonly error = computed(
+		() => this.planStore.error() || this.serviceStore.error(),
+	);
 	protected readonly editing = signal(false);
 	protected readonly serviceEditing = signal(false);
 	protected readonly serviceEditingId = signal<string | null>(null);
 	protected readonly servicePlanId = signal<string | null>(null);
 	protected readonly editingId = signal<string | null>(null);
-	protected readonly action = signal<string | null>(null);
+	protected readonly action = this.planStore.action;
 	protected readonly formError = signal('');
 	protected readonly form = signal<MaintenanceForm>(emptyForm());
 	protected readonly serviceForm = signal<ServiceForm>(emptyServiceForm());
@@ -267,7 +277,7 @@ export class MaintenanceCockpit {
 		);
 	});
 	protected readonly serviceError = signal('');
-	protected readonly serviceAction = signal<string | null>(null);
+	protected readonly serviceAction = this.serviceStore.action;
 	protected readonly historyFilter = signal<'active' | 'deleted'>('active');
 	protected readonly selectedFilter = signal<'all' | PlanState>('all');
 	protected readonly filterOptions: Array<'all' | PlanState> = [
@@ -327,9 +337,51 @@ export class MaintenanceCockpit {
 		}));
 	});
 
+	constructor() {
+		let handledPlanOperationId = 0;
+		effect(() => {
+			const outcome = this.planStore.outcome();
+			if (
+				outcome.status === 'idle' ||
+				outcome.status === 'pending' ||
+				outcome.operationId === handledPlanOperationId
+			)
+				return;
+			handledPlanOperationId = outcome.operationId;
+			if (outcome.status === 'failed') {
+				this.handleMutationFailure(outcome.command, outcome.error);
+				return;
+			}
+			if (outcome.command.kind === 'save-plan') {
+				this.returnFocusSelector = '#maintenance-title';
+				this.cancelEdit();
+			}
+		});
+		let handledServiceOperationId = 0;
+		effect(() => {
+			const outcome = this.serviceStore.outcome();
+			if (
+				outcome.status === 'idle' ||
+				outcome.status === 'pending' ||
+				outcome.operationId === handledServiceOperationId
+			)
+				return;
+			handledServiceOperationId = outcome.operationId;
+			if (outcome.status === 'failed') {
+				this.handleMutationFailure(outcome.command, outcome.error);
+				return;
+			}
+			if (outcome.command.kind === 'save-service') {
+				this.returnFocusSelector = '#maintenance-title';
+				this.cancelServiceEdit();
+			}
+		});
+	}
+
 	protected load(): void {
 		this.mutationError.set('');
-		this.store.retryCockpit();
+		this.planStore.retry();
+		this.serviceStore.retry();
 	}
 
 	protected openCreate(): void {
@@ -401,7 +453,7 @@ export class MaintenanceCockpit {
 		this.serviceEditingId.set(null);
 		this.servicePlanId.set(null);
 		this.serviceError.set('');
-		this.loadComponents(firstCar?.id ?? '');
+		this.loadServiceComponents(firstCar?.id ?? '');
 		this.serviceEditing.set(true);
 		this.focusAfterRender('#service-form-title');
 	}
@@ -421,7 +473,7 @@ export class MaintenanceCockpit {
 		this.serviceEditingId.set(record.id);
 		this.servicePlanId.set(record.planId ?? null);
 		this.serviceError.set('');
-		this.loadComponents(record.carId);
+		this.loadServiceComponents(record.carId);
 		this.serviceEditing.set(true);
 		this.focusAfterRender('#service-form-title');
 	}
@@ -439,7 +491,7 @@ export class MaintenanceCockpit {
 		this.serviceEditingId.set(null);
 		this.servicePlanId.set(plan.id);
 		this.serviceError.set('');
-		this.loadComponents(plan.carId);
+		this.loadServiceComponents(plan.carId);
 		this.serviceEditing.set(true);
 		this.focusAfterRender('#service-form-title');
 	}
@@ -454,7 +506,7 @@ export class MaintenanceCockpit {
 	}
 	protected updateService(field: keyof ServiceForm, value: string): void {
 		this.serviceForm.update((current) => ({ ...current, [field]: value }));
-		if (field === 'carId') this.loadComponents(value);
+		if (field === 'carId') this.loadServiceComponents(value);
 	}
 	protected changeServiceCar(event: Event): void {
 		const carId = this.selectedValue(event);
@@ -492,7 +544,7 @@ export class MaintenanceCockpit {
 			return;
 		}
 		if (this.serviceAction()) return;
-		const payload = {
+		const service = {
 			performedAt: this.toIso(form.performedAt),
 			description: form.description.trim(),
 			...(form.notes?.trim() ? { notes: form.notes.trim() } : {}),
@@ -503,44 +555,13 @@ export class MaintenanceCockpit {
 		};
 		const recordId = this.serviceEditingId();
 		const planId = this.servicePlanId();
-		this.serviceAction.set(recordId ? 'edit' : planId ? 'complete' : 'create');
 		this.serviceError.set('');
-		const request = recordId
-			? this.http.patch<{ serviceRecord: ServiceRecord }>(
-					`/api/v1/service-records/${recordId}`,
-					payload,
-					{ withCredentials: true },
-				)
-			: planId
-				? this.http.post<{
-						serviceRecord: ServiceRecord;
-						maintenancePlan: MaintenancePlan;
-					}>(`/api/v1/maintenance-plans/${planId}/complete`, payload, {
-						withCredentials: true,
-					})
-				: this.http.post<{ serviceRecord: ServiceRecord }>(
-						`/api/v1/cars/${form.carId}/service-records`,
-						payload,
-						{ withCredentials: true },
-					);
-		request.subscribe({
-			next: () => {
-				this.store.refreshServiceRecords();
-				this.store.refreshPlans();
-				this.returnFocusSelector = '#maintenance-title';
-				this.cancelServiceEdit();
-				this.serviceAction.set(null);
-			},
-			error: (error: { status?: number }) => {
-				this.serviceAction.set(null);
-				this.serviceError.set(
-					error.status === 409
-						? 'This car is archived. Restore it before recording service.'
-						: error.status === 401
-							? 'Your garage session has expired. Sign in again to continue.'
-							: 'The service record could not be saved.',
-				);
-			},
+		this.serviceStore.mutate({
+			kind: 'save-service',
+			mode: recordId ? 'edit' : planId ? 'complete' : 'create',
+			carId: form.carId,
+			id: recordId ?? planId,
+			service,
 		});
 	}
 	protected update(field: keyof MaintenanceForm, value: string): void {
@@ -596,7 +617,7 @@ export class MaintenanceCockpit {
 		}
 		if (this.action()) return;
 		this.mutationError.set('');
-		const payload = {
+		const plan: MaintenancePlanDraft = {
 			carId: form.carId,
 			componentId: form.componentId || undefined,
 			name: form.name.trim(),
@@ -610,34 +631,12 @@ export class MaintenanceCockpit {
 			baselineSessionCount: Number(form.baselineSessions) || 0,
 		};
 		const id = this.editingId();
-		this.action.set(id ? 'edit' : 'create');
 		this.formError.set('');
-		const request = id
-			? this.http.patch<PlanResponse>(
-					`/api/v1/maintenance-plans/${id}`,
-					payload,
-					{ withCredentials: true },
-				)
-			: this.http.post<PlanResponse>('/api/v1/maintenance-plans', payload, {
-					withCredentials: true,
-				});
-		request.subscribe({
-			next: () => {
-				this.store.refreshPlans();
-				this.returnFocusSelector = '#maintenance-title';
-				this.cancelEdit();
-				this.action.set(null);
-			},
-			error: (error: { status?: number }) => {
-				this.action.set(null);
-				this.formError.set(
-					error.status === 401
-						? 'Your garage session has expired. Sign in again to continue.'
-						: error.status === 409
-							? 'This car is archived. Restore it before changing maintenance.'
-							: 'The maintenance plan could not be saved.',
-				);
-			},
+		this.planStore.mutate({
+			kind: 'save-plan',
+			mode: id ? 'edit' : 'create',
+			id,
+			plan,
 		});
 	}
 
@@ -647,81 +646,73 @@ export class MaintenanceCockpit {
 	): void {
 		if (this.isReadOnly(plan)) return;
 		this.mutationError.set('');
-		this.action.set(`${action}:${plan.id}`);
-		const request = this.http.post<PlanResponse>(
-			`/api/v1/maintenance-plans/${plan.id}/${action}`,
-			{},
-			{ withCredentials: true },
-		);
-		request.subscribe({
-			next: () => {
-				this.store.refreshPlans();
-				this.action.set(null);
-			},
-			error: () => {
-				this.action.set(null);
-				this.mutationError.set('That maintenance update could not be saved.');
-			},
+		this.planStore.mutate({
+			kind: 'transition-plan',
+			planId: plan.id,
+			action,
 		});
 	}
 
 	protected deleteService(record: ServiceRecord): void {
 		if (this.isRecordReadOnly(record) || this.serviceAction()) return;
-		this.serviceAction.set(`delete:${record.id}`);
-		this.http
-			.delete<{
-				serviceRecord: ServiceRecord;
-				maintenancePlan?: MaintenancePlan;
-			}>(`/api/v1/service-records/${record.id}`, { withCredentials: true })
-			.subscribe({
-				next: () => {
-					this.store.refreshServiceRecords();
-					this.store.refreshPlans();
-					this.serviceAction.set(null);
-				},
-				error: () => {
-					this.serviceAction.set(null);
-					this.serviceError.set('That service record could not be archived.');
-				},
-			});
+		this.serviceStore.mutate({
+			kind: 'change-service',
+			recordId: record.id,
+			action: 'archive',
+		});
 	}
 
 	protected restoreService(record: ServiceRecord): void {
-		this.serviceAction.set(`restore:${record.id}`);
-		this.http
-			.post<{
-				serviceRecord: ServiceRecord;
-				maintenancePlan?: MaintenancePlan;
-			}>(
-				`/api/v1/service-records/${record.id}/restore`,
-				{},
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: () => {
-					this.store.refreshServiceRecords();
-					this.store.refreshPlans();
-					this.serviceAction.set(null);
-				},
-				error: () => {
-					this.serviceAction.set(null);
-					this.serviceError.set('That service record could not be restored.');
-				},
-			});
+		this.serviceStore.mutate({
+			kind: 'change-service',
+			recordId: record.id,
+			action: 'restore',
+		});
 	}
 
 	protected undoActivity(item: MaintenanceActivity): void {
 		this.mutationError.set('');
-		this.http
-			.delete(`/api/v1/service-records/${item.id}`, { withCredentials: true })
-			.subscribe({
-				next: () => {
-					this.store.refreshServiceRecords();
-					this.store.refreshPlans();
-				},
-				error: () =>
-					this.mutationError.set('That completion could not be undone.'),
-			});
+		this.serviceStore.mutate({ kind: 'undo-activity', recordId: item.id });
+	}
+
+	private handleMutationFailure(
+		command: MaintenancePlanCommand | ServiceRecordCommand,
+		error: MaintenanceGatewayFailure,
+	): void {
+		const status = error.kind === 'http' ? error.status : undefined;
+		if (command.kind === 'save-plan') {
+			this.formError.set(
+				status === 401
+					? 'Your garage session has expired. Sign in again to continue.'
+					: status === 409
+						? 'This car is archived. Restore it before changing maintenance.'
+						: 'The maintenance plan could not be saved.',
+			);
+			return;
+		}
+		if (command.kind === 'transition-plan') {
+			this.mutationError.set('That maintenance update could not be saved.');
+			return;
+		}
+		if (command.kind === 'save-service') {
+			this.serviceError.set(
+				status === 409
+					? 'This car is archived. Restore it before recording service.'
+					: status === 401
+						? 'Your garage session has expired. Sign in again to continue.'
+						: 'The service record could not be saved.',
+			);
+			return;
+		}
+		if (command.kind === 'change-service') {
+			this.serviceError.set(
+				command.action === 'archive'
+					? 'That service record could not be archived.'
+					: 'That service record could not be restored.',
+			);
+			return;
+		}
+		this.mutationError.set('That completion could not be undone.');
 	}
 
 	protected carName(carId: string): string {
@@ -828,14 +819,11 @@ export class MaintenanceCockpit {
 		return new Date(asUtc - offset).toISOString();
 	}
 	protected loadComponents(carId: string): void {
-		if (!carId) {
-			this.components.set([]);
-			return;
-		}
-		this.lookups.components(carId).subscribe({
-			next: (components) => this.components.set(components),
-			error: () => this.components.set([]),
-		});
+		this.planStore.loadComponents(carId);
+	}
+
+	private loadServiceComponents(carId: string): void {
+		this.serviceStore.loadComponents(carId);
 	}
 
 	private selectedValue(event: Event): string | null {

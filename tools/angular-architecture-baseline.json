@@ -1,37 +1,4 @@
 {
 	"version": 1,
-	"diagnostics": [
-		"client/src/app/car/photos/car-photo-gallery.ts:140:3:manual-subscribe",
-		"client/src/app/car/photos/car-photo-gallery.ts:177:3:manual-subscribe",
-		"client/src/app/car/photos/car-photo-gallery.ts:246:3:manual-subscribe",
-		"client/src/app/car/photos/car-photo-gallery.ts:51:33:http-client",
-		"client/src/app/car/setups/car-setups.ts:19:33:http-client",
-		"client/src/app/car/setups/car-setups.ts:57:3:manual-subscribe",
-		"client/src/app/car/setups/setup-snapshots.ts:305:3:manual-subscribe",
-		"client/src/app/car/setups/setup-snapshots.ts:332:16:manual-subscribe",
-		"client/src/app/car/setups/setup-snapshots.ts:433:3:manual-subscribe",
-		"client/src/app/car/setups/setup-snapshots.ts:472:3:manual-subscribe",
-		"client/src/app/car/setups/setup-snapshots.ts:502:3:manual-subscribe",
-		"client/src/app/car/car-build.ts:111:33:http-client",
-		"client/src/app/car/car-build.ts:256:3:manual-subscribe",
-		"client/src/app/car/car-overview.ts:163:7:await",
-		"client/src/app/maintenance/consumables/consumable-maintenance.ts:213:33:http-client",
-		"client/src/app/maintenance/consumables/consumable-maintenance.ts:447:3:manual-subscribe",
-		"client/src/app/maintenance/consumables/consumable-maintenance.ts:468:3:manual-subscribe",
-		"client/src/app/maintenance/consumables/consumable-maintenance.ts:489:3:manual-subscribe",
-		"client/src/app/maintenance/consumables/consumable-maintenance.ts:567:3:manual-subscribe",
-		"client/src/app/garage/garage.ts:129:15:await",
-		"client/src/app/garage/garage.ts:132:3:await",
-		"client/src/app/maintenance/maintenance-cockpit.ts:148:33:http-client",
-		"client/src/app/maintenance/maintenance-cockpit.ts:526:3:manual-subscribe",
-		"client/src/app/maintenance/maintenance-cockpit.ts:624:3:manual-subscribe",
-		"client/src/app/maintenance/maintenance-cockpit.ts:656:3:manual-subscribe",
-		"client/src/app/maintenance/maintenance-cockpit.ts:671:3:manual-subscribe",
-		"client/src/app/maintenance/maintenance-cockpit.ts:691:3:manual-subscribe",
-		"client/src/app/maintenance/maintenance-cockpit.ts:715:3:manual-subscribe",
-		"client/src/app/maintenance/maintenance-cockpit.ts:835:3:manual-subscribe",
-		"client/src/app/settings/settings.ts:117:7:await",
-		"client/src/app/settings/settings.ts:128:7:await",
-		"client/src/app/settings/settings.ts:158:7:await"
-	]
+	"diagnostics": []
 }

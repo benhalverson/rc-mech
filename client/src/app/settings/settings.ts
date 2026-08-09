@@ -3,6 +3,7 @@ import {
 	afterNextRender,
 	Component,
 	ElementRef,
+	effect,
 	inject,
 	Injector,
 	linkedSignal,
@@ -30,8 +31,9 @@ import {
 	LucideX,
 } from '@lucide/angular';
 import { AppearanceSelector } from './appearance-selector';
+import { InviteStore } from './invite-store';
 import { isValidTimezone, type Passkey } from './settings.models';
-import { SettingsStore } from './settings-store';
+import { PasskeyStore } from './passkey-store';
 import { TimezoneStore } from './timezone-store';
 
 @Component({
@@ -57,7 +59,8 @@ import { TimezoneStore } from './timezone-store';
 export class Settings {
 	private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 	private readonly injector = inject(Injector);
-	protected readonly store = inject(SettingsStore);
+	protected readonly invites = inject(InviteStore);
+	protected readonly passkeys = inject(PasskeyStore);
 	protected readonly timezoneStore = inject(TimezoneStore);
 	protected readonly timezoneModel = linkedSignal(() => ({
 		timezone: this.timezoneStore.timezone(),
@@ -95,6 +98,35 @@ export class Settings {
 	});
 	protected readonly editingPasskeyId = signal<string | null>(null);
 
+	constructor() {
+		let handledInviteOperationId = 0;
+		effect(() => {
+			const outcome = this.invites.outcome();
+			if (
+				outcome.status !== 'succeeded' ||
+				outcome.operationId === handledInviteOperationId
+			)
+				return;
+			handledInviteOperationId = outcome.operationId;
+			if (outcome.command.kind === 'create')
+				this.inviteForm().reset({ code: '' });
+		});
+		let handledPasskeyOperationId = 0;
+		effect(() => {
+			const outcome = this.passkeys.outcome();
+			if (
+				outcome.status !== 'succeeded' ||
+				outcome.operationId === handledPasskeyOperationId
+			)
+				return;
+			handledPasskeyOperationId = outcome.operationId;
+			if (outcome.command.kind === 'register')
+				this.passkeyForm().reset({ name: '' });
+			else if (outcome.command.kind === 'rename')
+				this.cancelRename(outcome.command.passkey);
+		});
+	}
+
 	protected saveTimezone(event: SubmitEvent): void {
 		event.preventDefault();
 		this.timezoneForm.timezone().markAsTouched();
@@ -107,26 +139,24 @@ export class Settings {
 		});
 	}
 
-	protected async createInviteCode(event: SubmitEvent): Promise<void> {
+	protected createInviteCode(event: SubmitEvent): void {
 		event.preventDefault();
 		this.inviteForm.code().markAsTouched();
 		if (this.inviteForm().invalid()) {
 			this.focusField('#new-invite-code');
 			return;
 		}
-		if (await this.store.createInviteCode(this.inviteModel().code))
-			this.inviteForm().reset({ code: '' });
+		this.invites.create(this.inviteModel().code);
 	}
 
-	protected async registerPasskey(event: SubmitEvent): Promise<void> {
+	protected registerPasskey(event: SubmitEvent): void {
 		event.preventDefault();
 		this.passkeyForm.name().markAsTouched();
 		if (this.passkeyForm().invalid()) {
 			this.focusField('#passkey-name');
 			return;
 		}
-		if (await this.store.registerPasskey(this.passkeyModel().name))
-			this.passkeyForm().reset({ name: '' });
+		this.passkeys.register(this.passkeyModel().name);
 	}
 
 	protected beginRename(passkey: Passkey): void {
@@ -145,18 +175,14 @@ export class Settings {
 		});
 	}
 
-	protected async renamePasskey(
-		event: SubmitEvent,
-		passkey: Passkey,
-	): Promise<void> {
+	protected renamePasskey(event: SubmitEvent, passkey: Passkey): void {
 		event.preventDefault();
 		this.renameForm.name().markAsTouched();
 		if (this.renameForm().invalid()) {
 			this.focusField(`#rename-${passkey.id}`);
 			return;
 		}
-		if (await this.store.renamePasskey(passkey, this.renameModel().name))
-			this.cancelRename(passkey);
+		this.passkeys.rename(passkey, this.renameModel().name);
 	}
 
 	private focusField(selector: string): void {

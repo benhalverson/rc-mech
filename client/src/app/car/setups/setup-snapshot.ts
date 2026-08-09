@@ -1,6 +1,11 @@
-import { HttpClient } from '@angular/common/http';
-import { inject, Service } from '@angular/core';
-import { map, Observable, throwError } from 'rxjs';
+import {
+	HttpClient,
+	HttpErrorResponse,
+	httpResource,
+} from '@angular/common/http';
+import { Injectable, inject, signal } from '@angular/core';
+import { catchError, map, Observable, throwError } from 'rxjs';
+import { array, custom, literal, object, string } from 'zod/mini';
 
 export const setupSectionKeys = [
 	'vehicle',
@@ -50,7 +55,7 @@ export type SetupSnapshot = {
 	updatedAt?: string;
 };
 
-export type SetupSnapshotPayload = {
+export type SetupSnapshotDraft = {
 	name: string;
 	status?: 'draft' | 'reviewed' | 'active';
 	setupDate?: string | null;
@@ -105,8 +110,59 @@ export type SoDialedImportPreview = {
 	} | null;
 };
 
-@Service()
-export class SoDialedImporterClient {
+export type SetupGatewayFailure =
+	| { readonly kind: 'http'; readonly status: number }
+	| { readonly kind: 'rejected'; readonly message: string }
+	| { readonly kind: 'invalid-response' }
+	| { readonly kind: 'unavailable' };
+
+class InvalidSetupResponse extends Error {}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const setupSnapshotSchema = custom<SetupSnapshot>(
+	(value) =>
+		isRecord(value) &&
+		typeof value['id'] === 'string' &&
+		typeof value['carId'] === 'string' &&
+		typeof value['name'] === 'string' &&
+		isRecord(value['sections']),
+);
+const setupCollectionSchema = object({ setups: array(setupSnapshotSchema) });
+const setupMutationSchema = object({ setup: setupSnapshotSchema });
+const acknowledgementSchema = object({ ok: literal(true) });
+
+const parse = <T>(
+	result: { success: true; data: T } | { success: false },
+): T => {
+	if (!result.success) throw new InvalidSetupResponse();
+	return result.data;
+};
+
+export const parseSetupCollection = (value: unknown): SetupSnapshot[] =>
+	parse(setupCollectionSchema.safeParse(value)).setups;
+
+export const parseSetupMutation = (value: unknown): SetupSnapshot =>
+	parse(setupMutationSchema.safeParse(value)).setup;
+
+export const setupGatewayFailure = (error: unknown): SetupGatewayFailure => {
+	if (error instanceof HttpErrorResponse)
+		return error.status === 0
+			? { kind: 'unavailable' }
+			: { kind: 'http', status: error.status };
+	return error instanceof InvalidSetupResponse
+		? { kind: 'invalid-response' }
+		: error instanceof Error && error.message
+			? { kind: 'rejected', message: error.message }
+			: { kind: 'unavailable' };
+};
+
+const mapFailure = (error: unknown): Observable<never> =>
+	throwError(() => setupGatewayFailure(error));
+
+@Injectable()
+export class SoDialedImportGateway {
 	private readonly http = inject(HttpClient);
 
 	static isSupportedUrl(value: string): boolean {
@@ -127,7 +183,7 @@ export class SoDialedImporterClient {
 	}
 
 	preview(url: string, carId: string): Observable<SoDialedImportPreview> {
-		if (!SoDialedImporterClient.isSupportedUrl(url)) {
+		if (!SoDialedImportGateway.isSupportedUrl(url)) {
 			return throwError(() => new Error('Enter a supported So Dialed URL.'));
 		}
 		return this.http
@@ -136,37 +192,54 @@ export class SoDialedImporterClient {
 				{ sourceUrl: url.trim(), carId },
 				{ withCredentials: true },
 			)
-			.pipe(map(({ draft }) => importPreviewFromDraft(draft)));
+			.pipe(
+				map((value) => parseImportPreview(value)),
+				catchError(mapFailure),
+			);
 	}
 
-	update(draftId: string, payload: ImportDraftPatch): Observable<ImportDraft> {
+	update(draftId: string, review: SetupImportReview): Observable<void> {
 		return this.http
 			.patch<{ draft: ImportDraft }>(
 				`/api/v1/setup-imports/drafts/${draftId}`,
-				payload,
+				review,
 				{ withCredentials: true },
 			)
-			.pipe(map(({ draft }) => draft));
+			.pipe(
+				map((value) => {
+					parse(importDraftUpdateSchema.safeParse(value));
+				}),
+				catchError(mapFailure),
+			);
 	}
 
 	cancel(draftId: string): Observable<void> {
-		return this.http.post<void>(
-			`/api/v1/setup-imports/drafts/${draftId}/cancel`,
-			{},
-			{ withCredentials: true },
-		);
+		return this.http
+			.post<unknown>(
+				`/api/v1/setup-imports/drafts/${draftId}/cancel`,
+				{},
+				{ withCredentials: true },
+			)
+			.pipe(
+				map((value) => {
+					parse(acknowledgementSchema.safeParse(value));
+				}),
+				catchError(mapFailure),
+			);
 	}
 
 	accept(
 		draftId: string,
 		carId: string,
 		name: string,
-	): Observable<SetupResponse> {
-		return this.http.post<SetupResponse>(
-			`/api/v1/setup-imports/drafts/${draftId}/accept`,
-			{ carId, name, makeCurrent: false },
-			{ withCredentials: true },
-		);
+	): Observable<SetupSnapshot> {
+		return this.http
+			.post<unknown>(
+				`/api/v1/setup-imports/drafts/${draftId}/accept`,
+				{ carId, name, makeCurrent: false },
+				{ withCredentials: true },
+			)
+			.pipe(map(parseSetupMutation), catchError(mapFailure));
 	}
 }
 
@@ -185,7 +258,7 @@ type ImportDraft = {
 	rawValues: Record<string, unknown>;
 	unmappedValues: Record<string, unknown>;
 };
-type ImportDraftPatch = {
+export type SetupImportReview = {
 	carId?: string | null;
 	knownValues?: Record<string, unknown>;
 	uncertainValues?: Record<string, unknown>;
@@ -193,6 +266,26 @@ type ImportDraftPatch = {
 	unmappedValues?: Record<string, unknown>;
 	sourceMetadata?: Record<string, unknown>;
 };
+
+const importDraftSchema = object({
+	draft: custom<ImportDraft>(
+		(value) =>
+			isRecord(value) &&
+			typeof value['id'] === 'string' &&
+			typeof value['sourceUrl'] === 'string' &&
+			isRecord(value['sourceIdentity']) &&
+			isRecord(value['source']) &&
+			isRecord(value['knownValues']) &&
+			isRecord(value['uncertainValues']) &&
+			isRecord(value['rawValues']) &&
+			isRecord(value['unmappedValues']),
+	),
+});
+const importDraftUpdateSchema = object({ draft: object({ id: string() }) });
+
+export const parseImportPreview = (value: unknown): SoDialedImportPreview =>
+	importPreviewFromDraft(parse(importDraftSchema.safeParse(value)).draft);
+
 const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => {
 	const rawMetadata = draft.source.metadata;
 	const metadata =
@@ -237,57 +330,79 @@ const importPreviewFromDraft = (draft: ImportDraft): SoDialedImportPreview => {
 const emptyImportSections = (): SetupSections =>
 	Object.fromEntries(setupSectionKeys.map((key) => [key, {}])) as SetupSections;
 
-type SetupResponse = { setup: SetupSnapshot };
-
-@Service()
-export class SetupSnapshotService {
+@Injectable()
+export class SetupSnapshotGateway {
 	private readonly http = inject(HttpClient);
+	private readonly carId = signal('');
 
-	create(
-		carId: string,
-		payload: SetupSnapshotPayload,
-	): Observable<SetupResponse> {
-		return this.http.post<SetupResponse>(
-			this.collectionEndpoint(carId),
-			payload,
-			{
+	readonly collection = httpResource<SetupSnapshot[]>(
+		() => {
+			const carId = this.carId();
+			return carId
+				? {
+						url: this.collectionEndpoint(carId),
+						withCredentials: true,
+					}
+				: undefined;
+		},
+		{ parse: parseSetupCollection },
+	);
+
+	selectCar(carId: string): void {
+		if (this.carId() !== carId) this.carId.set(carId);
+	}
+
+	create(carId: string, draft: SetupSnapshotDraft): Observable<SetupSnapshot> {
+		return this.http
+			.post<unknown>(this.collectionEndpoint(carId), draft, {
 				withCredentials: true,
-			},
-		);
+			})
+			.pipe(map(parseSetupMutation), catchError(mapFailure));
 	}
 
 	update(
 		carId: string,
 		setupId: string,
-		payload: SetupSnapshotPayload,
-	): Observable<SetupResponse> {
-		return this.http.patch<SetupResponse>(
-			this.endpoint(carId, setupId),
-			payload,
-			{
+		draft: SetupSnapshotDraft,
+	): Observable<SetupSnapshot> {
+		return this.http
+			.patch<unknown>(this.endpoint(carId, setupId), draft, {
 				withCredentials: true,
-			},
-		);
+			})
+			.pipe(map(parseSetupMutation), catchError(mapFailure));
 	}
 
-	copy(carId: string, setupId: string): Observable<SetupResponse> {
-		return this.http.post<SetupResponse>(
-			`${this.endpoint(carId, setupId)}/copy`,
-			{},
-			{
-				withCredentials: true,
-			},
-		);
+	copy(carId: string, setupId: string): Observable<SetupSnapshot> {
+		return this.http
+			.post<unknown>(
+				`${this.endpoint(carId, setupId)}/copy`,
+				{},
+				{
+					withCredentials: true,
+				},
+			)
+			.pipe(map(parseSetupMutation), catchError(mapFailure));
 	}
 
-	selectCurrent(carId: string, setupId: string): Observable<SetupResponse> {
-		return this.http.post<SetupResponse>(
-			`${this.endpoint(carId, setupId)}/current`,
-			{},
-			{
-				withCredentials: true,
-			},
-		);
+	selectCurrent(carId: string, setupId: string): Observable<SetupSnapshot> {
+		return this.http
+			.post<unknown>(
+				`${this.endpoint(carId, setupId)}/current`,
+				{},
+				{
+					withCredentials: true,
+				},
+			)
+			.pipe(map(parseSetupMutation), catchError(mapFailure));
+	}
+
+	failure(): SetupGatewayFailure | null {
+		const error = this.collection.error();
+		return error ? setupGatewayFailure(error) : null;
+	}
+
+	refresh(): void {
+		this.collection.reload();
 	}
 
 	private collectionEndpoint(carId: string): string {

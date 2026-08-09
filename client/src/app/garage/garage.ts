@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import {
 	FormField,
 	maxLength,
@@ -97,6 +97,21 @@ export class Garage {
 		() => this.formValidationError() || this.store.carMutationError(),
 	);
 
+	constructor() {
+		let handledOperationId: number | null = null;
+		effect(() => {
+			const outcome = this.store.createOutcome();
+			if (
+				outcome.status !== 'succeeded' ||
+				outcome.operationId === handledOperationId
+			)
+				return;
+			handledOperationId = outcome.operationId;
+			this.editing.set(false);
+			void this.router.navigate(['/garage', outcome.car.id, 'overview']);
+		});
+	}
+
 	protected openCreate(): void {
 		if (this.store.carAction()) return;
 		this.store.clearCarMutationState();
@@ -113,7 +128,7 @@ export class Garage {
 		this.carFields().reset();
 	}
 
-	protected async save(event: Event): Promise<void> {
+	protected save(event: Event): void {
 		event.preventDefault();
 		if (this.store.carAction()) return;
 		this.carFields().markAsTouched();
@@ -126,9 +141,6 @@ export class Garage {
 			return;
 		}
 		this.formValidationError.set('');
-		const car = await this.store.createCar(carPayload(this.form()));
-		if (!car) return;
-		this.editing.set(false);
-		await this.router.navigate(['/garage', car.id, 'overview']);
+		this.store.createCar({ input: carPayload(this.form()) });
 	}
 }

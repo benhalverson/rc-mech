@@ -1,45 +1,65 @@
-import { provideHttpClient } from '@angular/common/http';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-	SetupSnapshotService,
-	SoDialedImporterClient,
+	parseSetupCollection,
+	parseSetupMutation,
+	type SetupSnapshot,
+	SetupSnapshotGateway,
+	SoDialedImportGateway,
 	type SoDialedImportPreview,
+	setupGatewayFailure,
 } from './setup-snapshot';
+
+const snapshot = (id = 'setup-1', carId = 'car-1'): SetupSnapshot => ({
+	id,
+	carId,
+	name: 'Setup',
+	sections: {
+		vehicle: {},
+		drivetrain: {},
+		electronics: {},
+		tires: {},
+		shocks: {},
+		frontSuspension: {},
+		rearSuspension: {},
+		notes: {},
+	},
+});
 
 describe('setup snapshot clients', () => {
 	let http: HttpTestingController;
-	let importer: SoDialedImporterClient;
-	let snapshots: SetupSnapshotService;
+	let importer: SoDialedImportGateway;
+	let snapshots: SetupSnapshotGateway;
 
 	beforeEach(() => {
 		TestBed.configureTestingModule({
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				SoDialedImporterClient,
-				SetupSnapshotService,
+				SoDialedImportGateway,
+				SetupSnapshotGateway,
 			],
 		});
 		http = TestBed.inject(HttpTestingController);
-		importer = TestBed.inject(SoDialedImporterClient);
-		snapshots = TestBed.inject(SetupSnapshotService);
+		importer = TestBed.inject(SoDialedImportGateway);
+		snapshots = TestBed.inject(SetupSnapshotGateway);
 	});
 
 	afterEach(() => http.verify());
 
 	it('accepts only owner-safe So Dialed setup URLs', () => {
 		expect(
-			SoDialedImporterClient.isSupportedUrl(
+			SoDialedImportGateway.isSupportedUrl(
 				' https://sodialed.com/setup/Abc123/ ',
 			),
 		).toBe(true);
 		expect(
-			SoDialedImporterClient.isSupportedUrl(
+			SoDialedImportGateway.isSupportedUrl(
 				'https://www.sodialed.com:443/setup/abc',
 			),
 		).toBe(true);
@@ -52,7 +72,62 @@ describe('setup snapshot clients', () => {
 			'https://sodialed.com:444/setup/abc',
 			'https://sodialed.com/not-a-setup/abc',
 		])
-			expect(SoDialedImporterClient.isSupportedUrl(url)).toBe(false);
+			expect(SoDialedImportGateway.isSupportedUrl(url)).toBe(false);
+	});
+
+	it('parses snapshot responses and maps all canonical failures', () => {
+		expect(parseSetupCollection({ setups: [snapshot()] })).toEqual([
+			snapshot(),
+		]);
+		expect(parseSetupMutation({ setup: snapshot() })).toEqual(snapshot());
+		expect(() => parseSetupCollection({ setups: [{ id: 4 }] })).toThrow();
+		expect(() => parseSetupMutation({ setup: null })).toThrow();
+		expect(setupGatewayFailure(new HttpErrorResponse({ status: 0 }))).toEqual({
+			kind: 'unavailable',
+		});
+		expect(setupGatewayFailure(new HttpErrorResponse({ status: 401 }))).toEqual(
+			{ kind: 'http', status: 401 },
+		);
+		expect(setupGatewayFailure(new Error('Rejected setup'))).toEqual({
+			kind: 'rejected',
+			message: 'Rejected setup',
+		});
+		expect(setupGatewayFailure('offline')).toEqual({ kind: 'unavailable' });
+		let malformed: unknown;
+		try {
+			parseSetupMutation({ setup: {} });
+		} catch (error) {
+			malformed = error;
+		}
+		expect(setupGatewayFailure(malformed)).toEqual({
+			kind: 'invalid-response',
+		});
+	});
+
+	it('loads, refreshes, and validates one selected snapshot collection', async () => {
+		snapshots.collection.value();
+		http.expectNone('/api/v1/cars/car%2F1/setups');
+		expect(snapshots.failure()).toBeNull();
+		snapshots.selectCar('car/1');
+		snapshots.selectCar('car/1');
+		let read: ReturnType<HttpTestingController['expectOne']> | undefined;
+		await vi.waitFor(() => {
+			read = http.expectOne('/api/v1/cars/car%2F1/setups');
+		});
+		expect(read?.request.withCredentials).toBe(true);
+		read?.flush({ setups: [snapshot('setup-1', 'car/1')] });
+		await vi.waitFor(() =>
+			expect(snapshots.collection.value()).toHaveLength(1),
+		);
+
+		snapshots.refresh();
+		let refresh: ReturnType<HttpTestingController['expectOne']> | undefined;
+		await vi.waitFor(() => {
+			refresh = http.expectOne('/api/v1/cars/car%2F1/setups');
+		});
+		refresh?.flush({ setups: [{ id: 4 }] });
+		await vi.waitFor(() => expect(snapshots.collection.error()).toBeTruthy());
+		expect(snapshots.failure()).toEqual({ kind: 'invalid-response' });
 	});
 
 	it('rejects unsupported previews without an HTTP request', () => {
@@ -187,7 +262,7 @@ describe('setup snapshot clients', () => {
 			'/api/v1/setup-imports/drafts/draft/1/cancel',
 		);
 		expect(cancel.request.method).toBe('POST');
-		cancel.flush(null);
+		cancel.flush({ ok: true });
 
 		importer.accept('draft/1', 'car-2', 'Imported').subscribe();
 		const accept = http.expectOne(
@@ -198,7 +273,18 @@ describe('setup snapshot clients', () => {
 			name: 'Imported',
 			makeCurrent: false,
 		});
-		accept.flush({ setup: {} });
+		accept.flush({ setup: snapshot('setup-imported', 'car-2') });
+	});
+
+	it('rejects a malformed import cancellation acknowledgement', () => {
+		let failure: unknown;
+		importer.cancel('draft-1').subscribe({
+			error: (error: unknown) => {
+				failure = error;
+			},
+		});
+		http.expectOne('/api/v1/setup-imports/drafts/draft-1/cancel').flush(null);
+		expect(failure).toEqual({ kind: 'invalid-response' });
 	});
 
 	it('uses encoded owner-scoped endpoints for every snapshot mutation', () => {
@@ -206,23 +292,23 @@ describe('setup snapshot clients', () => {
 		snapshots.create('car/1', payload).subscribe();
 		const create = http.expectOne('/api/v1/cars/car%2F1/setups');
 		expect(create.request.method).toBe('POST');
-		create.flush({ setup: {} });
+		create.flush({ setup: snapshot('setup-created', 'car/1') });
 
 		snapshots.update('car/1', 'setup/1', payload).subscribe();
 		const update = http.expectOne('/api/v1/cars/car%2F1/setups/setup%2F1');
 		expect(update.request.method).toBe('PATCH');
-		update.flush({ setup: {} });
+		update.flush({ setup: snapshot('setup/1', 'car/1') });
 
 		snapshots.copy('car/1', 'setup/1').subscribe();
 		const copy = http.expectOne('/api/v1/cars/car%2F1/setups/setup%2F1/copy');
 		expect(copy.request.method).toBe('POST');
-		copy.flush({ setup: {} });
+		copy.flush({ setup: snapshot('setup-copy', 'car/1') });
 
 		snapshots.selectCurrent('car/1', 'setup/1').subscribe();
 		const current = http.expectOne(
 			'/api/v1/cars/car%2F1/setups/setup%2F1/current',
 		);
 		expect(current.request.method).toBe('POST');
-		current.flush({ setup: {} });
+		current.flush({ setup: snapshot('setup/1', 'car/1') });
 	});
 });

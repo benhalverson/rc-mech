@@ -1,6 +1,12 @@
 import { DatePipe } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
-import { Component, effect, inject, input, signal } from '@angular/core';
+import {
+	Component,
+	computed,
+	effect,
+	inject,
+	input,
+	signal,
+} from '@angular/core';
 import {
 	FormField,
 	maxLength,
@@ -18,7 +24,7 @@ import {
 	LucideTriangleAlert,
 	LucideWrench,
 } from '@lucide/angular';
-import type { InstalledComponent } from './car.models';
+import type { BuildMode, InstalledComponent } from './car.models';
 import { CarBuildStore } from './car-build-store';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
@@ -32,8 +38,6 @@ type ComponentForm = {
 	serialNumber: string;
 	notes: string;
 };
-
-type ComponentMode = 'add' | 'edit' | 'replace';
 
 const standardSlots = [
 	'motor',
@@ -108,12 +112,11 @@ export class CarBuild {
 	readonly carId = input('');
 	protected readonly carStore = inject(CarStore);
 	protected readonly buildStore = inject(CarBuildStore);
-	private readonly http = inject(HttpClient);
 	protected readonly standardSlots = standardSlots;
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
-	protected readonly mode = signal<ComponentMode>('add');
-	protected readonly action = signal<ComponentMode | null>(null);
+	protected readonly mode = signal<BuildMode>('add');
+	protected readonly action = this.buildStore.action;
 	protected readonly form = signal(emptyForm());
 	protected readonly componentForm = signalForm(this.form, (path) => {
 		required(path.slot, { message: 'Choose a component slot.' });
@@ -132,11 +135,15 @@ export class CarBuild {
 			message: 'Use 160 characters or fewer for the component name.',
 		});
 	});
-	protected readonly formError = signal('');
-	protected readonly message = signal('');
+	private readonly validationError = signal('');
+	protected readonly formError = computed(
+		() => this.validationError() || this.buildStore.error(),
+	);
+	protected readonly message = this.buildStore.message;
 
 	constructor() {
 		let previousCarId: string | undefined;
+		let handledOperationId: number | null = null;
 		effect(() => {
 			const carId = this.carId();
 			if (!carId) return;
@@ -146,16 +153,25 @@ export class CarBuild {
 			this.carStore.selectCar(carId);
 			this.buildStore.selectCar(carId);
 		});
+		effect(() => {
+			const outcome = this.buildStore.outcome();
+			if (
+				outcome.status !== 'succeeded' ||
+				outcome.operationId === handledOperationId
+			)
+				return;
+			handledOperationId = outcome.operationId;
+			this.editing.set(false);
+		});
 	}
 
 	private resetRouteState(): void {
 		this.editing.set(false);
 		this.editingId.set(null);
 		this.mode.set('add');
-		this.action.set(null);
+		this.buildStore.clearOutcome();
 		this.componentForm().reset(emptyForm());
-		this.formError.set('');
-		this.message.set('');
+		this.validationError.set('');
 	}
 
 	protected openAdd(slot = ''): void {
@@ -209,24 +225,25 @@ export class CarBuild {
 	protected cancel(): void {
 		if (this.action()) return;
 		this.editing.set(false);
-		this.formError.set('');
+		this.validationError.set('');
+		this.buildStore.clearOutcome();
 		this.componentForm().reset();
 	}
 
 	protected save(event?: Event): void {
 		event?.preventDefault();
 		if (this.action()) return;
-		this.formError.set('');
-		this.message.set('');
+		this.validationError.set('');
+		this.buildStore.clearOutcome();
 		this.componentForm().markAsTouched();
 		const car = this.carStore.car();
 		const form = this.form();
 		if (!car || car.archivedAt) {
-			this.formError.set('Restore this car before changing its build.');
+			this.validationError.set('Restore this car before changing its build.');
 			return;
 		}
 		if (this.componentForm().invalid()) {
-			this.formError.set('Review the highlighted component fields.');
+			this.validationError.set('Review the highlighted component fields.');
 			if (this.componentForm.slot().invalid())
 				this.componentForm.slot().focusBoundControl();
 			else this.componentForm.name().focusBoundControl();
@@ -234,48 +251,10 @@ export class CarBuild {
 		}
 		const mode = this.mode();
 		const id = this.editingId();
-		this.action.set(mode);
-		const request =
-			mode === 'edit' && id
-				? this.http.patch(
-						`/api/v1/cars/${encodeURIComponent(car.id)}/components/${encodeURIComponent(id)}`,
-						payload(form, false),
-						{ withCredentials: true },
-					)
-				: mode === 'replace' && id
-					? this.http.post(
-							`/api/v1/cars/${encodeURIComponent(car.id)}/components/${encodeURIComponent(id)}/replace`,
-							payload(form),
-							{ withCredentials: true },
-						)
-					: this.http.post(
-							`/api/v1/cars/${encodeURIComponent(car.id)}/components`,
-							payload(form),
-							{ withCredentials: true },
-						);
-		request.subscribe({
-			next: () => {
-				if (this.carId() !== car.id) return;
-				this.buildStore.refresh();
-				this.action.set(null);
-				this.editing.set(false);
-				this.message.set(
-					mode === 'replace'
-						? 'Component replaced; previous installation retained.'
-						: 'Build sheet saved.',
-				);
-			},
-			error: (error: { status?: number }) => {
-				if (this.carId() !== car.id) return;
-				this.action.set(null);
-				this.formError.set(
-					error.status === 401
-						? 'Your garage session has expired. Sign in again to continue.'
-						: error.status === 409
-							? 'Restore this car before changing its build.'
-							: 'The component could not be saved.',
-				);
-			},
+		this.buildStore.save({
+			mode,
+			componentId: id,
+			input: payload(form, mode !== 'edit'),
 		});
 	}
 }

@@ -6,8 +6,7 @@ import {
 } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import { MaintenanceLookups } from './maintenance-lookups';
-import { MaintenanceStore } from './maintenance-store';
+import { ConsumableStore } from './consumables/consumable-store';
 import {
 	calculatePlanState,
 	calendarDays,
@@ -15,6 +14,9 @@ import {
 	MaintenancePlan,
 	ServiceRecord,
 } from './maintenance-cockpit';
+import { MaintenanceGateway } from './maintenance-gateway';
+import { MaintenancePlanStore } from './maintenance-plan-store';
+import { ServiceRecordStore } from './service-record-store';
 
 type TestMember = {
 	set(value: unknown): void;
@@ -103,6 +105,17 @@ describe('MaintenanceCockpit', () => {
 		baselineSessionCount: 0,
 		status: 'active',
 	};
+	const pendingPlan = {
+		carId: 'car-1',
+		name: 'Pending',
+		intervalUnit: 'days' as const,
+		intervalValue: 7,
+		baselineSessionCount: 0,
+	};
+	const pendingService = {
+		performedAt: '2026-08-09T18:00:00.000Z',
+		description: 'Pending',
+	};
 
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
@@ -110,8 +123,10 @@ describe('MaintenanceCockpit', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				MaintenanceLookups,
-				MaintenanceStore,
+				ConsumableStore,
+				MaintenanceGateway,
+				MaintenancePlanStore,
+				ServiceRecordStore,
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -277,8 +292,10 @@ describe('MaintenanceCockpit', () => {
 		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
 		http
 			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlans: [plan], activity: [] });
+		http
+			.expectOne('/api/v1/service-records')
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
@@ -302,8 +319,7 @@ describe('MaintenanceCockpit', () => {
 	});
 
 	it('keeps cockpit data visible when only the consumable report fails', async () => {
-		const store = TestBed.inject(MaintenanceStore);
-		store.reportResource.reload();
+		TestBed.inject(MaintenanceGateway).report.reload();
 		let report: TestRequest | undefined;
 		await vi.waitFor(() => {
 			report = http.expectOne('/api/v1/consumables/report');
@@ -756,10 +772,18 @@ describe('MaintenanceCockpit', () => {
 		app.form.set({ ...app.form(), calendarValue: '', sessionInterval: '' });
 		app.save();
 		expect(app.formError()).toContain('calendar interval');
-		app.action.set('busy');
+		const store = TestBed.inject(MaintenancePlanStore);
+		store.mutate({
+			kind: 'save-plan',
+			mode: 'create',
+			id: null,
+			plan: pendingPlan,
+		});
+		const pending = http.expectOne('/api/v1/maintenance-plans');
 		app.form.set({ ...app.form(), calendarValue: '1' });
 		app.save();
 		http.expectNone((request) => request.url === '/api/v1/maintenance-plans');
+		pending.flush('failed', { status: 500, statusText: 'Failed' });
 	});
 
 	it('uses plan validation fallback and maps every save failure', () => {
@@ -794,8 +818,15 @@ describe('MaintenanceCockpit', () => {
 			http
 				.expectOne('/api/v1/maintenance-plans')
 				.flush('failed', { status, statusText: 'Failed' });
+			fixture.detectChanges();
 			expect(app.formError()).toContain(message);
 		}
+		app.save();
+		http
+			.expectOne('/api/v1/maintenance-plans')
+			.flush({ maintenancePlan: { id: 4 } });
+		fixture.detectChanges();
+		expect(app.formError()).toContain('could not be saved');
 	});
 
 	it('updates a plan with only a drive-session threshold', async () => {
@@ -944,10 +975,19 @@ describe('MaintenanceCockpit', () => {
 		app.saveService();
 		expect(app.serviceError()).toContain('4,000');
 		expectFieldError('#service-notes-error', '4,000');
-		app.serviceAction.set('busy');
+		const store = TestBed.inject(ServiceRecordStore);
+		store.mutate({
+			kind: 'save-service',
+			mode: 'create',
+			carId: 'car-1',
+			id: null,
+			service: pendingService,
+		});
+		const pending = http.expectOne('/api/v1/cars/car-1/service-records');
 		app.serviceForm.set({ ...app.serviceForm(), notes: '' });
 		app.saveService();
 		http.expectNone((request) => request.url.includes('service-records'));
+		pending.flush('failed', { status: 500, statusText: 'Failed' });
 	});
 
 	it('uses service validation fallback and maps service save failures', () => {
@@ -986,6 +1026,7 @@ describe('MaintenanceCockpit', () => {
 			http
 				.expectOne('/api/v1/cars/car-1/service-records')
 				.flush('failed', { status, statusText: 'Failed' });
+			fixture.detectChanges();
 			expect(app.serviceError()).toContain(message);
 		}
 	});
@@ -1033,20 +1074,31 @@ describe('MaintenanceCockpit', () => {
 			performedAt: '2026-08-02T00:00:00.000Z',
 			description: 'Checked car',
 		};
-		app.serviceAction.set('busy');
+		const store = TestBed.inject(ServiceRecordStore);
+		store.mutate({
+			kind: 'save-service',
+			mode: 'create',
+			carId: 'car-1',
+			id: null,
+			service: pendingService,
+		});
+		const pending = http.expectOne('/api/v1/cars/car-1/service-records');
 		app.deleteService(record);
 		http.expectNone('/api/v1/service-records/record-actions');
-		app.serviceAction.set(null);
+		pending.flush('failed', { status: 500, statusText: 'Failed' });
+		fixture.detectChanges();
 		app.deleteService(record);
 		http
 			.expectOne('/api/v1/service-records/record-actions')
 			.flush('offline', { status: 500, statusText: 'Unavailable' });
+		fixture.detectChanges();
 		expect(app.serviceError()).toContain('could not be archived');
 
 		app.restoreService({ ...record, deletedAt: '2026-08-03T00:00:00.000Z' });
 		http
 			.expectOne('/api/v1/service-records/record-actions/restore')
 			.flush('offline', { status: 500, statusText: 'Unavailable' });
+		fixture.detectChanges();
 		expect(app.serviceError()).toContain('could not be restored');
 
 		app.undoActivity({
@@ -1057,6 +1109,7 @@ describe('MaintenanceCockpit', () => {
 		http
 			.expectOne('/api/v1/service-records/activity-fail')
 			.flush('offline', { status: 500, statusText: 'Unavailable' });
+		fixture.detectChanges();
 		expect(app.mutationError()).toContain('could not be undone');
 
 		app.undoActivity({
@@ -1064,7 +1117,9 @@ describe('MaintenanceCockpit', () => {
 			action: 'Completed',
 			occurredAt: '2026-08-01T00:00:00.000Z',
 		});
-		http.expectOne('/api/v1/service-records/activity-ok').flush({});
+		http
+			.expectOne('/api/v1/service-records/activity-ok')
+			.flush({ serviceRecord: { ...record, id: 'activity-ok' } });
 		await vi.waitFor(() => {
 			http.expectOne('/api/v1/service-records').flush({ serviceRecords: [] });
 			http
@@ -1075,7 +1130,10 @@ describe('MaintenanceCockpit', () => {
 
 	it('labels plan, component, service, and due-state fallbacks', () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
-		app.components.set([component]);
+		app.loadComponents('car-1');
+		http
+			.expectOne('/api/v1/cars/car-1/components')
+			.flush({ components: [component] });
 		expect(app.carName('missing')).toBe('Unknown car');
 		expect(app.componentName()).toBe('Car-level plan');
 		expect(app.componentName('missing')).toBe('Installed component');
@@ -1201,7 +1259,10 @@ describe('MaintenanceCockpit', () => {
 			id: 'record-deleted',
 			deletedAt: '2026-08-03T00:00:00.000Z',
 		};
-		app.components.set([component]);
+		app.loadComponents('car-1');
+		http
+			.expectOne('/api/v1/cars/car-1/components')
+			.flush({ components: [component] });
 		app.plans.set(plans);
 		app.serviceRecords.set([active, adHoc, deleted]);
 		fixture.detectChanges();
@@ -1234,14 +1295,28 @@ describe('MaintenanceCockpit', () => {
 			.expectOne('/api/v1/cars/car-1/components')
 			.flush({ components: [component] });
 		fixture.detectChanges();
-		app.action.set('create');
-		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain('Creating…');
-		app.action.set('edit');
-		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain('Saving…');
-		app.action.set(null);
-		fixture.detectChanges();
+		const planWorkflow = TestBed.inject(MaintenancePlanStore);
+		const serviceWorkflow = TestBed.inject(ServiceRecordStore);
+		for (const [mode, label] of [
+			['create', 'Creating…'],
+			['edit', 'Saving…'],
+		] as const) {
+			planWorkflow.mutate({
+				kind: 'save-plan',
+				mode,
+				id: mode === 'edit' ? 'plan-1' : null,
+				plan: pendingPlan,
+			});
+			const pending = http.expectOne(
+				mode === 'edit'
+					? '/api/v1/maintenance-plans/plan-1'
+					: '/api/v1/maintenance-plans',
+			);
+			fixture.detectChanges();
+			expect(fixture.nativeElement.textContent).toContain(label);
+			pending.flush('failed', { status: 500, statusText: 'Failed' });
+			fixture.detectChanges();
+		}
 		byText('Cancel').click();
 		fixture.detectChanges();
 
@@ -1250,17 +1325,30 @@ describe('MaintenanceCockpit', () => {
 			.expectOne('/api/v1/cars/car-1/components')
 			.flush({ components: [component] });
 		fixture.detectChanges();
-		for (const [action, label] of [
+		for (const [mode, label] of [
 			['create', 'Recording…'],
 			['edit', 'Saving…'],
 			['complete', 'Completing…'],
 		] as const) {
-			app.serviceAction.set(action);
+			serviceWorkflow.mutate({
+				kind: 'save-service',
+				mode,
+				carId: 'car-1',
+				id: mode === 'create' ? null : mode === 'edit' ? 'record-1' : 'plan-1',
+				service: pendingService,
+			});
+			const pending = http.expectOne(
+				mode === 'create'
+					? '/api/v1/cars/car-1/service-records'
+					: mode === 'edit'
+						? '/api/v1/service-records/record-1'
+						: '/api/v1/maintenance-plans/plan-1/complete',
+			);
 			fixture.detectChanges();
 			expect(fixture.nativeElement.textContent).toContain(label);
+			pending.flush('failed', { status: 500, statusText: 'Failed' });
+			fixture.detectChanges();
 		}
-		app.serviceAction.set(null);
-		fixture.detectChanges();
 		byText('Cancel').click();
 		fixture.detectChanges();
 
@@ -1368,8 +1456,7 @@ describe('MaintenanceCockpit', () => {
 	});
 
 	it('renders activity details and invokes undo from the activity feed', async () => {
-		const store = TestBed.inject(MaintenanceStore);
-		store.plansResource.reload();
+		TestBed.inject(MaintenanceGateway).plans.reload();
 		await vi.waitFor(() =>
 			http.expectOne('/api/v1/maintenance-plans').flush({
 				maintenancePlans: [plan],
