@@ -1,4 +1,5 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, exists } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { db } from '../../db';
 import { car, setup } from '../../schema';
@@ -9,6 +10,7 @@ import {
 } from '../../setup-policy';
 import {
 	type AppEnv,
+	guardedSetupCopyInput,
 	setupCopyInput,
 	setupInput,
 	setupUpdateInput,
@@ -20,6 +22,7 @@ import {
 	ownedSetup,
 	publicSetup,
 	setupCopyValue,
+	setupInsertSelection,
 	setupInsertValues,
 } from './setup-records';
 
@@ -225,7 +228,7 @@ export const createSetupSnapshotRoutes = () => {
 			);
 		const source = await ownedSetup(c, carId, c.req.param('setupId'));
 		if (!source) return c.json({ error: 'Setup not found' }, 404);
-		const parsed = setupCopyInput.safeParse(
+		const parsed = guardedSetupCopyInput.safeParse(
 			await c.req.json().catch(() => ({})),
 		);
 		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -234,24 +237,79 @@ export const createSetupSnapshotRoutes = () => {
 		const id = crypto.randomUUID();
 		const now = new Date().toISOString();
 		const database = db(c.env);
-		await database.batch([
-			database
-				.insert(setup)
-				.values(setupInsertValues(id, carId, value, now, source.id)),
-			...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
-				? [
-						database
-							.update(car)
-							.set({ currentSetupId: id })
-							.where(eq(car.id, carId)),
-					]
-				: []),
-		]);
+		const expectedCurrentSetupId = parsed.data.expectedCurrentSetupId;
+		const expectedSourceUpdatedAt = parsed.data.expectedSourceUpdatedAt;
+		const guardedCurrentSave =
+			parsed.data.makeCurrent === true &&
+			expectedCurrentSetupId !== undefined &&
+			expectedSourceUpdatedAt !== undefined;
+		if (guardedCurrentSave && expectedCurrentSetupId !== source.id)
+			return c.json(
+				{ error: 'The Current setup changed while you were editing' },
+				409,
+			);
+		const insertValues = setupInsertValues(id, carId, value, now, source.id);
+		if (guardedCurrentSave) {
+			const guardedSource = alias(setup, 'guarded_source');
+			await database.batch([
+				database.insert(setup).select(
+					database
+						.select(setupInsertSelection(insertValues))
+						.from(car)
+						.innerJoin(
+							guardedSource,
+							and(
+								eq(guardedSource.id, source.id),
+								eq(guardedSource.carId, carId),
+								eq(guardedSource.updatedAt, expectedSourceUpdatedAt),
+							),
+						)
+						.where(
+							and(
+								eq(car.id, carId),
+								eq(car.currentSetupId, expectedCurrentSetupId),
+							),
+						),
+				),
+				database
+					.update(car)
+					.set({ currentSetupId: id })
+					.where(
+						and(
+							eq(car.id, carId),
+							eq(car.currentSetupId, expectedCurrentSetupId),
+							exists(
+								database
+									.select({ id: setup.id })
+									.from(setup)
+									.where(and(eq(setup.id, id), eq(setup.carId, carId))),
+							),
+						),
+					),
+			]);
+		} else {
+			await database.batch([
+				database.insert(setup).values(insertValues),
+				...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+					? [
+							database
+								.update(car)
+								.set({ currentSetupId: id })
+								.where(eq(car.id, carId)),
+						]
+					: []),
+			]);
+		}
 		const copied = await database
 			.select()
 			.from(setup)
 			.where(eq(setup.id, id))
 			.get();
+		if (!copied)
+			return c.json(
+				{ error: 'The Current setup changed while you were editing' },
+				409,
+			);
 		return c.json(
 			{
 				setup: publicSetup(

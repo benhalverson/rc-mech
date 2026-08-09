@@ -845,6 +845,15 @@ const setupSchema = {
 		makeCurrent: { type: 'boolean' },
 	},
 };
+const guardedSetupCopySchema = {
+	...setupSchema,
+	required: [],
+	properties: {
+		...setupSchema.properties,
+		expectedCurrentSetupId: { type: 'string' },
+		expectedSourceUpdatedAt: { type: 'string', format: 'date-time' },
+	},
+};
 const setupResponseSchema = {
 	type: 'object',
 	required: [
@@ -1024,7 +1033,7 @@ Object.assign(setupPaths, {
 			summary: 'Copy an owned-car setup snapshot',
 			requestBody: {
 				content: {
-					'application/json': { schema: { ...setupSchema, required: [] } },
+					'application/json': { schema: guardedSetupCopySchema },
 				},
 			},
 			responses: {
@@ -1033,7 +1042,7 @@ Object.assign(setupPaths, {
 					content: { 'application/json': { schema: setupResponse } },
 				},
 				404: { description: 'Setup not found' },
-				409: { description: 'Archived car' },
+				409: { description: 'Archived car or stale Current setup' },
 			},
 		},
 	},

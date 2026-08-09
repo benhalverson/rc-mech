@@ -161,3 +161,144 @@ test('shows one accessible no-current-setup action state', async ({ page }) => {
 	await expect(sheet.locator('.instrument-table')).toHaveCount(0);
 	await expectAxeClean(page);
 });
+
+test('changes multiple focused values as one copied Current setup', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	const { car } = await createCar(page, 'Setup-change buggy');
+	const baselineResponse = await page.request.post(
+		`/api/v1/cars/${car.id}/setups`,
+		{
+			data: {
+				name: 'Clay baseline',
+				track: 'Club track',
+				condition: 'Dry',
+				vehicle: { rideHeight: '12 mm', weight: '1,510 g' },
+				drivetrain: {
+					driveType: '2WD',
+					gearDiffOil: '7k',
+					gearDiffHeight: '3 mm',
+				},
+				shocks: { frontOil: '35 wt', rearOil: '450 cSt' },
+				frontSuspension: { camber: '-1°', toe: '1 mm out' },
+				rearSuspension: {
+					camber: '-2°',
+					cBlockPill: 'up/in',
+					dBlockPill: 'center/in',
+				},
+				electronics: { esc: 'Stock profile' },
+				makeCurrent: true,
+			},
+		},
+	);
+	expect(baselineResponse.ok()).toBe(true);
+	const baseline = (await baselineResponse.json()) as {
+		setup: { id: string };
+	};
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(`/garage/${car.id}/overview`);
+	const sheet = page.locator('.current-setup-sheet');
+	const rideHeight = sheet.getByRole('button', {
+		name: 'Change setup: Ride height, 12 mm',
+	});
+	await rideHeight.click();
+	await expect(
+		page.getByRole('heading', { name: 'Change setup' }),
+	).toBeVisible();
+	await expect(
+		page.locator('[data-setup-field="vehicle.rideHeight"]'),
+	).toBeFocused();
+	await expect(page.locator('[data-setup-field="name"]')).toHaveValue(
+		/^Clay baseline · /,
+	);
+
+	await page.locator('[data-setup-field="vehicle.rideHeight"]').fill('14 mm');
+	await page
+		.locator('[data-setup-field="frontSuspension.camber"]')
+		.fill('-1.5°');
+	await page.locator('[data-setup-field="drivetrain.driveType"]').fill('4WD');
+	await page.locator('[data-setup-field="drivetrain.frontDiffOil"]').fill('6k');
+	await page
+		.locator('[data-setup-field="drivetrain.centerDiffOil"]')
+		.fill('9k');
+	await page.locator('[data-setup-field="drivetrain.rearDiffOil"]').fill('4k');
+	await page
+		.locator('[data-setup-field="drivetrain.centerSlipper"]')
+		.fill('Decoupled');
+	await expect(
+		page.locator('[data-setup-field="drivetrain.centerDiffOil"]'),
+	).toHaveCount(0);
+	await page
+		.getByRole('group', { name: 'C block Pill' })
+		.getByText('down / out', { exact: true })
+		.click();
+	await page
+		.getByRole('group', { name: 'D block Pill' })
+		.getByText('center / out', { exact: true })
+		.click();
+	await page
+		.locator('[data-setup-field="electronics.esc"]')
+		.fill('Modified profile');
+	await expectAxeClean(page);
+
+	await page.getByRole('button', { name: 'Cancel' }).click();
+	await expect(page.getByRole('heading', { name: 'Change setup' })).toHaveCount(
+		0,
+	);
+	await expect(rideHeight).toBeFocused();
+	let collectionResponse = await page.request.get(
+		`/api/v1/cars/${car.id}/setups`,
+	);
+	let collection = (await collectionResponse.json()) as {
+		currentSetupId: string | null;
+		setups: Array<{ id: string }>;
+	};
+	expect(collection.currentSetupId).toBe(baseline.setup.id);
+	expect(collection.setups).toHaveLength(1);
+
+	await rideHeight.click();
+	await page.locator('[data-setup-field="vehicle.rideHeight"]').fill('14 mm');
+	await page
+		.locator('[data-setup-field="frontSuspension.camber"]')
+		.fill('-1.5°');
+	await page
+		.getByRole('group', { name: 'C block Pill' })
+		.getByText('down / out', { exact: true })
+		.click();
+	await page
+		.locator('[data-setup-field="electronics.esc"]')
+		.fill('Modified profile');
+	await page.getByRole('button', { name: 'Save new Current setup' }).click();
+	await expect(
+		page.getByText('New Current setup saved.', { exact: true }),
+	).toBeVisible();
+	await expect(sheet).toContainText('14 mm');
+	await expect(sheet).toContainText('-1.5° / -2°');
+	await expect(sheet).toContainText('down/out / center/in');
+	await expect(sheet).toContainText('Modified profile');
+
+	collectionResponse = await page.request.get(`/api/v1/cars/${car.id}/setups`);
+	collection = (await collectionResponse.json()) as {
+		currentSetupId: string | null;
+		setups: Array<{
+			id: string;
+			current?: boolean;
+			copiedFromSetupId?: string | null;
+			sections?: { vehicle?: { rideHeight?: string } };
+		}>;
+	};
+	expect(collection.setups).toHaveLength(2);
+	expect(collection.currentSetupId).not.toBe(baseline.setup.id);
+	expect(
+		collection.setups.find(({ id }) => id === collection.currentSetupId),
+	).toMatchObject({
+		current: true,
+		copiedFromSetupId: baseline.setup.id,
+		sections: { vehicle: { rideHeight: '14 mm' } },
+	});
+	expect(collection.setups.some(({ id }) => id === baseline.setup.id)).toBe(
+		true,
+	);
+});

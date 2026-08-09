@@ -64,8 +64,8 @@
               <div class="review-counts"><span>{{ importValueCount(preview.sections.vehicle) + importValueCount(preview.sections.drivetrain) + importValueCount(preview.sections.electronics) + importValueCount(preview.sections.tires) + importValueCount(preview.sections.shocks) + importValueCount(preview.sections.frontSuspension) + importValueCount(preview.sections.rearSuspension) }} mapped values</span><span>{{ importValueCount(preview.uncertainValues) }} uncertain</span><span>{{ importValueCount(preview.unmappedValues) }} unmapped</span></div>
             </div>
           } @else {
-            <div class="eyebrow">{{ mode() === 'edit' ? 'Edit snapshot' : 'New snapshot' }}</div>
-            <h4 id="setup-editor-title">{{ mode() === 'edit' ? 'Tune the setup record.' : 'Put a baseline on the bench.' }}</h4>
+            <div class="eyebrow">{{ mode() === 'edit' ? 'Correct record' : 'New snapshot' }}</div>
+            <h4 id="setup-editor-title">{{ mode() === 'edit' ? 'Repair a recording mistake.' : 'Put a baseline on the bench.' }}</h4>
           }
           @if (formError()) { <div id="setup-form-validation" class="message" role="alert"><p>{{ formError() }}</p>@if (setupForm().invalid()) { <ul>@for (validationError of setupForm().errorSummary(); track $index) { <li>{{ validationError.message }}</li> }</ul> }</div> }
           <div class="form-grid">
@@ -102,7 +102,7 @@
           <div class="detail-topline"><div class="eyebrow">{{ setup.current ? 'Current setup' : 'Historical snapshot' }}</div>@if (setup.current) { <span class="status-pill">Current</span> }</div>
           <h4 id="selected-setup-title">{{ setup.name }}</h4>
           <p class="setup-context">{{ setup.context?.track || 'Track not recorded' }} <span>·</span> {{ setup.context?.condition || 'Condition not recorded' }} <span>·</span> {{ setup.context?.recordedAt ? (setup.context?.recordedAt | date:'mediumDate') : 'Date not recorded' }}</p>
-          <div class="setup-actions">@if (!archived()) { <button class="button" type="button" (click)="copy()" [disabled]="action() !== null">{{ action() === 'copy' ? 'Copying…' : 'Copy setup' }}</button><button class="button quiet" type="button" (click)="openEdit()">Edit</button>@if (!setup.current) { <button class="text-button" type="button" (click)="makeCurrent()" [disabled]="action() !== null">{{ action() === 'current' ? 'Selecting…' : 'Select as current' }}</button> } }</div>
+          <div class="setup-actions">@if (!archived()) { <button class="button" type="button" (click)="copy()" [disabled]="action() !== null">{{ action() === 'copy' ? 'Copying…' : 'Copy setup' }}</button><button class="button quiet" type="button" (click)="openEdit()">Correct record</button>@if (!setup.current) { <button class="text-button" type="button" (click)="makeCurrent()" [disabled]="action() !== null">{{ action() === 'current' ? 'Selecting…' : 'Select as current' }}</button> } }</div>
           <div class="setup-readout">
             @for (section of sectionKeys; track section) { @if (sectionHasValues(setup.sections[section])) { <section><h5>{{ sectionLabels[section] }}</h5><dl>@for (entry of setup.sections[section] | keyvalue; track entry.key) { @if (entry.value) { <div><dt>{{ displayName(entry.key) }}</dt><dd>{{ entry.value }}</dd></div> } }</dl></section> } }
           </div>

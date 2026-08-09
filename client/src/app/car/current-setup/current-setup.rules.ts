@@ -161,38 +161,107 @@ const drivetrainRows = (
 		/decoupled/i.test(driveText) &&
 		(drive?.field === 'centerSlipper' || /slipper/i.test(driveText));
 	const rows: CurrentSetupReadoutRow[] = [];
-	const add = (id: string, label: string, entry: SetupEntry | null): void => {
-		rows.push({ id, label, value: entryValue(entry) });
+	const add = (
+		id: string,
+		label: string,
+		entry: SetupEntry | null,
+		focusField: string,
+	): void => {
+		rows.push({ id, label, value: entryValue(entry), focusField });
 		recordConsumed(consumed, entry);
 	};
 
 	if (configuration)
-		add('drivetrain-configuration', 'Drivetrain configuration', configuration);
+		add(
+			'drivetrain-configuration',
+			'Drivetrain configuration',
+			configuration,
+			'drivetrain.driveType',
+		);
 	if (isFourWheel) {
-		add('front-differential-oil', 'Front differential oil', frontOil);
-		if (decoupledCenter) add('center-drive', 'Center drive', drive);
-		else add('center-differential-oil', 'Center differential oil', centerOil);
-		add('rear-differential-oil', 'Rear differential oil', rearOil);
+		add(
+			'front-differential-oil',
+			'Front differential oil',
+			frontOil,
+			'drivetrain.frontDiffOil',
+		);
+		if (decoupledCenter)
+			add('center-drive', 'Center drive', drive, 'drivetrain.centerSlipper');
+		else
+			add(
+				'center-differential-oil',
+				'Center differential oil',
+				centerOil,
+				'drivetrain.centerDiffOil',
+			);
+		add(
+			'rear-differential-oil',
+			'Rear differential oil',
+			rearOil,
+			'drivetrain.rearDiffOil',
+		);
 	} else if (isTwoWheel) {
-		add('gear-differential-oil', 'Gear differential oil', gearOil);
-		add('gear-differential-height', 'Gear differential height', gearHeight);
+		add(
+			'gear-differential-oil',
+			'Gear differential oil',
+			gearOil,
+			'drivetrain.gearDiffOil',
+		);
+		add(
+			'gear-differential-height',
+			'Gear differential height',
+			gearHeight,
+			'drivetrain.gearDiffHeight',
+		);
 	} else {
-		for (const [id, label, entry] of [
-			['gear-differential-oil', 'Gear differential oil', gearOil],
-			['gear-differential-height', 'Gear differential height', gearHeight],
-			['front-differential-oil', 'Front differential oil', frontOil],
-			['center-differential-oil', 'Center differential oil', centerOil],
-			['rear-differential-oil', 'Rear differential oil', rearOil],
-			['center-drive', 'Center drive', drive],
+		for (const [id, label, entry, focusField] of [
+			[
+				'gear-differential-oil',
+				'Gear differential oil',
+				gearOil,
+				'drivetrain.gearDiffOil',
+			],
+			[
+				'gear-differential-height',
+				'Gear differential height',
+				gearHeight,
+				'drivetrain.gearDiffHeight',
+			],
+			[
+				'front-differential-oil',
+				'Front differential oil',
+				frontOil,
+				'drivetrain.frontDiffOil',
+			],
+			[
+				'center-differential-oil',
+				'Center differential oil',
+				centerOil,
+				'drivetrain.centerDiffOil',
+			],
+			[
+				'rear-differential-oil',
+				'Rear differential oil',
+				rearOil,
+				'drivetrain.rearDiffOil',
+			],
+			['center-drive', 'Center drive', drive, 'drivetrain.centerSlipper'],
 		] as const) {
 			if (!entry || isMissing(entry.value)) continue;
-			add(id, label, entry);
+			add(id, label, entry, focusField);
 		}
 	}
 
 	return rows.length
 		? rows
-		: [{ id: 'drivetrain', label: 'Drivetrain', value: NOT_RECORDED }];
+		: [
+				{
+					id: 'drivetrain',
+					label: 'Drivetrain',
+					value: NOT_RECORDED,
+					focusField: 'drivetrain.driveType',
+				},
+			];
 };
 
 export const currentSetupPriorityRows = (
@@ -223,7 +292,12 @@ export const currentSetupPriorityRows = (
 		rearOil,
 	);
 	return [
-		{ id: 'ride-height', label: 'Ride height', value: entryValue(ride) },
+		{
+			id: 'ride-height',
+			label: 'Ride height',
+			value: entryValue(ride),
+			focusField: 'vehicle.rideHeight',
+		},
 		{
 			id: 'camber',
 			label: 'Camber · Front / Rear',
@@ -231,8 +305,26 @@ export const currentSetupPriorityRows = (
 				!frontCamberEntry && !rearCamberEntry
 					? NOT_RECORDED
 					: `${entryValue(frontCamberEntry)} / ${entryValue(rearCamberEntry)}`,
+			focusField: 'frontSuspension.camber',
+			segments: [
+				{
+					label: 'Front camber',
+					value: entryValue(frontCamberEntry),
+					focusField: 'frontSuspension.camber',
+				},
+				{
+					label: 'Rear camber',
+					value: entryValue(rearCamberEntry),
+					focusField: 'rearSuspension.camber',
+				},
+			],
 		},
-		{ id: 'front-toe', label: 'Front toe', value: entryValue(frontToeEntry) },
+		{
+			id: 'front-toe',
+			label: 'Front toe',
+			value: entryValue(frontToeEntry),
+			focusField: 'frontSuspension.toe',
+		},
 		{
 			id: 'rear-toe',
 			label: 'Rear toe · C / D Pill',
@@ -240,26 +332,43 @@ export const currentSetupPriorityRows = (
 				!cBlock && !dBlock
 					? NOT_RECORDED
 					: `${entryValue(cBlock)} / ${entryValue(dBlock)}`,
+			focusField: 'rearSuspension.cBlockPill',
+			segments: [
+				{
+					label: 'C block Pill',
+					value: entryValue(cBlock),
+					focusField: 'rearSuspension.cBlockPill',
+				},
+				{
+					label: 'D block Pill',
+					value: entryValue(dBlock),
+					focusField: 'rearSuspension.dBlockPill',
+				},
+			],
 		},
 		{
 			id: 'front-shock-spring',
 			label: 'Front shock spring',
 			value: entryValue(frontSpring),
+			focusField: 'shocks.frontSpring',
 		},
 		{
 			id: 'front-shock-oil',
 			label: 'Front shock oil',
 			value: entryValue(frontOil),
+			focusField: 'shocks.frontOil',
 		},
 		{
 			id: 'rear-shock-spring',
 			label: 'Rear shock spring',
 			value: entryValue(rearSpring),
+			focusField: 'shocks.rearSpring',
 		},
 		{
 			id: 'rear-shock-oil',
 			label: 'Rear shock oil',
 			value: entryValue(rearOil),
+			focusField: 'shocks.rearOil',
 		},
 		...drivetrainRows(setup, consumed),
 	];
@@ -296,6 +405,10 @@ export const currentSetupRemainingRows = (
 				id: fieldId(section, field),
 				label: `${sectionLabels[section]} · ${setupFieldLabel(field)}`,
 				value: displaySetupValue(value),
+				focusField:
+					section === 'rearSuspension' && field === 'toe'
+						? 'rearSuspension.cBlockPill'
+						: fieldId(section, field),
 			})),
 	);
 };

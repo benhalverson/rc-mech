@@ -1,24 +1,43 @@
-import { HttpErrorResponse, httpResource } from '@angular/common/http';
+import {
+	HttpClient,
+	HttpErrorResponse,
+	httpResource,
+} from '@angular/common/http';
 import { inject, Service } from '@angular/core';
+import { catchError, map, throwError, type Observable } from 'rxjs';
+import { minLength, object, string, trim } from 'zod/mini';
 import { ShellRouteContext } from '../../shell/shell-route-context';
 import {
+	type CurrentSetupGatewayFailure,
 	parseCurrentSetupCollection,
+	parseCurrentSetupMutation,
+	parseCurrentSetupTimezone,
 	type CurrentSetupCollection,
+	type CurrentSetupSnapshot,
+	type SaveCurrentSetupCommand,
 } from './current-setup.models';
 
-export type CurrentSetupGatewayFailure =
-	| { kind: 'http'; status: number }
-	| { kind: 'unavailable' }
-	| { kind: 'invalid-response' };
+export type { CurrentSetupGatewayFailure } from './current-setup.models';
+
+const apiErrorSchema = object({
+	error: string().check(trim(), minLength(1)),
+});
 
 export const currentSetupGatewayFailure = (
 	error: unknown,
-): CurrentSetupGatewayFailure | null => {
-	if (!error) return null;
+): CurrentSetupGatewayFailure => {
 	if (error instanceof HttpErrorResponse)
-		return error.status === 0
-			? { kind: 'unavailable' }
-			: { kind: 'http', status: error.status };
+		if (error.status === 0) return { kind: 'unavailable' };
+		else {
+			const parsed = apiErrorSchema.safeParse(error.error);
+			return parsed.success
+				? {
+						kind: 'rejected-response',
+						status: error.status,
+						message: parsed.data.error,
+					}
+				: { kind: 'http', status: error.status };
+		}
 	return error instanceof Error &&
 		error.message.includes('response was invalid')
 		? { kind: 'invalid-response' }
@@ -27,6 +46,7 @@ export const currentSetupGatewayFailure = (
 
 @Service()
 export class CurrentSetupGateway {
+	private readonly http = inject(HttpClient);
 	private readonly route = inject(ShellRouteContext);
 	readonly collection = httpResource<CurrentSetupCollection>(
 		() => {
@@ -40,9 +60,50 @@ export class CurrentSetupGateway {
 		},
 		{ parse: parseCurrentSetupCollection },
 	);
+	readonly timezone = httpResource<{ readonly timezone: string | null }>(
+		() => ({
+			url: '/api/v1/preferences/timezone',
+			withCredentials: true,
+		}),
+		{ parse: parseCurrentSetupTimezone },
+	);
+
+	saveCurrentSetup(
+		command: SaveCurrentSetupCommand,
+	): Observable<CurrentSetupSnapshot> {
+		const { sections, recordedAt, ...context } = command.draft;
+		const notes = sections.notes['setupNotes'];
+		return this.http
+			.post<unknown>(
+				`/api/v1/cars/${encodeURIComponent(command.carId)}/setups/${encodeURIComponent(command.sourceSetupId)}/copy`,
+				{
+					...context,
+					expectedCurrentSetupId: command.sourceSetupId,
+					expectedSourceUpdatedAt: command.sourceUpdatedAt,
+					setupDate: recordedAt,
+					vehicle: sections.vehicle,
+					drivetrain: sections.drivetrain,
+					electronics: sections.electronics,
+					tires: sections.tires,
+					shocks: sections.shocks,
+					frontSuspension: sections.frontSuspension,
+					rearSuspension: sections.rearSuspension,
+					notes: typeof notes === 'string' ? notes : null,
+					makeCurrent: true,
+				},
+				{ withCredentials: true },
+			)
+			.pipe(
+				map(parseCurrentSetupMutation),
+				catchError((error: unknown) =>
+					throwError(() => currentSetupGatewayFailure(error)),
+				),
+			);
+	}
 
 	failure(): CurrentSetupGatewayFailure | null {
-		return currentSetupGatewayFailure(this.collection.error());
+		const error = this.collection.error();
+		return error ? currentSetupGatewayFailure(error) : null;
 	}
 
 	refresh(): void {

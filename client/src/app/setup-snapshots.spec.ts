@@ -994,7 +994,7 @@ describe('SetupSnapshots', () => {
 			.expectOne('/api/v1/cars/car-1/setups/setup-old/copy')
 			.flush('offline', { status: 500, statusText: 'Unavailable' });
 		fixture.detectChanges();
-		byText('Edit').click();
+		byText('Correct record').click();
 		fixture.detectChanges();
 		byText('Cancel').click();
 		fixture.detectChanges();

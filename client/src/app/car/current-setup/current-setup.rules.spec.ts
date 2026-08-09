@@ -108,7 +108,24 @@ describe('current setup readout rules', () => {
 		]);
 		expect(priority[0]?.value).toBe('12 mm');
 		expect(priority[1]?.value).toBe('-1° / -2°');
+		expect(priority[1]?.segments).toEqual([
+			{
+				label: 'Front camber',
+				value: '-1°',
+				focusField: 'frontSuspension.camber',
+			},
+			{
+				label: 'Rear camber',
+				value: '-2°',
+				focusField: 'rearSuspension.camber',
+			},
+		]);
 		expect(priority[3]?.value).toBe('up/in / center/in');
+		expect(priority[3]?.segments?.[1]).toEqual({
+			label: 'D block Pill',
+			value: 'center/in',
+			focusField: 'rearSuspension.dBlockPill',
+		});
 		expect(priority[5]?.value).toBe('35 wt');
 		expect(priority[7]?.value).toBe('450 cSt');
 		expect(priority[10]?.value).toBe('10k');
@@ -122,6 +139,9 @@ describe('current setup readout rules', () => {
 			'Notes · Setup Notes',
 		]);
 		expect(remaining.at(-1)?.value).toBe('Long main day setup');
+		expect(
+			remaining.find(({ id }) => id === 'rearSuspension.toe')?.focusField,
+		).toBe('rearSuspension.cBlockPill');
 	});
 
 	it('uses setup-recorded 2WD and decoupled-center configurations only', () => {
@@ -165,6 +185,7 @@ describe('current setup readout rules', () => {
 			id: 'center-drive',
 			label: 'Center drive',
 			value: 'Decoupled center slipper',
+			focusField: 'drivetrain.centerSlipper',
 		});
 		expect(drivetrain.map(({ label }) => label)).not.toContain(
 			'Center differential oil',
@@ -186,6 +207,7 @@ describe('current setup readout rules', () => {
 			id: 'center-drive',
 			label: 'Center drive',
 			value: 'Decoupled',
+			focusField: 'drivetrain.centerSlipper',
 		});
 	});
 
@@ -213,11 +235,13 @@ describe('current setup readout rules', () => {
 			id: 'gear-differential-oil',
 			label: 'Gear differential oil',
 			value: '8k',
+			focusField: 'drivetrain.gearDiffOil',
 		});
 		expect(rows).toContainEqual({
 			id: 'center-drive',
 			label: 'Center drive',
 			value: 'Coupled slipper',
+			focusField: 'drivetrain.centerSlipper',
 		});
 		expect(currentSetupPriorityRows(setup()).at(-1)?.value).toBe(
 			'Not recorded',

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import { setup } from '../../schema';
 import { ownsSetup } from '../../setup-policy';
@@ -93,6 +93,57 @@ export const setupInsertValues = (
 	unmappedValues: jsonText(value.unmappedValues) ?? null,
 	createdAt: now,
 	updatedAt: now,
+});
+
+const setupInsertParameter = <T>(value: T, column: { readonly name: string }) =>
+	sql<T>`${value}`.as(column.name);
+
+export const setupInsertSelection = (
+	value: ReturnType<typeof setupInsertValues>,
+) => ({
+	id: setupInsertParameter(value.id, setup.id),
+	carId: setupInsertParameter(value.carId, setup.carId),
+	name: setupInsertParameter(value.name, setup.name),
+	status: setupInsertParameter(value.status, setup.status),
+	setupDate: setupInsertParameter(value.setupDate, setup.setupDate),
+	track: setupInsertParameter(value.track, setup.track),
+	event: setupInsertParameter(value.event, setup.event),
+	surface: setupInsertParameter(value.surface, setup.surface),
+	traction: setupInsertParameter(value.traction, setup.traction),
+	moisture: setupInsertParameter(value.moisture, setup.moisture),
+	condition: setupInsertParameter(value.condition, setup.condition),
+	temperature: setupInsertParameter(value.temperature, setup.temperature),
+	vehicle: setupInsertParameter(value.vehicle, setup.vehicle),
+	drivetrain: setupInsertParameter(value.drivetrain, setup.drivetrain),
+	electronics: setupInsertParameter(value.electronics, setup.electronics),
+	tires: setupInsertParameter(value.tires, setup.tires),
+	shocks: setupInsertParameter(value.shocks, setup.shocks),
+	frontSuspension: setupInsertParameter(
+		value.frontSuspension,
+		setup.frontSuspension,
+	),
+	rearSuspension: setupInsertParameter(
+		value.rearSuspension,
+		setup.rearSuspension,
+	),
+	notes: setupInsertParameter(value.notes, setup.notes),
+	sourceUrl: setupInsertParameter(value.sourceUrl, setup.sourceUrl),
+	sourcePdfReference: setupInsertParameter(
+		value.sourcePdfReference,
+		setup.sourcePdfReference,
+	),
+	sourceMetadata: setupInsertParameter(
+		value.sourceMetadata,
+		setup.sourceMetadata,
+	),
+	copiedFromId: setupInsertParameter(value.copiedFromId, setup.copiedFromId),
+	rawValues: setupInsertParameter(value.rawValues, setup.rawValues),
+	unmappedValues: setupInsertParameter(
+		value.unmappedValues,
+		setup.unmappedValues,
+	),
+	createdAt: setupInsertParameter(value.createdAt, setup.createdAt),
+	updatedAt: setupInsertParameter(value.updatedAt, setup.updatedAt),
 });
 
 export const setupCopyValue = (

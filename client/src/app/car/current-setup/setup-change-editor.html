@@ -1,0 +1,156 @@
+<section class="rounded-alloy-panel border border-alloy-separator bg-alloy-surface" aria-labelledby="setup-change-title">
+	<header class="border-b border-alloy-separator p-4">
+		<span class="alloy-section-heading">Copied from {{ setup().name }}</span>
+		<h3 id="setup-change-title" class="m-0 mt-1 font-interface text-[22px] font-[650] leading-7">Change setup</h3>
+		<p class="alloy-supporting-text mb-0">Adjust one or several values. Saving creates a new Current setup and keeps this source in history.</p>
+	</header>
+
+	<form class="grid gap-6 p-4" (submit)="save($event)" [attr.aria-describedby]="formError() ? 'setup-change-error' : null" novalidate>
+		@if (formError()) {
+			<div id="setup-change-error" class="alloy-state alloy-error-state m-0" role="alert">
+				<strong>Setup not saved</strong>
+				<span>{{ formError() }}</span>
+				@if (setupForm().invalid()) {
+					<ul class="m-0 pl-5">
+						@for (validationError of setupForm().errorSummary(); track $index) {
+							<li>{{ validationError.message }}</li>
+						}
+					</ul>
+				}
+			</div>
+		}
+
+		<fieldset class="m-0 grid gap-4 border-0 p-0">
+			<legend class="mb-3 text-sm font-[650]">Setup identity</legend>
+			<label class="grid gap-1.5 text-sm font-semibold">
+				Setup name
+				<input class="alloy-field w-full" data-setup-field="name" [formField]="setupForm.name" [attr.aria-describedby]="formError() && setupForm.name().invalid() ? 'setup-change-error' : null" />
+			</label>
+			<label class="grid gap-1.5 text-sm font-semibold sm:max-w-64">
+				Date
+				<input class="alloy-field w-full" data-setup-field="context.recordedAt" type="date" [formField]="setupForm.recordedAt" />
+			</label>
+		</fieldset>
+
+		<fieldset class="m-0 grid gap-4 border-0 border-t border-alloy-separator p-0 pt-5">
+			<legend class="mb-3 text-sm font-[650]">Priority setup values</legend>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<label class="grid gap-1.5 text-sm font-semibold">
+					Ride height
+					<input class="alloy-field w-full font-technical" data-setup-field="vehicle.rideHeight" placeholder="12 mm" [formField]="setupForm.sections.vehicle['rideHeight']" />
+				</label>
+				<div class="hidden sm:block" aria-hidden="true"></div>
+				<label class="grid gap-1.5 text-sm font-semibold">
+					Front camber
+					<input class="alloy-field w-full font-technical" data-setup-field="frontSuspension.camber" placeholder="-1°" [formField]="setupForm.sections.frontSuspension['camber']" />
+				</label>
+				<label class="grid gap-1.5 text-sm font-semibold">
+					Rear camber
+					<input class="alloy-field w-full font-technical" data-setup-field="rearSuspension.camber" placeholder="-2°" [formField]="setupForm.sections.rearSuspension['camber']" />
+				</label>
+				<label class="grid gap-1.5 text-sm font-semibold">
+					Front toe
+					<input class="alloy-field w-full font-technical" data-setup-field="frontSuspension.toe" placeholder="1 mm out" [formField]="setupForm.sections.frontSuspension['toe']" />
+				</label>
+			</div>
+		</fieldset>
+
+		<fieldset class="m-0 border-0 border-t border-alloy-separator p-0 pt-5">
+			<legend class="mb-1 text-sm font-[650]">Rear toe</legend>
+			<p class="alloy-supporting-text mt-0">Choose the exact vertical and lateral Pill position for each rear suspension block.</p>
+			<div class="grid gap-5 lg:grid-cols-2">
+				<fieldset class="m-0 border-0 p-0">
+					<legend class="mb-2 text-sm font-semibold">C block Pill</legend>
+					<div class="grid grid-cols-3 gap-2">
+						@for (position of pillPositions; track position) {
+							<label class="alloy-segment min-h-12 grid-cols-1 place-items-center px-1 text-center font-technical text-[12px] leading-4">
+								<input class="alloy-choice-input" data-setup-field="rearSuspension.cBlockPill" type="radio" [value]="position" [formField]="setupForm.sections.rearSuspension['cBlockPill']" />
+								<span>{{ pillLabel(position) }}</span>
+							</label>
+						}
+					</div>
+					<p class="m-0 mt-2 font-technical text-[13px]" aria-live="polite">C block selected: {{ formModel().sections.rearSuspension['cBlockPill'] || 'Not recorded' }}</p>
+				</fieldset>
+				<fieldset class="m-0 border-0 p-0">
+					<legend class="mb-2 text-sm font-semibold">D block Pill</legend>
+					<div class="grid grid-cols-3 gap-2">
+						@for (position of pillPositions; track position) {
+							<label class="alloy-segment min-h-12 grid-cols-1 place-items-center px-1 text-center font-technical text-[12px] leading-4">
+								<input class="alloy-choice-input" data-setup-field="rearSuspension.dBlockPill" type="radio" [value]="position" [formField]="setupForm.sections.rearSuspension['dBlockPill']" />
+								<span>{{ pillLabel(position) }}</span>
+							</label>
+						}
+					</div>
+					<p class="m-0 mt-2 font-technical text-[13px]" aria-live="polite">D block selected: {{ formModel().sections.rearSuspension['dBlockPill'] || 'Not recorded' }}</p>
+				</fieldset>
+			</div>
+		</fieldset>
+
+		<fieldset class="m-0 border-0 border-t border-alloy-separator p-0 pt-5">
+			<legend class="mb-3 text-sm font-[650]">Shock package</legend>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<label class="grid gap-1.5 text-sm font-semibold">Front spring <input class="alloy-field w-full font-technical" data-setup-field="shocks.frontSpring" [formField]="setupForm.sections.shocks['frontSpring']" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Front shock oil <input class="alloy-field w-full font-technical" data-setup-field="shocks.frontOil" [formField]="setupForm.sections.shocks['frontOil']" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Rear spring <input class="alloy-field w-full font-technical" data-setup-field="shocks.rearSpring" [formField]="setupForm.sections.shocks['rearSpring']" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Rear shock oil <input class="alloy-field w-full font-technical" data-setup-field="shocks.rearOil" [formField]="setupForm.sections.shocks['rearOil']" /></label>
+			</div>
+		</fieldset>
+
+		<fieldset class="m-0 border-0 border-t border-alloy-separator p-0 pt-5">
+			<legend class="mb-3 text-sm font-[650]">Drivetrain</legend>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<label class="grid gap-1.5 text-sm font-semibold">Configuration <input class="alloy-field w-full font-technical" data-setup-field="drivetrain.driveType" placeholder="2WD or 4WD" [formField]="setupForm.sections.drivetrain['driveType']" /></label>
+				@if (isTwoWheel() || drivetrainUnknown()) {
+					<label class="grid gap-1.5 text-sm font-semibold">Gear differential oil <input class="alloy-field w-full font-technical" data-setup-field="drivetrain.gearDiffOil" [formField]="setupForm.sections.drivetrain['gearDiffOil']" /></label>
+					<label class="grid gap-1.5 text-sm font-semibold">Gear differential height <input class="alloy-field w-full font-technical" data-setup-field="drivetrain.gearDiffHeight" [formField]="setupForm.sections.drivetrain['gearDiffHeight']" /></label>
+				}
+				@if (isFourWheel() || drivetrainUnknown()) {
+					<label class="grid gap-1.5 text-sm font-semibold">Front differential oil <input class="alloy-field w-full font-technical" data-setup-field="drivetrain.frontDiffOil" [formField]="setupForm.sections.drivetrain['frontDiffOil']" /></label>
+					<label class="grid gap-1.5 text-sm font-semibold">Center slipper configuration <input class="alloy-field w-full font-technical" data-setup-field="drivetrain.centerSlipper" placeholder="Coupled or decoupled" [formField]="setupForm.sections.drivetrain['centerSlipper']" /></label>
+					@if (!decoupledCenter()) {
+						<label class="grid gap-1.5 text-sm font-semibold">Center differential oil <input class="alloy-field w-full font-technical" data-setup-field="drivetrain.centerDiffOil" [formField]="setupForm.sections.drivetrain['centerDiffOil']" /></label>
+					}
+					<label class="grid gap-1.5 text-sm font-semibold">Rear differential oil <input class="alloy-field w-full font-technical" data-setup-field="drivetrain.rearDiffOil" [formField]="setupForm.sections.drivetrain['rearDiffOil']" /></label>
+				}
+			</div>
+		</fieldset>
+
+		<fieldset class="m-0 border-0 border-t border-alloy-separator p-0 pt-5">
+			<legend class="mb-3 text-sm font-[650]">Track and conditions</legend>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<label class="grid gap-1.5 text-sm font-semibold">Track <input class="alloy-field w-full" data-setup-field="context.track" [formField]="setupForm.track" [attr.aria-describedby]="formError() && setupForm.track().invalid() ? 'setup-change-error' : null" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Event <input class="alloy-field w-full" data-setup-field="context.event" [formField]="setupForm.event" [attr.aria-describedby]="formError() && setupForm.event().invalid() ? 'setup-change-error' : null" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Surface <input class="alloy-field w-full" data-setup-field="context.surface" [formField]="setupForm.surface" [attr.aria-describedby]="formError() && setupForm.surface().invalid() ? 'setup-change-error' : null" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Traction / grip <input class="alloy-field w-full" data-setup-field="context.traction" [formField]="setupForm.traction" [attr.aria-describedby]="formError() && setupForm.traction().invalid() ? 'setup-change-error' : null" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Moisture <input class="alloy-field w-full" data-setup-field="context.moisture" [formField]="setupForm.moisture" [attr.aria-describedby]="formError() && setupForm.moisture().invalid() ? 'setup-change-error' : null" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Condition <input class="alloy-field w-full" data-setup-field="context.condition" [formField]="setupForm.condition" [attr.aria-describedby]="formError() && setupForm.condition().invalid() ? 'setup-change-error' : null" /></label>
+				<label class="grid gap-1.5 text-sm font-semibold">Temperature <input class="alloy-field w-full font-technical" data-setup-field="context.temperature" [formField]="setupForm.temperature" [attr.aria-describedby]="formError() && setupForm.temperature().invalid() ? 'setup-change-error' : null" /></label>
+			</div>
+		</fieldset>
+
+		<fieldset class="m-0 border-0 border-t border-alloy-separator p-0 pt-5">
+			<legend class="mb-1 text-sm font-[650]">Remaining setup</legend>
+			<p class="alloy-supporting-text mt-0">Every other recognized or previously recorded value is carried into the new setup.</p>
+			<div class="grid gap-5">
+				@for (group of remainingGroups(); track group.section) {
+					<section [attr.aria-labelledby]="'setup-change-' + group.section">
+						<h4 class="m-0 mb-3 text-sm font-semibold" [id]="'setup-change-' + group.section">{{ group.label }}</h4>
+						<div class="grid gap-4 sm:grid-cols-2">
+							@for (field of group.fields; track field.id) {
+								<label class="grid gap-1.5 text-sm font-semibold">
+									{{ field.label }}
+									<input class="alloy-field w-full font-technical" [attr.data-setup-field]="field.id" [formField]="setupForm.sections[group.section][field.field]" />
+								</label>
+							}
+						</div>
+					</section>
+				}
+			</div>
+		</fieldset>
+
+		<div class="-mx-4 -mb-4 flex flex-wrap gap-3 border-t border-alloy-separator bg-alloy-surface p-4">
+			<button class="alloy-control alloy-control-primary" type="submit" [disabled]="store.pending()" [attr.aria-busy]="store.pending()">{{ store.pending() ? 'Saving setup…' : 'Save new Current setup' }}</button>
+			<button class="alloy-control alloy-control-secondary" type="button" (click)="cancel()" [disabled]="store.pending()">Cancel</button>
+		</div>
+	</form>
+</section>

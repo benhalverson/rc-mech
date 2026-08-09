@@ -36,6 +36,17 @@ const emptyCurrentSetupStore = {
 	priorityRows: () => [],
 	remainingRows: () => [],
 	changes: () => [],
+	timezone: () => 'UTC',
+	outcome: () => ({
+		status: 'idle' as const,
+		operation: 'save-current-setup' as const,
+		operationId: null,
+	}),
+	pending: () => false,
+	saveError: () => '',
+	selectCar: (): void => undefined,
+	clearSaveOutcome: (): void => undefined,
+	saveCurrentSetup: (): void => undefined,
 	retry: (): void => undefined,
 };
 

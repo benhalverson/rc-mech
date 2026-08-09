@@ -281,6 +281,21 @@ export const setupUpdateInput = z
 
 export const setupCopyInput = setupInput.partial();
 
+export const guardedSetupCopyInput = setupCopyInput
+	.extend({
+		expectedCurrentSetupId: z.string().min(1).max(160).optional(),
+		expectedSourceUpdatedAt: z.string().datetime().optional(),
+	})
+	.refine(
+		(value) =>
+			(value.expectedCurrentSetupId === undefined) ===
+			(value.expectedSourceUpdatedAt === undefined),
+		{
+			message:
+				'Expected Current setup ID and source update time must be provided together',
+		},
+	);
+
 export const setupImportSourceUrl = z
 	.string()
 	.trim()
