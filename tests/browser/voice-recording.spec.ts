@@ -5,16 +5,16 @@ let authentication = 0;
 
 const authenticateOwner = async (page: Page): Promise<void> => {
 	authentication += 1;
-	await page.setExtraHTTPHeaders({
-		'CF-Connecting-IP': `voice-recording-owner-${authentication}`,
-	});
+	const clientIp = `voice-recording-owner-${authentication}`;
+	await page.setExtraHTTPHeaders({ 'CF-Connecting-IP': clientIp });
 	const request = await page.request.post('/api/auth/sign-in/magic-link', {
+		headers: { 'CF-Connecting-IP': clientIp },
 		data: { email: 'owner@example.com', callbackURL: '/garage' },
 	});
 	expect(request.ok()).toBe(true);
 	const verification = await page.request.get(
 		'/api/auth/magic-link/verify?token=local-test-token&callbackURL=%2Fgarage',
-		{ maxRedirects: 0 },
+		{ headers: { 'CF-Connecting-IP': clientIp }, maxRedirects: 0 },
 	);
 	expect([302, 303]).toContain(verification.status());
 };

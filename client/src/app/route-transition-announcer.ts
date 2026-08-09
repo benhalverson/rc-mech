@@ -1,5 +1,11 @@
 import { DOCUMENT } from '@angular/common';
-import { DestroyRef, inject, Service, signal } from '@angular/core';
+import {
+	DestroyRef,
+	inject,
+	InjectionToken,
+	Service,
+	signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
 	NavigationCancel,
@@ -10,11 +16,23 @@ import {
 } from '@angular/router';
 import { filter } from 'rxjs';
 
+export const ROUTE_RELOADER = new InjectionToken<(url: string) => void>(
+	'ROUTE_RELOADER',
+	{
+		providedIn: 'root',
+		factory: () => {
+			const view = inject(DOCUMENT).defaultView;
+			return (url) => view?.location.assign(url);
+		},
+	},
+);
+
 @Service()
 export class RouteTransitionAnnouncer {
 	private readonly document = inject(DOCUMENT);
 	private readonly router = inject(Router);
 	private readonly destroyRef = inject(DestroyRef);
+	private readonly reloadRoute = inject(ROUTE_RELOADER);
 	private focusObserver?: MutationObserver;
 	readonly loading = signal(false);
 	readonly announcement = signal('');
@@ -69,7 +87,7 @@ export class RouteTransitionAnnouncer {
 	}
 
 	retry(): void {
-		void this.router.navigateByUrl(this.lastUrl);
+		this.reloadRoute(this.lastUrl);
 	}
 
 	private label(url: string): string {

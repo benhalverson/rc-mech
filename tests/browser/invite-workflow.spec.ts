@@ -1,8 +1,24 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
 const baseURL = 'http://127.0.0.1:4201';
+
+const builtRouteChunk = (routeExport: string): string => {
+	const index = readFileSync('public/index.html', 'utf8');
+	const mainName = index.match(/<script src="(main-[^"]+\.js)"/)?.[1];
+	if (!mainName) throw new Error('The browser build has no main bundle.');
+	const main = readFileSync(`public/${mainName}`, 'utf8');
+	const marker = `({${routeExport}:`;
+	const markerIndex = main.indexOf(marker);
+	const importPrefix = 'import(`./';
+	const chunkStart = main.lastIndexOf(importPrefix, markerIndex);
+	const chunkEnd = main.indexOf('`)', chunkStart + importPrefix.length);
+	if (markerIndex < 0 || chunkStart < 0 || chunkEnd < 0)
+		throw new Error(`The browser build has no ${routeExport} lazy chunk.`);
+	return main.slice(chunkStart + importPrefix.length, chunkEnd);
+};
 
 const scan = async (page: Page) => {
 	await injectAxe(page);
@@ -130,6 +146,41 @@ test('protects private routes and keeps primary owner navigation accessible', as
 		expect(await scan(page)).toEqual([]);
 	}
 	await expect(page.getByText('OWNER-SHELL')).toBeVisible();
+});
+
+test('shows and recovers from an explicit lazy-route load failure', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	const maintenanceChunk = builtRouteChunk('MAINTENANCE_ROUTES');
+	const chunkPattern = `**/${maintenanceChunk}`;
+	let failedRequests = 0;
+	await page.route(chunkPattern, async (route) => {
+		if (failedRequests === 0) {
+			failedRequests += 1;
+			await route.fulfill({
+				status: 503,
+				contentType: 'text/javascript',
+				body: 'Route chunk temporarily unavailable.',
+			});
+			return;
+		}
+		await route.continue();
+	});
+
+	await page
+		.getByRole('navigation', { name: 'Primary workspace' })
+		.getByRole('link', { name: 'Maintenance' })
+		.click();
+	await expect(page.getByRole('alert')).toContainText(
+		'This page could not be loaded. Try again.',
+	);
+	await page.unroute(chunkPattern);
+	await page.getByRole('button', { name: 'Try again' }).click();
+	await expect(
+		page.getByRole('heading', { name: 'Maintenance cockpit' }),
+	).toBeFocused();
+	expect(failedRequests).toBe(1);
 });
 
 test('keeps overview, build, and setup car routes accessible', async ({
