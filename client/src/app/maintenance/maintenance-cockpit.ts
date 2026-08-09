@@ -3,19 +3,38 @@ import {
 	LucidePlus,
 	LucideRefreshCw,
 	LucideTriangleAlert,
+	LucideWrench,
 } from '@lucide/angular';
 import { ConsumableMaintenance } from './consumables/consumable-maintenance';
+import {
+	MaintenancePlanEditor,
+	type MaintenancePlanEditorRequest,
+} from './maintenance-plan-editor';
+import { calculatePlanState } from './maintenance-plan.rules';
 import { MaintenancePlans } from './maintenance-plans';
 import { MaintenancePlanStore } from './maintenance-plan-store';
-import type { MaintenancePlan } from './maintenance.models';
+import type {
+	MaintenancePlan,
+	PlanState,
+	ServiceRecord,
+} from './maintenance.models';
+import {
+	ServiceRecordEditor,
+	type ServiceRecordEditorRequest,
+} from './service-record-editor';
+import { ServiceRecordTotals } from './service-record-totals';
 import { ServiceRecords } from './service-records';
 import { ServiceRecordStore } from './service-record-store';
 
-export type { MaintenancePlan, ServiceRecord } from './maintenance.models';
-export {
-	calculatePlanState,
-	calendarDays,
-} from './maintenance-plan.rules';
+type ActiveEditor =
+	| {
+			readonly workflow: 'plan';
+			readonly request: MaintenancePlanEditorRequest;
+	  }
+	| {
+			readonly workflow: 'service';
+			readonly request: ServiceRecordEditorRequest;
+	  };
 
 @Component({
 	selector: 'app-maintenance-cockpit',
@@ -24,7 +43,11 @@ export {
 		LucidePlus,
 		LucideRefreshCw,
 		LucideTriangleAlert,
+		LucideWrench,
+		MaintenancePlanEditor,
 		MaintenancePlans,
+		ServiceRecordEditor,
+		ServiceRecordTotals,
 		ServiceRecords,
 	],
 	templateUrl: './maintenance-cockpit.html',
@@ -34,9 +57,29 @@ export class MaintenanceCockpit {
 	private readonly planStore = inject(MaintenancePlanStore);
 	private readonly serviceStore = inject(ServiceRecordStore);
 
-	protected readonly activeEditor = signal<'plan' | 'service' | null>(null);
-	protected readonly completionPlan = signal<MaintenancePlan | null>(null);
-	protected readonly createPlanRequested = signal(false);
+	protected readonly activeEditor = signal<ActiveEditor | null>(null);
+	protected readonly planFilter = signal<'all' | PlanState>('all');
+	protected readonly serviceFilter = signal<'active' | 'deleted'>('active');
+	protected readonly planRequest = computed(() => {
+		const editor = this.activeEditor();
+		return editor?.workflow === 'plan' ? editor.request : null;
+	});
+	protected readonly serviceRequest = computed(() => {
+		const editor = this.activeEditor();
+		return editor?.workflow === 'service' ? editor.request : null;
+	});
+	protected readonly hasActiveCars = computed(() =>
+		this.planStore.cars().some((car) => !car.archivedAt),
+	);
+	protected readonly canCreatePlan = computed(() =>
+		this.planStore
+			.plans()
+			.some(
+				(plan) =>
+					this.planFilter() === 'all' ||
+					calculatePlanState(plan) === this.planFilter(),
+			),
+	);
 	protected readonly state = computed(() =>
 		this.planStore.loading() || this.serviceStore.loading()
 			? 'loading'
@@ -48,30 +91,39 @@ export class MaintenanceCockpit {
 		() => this.planStore.error() || this.serviceStore.error(),
 	);
 
-	protected canCreatePlan(): boolean {
-		return Boolean(this.planStore.plans().length);
+	protected createPlan(): void {
+		if (!this.hasActiveCars()) return;
+		this.activeEditor.set({ workflow: 'plan', request: { kind: 'create' } });
 	}
 
-	protected openCreatePlan(): void {
-		this.createPlanRequested.set(true);
+	protected editPlan(plan: MaintenancePlan): void {
+		this.activeEditor.set({
+			workflow: 'plan',
+			request: { kind: 'edit', plan },
+		});
 	}
 
-	protected planEditing(editing: boolean): void {
-		this.activeEditor.set(editing ? 'plan' : null);
-		if (editing) this.createPlanRequested.set(false);
+	protected completePlan(plan: MaintenancePlan): void {
+		this.activeEditor.set({
+			workflow: 'service',
+			request: { kind: 'complete', plan },
+		});
 	}
 
-	protected serviceEditing(editing: boolean): void {
-		this.activeEditor.set(editing ? 'service' : null);
+	protected createService(): void {
+		if (!this.hasActiveCars()) return;
+		this.activeEditor.set({ workflow: 'service', request: { kind: 'create' } });
 	}
 
-	protected complete(plan: MaintenancePlan): void {
-		this.completionPlan.set(plan);
-		this.activeEditor.set('service');
+	protected editService(record: ServiceRecord): void {
+		this.activeEditor.set({
+			workflow: 'service',
+			request: { kind: 'edit', record },
+		});
 	}
 
-	protected closeCompletion(): void {
-		this.completionPlan.set(null);
+	protected closeEditor(): void {
+		this.activeEditor.set(null);
 	}
 
 	protected load(): void {

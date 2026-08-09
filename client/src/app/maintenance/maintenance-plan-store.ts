@@ -36,6 +36,12 @@ export type MaintenancePlanCommand =
 			readonly action: 'pause' | 'resume' | 'archive';
 	  };
 
+export type MaintenancePlanFailure =
+	| 'session-expired'
+	| 'car-archived'
+	| 'save-failed'
+	| 'transition-failed';
+
 export type MaintenancePlanOutcome =
 	| { readonly status: 'idle'; readonly operationId: null }
 	| {
@@ -47,7 +53,7 @@ export type MaintenancePlanOutcome =
 			readonly status: 'failed';
 			readonly operationId: number;
 			readonly command: MaintenancePlanCommand;
-			readonly error: MaintenanceGatewayFailure;
+			readonly failure: MaintenancePlanFailure;
 	  };
 
 const idleOutcome = (): MaintenancePlanOutcome => ({
@@ -62,6 +68,17 @@ const requestFor = (
 	command.kind === 'save-plan'
 		? gateway.savePlan(command.mode, command.id, command.plan)
 		: gateway.transitionPlan(command.planId, command.action);
+
+const mutationFailure = (
+	command: MaintenancePlanCommand,
+	failure: MaintenanceGatewayFailure,
+): MaintenancePlanFailure => {
+	if (command.kind === 'transition-plan') return 'transition-failed';
+	if (failure.kind === 'http' && failure.status === 401)
+		return 'session-expired';
+	if (failure.kind === 'http' && failure.status === 409) return 'car-archived';
+	return 'save-failed';
+};
 
 const resourceMessage = (
 	failures: Array<MaintenanceGatewayFailure | null>,
@@ -106,10 +123,12 @@ export const MaintenancePlanStore = signalStore(
 			plans: computed(() =>
 				store.gateway.plans.hasValue() ? store.gateway.plans.value().plans : [],
 			),
-			loading: computed(() =>
-				[store.gateway.cars, store.gateway.timezone, store.gateway.plans].some(
-					(resource) => resource.isLoading(),
-				),
+			loading: computed(
+				() =>
+					(store.gateway.cars.isLoading() && !store.gateway.cars.hasValue()) ||
+					(store.gateway.timezone.isLoading() &&
+						!store.gateway.timezone.hasValue()) ||
+					(store.gateway.plans.isLoading() && !store.gateway.plans.hasValue()),
 			),
 			error: computed(() => resourceMessage(failures())),
 			action: computed(() => {
@@ -139,7 +158,12 @@ export const MaintenancePlanStore = signalStore(
 						}),
 						catchError((error: MaintenanceGatewayFailure) => {
 							patchState(store, {
-								outcome: { status: 'failed', operationId, command, error },
+								outcome: {
+									status: 'failed',
+									operationId,
+									command,
+									failure: mutationFailure(command, error),
+								},
 							});
 							return of(null);
 						}),

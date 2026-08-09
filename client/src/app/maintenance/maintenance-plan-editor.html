@@ -1,0 +1,55 @@
+@if (request()) {
+	<form class="maintenance-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="maintenance-form-title" [attr.aria-describedby]="formError() ? 'maintenance-form-error' : 'maintenance-form-intro'" novalidate>
+		<div>
+			<div class="alloy-section-heading">{{ request()?.kind === 'edit' ? 'Edit plan' : 'New maintenance plan' }}</div>
+			<h3 id="maintenance-form-title" class="alloy-screen-title" tabindex="-1">Set the care rule</h3>
+			<p id="maintenance-form-intro" class="alloy-supporting-text mb-0 max-w-3xl">Use a calendar interval, a drive-session threshold, or both. The first service date and prior drive-session count become the baseline.</p>
+		</div>
+		@if (formError()) {
+			<p id="maintenance-form-error" class="message alloy-state alloy-error-state mt-0" role="alert">
+				<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+				<span>{{ formError() }}</span>
+			</p>
+		}
+		<div class="form-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Car</span>
+				<select class="alloy-field alloy-focus-ring w-full" [formField]="fields.carId" (change)="changeCar($event)" [attr.aria-describedby]="fields.carId().touched() && fields.carId().invalid() ? 'plan-car-error' : null">
+					@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }
+				</select>
+				@if (fields.carId().touched() && fields.carId().invalid()) { <span id="plan-car-error" class="text-sm text-alloy-text">{{ fields.carId().errors()[0]?.message }}</span> }
+			</label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Installed component</span>
+				<select class="alloy-field alloy-focus-ring w-full" [formField]="fields.componentId"><option value="">Car-level plan</option>@for (component of components(); track component.id) { <option [value]="component.id">{{ component.slot }} · {{ component.name }}</option> }</select>
+			</label>
+			<label class="wide grid gap-1 sm:col-span-2 lg:col-span-3">
+				<span class="text-sm font-semibold text-alloy-text">Plan name</span>
+				<input class="alloy-field alloy-focus-ring w-full" placeholder="Clean and re-oil bearings" [formField]="fields.name" [attr.aria-describedby]="fields.name().touched() && fields.name().invalid() ? 'plan-name-error' : null" />
+				@if (fields.name().touched() && fields.name().invalid()) { <span id="plan-name-error" class="text-sm text-alloy-text">{{ fields.name().errors()[0]?.message }}</span> }
+			</label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Calendar interval</span>
+				<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" placeholder="Optional" [formField]="fields.calendarValue" [attr.aria-describedby]="fields.calendarValue().touched() && fields.calendarValue().invalid() ? 'plan-calendar-error' : 'plan-calendar-help'" />
+				@if (fields.calendarValue().touched() && fields.calendarValue().invalid()) { <span id="plan-calendar-error" class="text-sm text-alloy-text">{{ fields.calendarValue().errors()[0]?.message }}</span> } @else { <span id="plan-calendar-help" class="text-sm text-alloy-text-secondary">Whole days, weeks, or months.</span> }
+			</label>
+			<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Calendar unit</span><select class="alloy-field alloy-focus-ring w-full" [formField]="fields.calendarUnit"><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select></label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Drive-session threshold</span>
+				<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" placeholder="Optional" [formField]="fields.sessionInterval" [attr.aria-describedby]="fields.sessionInterval().touched() && fields.sessionInterval().invalid() ? 'plan-session-error' : 'plan-session-help'" />
+				@if (fields.sessionInterval().touched() && fields.sessionInterval().invalid()) { <span id="plan-session-error" class="text-sm text-alloy-text">{{ fields.sessionInterval().errors()[0]?.message }}</span> } @else { <span id="plan-session-help" class="text-sm text-alloy-text-secondary">Whole drive sessions.</span> }
+			</label>
+			<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Last service</span><input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="fields.baselineAt" /></label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Prior drive sessions</span>
+				<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" [formField]="fields.baselineSessions" [attr.aria-describedby]="fields.baselineSessions().touched() && fields.baselineSessions().invalid() ? 'plan-baseline-error' : null" />
+				@if (fields.baselineSessions().touched() && fields.baselineSessions().invalid()) { <span id="plan-baseline-error" class="text-sm text-alloy-text">{{ fields.baselineSessions().errors()[0]?.message }}</span> }
+			</label>
+		</div>
+		<p class="hint alloy-technical m-0 text-alloy-text-secondary">Dates are entered in <strong class="font-normal text-alloy-text">{{ timezone() }}</strong>. Completing this plan starts a fresh baseline.</p>
+		<div class="form-actions flex flex-col gap-2 sm:flex-row">
+			<button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ action() === 'create' ? 'Creating…' : action() === 'edit' ? 'Saving…' : 'Save plan' }}</button>
+			<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancel()" [disabled]="action()">Cancel</button>
+		</div>
+	</form>
+}

@@ -38,6 +38,14 @@ export type ServiceRecordCommand =
 	  }
 	| { readonly kind: 'undo-activity'; readonly recordId: string };
 
+export type ServiceRecordFailure =
+	| 'session-expired'
+	| 'car-archived'
+	| 'save-failed'
+	| 'archive-failed'
+	| 'restore-failed'
+	| 'undo-failed';
+
 export type ServiceRecordOutcome =
 	| { readonly status: 'idle'; readonly operationId: null }
 	| {
@@ -49,7 +57,7 @@ export type ServiceRecordOutcome =
 			readonly status: 'failed';
 			readonly operationId: number;
 			readonly command: ServiceRecordCommand;
-			readonly error: MaintenanceGatewayFailure;
+			readonly failure: ServiceRecordFailure;
 	  };
 
 const idleOutcome = (): ServiceRecordOutcome => ({
@@ -74,6 +82,19 @@ const requestFor = (
 		case 'undo-activity':
 			return gateway.changeService(command.recordId, 'archive');
 	}
+};
+
+const mutationFailure = (
+	command: ServiceRecordCommand,
+	failure: MaintenanceGatewayFailure,
+): ServiceRecordFailure => {
+	if (command.kind === 'undo-activity') return 'undo-failed';
+	if (command.kind === 'change-service')
+		return command.action === 'archive' ? 'archive-failed' : 'restore-failed';
+	if (failure.kind === 'http' && failure.status === 401)
+		return 'session-expired';
+	if (failure.kind === 'http' && failure.status === 409) return 'car-archived';
+	return 'save-failed';
 };
 
 const resourceMessage = (failure: MaintenanceGatewayFailure | null): string => {
@@ -120,7 +141,11 @@ export const ServiceRecordStore = signalStore(
 						note: record.description,
 					}));
 			}),
-			loading: computed(() => store.gateway.services.isLoading()),
+			loading: computed(
+				() =>
+					store.gateway.services.isLoading() &&
+					!store.gateway.services.hasValue(),
+			),
 			error: computed(() =>
 				resourceMessage(store.gateway.failure(store.gateway.services.error())),
 			),
@@ -154,7 +179,12 @@ export const ServiceRecordStore = signalStore(
 						}),
 						catchError((error: MaintenanceGatewayFailure) => {
 							patchState(store, {
-								outcome: { status: 'failed', operationId, command, error },
+								outcome: {
+									status: 'failed',
+									operationId,
+									command,
+									failure: mutationFailure(command, error),
+								},
 							});
 							return of(null);
 						}),

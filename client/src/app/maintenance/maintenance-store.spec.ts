@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
+	type TestRequest,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -143,6 +144,72 @@ describe('maintenance workflow stores', () => {
 		]);
 		expect(planStore.error()).toBe('');
 		expect(serviceStore.error()).toBe('');
+	});
+
+	it('reports loading only while each read has no usable value', async () => {
+		let cars!: TestRequest;
+		let timezone!: TestRequest;
+		let plans!: TestRequest;
+		let services!: TestRequest;
+		let consumables!: TestRequest;
+		let reportRequest!: TestRequest;
+		await vi.waitFor(() => {
+			cars = http.expectOne(
+				(request) =>
+					request.url === '/api/v1/cars' &&
+					request.params.get('archived') === 'all',
+			);
+			timezone = http.expectOne('/api/v1/preferences/timezone');
+			plans = http.expectOne('/api/v1/maintenance-plans');
+			services = http.expectOne('/api/v1/service-records');
+			consumables = http.expectOne('/api/v1/consumable-maintenance');
+			reportRequest = http.expectOne('/api/v1/consumables/report');
+		});
+		cars.flush({ cars: [car] });
+		expect(planStore.loading()).toBe(true);
+		timezone.flush({ timezone: 'UTC' });
+		expect(planStore.loading()).toBe(true);
+		plans.flush({ maintenancePlans: [plan], activity: [] });
+		await vi.waitFor(() => expect(planStore.loading()).toBe(false));
+		services.flush({ serviceRecords: [record] });
+		consumables.flush({ consumableMaintenance: [] });
+		reportRequest.flush({ report });
+
+		planStore.refresh();
+		let refreshedPlans!: TestRequest;
+		await vi.waitFor(() => {
+			const matches = http.match('/api/v1/maintenance-plans');
+			expect(matches).toHaveLength(1);
+			[refreshedPlans] = matches;
+		});
+		expect(planStore.loading()).toBe(false);
+		refreshedPlans.flush({ plans: [plan] });
+		serviceStore.refresh();
+		let refreshedServices!: TestRequest;
+		await vi.waitFor(() => {
+			const matches = http.match('/api/v1/service-records');
+			expect(matches).toHaveLength(1);
+			[refreshedServices] = matches;
+		});
+		expect(serviceStore.loading()).toBe(false);
+		refreshedServices.flush({ serviceRecords: [record] });
+
+		planStore.retry();
+		let retriedCars!: TestRequest;
+		let retriedTimezone!: TestRequest;
+		let retriedPlans!: TestRequest;
+		await vi.waitFor(() => {
+			[retriedCars] = http.match((request) => request.url === '/api/v1/cars');
+			[retriedTimezone] = http.match('/api/v1/preferences/timezone');
+			[retriedPlans] = http.match('/api/v1/maintenance-plans');
+			expect(retriedCars).toBeTruthy();
+			expect(retriedTimezone).toBeTruthy();
+			expect(retriedPlans).toBeTruthy();
+		});
+		expect(planStore.loading()).toBe(false);
+		retriedCars.flush({ cars: [car] });
+		retriedTimezone.flush({ timezone: 'UTC' });
+		retriedPlans.flush({ plans: [plan] });
 	});
 
 	it('prefers server activity and maps protected read failures', async () => {
@@ -347,6 +414,95 @@ describe('maintenance workflow stores', () => {
 			.expectOne('/api/v1/cars/car-1/service-records')
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
 		expect(serviceStore.outcome().status).toBe('failed');
+	});
+
+	it('normalizes mutation transport failures into workflow reasons', async () => {
+		await flushReads();
+		planStore.mutate({
+			kind: 'transition-plan',
+			planId: 'plan-1',
+			action: 'archive',
+		});
+		http
+			.expectOne('/api/v1/maintenance-plans/plan-1/archive')
+			.flush('failed', { status: 500, statusText: 'Failed' });
+		expect(planStore.outcome()).toMatchObject({
+			status: 'failed',
+			failure: 'transition-failed',
+		});
+
+		for (const [status, failure] of [
+			[401, 'session-expired'],
+			[409, 'car-archived'],
+			[500, 'save-failed'],
+		] as const) {
+			planStore.mutate({
+				kind: 'save-plan',
+				mode: 'create',
+				id: null,
+				plan: planDraft('Failure'),
+			});
+			http
+				.expectOne('/api/v1/maintenance-plans')
+				.flush('failed', { status, statusText: 'Failed' });
+			expect(planStore.outcome()).toMatchObject({ status: 'failed', failure });
+		}
+
+		for (const [command, path, failure] of [
+			[
+				{ kind: 'undo-activity' as const, recordId: 'record-1' },
+				'/api/v1/service-records/record-1',
+				'undo-failed',
+			],
+			[
+				{
+					kind: 'change-service' as const,
+					recordId: 'record-1',
+					action: 'archive' as const,
+				},
+				'/api/v1/service-records/record-1',
+				'archive-failed',
+			],
+			[
+				{
+					kind: 'change-service' as const,
+					recordId: 'record-1',
+					action: 'restore' as const,
+				},
+				'/api/v1/service-records/record-1/restore',
+				'restore-failed',
+			],
+		] as const) {
+			serviceStore.mutate(command);
+			http
+				.expectOne(path)
+				.flush('failed', { status: 500, statusText: 'Failed' });
+			expect(serviceStore.outcome()).toMatchObject({
+				status: 'failed',
+				failure,
+			});
+		}
+
+		for (const [status, failure] of [
+			[401, 'session-expired'],
+			[409, 'car-archived'],
+			[500, 'save-failed'],
+		] as const) {
+			serviceStore.mutate({
+				kind: 'save-service',
+				mode: 'create',
+				carId: 'car-1',
+				id: null,
+				service: serviceDraft('Failure'),
+			});
+			http
+				.expectOne('/api/v1/cars/car-1/service-records')
+				.flush('failed', { status, statusText: 'Failed' });
+			expect(serviceStore.outcome()).toMatchObject({
+				status: 'failed',
+				failure,
+			});
+		}
 	});
 
 	it('loads only the latest car component lookup and clears failures', async () => {

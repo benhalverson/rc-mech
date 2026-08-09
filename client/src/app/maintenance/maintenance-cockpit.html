@@ -6,40 +6,25 @@
 			<p class="alloy-supporting-text mb-0 max-w-3xl">A quiet view of what the garage needs next. Calendar and drive-session thresholds share one baseline, so either one can call a plan due.</p>
 		</div>
 		@if (state() === 'ready' && activeEditor() === null && canCreatePlan()) {
-			<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-maintenance-launcher="new-plan" (click)="openCreatePlan()">
-				<svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>
-				New plan
-			</button>
+			<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-maintenance-launcher="new-plan" (click)="createPlan()" [disabled]="!hasActiveCars()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>New plan</button>
 		}
 	</header>
 
 	@if (state() === 'loading') {
-		<div class="state-card alloy-state alloy-live-state mt-0" role="status">
-			<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening care ledger</strong></span>
-			<span>Reading the care ledger…</span>
-		</div>
+		<div class="state-card alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening care ledger</strong></span><span>Reading the care ledger…</span></div>
 	} @else if (state() === 'error') {
-		<div class="state-card error-state alloy-state alloy-error-state mt-0" role="alert">
-			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
-			<span>{{ error() }}</span>
-			<button class="text-button alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="load()">
-				<svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>
-				Try again
-			</button>
-		</div>
+		<div class="state-card error-state alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ error() }}</span><button class="text-button alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="load()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button></div>
 	} @else {
-		<app-maintenance-plans
-			[siblingEditing]="activeEditor() === 'service'"
-			[createRequested]="createPlanRequested()"
-			(editingChange)="planEditing($event)"
-			(completePlan)="complete($event)"
-		/>
-		<app-service-records
-			[siblingEditing]="activeEditor() === 'plan'"
-			[completionPlan]="completionPlan()"
-			(editingChange)="serviceEditing($event)"
-			(completionClosed)="closeCompletion()"
-		/>
+		<app-maintenance-plan-editor [request]="planRequest()" (cancelled)="closeEditor()" (saved)="closeEditor()" />
+		<app-service-record-editor [request]="serviceRequest()" (cancelled)="closeEditor()" (saved)="closeEditor()" />
+
+		@if (activeEditor() === null) {
+			<app-maintenance-plans [filter]="planFilter()" (filterChange)="planFilter.set($event)" (createRequested)="createPlan()" (editRequested)="editPlan($event)" (completionRequested)="completePlan($event)">
+				<app-service-record-totals service-totals [filter]="serviceFilter()" />
+				<button service-launcher class="button quiet alloy-control alloy-control-secondary alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-maintenance-launcher="service" (click)="createService()" [disabled]="!hasActiveCars()"><svg lucideWrench size="18" strokeWidth="1.8" aria-hidden="true"></svg>Log ad hoc service</button>
+			</app-maintenance-plans>
+			<app-service-records [filter]="serviceFilter()" (filterChange)="serviceFilter.set($event)" (editRequested)="editService($event)" />
+		}
 	}
 </section>
 
