@@ -153,6 +153,15 @@ describe('ConsumableStore', () => {
 		expect(store.loading()).toBe(false);
 		expect(store.error()).toBe('');
 		expect(store.action()).toBeNull();
+		gateway.cars.setLoading(true);
+		expect(store.loading()).toBe(true);
+		gateway.cars.setLoading(false);
+		gateway.timezone.setLoading(true);
+		expect(store.loading()).toBe(true);
+		gateway.timezone.setLoading(false);
+		gateway.consumables.setLoading(true);
+		expect(store.loading()).toBe(true);
+		gateway.consumables.setLoading(false);
 
 		gateway.cars.setValue([{ id: 'car-1', name: 'Red Runner' }]);
 		gateway.timezone.setValue('America/Los_Angeles');
@@ -164,7 +173,15 @@ describe('ConsumableStore', () => {
 		expect(store.report()).toEqual(report);
 
 		gateway.cars.setLoading(true);
-		expect(store.loading()).toBe(true);
+		expect(store.loading()).toBe(false);
+		gateway.cars.setLoading(false);
+		gateway.consumables.setLoading(true);
+		expect(store.action()).toBe('refresh');
+		gateway.consumables.setLoading(false);
+		gateway.report.setLoading(true);
+		expect(store.action()).toBe('refresh');
+		gateway.report.setLoading(false);
+		expect(store.action()).toBeNull();
 		gateway.cars.setError({ kind: 'http', status: 401 });
 		expect(store.error()).toContain('session has expired');
 		gateway.cars.setError(null);
@@ -221,6 +238,14 @@ describe('ConsumableStore', () => {
 		const current = entry();
 		store.mutate({ kind: 'change', action: 'archive', entry: current });
 		expect(store.action()).toBe('archive:entry-1');
+		gateway.failChange({ kind: 'unavailable' });
+		expect(store.outcome()).toMatchObject({
+			status: 'failed',
+			failure: 'archive-failed',
+		});
+
+		gateway.resetChange();
+		store.mutate({ kind: 'change', action: 'archive', entry: current });
 		gateway.succeedChange({ ...current, deletedAt: '2026-08-09' });
 		expect(store.outcome().status).toBe('succeeded');
 
@@ -234,7 +259,7 @@ describe('ConsumableStore', () => {
 		gateway.failChange({ kind: 'http', status: 409 });
 		expect(store.outcome()).toMatchObject({
 			status: 'failed',
-			error: { kind: 'http', status: 409 },
+			failure: 'restore-failed',
 		});
 
 		gateway.resetSave();
@@ -249,8 +274,29 @@ describe('ConsumableStore', () => {
 				fluidArea: 'front-shocks',
 			},
 		});
+		gateway.failSave({ kind: 'http', status: 409 });
+		expect(store.outcome()).toMatchObject({
+			status: 'failed',
+			failure: 'car-archived',
+		});
+
+		gateway.resetSave();
+		store.mutate({
+			kind: 'save',
+			mode: 'create',
+			carId: 'car-1',
+			id: null,
+			maintenance: {
+				kind: 'shock-fluid',
+				performedAt: '2026-08-09T18:00:00.000Z',
+				fluidArea: 'front-shocks',
+			},
+		});
 		gateway.failSave({ kind: 'unavailable' });
-		expect(store.outcome().status).toBe('failed');
+		expect(store.outcome()).toMatchObject({
+			status: 'failed',
+			failure: 'save-failed',
+		});
 	});
 
 	it('keeps only the latest tire lookup and publishes success and failure', () => {

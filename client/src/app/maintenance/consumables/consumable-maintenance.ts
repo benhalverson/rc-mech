@@ -1,211 +1,30 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { Component, computed, inject, signal } from '@angular/core';
 import {
-	afterNextRender,
-	Component,
-	computed,
-	ElementRef,
-	effect,
-	Injector,
-	inject,
-	linkedSignal,
-	signal,
-	untracked,
-} from '@angular/core';
-import {
-	FormField,
-	maxLength,
-	required,
-	form as signalForm,
-	validate,
-} from '@angular/forms/signals';
-import {
-	LucideArchive,
-	LucideArchiveRestore,
-	LucideHistory,
-	LucidePencil,
 	LucidePlus,
 	LucideRefreshCw,
-	LucideSave,
 	LucideTriangleAlert,
 } from '@lucide/angular';
-import type {
-	ConsumableEntry,
-	ConsumableMaintenanceDraft,
-	FluidArea,
-	MaintenanceGatewayFailure,
-	MaintenanceReport,
-	TireAxle,
-} from '../maintenance.models';
-import { type ConsumableCommand, ConsumableStore } from './consumable-store';
+import type { ConsumableEntry } from '../maintenance.models';
+import {
+	consumableEntryIsReadOnly,
+	visibleConsumableEntries,
+} from './consumable.rules';
+import {
+	ConsumableEntryEditor,
+	type ConsumableEntryEditorRequest,
+} from './consumable-entry-editor';
+import { ConsumableHistory } from './consumable-history';
+import { ConsumableStore } from './consumable-store';
 
 export type { ConsumableEntry } from '../maintenance.models';
-
-export type ConsumableCar = {
-	id: string;
-	name: string;
-	archivedAt?: string | null;
-};
-export type TireReport = {
-	front: TireReportAxle;
-	rear: TireReportAxle;
-	spend: {
-		front: number | null;
-		rear: number | null;
-		combined: number | null;
-		missingCostEntries: number;
-	};
-	fluidEntries: ConsumableEntry[];
-};
-export type TireReportAxle = {
-	latest: ConsumableEntry | null;
-	eventCount: number;
-	averageDays: number | null;
-	missingDetails: boolean;
-};
-type EntryForm = {
-	carId: string;
-	kind: 'shock-fluid' | 'differential-fluid' | 'tires';
-	performedAt: string;
-	fluidArea: FluidArea;
-	customArea: string;
-	axle: TireAxle;
-	frontDetails: string;
-	rearDetails: string;
-	frontCost: string;
-	rearCost: string;
-	notes: string;
-};
-
-const emptyForm = (): EntryForm => ({
-	carId: '',
-	kind: 'shock-fluid',
-	performedAt: '',
-	fluidArea: 'front-shocks',
-	customArea: '',
-	axle: 'front',
-	frontDetails: '',
-	rearDetails: '',
-	frontCost: '',
-	rearCost: '',
-	notes: '',
-});
-
-const isTireEntry = (entry: ConsumableEntry): boolean =>
-	entry.kind === 'tires' && !entry.deletedAt;
-
-const includesAxle = (
-	entry: ConsumableEntry,
-	axle: 'front' | 'rear',
-): boolean => entry.axle === axle || entry.axle === 'both';
-
-const averageIntervalDays = (entries: ConsumableEntry[]): number | null => {
-	if (entries.length < 2) return null;
-	let total = 0;
-	for (let index = 1; index < entries.length; index += 1) {
-		total +=
-			(new Date(entries[index - 1].performedAt).getTime() -
-				new Date(entries[index].performedAt).getTime()) /
-			86400000;
-	}
-	return Math.round((total / (entries.length - 1)) * 10) / 10;
-};
-
-const reportAxle = (
-	entries: ConsumableEntry[],
-	axle: 'front' | 'rear',
-): TireReportAxle => {
-	const events = entries
-		.filter((entry) => includesAxle(entry, axle))
-		.sort((a, b) => b.performedAt.localeCompare(a.performedAt));
-	return {
-		latest: events[0] ?? null,
-		eventCount: events.length,
-		averageDays: averageIntervalDays(events),
-		missingDetails: events.some((entry) =>
-			axle === 'front'
-				? !entry.frontDetails?.trim()
-				: !entry.rearDetails?.trim(),
-		),
-	};
-};
-
-export const buildTireReport = (entries: ConsumableEntry[]): TireReport => {
-	const tires = entries.filter(isTireEntry);
-	const fluidEntries = entries
-		.filter((entry) => entry.kind !== 'tires' && !entry.deletedAt)
-		.sort((a, b) => b.performedAt.localeCompare(a.performedAt));
-	const missingCostEntries = tires.filter((entry) => {
-		const frontMissing =
-			includesAxle(entry, 'front') && entry.frontCost == null;
-		const rearMissing = includesAxle(entry, 'rear') && entry.rearCost == null;
-		return frontMissing || rearMissing;
-	}).length;
-	return {
-		front: reportAxle(tires, 'front'),
-		rear: reportAxle(tires, 'rear'),
-		spend: {
-			front: tires.reduce((total, entry) => total + (entry.frontCost ?? 0), 0),
-			rear: tires.reduce((total, entry) => total + (entry.rearCost ?? 0), 0),
-			combined: tires.reduce(
-				(total, entry) =>
-					total + (entry.frontCost ?? 0) + (entry.rearCost ?? 0),
-				0,
-			),
-			missingCostEntries,
-		},
-		fluidEntries,
-	};
-};
-
-export const mergeTireReport = (
-	local: TireReport,
-	server: MaintenanceReport | null | undefined,
-): TireReport => {
-	if (
-		!server?.tires?.frequency?.front ||
-		!server.tires.frequency.rear ||
-		!server.tires.spend?.front ||
-		!server.tires.spend.rear ||
-		!server.tires.spend.combined
-	)
-		return local;
-	return {
-		...local,
-		front: {
-			...local.front,
-			eventCount: server.tires.frequency.front.eventCount,
-			averageDays: server.tires.frequency.front.averageIntervalDays,
-		},
-		rear: {
-			...local.rear,
-			eventCount: server.tires.frequency.rear.eventCount,
-			averageDays: server.tires.frequency.rear.averageIntervalDays,
-		},
-		spend: {
-			...local.spend,
-			front: server.tires.spend.front.total,
-			rear: server.tires.spend.rear.total,
-			combined: server.tires.spend.combined.total,
-		},
-	};
-};
-
-export const spendLabel = (value: number | null): string =>
-	value === null ? 'Multiple currencies' : `$${value.toFixed(2)}`;
 
 @Component({
 	selector: 'app-consumable-maintenance',
 	imports: [
-		CommonModule,
-		DatePipe,
-		FormField,
-		LucideArchive,
-		LucideArchiveRestore,
-		LucideHistory,
-		LucidePencil,
+		ConsumableEntryEditor,
+		ConsumableHistory,
 		LucidePlus,
 		LucideRefreshCw,
-		LucideSave,
 		LucideTriangleAlert,
 	],
 	templateUrl: './consumable-maintenance.html',
@@ -213,404 +32,41 @@ export const spendLabel = (value: number | null): string =>
 })
 export class ConsumableMaintenance {
 	private readonly store = inject(ConsumableStore);
-	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
-	private readonly injector = inject(Injector);
-	private returnFocusSelector = '[data-consumable-launcher="record"]';
-	protected readonly garage = linkedSignal(() => this.store.cars());
-	protected readonly entries = linkedSignal(() => this.store.entries());
-	protected readonly timezone = this.store.timezone;
-	protected readonly mutationError = signal('');
+
+	protected readonly activeRequest =
+		signal<ConsumableEntryEditorRequest | null>(null);
+	protected readonly historyFilter = signal<'active' | 'archived'>('active');
 	protected readonly state = computed(() =>
 		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
 	);
 	protected readonly error = this.store.error;
-	protected readonly formError = signal('');
-	protected readonly editing = signal(false);
-	protected readonly editingId = signal<string | null>(null);
 	protected readonly action = this.store.action;
-	protected readonly historyFilter = signal<'active' | 'archived'>('active');
 	protected readonly hasActiveCars = computed(() =>
-		this.garage().some((car) => !car.archivedAt),
+		this.store.cars().some((car) => !car.archivedAt),
 	);
-	protected readonly form = signal<EntryForm>(emptyForm());
-	protected readonly entryFields = signalForm(this.form, (path) => {
-		required(path.carId, { message: 'Choose a car.' });
-		required(path.performedAt, { message: 'Add the change date.' });
-		maxLength(path.notes, 4000, {
-			message: 'Use 4,000 characters or fewer for notes.',
-		});
-		for (const cost of [path.frontCost, path.rearCost])
-			validate(cost, ({ value }) =>
-				!value().trim() ||
-				(Number.isFinite(Number(value())) && Number(value()) >= 0)
-					? undefined
-					: { kind: 'cost', message: 'Costs must be zero or greater.' },
-			);
-		validate(path.frontDetails, (context) =>
-			context.valueOf(path.kind) === 'tires' &&
-			context.valueOf(path.axle) !== 'rear' &&
-			!context.value().trim() &&
-			!context.valueOf(path.frontCost).trim()
-				? {
-						kind: 'tireDetailsRequired',
-						message: 'Add front tire details or cost.',
-					}
-				: undefined,
-		);
-		validate(path.rearDetails, (context) =>
-			context.valueOf(path.kind) === 'tires' &&
-			context.valueOf(path.axle) !== 'front' &&
-			!context.value().trim() &&
-			!context.valueOf(path.rearCost).trim()
-				? {
-						kind: 'tireDetailsRequired',
-						message: 'Add rear tire details or cost.',
-					}
-				: undefined,
-		);
-	});
-	protected readonly report = computed(() =>
-		mergeTireReport(buildTireReport(this.entries()), this.store.report()),
+	protected readonly hasVisibleEntries = computed(
+		() =>
+			visibleConsumableEntries(this.store.entries(), this.historyFilter())
+				.length > 0,
 	);
-	protected readonly spendLabel = spendLabel;
 
-	constructor() {
-		let handledOperationId = 0;
-		effect(() => {
-			const outcome = this.store.outcome();
-			if (
-				outcome.status === 'idle' ||
-				outcome.status === 'pending' ||
-				outcome.operationId === handledOperationId
-			)
-				return;
-			handledOperationId = outcome.operationId;
-			if (outcome.status === 'failed') {
-				this.handleFailure(outcome.command, outcome.error);
-				return;
-			}
-			if (outcome.command.kind === 'save') {
-				this.returnFocusSelector = '#consumable-title';
-				this.cancelEdit();
-			}
-		});
-		effect(() => {
-			const lookup = this.store.tireLookup();
-			const currentForm = untracked(this.form);
-			if (
-				lookup.status !== 'succeeded' ||
-				lookup.carId !== currentForm.carId ||
-				!lookup.tires
-			)
-				return;
-			const details = Object.entries(lookup.tires)
-				.map(([key, value]) => `${key}: ${String(value)}`)
-				.join('\n');
-			untracked(() =>
-				this.form.update((current) => ({
-					...current,
-					frontDetails: current.frontDetails || details,
-					rearDetails: current.rearDetails || details,
-				})),
-			);
-		});
+	protected createEntry(): void {
+		if (!this.hasActiveCars() || this.action()) return;
+		this.activeRequest.set({ kind: 'create' });
+	}
+
+	protected editEntry(entry: ConsumableEntry): void {
+		if (this.action() || consumableEntryIsReadOnly(entry, this.store.cars()))
+			return;
+		this.activeRequest.set({ kind: 'edit', entry });
+	}
+
+	protected closeEditor(): void {
+		this.activeRequest.set(null);
 	}
 
 	protected load(): void {
-		this.mutationError.set('');
+		this.store.clearOutcome();
 		this.store.retry();
-	}
-	protected visibleEntries(): ConsumableEntry[] {
-		return this.entries().filter((entry) =>
-			this.historyFilter() === 'archived'
-				? Boolean(entry.deletedAt)
-				: !entry.deletedAt,
-		);
-	}
-	protected openCreate(): void {
-		if (!this.hasActiveCars()) return;
-		this.returnFocusSelector = '[data-consumable-launcher="record"]';
-		const car = this.garage().find((item) => !item.archivedAt);
-		this.entryFields().reset({
-			...emptyForm(),
-			carId: car?.id ?? '',
-			performedAt: this.localDateTime(new Date()),
-		});
-		this.editingId.set(null);
-		this.formError.set('');
-		this.editing.set(true);
-		this.focusAfterRender('#consumable-form-title');
-	}
-	protected openEdit(entry: ConsumableEntry): void {
-		if (this.isReadOnly(entry)) return;
-		this.returnFocusSelector = `[data-consumable-launcher="entry:${entry.id}"]`;
-		this.entryFields().reset({
-			...emptyForm(),
-			carId: entry.carId,
-			kind: entry.kind,
-			performedAt: this.localDateTime(new Date(entry.performedAt)),
-			fluidArea: entry.fluidArea ?? 'front-shocks',
-			customArea: entry.customArea ?? '',
-			axle: entry.axle ?? 'front',
-			frontDetails: entry.frontDetails ?? '',
-			rearDetails: entry.rearDetails ?? '',
-			frontCost:
-				entry.kind === 'tires'
-					? entry.frontCost == null
-						? ''
-						: String(entry.frontCost)
-					: entry.cost == null
-						? ''
-						: String(entry.cost),
-			rearCost: entry.rearCost == null ? '' : String(entry.rearCost),
-			notes: entry.notes ?? '',
-		});
-		this.editingId.set(entry.id);
-		this.formError.set('');
-		this.editing.set(true);
-		this.focusAfterRender('#consumable-form-title');
-	}
-	protected cancelEdit(): void {
-		this.editing.set(false);
-		this.editingId.set(null);
-		this.formError.set('');
-		this.entryFields().reset();
-		this.focusAfterRender(this.returnFocusSelector);
-	}
-	protected update(field: keyof EntryForm, value: string): void {
-		this.form.update((current) => ({ ...current, [field]: value }));
-		if (field === 'kind') this.applyKindChange();
-	}
-	protected changeKind(event: Event): void {
-		const target = event.target;
-		if (target instanceof HTMLSelectElement) this.update('kind', target.value);
-	}
-	private applyKindChange(): void {
-		const kind = this.form().kind;
-		if (kind !== 'tires')
-			this.form.update((current) => ({
-				...current,
-				axle: 'front',
-				rearDetails: '',
-				rearCost: '',
-			}));
-		else this.prefillTires(this.form().carId);
-	}
-	protected save(event?: Event): void {
-		event?.preventDefault();
-		this.entryFields().markAsTouched();
-		const form = this.form();
-		if (this.entryFields().invalid()) {
-			this.formError.set(
-				this.entryFields().errorSummary()[0]?.message ??
-					'Review the consumable history fields.',
-			);
-			if (this.entryFields.carId().invalid())
-				this.entryFields.carId().focusBoundControl();
-			else if (this.entryFields.performedAt().invalid())
-				this.entryFields.performedAt().focusBoundControl();
-			else if (this.entryFields.frontDetails().invalid())
-				this.entryFields.frontDetails().focusBoundControl();
-			else if (this.entryFields.rearDetails().invalid())
-				this.entryFields.rearDetails().focusBoundControl();
-			else if (this.entryFields.frontCost().invalid())
-				this.entryFields.frontCost().focusBoundControl();
-			else if (this.entryFields.rearCost().invalid())
-				this.entryFields.rearCost().focusBoundControl();
-			else this.entryFields.notes().focusBoundControl();
-			return;
-		}
-		if (
-			form.kind === 'tires' &&
-			((form.axle !== 'rear' &&
-				!form.frontDetails.trim() &&
-				!form.frontCost.trim()) ||
-				(form.axle !== 'front' &&
-					!form.rearDetails.trim() &&
-					!form.rearCost.trim()))
-		) {
-			this.formError.set('Add front or rear tire details before saving.');
-			return;
-		}
-		const frontCost = this.optionalCost(form.frontCost);
-		const rearCost = this.optionalCost(form.rearCost);
-		if (frontCost === 'invalid' || rearCost === 'invalid') {
-			this.formError.set('Costs must be zero or greater.');
-			return;
-		}
-		if (this.action()) return;
-		this.mutationError.set('');
-		const maintenance: ConsumableMaintenanceDraft =
-			form.kind === 'tires'
-				? {
-						kind: form.kind,
-						performedAt: this.toIso(form.performedAt),
-						axle: form.axle,
-						...(form.axle !== 'rear' && form.frontDetails.trim()
-							? { frontDetails: form.frontDetails.trim() }
-							: {}),
-						...(form.axle !== 'rear' && frontCost !== null
-							? { frontCost }
-							: {}),
-						...(form.axle !== 'front' && form.rearDetails.trim()
-							? { rearDetails: form.rearDetails.trim() }
-							: {}),
-						...(form.axle !== 'front' && rearCost !== null ? { rearCost } : {}),
-						...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
-					}
-				: {
-						kind: form.kind,
-						performedAt: this.toIso(form.performedAt),
-						fluidArea: form.fluidArea,
-						...(form.fluidArea === 'custom' && form.customArea.trim()
-							? { customArea: form.customArea.trim() }
-							: {}),
-						...(frontCost !== null ? { cost: frontCost } : {}),
-						...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
-					};
-		const id = this.editingId();
-		this.formError.set('');
-		this.store.mutate({
-			kind: 'save',
-			mode: id ? 'edit' : 'create',
-			carId: form.carId,
-			id,
-			maintenance,
-		});
-	}
-	protected archive(entry: ConsumableEntry): void {
-		if (this.isReadOnly(entry) || this.action()) return;
-		this.mutationError.set('');
-		this.store.mutate({ kind: 'change', action: 'archive', entry });
-	}
-	protected restore(entry: ConsumableEntry): void {
-		if (this.action()) return;
-		this.mutationError.set('');
-		this.store.mutate({ kind: 'change', action: 'restore', entry });
-	}
-
-	private handleFailure(
-		command: ConsumableCommand,
-		error: MaintenanceGatewayFailure,
-	): void {
-		if (command.kind === 'save') {
-			this.formError.set(
-				error.kind === 'http' && error.status === 409
-					? 'This car is archived. Restore it before recording maintenance.'
-					: 'The consumable entry could not be saved.',
-			);
-			return;
-		}
-		this.mutationError.set(
-			command.action === 'archive'
-				? 'That consumable entry could not be archived.'
-				: 'That consumable entry could not be restored.',
-		);
-	}
-	protected isReadOnly(entry: ConsumableEntry): boolean {
-		return (
-			Boolean(
-				this.garage().find((car) => car.id === entry.carId)?.archivedAt,
-			) || Boolean(entry.deletedAt)
-		);
-	}
-	protected carName(carId: string): string {
-		return this.garage().find((car) => car.id === carId)?.name ?? 'Unknown car';
-	}
-	protected kindLabel(kind: ConsumableEntry['kind']): string {
-		return kind === 'tires'
-			? 'Tire set'
-			: kind === 'shock-fluid'
-				? 'Shock fluid'
-				: 'Differential fluid';
-	}
-	protected areaLabel(entry: ConsumableEntry): string {
-		return entry.kind === 'tires'
-			? `${entry.axle ?? 'front'} axle`
-			: entry.fluidArea === 'custom'
-				? entry.customArea || 'Custom area'
-				: (entry.fluidArea ?? '').replaceAll('-', ' ');
-	}
-	protected axleDetails(entry: ConsumableEntry, axle: string): string {
-		const details = axle === 'front' ? entry.frontDetails : entry.rearDetails;
-		return details?.trim() || 'Details not recorded.';
-	}
-	protected axleCost(entry: ConsumableEntry, axle: string): number | null {
-		return axle === 'front'
-			? (entry.frontCost ?? null)
-			: (entry.rearCost ?? null);
-	}
-	protected entryCost(entry: ConsumableEntry): string {
-		const isFluid = entry.kind !== 'tires';
-		const hasCost = isFluid
-			? entry.cost !== null && entry.cost !== undefined
-			: (entry.frontCost !== null && entry.frontCost !== undefined) ||
-				(entry.rearCost !== null && entry.rearCost !== undefined);
-		const total = isFluid
-			? (entry.cost ?? 0)
-			: (entry.frontCost ?? 0) + (entry.rearCost ?? 0);
-		return hasCost
-			? `${entry.currency ?? 'USD'} ${total.toFixed(2)}`
-			: 'No cost logged';
-	}
-	protected setHistoryFilter(value: 'active' | 'archived'): void {
-		this.historyFilter.set(value);
-	}
-	private optionalCost(value: string): number | null | 'invalid' {
-		if (!value.trim()) return null;
-		const number = Number(value);
-		return Number.isFinite(number) && number >= 0 ? number : 'invalid';
-	}
-	private prefillTires(carId: string): void {
-		if (!carId) return;
-		this.store.loadTires(carId);
-	}
-	private localDateTime(date: Date): string {
-		const parts = new Intl.DateTimeFormat('en-CA', {
-			timeZone: this.timezone(),
-			year: 'numeric',
-			month: '2-digit',
-			day: '2-digit',
-			hour: '2-digit',
-			minute: '2-digit',
-			hourCycle: 'h23',
-		}).formatToParts(date);
-		const get = (type: string) =>
-			parts.find((part) => part.type === type)?.value ?? '';
-		return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
-	}
-	private toIso(value: string): string {
-		const [date, time] = value.split('T');
-		if (!date || !time) return '';
-		const [year, month, day] = date.split('-').map(Number);
-		const [hour, minute] = time.split(':').map(Number);
-		const asUtc = Date.UTC(year, month - 1, day, hour, minute);
-		const parts = new Intl.DateTimeFormat('en-US', {
-			timeZone: this.timezone(),
-			year: 'numeric',
-			month: '2-digit',
-			day: '2-digit',
-			hour: '2-digit',
-			minute: '2-digit',
-			hourCycle: 'h23',
-		}).formatToParts(new Date(asUtc));
-		const get = (type: string) =>
-			Number(parts.find((part) => part.type === type)?.value);
-		const offset =
-			Date.UTC(
-				get('year'),
-				get('month') - 1,
-				get('day'),
-				get('hour'),
-				get('minute'),
-			) - asUtc;
-		return new Date(asUtc - offset).toISOString();
-	}
-	private focusAfterRender(selector: string): void {
-		afterNextRender(
-			() =>
-				this.host.nativeElement.querySelector<HTMLElement>(selector)?.focus(),
-			{ injector: this.injector },
-		);
 	}
 }

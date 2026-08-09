@@ -1,0 +1,76 @@
+@if (request()) {
+	<form class="consumable-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="consumable-form-title" [attr.aria-describedby]="formError() ? 'consumable-form-error' : 'consumable-form-intro'" novalidate>
+		<div>
+			<div class="alloy-section-heading">{{ request()?.kind === 'edit' ? 'Edit history' : 'New history entry' }}</div>
+			<h4 id="consumable-form-title" class="alloy-screen-title" tabindex="-1">Keep the snapshot honest</h4>
+			<p id="consumable-form-intro" class="alloy-supporting-text mb-0">Record the change as it happened. This history does not create inventory or reminders.</p>
+		</div>
+		@if (formError()) {
+			<p id="consumable-form-error" class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ formError() }}</span></p>
+		}
+		<div class="form-grid grid gap-4 sm:grid-cols-3">
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Car</span>
+				<select class="alloy-field alloy-focus-ring w-full" [formField]="entryFields.carId" [attr.aria-describedby]="entryFields.carId().touched() && entryFields.carId().invalid() ? 'entry-car-error' : null">@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }</select>
+				@if (entryFields.carId().touched() && entryFields.carId().invalid()) { <span id="entry-car-error" class="text-sm text-alloy-text">{{ entryFields.carId().errors()[0]?.message }}</span> }
+			</label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">What changed</span>
+				<select class="alloy-field alloy-focus-ring w-full" [formField]="entryFields.kind" (change)="changeKind($event)"><option value="shock-fluid">Shock fluid</option><option value="differential-fluid">Differential fluid</option><option value="tires">Tire set</option></select>
+			</label>
+			<label class="grid gap-1">
+				<span class="text-sm font-semibold text-alloy-text">Change date</span>
+				<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="entryFields.performedAt" [attr.aria-describedby]="entryFields.performedAt().touched() && entryFields.performedAt().invalid() ? 'entry-date-error' : null" />
+				@if (entryFields.performedAt().touched() && entryFields.performedAt().invalid()) { <span id="entry-date-error" class="text-sm text-alloy-text">{{ entryFields.performedAt().errors()[0]?.message }}</span> }
+			</label>
+		</div>
+
+		@if (form().kind === 'shock-fluid' || form().kind === 'differential-fluid') {
+			<fieldset class="service-panel grid gap-4 border-t border-alloy-separator pt-5">
+				<legend class="alloy-section-heading pr-2">Service area</legend>
+				<div class="choice-row alloy-segment-grid" [class.sm:grid-cols-3]="true">
+					@for (area of (form().kind === 'shock-fluid' ? ['front-shocks', 'rear-shocks', 'custom'] : ['front-differential', 'rear-differential', 'custom']); track area) {
+						<label class="choice alloy-segment"><input class="alloy-choice-input" type="radio" [value]="area" [formField]="entryFields.fluidArea" /><span>{{ area.replace('-', ' ') }}</span></label>
+					}
+				</div>
+				@if (form().fluidArea === 'custom') {
+					<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Custom service area</span><input class="alloy-field alloy-focus-ring w-full" [formField]="entryFields.customArea" placeholder="Center differential" /></label>
+				}
+				<label class="grid gap-1 sm:max-w-xs">
+					<span class="text-sm font-semibold text-alloy-text">Cost ({{ 'USD' }})</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" [formField]="entryFields.frontCost" placeholder="Optional" [attr.aria-describedby]="entryFields.frontCost().touched() && entryFields.frontCost().invalid() ? 'entry-front-cost-error' : null" />
+					@if (entryFields.frontCost().touched() && entryFields.frontCost().invalid()) { <span id="entry-front-cost-error" class="text-sm text-alloy-text">{{ entryFields.frontCost().errors()[0]?.message }}</span> }
+				</label>
+			</fieldset>
+		} @else {
+			<fieldset class="service-panel grid gap-4 border-t border-alloy-separator pt-5">
+				<legend class="alloy-section-heading pr-2">Axle sets</legend>
+				<div class="choice-row alloy-segment-grid">
+					@for (axle of ['front', 'rear', 'both']; track axle) { <label class="choice alloy-segment"><input class="alloy-choice-input" type="radio" [value]="axle" [formField]="entryFields.axle" /><span>{{ axle }}{{ axle === 'both' ? ' axles' : ' axle' }}</span></label> }
+				</div>
+				<div class="axle-grid grid gap-4 sm:grid-cols-2">
+					@if (form().axle !== 'rear') {
+						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Front tire details</span><textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" [formField]="entryFields.frontDetails" placeholder="Brand, carcass, insert, wheel" [attr.aria-describedby]="entryFields.frontDetails().touched() && entryFields.frontDetails().invalid() ? 'entry-front-details-error' : null"></textarea>@if (entryFields.frontDetails().touched() && entryFields.frontDetails().invalid()) { <span id="entry-front-details-error" class="text-sm text-alloy-text">{{ entryFields.frontDetails().errors()[0]?.message }}</span> }</label>
+						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Front cost (USD)</span><input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" [formField]="entryFields.frontCost" placeholder="Optional" [attr.aria-describedby]="entryFields.frontCost().touched() && entryFields.frontCost().invalid() ? 'entry-front-cost-error' : null" />@if (entryFields.frontCost().touched() && entryFields.frontCost().invalid()) { <span id="entry-front-cost-error" class="text-sm text-alloy-text">{{ entryFields.frontCost().errors()[0]?.message }}</span> }</label>
+					}
+					@if (form().axle !== 'front') {
+						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Rear tire details</span><textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" [formField]="entryFields.rearDetails" placeholder="Brand, carcass, insert, wheel" [attr.aria-describedby]="entryFields.rearDetails().touched() && entryFields.rearDetails().invalid() ? 'entry-rear-details-error' : null"></textarea>@if (entryFields.rearDetails().touched() && entryFields.rearDetails().invalid()) { <span id="entry-rear-details-error" class="text-sm text-alloy-text">{{ entryFields.rearDetails().errors()[0]?.message }}</span> }</label>
+						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Rear cost (USD)</span><input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" [formField]="entryFields.rearCost" placeholder="Optional" [attr.aria-describedby]="entryFields.rearCost().touched() && entryFields.rearCost().invalid() ? 'entry-rear-cost-error' : null" />@if (entryFields.rearCost().touched() && entryFields.rearCost().invalid()) { <span id="entry-rear-cost-error" class="text-sm text-alloy-text">{{ entryFields.rearCost().errors()[0]?.message }}</span> }</label>
+					}
+				</div>
+				<p class="hint m-0 text-sm text-alloy-text-secondary">Details are copied from the current setup when available, then saved as this change’s own snapshot.</p>
+			</fieldset>
+		}
+
+		<label class="grid gap-1">
+			<span class="text-sm font-semibold text-alloy-text">Notes</span>
+			<textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" [formField]="entryFields.notes" placeholder="Viscosity, track conditions, or what changed" [attr.aria-describedby]="entryFields.notes().touched() && entryFields.notes().invalid() ? 'entry-notes-error' : null"></textarea>
+			@if (entryFields.notes().touched() && entryFields.notes().invalid()) { <span id="entry-notes-error" class="text-sm text-alloy-text">{{ entryFields.notes().errors()[0]?.message }}</span> }
+		</label>
+		<p class="hint alloy-technical m-0 text-alloy-text-secondary">Dates are entered in <strong class="font-normal text-alloy-text">{{ timezone() }}</strong>. Automatic plans and component inventory stay separate.</p>
+		<div class="form-actions flex flex-col gap-2 sm:flex-row">
+			<button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ action() === 'create' || action() === 'edit' ? 'Saving…' : 'Save change' }}</button>
+			<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancel()" [disabled]="action()">Cancel</button>
+		</div>
+	</form>
+}

@@ -5,150 +5,20 @@
 			<h3 id="consumable-title" class="alloy-screen-title" tabindex="-1">The changes worth remembering</h3>
 			<p class="alloy-supporting-text mb-0 max-w-3xl">Track fluid services and tire sets without turning the garage into an inventory system.</p>
 		</div>
-		@if (state() === 'ready' && !editing() && visibleEntries().length) {
-			<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-consumable-launcher="record" (click)="openCreate()" [disabled]="!hasActiveCars()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Record change</button>
+		@if (state() === 'ready' && activeRequest() === null && hasVisibleEntries()) {
+			<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-consumable-launcher="record" (click)="createEntry()" [disabled]="!hasActiveCars() || action()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Record change</button>
 		}
 	</header>
 
-	@if (mutationError()) {
-		<p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ mutationError() }}</span></p>
-	}
 	@if (state() === 'loading') {
 		<div class="state-card alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening consumable history</strong></span><span>Reading consumable history…</span></div>
 	} @else if (state() === 'error') {
 		<div class="state-card error-state alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ error() }}</span><button class="text-button alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="load()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button></div>
-	} @else if (editing()) {
-		<form class="consumable-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="consumable-form-title" [attr.aria-describedby]="formError() ? 'consumable-form-error' : 'consumable-form-intro'" novalidate>
-			<div>
-				<div class="alloy-section-heading">{{ editingId() ? 'Edit history' : 'New history entry' }}</div>
-				<h4 id="consumable-form-title" class="alloy-screen-title" tabindex="-1">Keep the snapshot honest</h4>
-				<p id="consumable-form-intro" class="alloy-supporting-text mb-0">Record the change as it happened. This history does not create inventory or reminders.</p>
-			</div>
-			@if (formError()) {
-				<p id="consumable-form-error" class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ formError() }}</span></p>
-			}
-			<div class="form-grid grid gap-4 sm:grid-cols-3">
-				<label class="grid gap-1">
-					<span class="text-sm font-semibold text-alloy-text">Car</span>
-					<select class="alloy-field alloy-focus-ring w-full" [formField]="entryFields.carId" [attr.aria-describedby]="entryFields.carId().touched() && entryFields.carId().invalid() ? 'entry-car-error' : null">@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }</select>
-					@if (entryFields.carId().touched() && entryFields.carId().invalid()) { <span id="entry-car-error" class="text-sm text-alloy-text">{{ entryFields.carId().errors()[0]?.message }}</span> }
-				</label>
-				<label class="grid gap-1">
-					<span class="text-sm font-semibold text-alloy-text">What changed</span>
-					<select class="alloy-field alloy-focus-ring w-full" [formField]="entryFields.kind" (change)="changeKind($event)"><option value="shock-fluid">Shock fluid</option><option value="differential-fluid">Differential fluid</option><option value="tires">Tire set</option></select>
-				</label>
-				<label class="grid gap-1">
-					<span class="text-sm font-semibold text-alloy-text">Change date</span>
-					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="entryFields.performedAt" [attr.aria-describedby]="entryFields.performedAt().touched() && entryFields.performedAt().invalid() ? 'entry-date-error' : null" />
-					@if (entryFields.performedAt().touched() && entryFields.performedAt().invalid()) { <span id="entry-date-error" class="text-sm text-alloy-text">{{ entryFields.performedAt().errors()[0]?.message }}</span> }
-				</label>
-			</div>
-
-			@if (form().kind === 'shock-fluid' || form().kind === 'differential-fluid') {
-				<fieldset class="service-panel grid gap-4 border-t border-alloy-separator pt-5">
-					<legend class="alloy-section-heading pr-2">Service area</legend>
-					<div class="choice-row alloy-segment-grid" [class.sm:grid-cols-3]="true">
-						@for (area of (form().kind === 'shock-fluid' ? ['front-shocks', 'rear-shocks', 'custom'] : ['front-differential', 'rear-differential', 'custom']); track area) {
-							<label class="choice alloy-segment"><input class="alloy-choice-input" type="radio" [value]="area" [formField]="entryFields.fluidArea" /><span>{{ area.replace('-', ' ') }}</span></label>
-						}
-					</div>
-					@if (form().fluidArea === 'custom') {
-						<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Custom service area</span><input class="alloy-field alloy-focus-ring w-full" [formField]="entryFields.customArea" placeholder="Center differential" /></label>
-					}
-					<label class="grid gap-1 sm:max-w-xs">
-						<span class="text-sm font-semibold text-alloy-text">Cost ({{ 'USD' }})</span>
-						<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" [formField]="entryFields.frontCost" placeholder="Optional" [attr.aria-describedby]="entryFields.frontCost().touched() && entryFields.frontCost().invalid() ? 'entry-front-cost-error' : null" />
-						@if (entryFields.frontCost().touched() && entryFields.frontCost().invalid()) { <span id="entry-front-cost-error" class="text-sm text-alloy-text">{{ entryFields.frontCost().errors()[0]?.message }}</span> }
-					</label>
-				</fieldset>
-			} @else {
-				<fieldset class="service-panel grid gap-4 border-t border-alloy-separator pt-5">
-					<legend class="alloy-section-heading pr-2">Axle sets</legend>
-					<div class="choice-row alloy-segment-grid">
-						@for (axle of ['front', 'rear', 'both']; track axle) { <label class="choice alloy-segment"><input class="alloy-choice-input" type="radio" [value]="axle" [formField]="entryFields.axle" /><span>{{ axle }}{{ axle === 'both' ? ' axles' : ' axle' }}</span></label> }
-					</div>
-					<div class="axle-grid grid gap-4 sm:grid-cols-2">
-						@if (form().axle !== 'rear') {
-							<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Front tire details</span><textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" [formField]="entryFields.frontDetails" placeholder="Brand, carcass, insert, wheel" [attr.aria-describedby]="entryFields.frontDetails().touched() && entryFields.frontDetails().invalid() ? 'entry-front-details-error' : null"></textarea>@if (entryFields.frontDetails().touched() && entryFields.frontDetails().invalid()) { <span id="entry-front-details-error" class="text-sm text-alloy-text">{{ entryFields.frontDetails().errors()[0]?.message }}</span> }</label>
-							<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Front cost (USD)</span><input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" [formField]="entryFields.frontCost" placeholder="Optional" [attr.aria-describedby]="entryFields.frontCost().touched() && entryFields.frontCost().invalid() ? 'entry-front-cost-error' : null" />@if (entryFields.frontCost().touched() && entryFields.frontCost().invalid()) { <span id="entry-front-cost-error" class="text-sm text-alloy-text">{{ entryFields.frontCost().errors()[0]?.message }}</span> }</label>
-						}
-						@if (form().axle !== 'front') {
-							<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Rear tire details</span><textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" [formField]="entryFields.rearDetails" placeholder="Brand, carcass, insert, wheel" [attr.aria-describedby]="entryFields.rearDetails().touched() && entryFields.rearDetails().invalid() ? 'entry-rear-details-error' : null"></textarea>@if (entryFields.rearDetails().touched() && entryFields.rearDetails().invalid()) { <span id="entry-rear-details-error" class="text-sm text-alloy-text">{{ entryFields.rearDetails().errors()[0]?.message }}</span> }</label>
-							<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Rear cost (USD)</span><input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="decimal" [formField]="entryFields.rearCost" placeholder="Optional" [attr.aria-describedby]="entryFields.rearCost().touched() && entryFields.rearCost().invalid() ? 'entry-rear-cost-error' : null" />@if (entryFields.rearCost().touched() && entryFields.rearCost().invalid()) { <span id="entry-rear-cost-error" class="text-sm text-alloy-text">{{ entryFields.rearCost().errors()[0]?.message }}</span> }</label>
-						}
-					</div>
-					<p class="hint m-0 text-sm text-alloy-text-secondary">Details are copied from the current setup when available, then saved as this change’s own snapshot.</p>
-				</fieldset>
-			}
-
-			<label class="grid gap-1">
-				<span class="text-sm font-semibold text-alloy-text">Notes</span>
-				<textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" [formField]="entryFields.notes" placeholder="Viscosity, track conditions, or what changed" [attr.aria-describedby]="entryFields.notes().touched() && entryFields.notes().invalid() ? 'entry-notes-error' : null"></textarea>
-				@if (entryFields.notes().touched() && entryFields.notes().invalid()) { <span id="entry-notes-error" class="text-sm text-alloy-text">{{ entryFields.notes().errors()[0]?.message }}</span> }
-			</label>
-			<p class="hint alloy-technical m-0 text-alloy-text-secondary">Dates are entered in <strong class="font-normal text-alloy-text">{{ timezone() }}</strong>. Automatic plans and component inventory stay separate.</p>
-			<div class="form-actions flex flex-col gap-2 sm:flex-row">
-				<button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ action() ? 'Saving…' : 'Save change' }}</button>
-				<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelEdit()" [disabled]="action()">Cancel</button>
-			</div>
-		</form>
 	} @else {
-		<div class="history-toolbar flex flex-wrap items-center gap-2" role="group" aria-label="Filter consumable history">
-			<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="historyFilter() === 'active'" [attr.aria-pressed]="historyFilter() === 'active'" (click)="setHistoryFilter('active')">Current history</button>
-			<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="historyFilter() === 'archived'" [attr.aria-pressed]="historyFilter() === 'archived'" (click)="setHistoryFilter('archived')">Archived entries</button>
-			<span class="history-total alloy-technical ml-auto text-alloy-text-secondary">{{ visibleEntries().length }} entries</span>
-		</div>
+		<app-consumable-entry-editor [request]="activeRequest()" (cancelled)="closeEditor()" (saved)="closeEditor()" />
 
-		<section class="tire-report grid gap-4 border-y border-alloy-separator py-5" aria-labelledby="tire-report-title">
-			<header><div class="alloy-section-heading">Historical report</div><h4 id="tire-report-title" class="alloy-screen-title">Tire changes, by axle</h4><p class="alloy-supporting-text mb-0">Recorded changes describe what has happened; they do not create due dates or reminders.</p></header>
-			<div class="report-grid divide-y divide-alloy-separator border-y border-alloy-separator md:grid md:grid-cols-2 md:divide-x md:divide-y-0">
-				@for (axle of ['front', 'rear']; track axle) {
-					@let summary = axle === 'front' ? report().front : report().rear;
-					<article class="report-card grid content-start gap-2 px-1 py-4 md:px-4">
-						<div class="plan-kicker flex flex-wrap justify-between gap-2 text-[12px] font-semibold tracking-[0.08em] text-alloy-text-secondary uppercase"><span>{{ axle }} axle</span><span>{{ summary.eventCount }} {{ summary.eventCount === 1 ? 'event' : 'events' }}</span></div>
-						<h5 class="m-0 text-base font-semibold text-alloy-text">@if (summary.latest) { Last change {{ summary.latest.performedAt | date:'mediumDate':timezone() }} } @else { No recorded change }</h5>
-						@if (summary.latest) {
-							<p class="m-0 text-alloy-text-secondary">{{ axleDetails(summary.latest, axle) }}</p>
-							@if (axleCost(summary.latest, axle) == null) { <p class="report-warning alloy-state alloy-attention-state mt-1"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span class="text-alloy-text">Cost not recorded for this axle event.</span></p> }
-						}
-						@if (summary.averageDays != null) { <p class="m-0 text-sm text-alloy-text-secondary">About {{ summary.averageDays }} days between recorded {{ axle }} changes.</p> } @else { <p class="hint m-0 text-sm text-alloy-text-secondary">Frequency needs at least two recorded {{ axle }} events.</p> }
-						@if (summary.missingDetails) { <p class="report-warning alloy-state alloy-attention-state mt-1"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span class="text-alloy-text">Some {{ axle }} events have incomplete tire details.</span></p> }
-					</article>
-				}
-			</div>
-			<div class="spend-strip grid grid-cols-1 divide-y divide-alloy-separator border-y border-alloy-separator sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-				<div class="grid gap-1 px-4 py-3"><span class="text-sm text-alloy-text-secondary">Front spend</span><strong class="alloy-technical font-normal text-alloy-text">{{ spendLabel(report().spend.front) }}</strong></div>
-				<div class="grid gap-1 px-4 py-3"><span class="text-sm text-alloy-text-secondary">Rear spend</span><strong class="alloy-technical font-normal text-alloy-text">{{ spendLabel(report().spend.rear) }}</strong></div>
-				<div class="grid gap-1 px-4 py-3"><span class="text-sm text-alloy-text-secondary">Combined spend</span><strong class="alloy-technical font-normal text-alloy-text">{{ spendLabel(report().spend.combined) }}</strong></div>
-			</div>
-			@if (report().spend.missingCostEntries) { <p class="report-warning alloy-state alloy-attention-state mt-0"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span class="text-alloy-text">{{ report().spend.missingCostEntries }} tire {{ report().spend.missingCostEntries === 1 ? 'event has' : 'events have' }} no recorded cost; totals include recorded costs only.</span></p> }
-		</section>
-
-		<section class="fluid-report grid gap-3 border-t border-alloy-separator pt-5" aria-labelledby="fluid-report-title">
-			<div><div class="alloy-section-heading">Fluid history</div><h4 id="fluid-report-title" class="alloy-screen-title">Service areas, kept alongside tire history</h4></div>
-			@if (!report().fluidEntries.length) { <p class="hint m-0 text-sm text-alloy-text-secondary">No shock-fluid or differential-fluid changes recorded.</p> } @else {
-				<div class="fluid-history divide-y divide-alloy-separator border-y border-alloy-separator">
-					@for (entry of report().fluidEntries; track entry.id) { <p class="m-0 grid min-h-12 gap-1 py-3 sm:grid-cols-[140px_minmax(0,1fr)_auto] sm:items-center"><time class="alloy-technical text-alloy-text" [dateTime]="entry.performedAt">{{ entry.performedAt | date:'mediumDate':timezone() }}</time><strong class="font-semibold text-alloy-text">{{ areaLabel(entry) }}</strong><span class="text-sm text-alloy-text-secondary">{{ entryCost(entry) }}</span></p> }
-				</div>
-			}
-		</section>
-
-		@if (!visibleEntries().length) {
-			<div class="state-card empty-state alloy-empty-state grid gap-3">
-				<svg lucideHistory size="24" strokeWidth="1.8" aria-hidden="true"></svg>
-				<div><h4 class="m-0 text-base font-semibold text-alloy-text">No consumable changes yet</h4><p class="m-0 mt-1">Record the next shock-fluid service, differential service, or tire-set change.</p></div>
-				<button class="button alloy-control alloy-focus-ring inline-flex w-fit items-center gap-2" type="button" data-consumable-launcher="record" (click)="openCreate()" [disabled]="!hasActiveCars()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Record change</button>
-			</div>
-		} @else {
-			<div class="consumable-list border-y border-alloy-separator">
-				@for (entry of visibleEntries(); track entry.id) {
-					<article class="consumable-row grid gap-3 border-b border-alloy-separator py-4 last:border-b-0 md:grid-cols-[140px_minmax(0,1fr)_auto]">
-						<div class="consumable-date"><time class="alloy-technical block text-alloy-text" [dateTime]="entry.performedAt">{{ entry.performedAt | date:'mediumDate':timezone() }}</time><span class="mt-1 block text-sm text-alloy-text-secondary">{{ carName(entry.carId) }}</span></div>
-						<div class="consumable-copy grid min-w-0 gap-2"><div class="plan-kicker flex flex-wrap gap-3 text-[12px] font-semibold tracking-[0.08em] text-alloy-text-secondary uppercase"><span class="text-alloy-text">{{ kindLabel(entry.kind) }}</span><span>{{ areaLabel(entry) }}</span></div>@if (entry.frontDetails) { <p class="m-0 break-words whitespace-pre-wrap text-alloy-text-secondary"><strong class="text-alloy-text">Front</strong> {{ entry.frontDetails }}@if (entry.frontCost != null) { · ${{ entry.frontCost | number:'1.2-2' }}}</p> }@if (entry.rearDetails) { <p class="m-0 break-words whitespace-pre-wrap text-alloy-text-secondary"><strong class="text-alloy-text">Rear</strong> {{ entry.rearDetails }}@if (entry.rearCost != null) { · ${{ entry.rearCost | number:'1.2-2' }}}</p> }@if (entry.kind !== 'tires') { <p class="m-0 break-words whitespace-pre-wrap text-alloy-text-secondary">{{ entry.notes || 'Fluid service recorded.' }}</p> }</div>
-						<div class="consumable-actions flex flex-wrap items-center gap-2 md:justify-end" role="group" aria-label="Consumable entry actions"><strong class="alloy-technical mr-1 font-normal text-alloy-text">{{ entryCost(entry) }}</strong>@if (!entry.deletedAt) { <button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-consumable-launcher]="'entry:' + entry.id" (click)="openEdit(entry)" [disabled]="isReadOnly(entry)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button><button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="archive(entry)" [disabled]="isReadOnly(entry)"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> } @else { <span class="deleted-label text-sm text-alloy-text-secondary">Archived</span><button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="restore(entry)" [disabled]="action()"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>Restore</button> }</div>
-					</article>
-				}
-			</div>
+		@if (activeRequest() === null) {
+			<app-consumable-history [(filter)]="historyFilter" (createRequested)="createEntry()" (editRequested)="editEntry($event)" />
 		}
 	}
 </section>

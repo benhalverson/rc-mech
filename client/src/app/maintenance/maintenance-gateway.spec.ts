@@ -36,6 +36,18 @@ const serviceDraft = {
 	performedAt: service.performedAt,
 	description: service.description,
 };
+const consumable = {
+	id: 'entry-1',
+	carId: 'car-1',
+	kind: 'shock-fluid' as const,
+	performedAt: '2026-08-09T18:00:00.000Z',
+	fluidArea: 'front-shocks' as const,
+};
+const consumableDraft = {
+	kind: 'shock-fluid' as const,
+	performedAt: consumable.performedAt,
+	fluidArea: 'front-shocks' as const,
+};
 
 describe('MaintenanceGateway', () => {
 	let gateway: MaintenanceGateway;
@@ -313,6 +325,51 @@ describe('MaintenanceGateway', () => {
 		await expect(result).resolves.toEqual(service);
 	});
 
+	it('sends consumable mutations to their credentialed car endpoints', async () => {
+		let result = firstValueFrom(
+			gateway.saveConsumable('create', 'car/1', null, consumableDraft),
+		);
+		let request = http.expectOne({
+			method: 'POST',
+			url: '/api/v1/cars/car%2F1/consumable-maintenance',
+		});
+		expect(request.request.body).toEqual(consumableDraft);
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ consumableMaintenance: consumable });
+		await expect(result).resolves.toEqual(consumable);
+
+		result = firstValueFrom(
+			gateway.saveConsumable('edit', 'car/1', 'entry/1', consumableDraft),
+		);
+		request = http.expectOne({
+			method: 'PATCH',
+			url: '/api/v1/cars/car%2F1/consumable-maintenance/entry%2F1',
+		});
+		expect(request.request.body).toEqual(consumableDraft);
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ consumableMaintenance: consumable });
+		await expect(result).resolves.toEqual(consumable);
+
+		result = firstValueFrom(gateway.changeConsumable(consumable, 'archive'));
+		request = http.expectOne({
+			method: 'DELETE',
+			url: '/api/v1/cars/car-1/consumable-maintenance/entry-1',
+		});
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ consumableMaintenance: consumable });
+		await expect(result).resolves.toEqual(consumable);
+
+		result = firstValueFrom(gateway.changeConsumable(consumable, 'restore'));
+		request = http.expectOne({
+			method: 'POST',
+			url: '/api/v1/cars/car-1/consumable-maintenance/entry-1/restore',
+		});
+		expect(request.request.body).toEqual({});
+		expect(request.request.withCredentials).toBe(true);
+		request.flush({ consumableMaintenance: consumable });
+		await expect(result).resolves.toEqual(consumable);
+	});
+
 	it('maps malformed mutations and component lookups canonically', async () => {
 		const malformedPlan = firstValueFrom(
 			gateway.savePlan('create', null, planDraft),
@@ -321,6 +378,16 @@ describe('MaintenanceGateway', () => {
 			.expectOne('/api/v1/maintenance-plans')
 			.flush({ maintenancePlan: { id: 4 } });
 		await expect(malformedPlan).rejects.toEqual({ kind: 'invalid-response' });
+
+		const malformedConsumable = firstValueFrom(
+			gateway.saveConsumable('create', 'car-1', null, consumableDraft),
+		);
+		http
+			.expectOne('/api/v1/cars/car-1/consumable-maintenance')
+			.flush({ consumableMaintenance: { id: 4 } });
+		await expect(malformedConsumable).rejects.toEqual({
+			kind: 'invalid-response',
+		});
 
 		const components = firstValueFrom(gateway.components('car/1'));
 		http.expectOne('/api/v1/cars/car%2F1/components').flush({
