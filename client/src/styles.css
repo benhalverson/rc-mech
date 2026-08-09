@@ -175,10 +175,7 @@ body {
 		font-weight: 600;
 		line-height: 20px;
 		cursor: pointer;
-		transition:
-			background-color var(--alloy-motion-feedback) ease-out,
-			border-color var(--alloy-motion-feedback) ease-out,
-			color var(--alloy-motion-feedback) ease-out;
+		transition: border-color var(--alloy-motion-feedback) ease-out;
 	}
 
 	.alloy-segment:has(input:checked) {
