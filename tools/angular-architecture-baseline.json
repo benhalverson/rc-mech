@@ -1,9 +1,6 @@
 {
 	"version": 1,
 	"diagnostics": [
-		"client/src/app/app.ts:21:33:http-client",
-		"client/src/app/app.ts:43:3:manual-subscribe",
-		"client/src/app/app.ts:65:3:manual-subscribe",
 		"client/src/app/car-photo-gallery.ts:117:3:manual-subscribe",
 		"client/src/app/car-photo-gallery.ts:154:3:manual-subscribe",
 		"client/src/app/car-photo-gallery.ts:223:3:manual-subscribe",

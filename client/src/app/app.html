@@ -45,15 +45,15 @@
 			<div class="workspace-content">
 				<div class="workspace-frame" role="region" aria-label="Workspace shell" [attr.aria-busy]="transition.loading()">
 					<header>
-						<button class="nav-toggle" type="button" (click)="openNav()" [attr.aria-expanded]="navOpen()" aria-controls="workspace-navigation" aria-label="Open workspace navigation">☰</button>
+						<button #navToggle class="nav-toggle" type="button" (click)="openNav(navToggle)" [attr.aria-expanded]="navOpen()" aria-controls="workspace-navigation" aria-label="Open workspace navigation">☰</button>
 						<div>
 							<div class="eyebrow">RC Mech / Field notebook</div>
 							<h1>Garage control<br />for the next run.</h1>
 							<p class="stamp">OWNER ACCESS · {{ ownerEmail() }} · PRIVATE BY DEFAULT</p>
 						</div>
-						<div class="actions"><span class="workspace-label">{{ ownerEmail() }}</span><button class="button quiet" type="button" (click)="signOut()">Sign out</button></div>
+						<div class="actions"><span class="workspace-label">{{ ownerEmail() }}</span><button class="button quiet" type="button" (click)="signOut()" [disabled]="signOutStore.signingOut()" [attr.aria-busy]="signOutStore.signingOut()">{{ signOutStore.signingOut() ? 'Signing out…' : 'Sign out' }}</button></div>
 					</header>
-					@if (signOutMessage()) { <p class="message" role="alert">{{ signOutMessage() }}</p> }
+					@if (signOutStore.error()) { <p class="message" role="alert">{{ signOutStore.error() }}</p> }
 					<router-outlet />
 				</div>
 			</div>

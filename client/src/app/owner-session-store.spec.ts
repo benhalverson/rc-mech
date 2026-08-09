@@ -62,4 +62,18 @@ describe('OwnerSessionStore', () => {
 
 		expect(await store.refresh()).toBeNull();
 	});
+
+	it('expires local session state and starts a background refresh', () => {
+		store.session.set({
+			session: { id: 'session-1' },
+			user: { email: 'owner@example.test' },
+		});
+		const refresh = vi.spyOn(store, 'refresh').mockResolvedValue(null);
+
+		store.expire();
+
+		expect(store.session.value()).toBeNull();
+		expect(store.hasResolvedSession).toBe(true);
+		expect(refresh).toHaveBeenCalledOnce();
+	});
 });
