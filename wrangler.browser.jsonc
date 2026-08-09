@@ -1,0 +1,19 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "rc-mech-browser",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-07-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"assets": { "directory": "./public", "binding": "ASSETS" },
+	"send_email": [{ "name": "EMAIL" }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "rc-mech",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations"
+		}
+	],
+	"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
+	"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }
+}
