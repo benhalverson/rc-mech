@@ -10,12 +10,15 @@ import { routes } from './app.routes';
 vi.mock('@lucide/angular', () => ({
 	LucideArchive: class {},
 	LucideArchiveRestore: class {},
+	LucideCheck: class {},
 	LucideCircleCheck: class {},
 	LucideCarFront: class {},
 	LucideChevronRight: class {},
 	LucideClock: class {},
+	LucideClipboardCopy: class {},
 	LucideImage: class {},
 	LucideHistory: class {},
+	LucideKeyRound: class {},
 	LucideMic: class {},
 	LucideMonitor: class {},
 	LucideMoveDown: class {},
@@ -34,6 +37,7 @@ vi.mock('@lucide/angular', () => ({
 	LucideTriangleAlert: class {},
 	LucideUpload: class {},
 	LucideWrench: class {},
+	LucideX: class {},
 }));
 
 @Component({ template: '' })

@@ -1,5 +1,13 @@
 import { DatePipe } from '@angular/common';
-import { Component, inject, linkedSignal, signal } from '@angular/core';
+import {
+	afterNextRender,
+	Component,
+	ElementRef,
+	inject,
+	Injector,
+	linkedSignal,
+	signal,
+} from '@angular/core';
 import {
 	FormField,
 	form,
@@ -9,6 +17,18 @@ import {
 	required,
 	validate,
 } from '@angular/forms/signals';
+import {
+	LucideCheck,
+	LucideClipboardCopy,
+	LucideKeyRound,
+	LucidePencil,
+	LucidePlus,
+	LucideRefreshCw,
+	LucideSave,
+	LucideTrash2,
+	LucideTriangleAlert,
+	LucideX,
+} from '@lucide/angular';
 import { AppearanceSelector } from './appearance-selector';
 import { isValidTimezone, type Passkey } from './settings.models';
 import { SettingsStore } from './settings-store';
@@ -16,11 +36,27 @@ import { TimezoneStore } from './timezone-store';
 
 @Component({
 	selector: 'app-settings',
-	imports: [AppearanceSelector, DatePipe, FormField],
+	host: { class: 'block min-w-0' },
+	imports: [
+		AppearanceSelector,
+		DatePipe,
+		FormField,
+		LucideCheck,
+		LucideClipboardCopy,
+		LucideKeyRound,
+		LucidePencil,
+		LucidePlus,
+		LucideRefreshCw,
+		LucideSave,
+		LucideTrash2,
+		LucideTriangleAlert,
+		LucideX,
+	],
 	templateUrl: './settings.html',
-	styleUrl: '../garage-pages.css',
 })
 export class Settings {
+	private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+	private readonly injector = inject(Injector);
 	protected readonly store = inject(SettingsStore);
 	protected readonly timezoneStore = inject(TimezoneStore);
 	protected readonly timezoneModel = linkedSignal(() => ({
@@ -62,7 +98,10 @@ export class Settings {
 	protected saveTimezone(event: SubmitEvent): void {
 		event.preventDefault();
 		this.timezoneForm.timezone().markAsTouched();
-		if (this.timezoneForm().invalid()) return;
+		if (this.timezoneForm().invalid()) {
+			this.focusField('#garage-timezone');
+			return;
+		}
 		this.timezoneStore.saveTimezone({
 			timezone: this.timezoneModel().timezone,
 		});
@@ -71,7 +110,10 @@ export class Settings {
 	protected async createInviteCode(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
 		this.inviteForm.code().markAsTouched();
-		if (this.inviteForm().invalid()) return;
+		if (this.inviteForm().invalid()) {
+			this.focusField('#new-invite-code');
+			return;
+		}
 		if (await this.store.createInviteCode(this.inviteModel().code))
 			this.inviteForm().reset({ code: '' });
 	}
@@ -79,7 +121,10 @@ export class Settings {
 	protected async registerPasskey(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
 		this.passkeyForm.name().markAsTouched();
-		if (this.passkeyForm().invalid()) return;
+		if (this.passkeyForm().invalid()) {
+			this.focusField('#passkey-name');
+			return;
+		}
 		if (await this.store.registerPasskey(this.passkeyModel().name))
 			this.passkeyForm().reset({ name: '' });
 	}
@@ -87,11 +132,17 @@ export class Settings {
 	protected beginRename(passkey: Passkey): void {
 		this.renameForm().reset({ name: passkey.name?.trim() || 'Passkey' });
 		this.editingPasskeyId.set(passkey.id);
+		afterNextRender(() => this.focusField(`#rename-${passkey.id}`), {
+			injector: this.injector,
+		});
 	}
 
-	protected cancelRename(): void {
+	protected cancelRename(passkey: Passkey): void {
 		this.editingPasskeyId.set(null);
 		this.renameForm().reset({ name: '' });
+		afterNextRender(() => this.focusField(`#rename-launcher-${passkey.id}`), {
+			injector: this.injector,
+		});
 	}
 
 	protected async renamePasskey(
@@ -100,8 +151,15 @@ export class Settings {
 	): Promise<void> {
 		event.preventDefault();
 		this.renameForm.name().markAsTouched();
-		if (this.renameForm().invalid()) return;
+		if (this.renameForm().invalid()) {
+			this.focusField(`#rename-${passkey.id}`);
+			return;
+		}
 		if (await this.store.renamePasskey(passkey, this.renameModel().name))
-			this.cancelRename();
+			this.cancelRename(passkey);
+	}
+
+	private focusField(selector: string): void {
+		this.element.nativeElement.querySelector<HTMLElement>(selector)?.focus();
 	}
 }
