@@ -20,7 +20,9 @@ export const authenticationRouteContext = (
 ): AuthenticationRouteContext => {
 	const requestedReturn = query.get('returnTo');
 	const returnTo =
-		requestedReturn?.startsWith('/') && !requestedReturn.startsWith('//')
+		requestedReturn?.startsWith('/') &&
+		!requestedReturn.startsWith('//') &&
+		!requestedReturn.includes('\\')
 			? requestedReturn
 			: '/garage';
 	const message =

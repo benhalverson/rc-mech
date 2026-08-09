@@ -11,7 +11,7 @@ import { AuthenticationStore } from './authentication-store';
 @Component({
 	selector: 'app-sign-in',
 	imports: [FormField],
-	styleUrl: '../garage-pages.css',
+	styleUrl: './sign-in.css',
 	templateUrl: './sign-in.html',
 })
 export class SignIn {

@@ -1,4 +1,5 @@
 import { computed, inject } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import {
 	patchState,
@@ -26,9 +27,9 @@ import { PasskeyCapability } from './passkey-capability';
 type AccessCommand = RequestMagicLinkCommand | RegisterCommand;
 
 type AuthenticationState = {
-	returnTo: string;
-	message: string;
-	sent: boolean;
+	feedbackRouteKey: string | null;
+	feedbackMessage: string;
+	feedbackSent: boolean;
 	accessOutcome: AuthenticationOutcome;
 	passkeyOutcome: AuthenticationOutcome;
 };
@@ -73,38 +74,59 @@ const passkeyFailureMessage = (failure: AuthenticationFailure): string =>
 		: 'The passkey request could not be completed. Try again or use a magic link.';
 
 export const AuthenticationStore = signalStore(
-	withState<AuthenticationState>(() => {
-		const context = authenticationRouteContext(
-			inject(ActivatedRoute).snapshot.queryParamMap,
-		);
+	withState<AuthenticationState>({
+		feedbackRouteKey: null,
+		feedbackMessage: '',
+		feedbackSent: false,
+		accessOutcome: idleOutcome(),
+		passkeyOutcome: idleOutcome(),
+	}),
+	withProps(() => {
+		const route = inject(ActivatedRoute);
 		return {
-			returnTo: context.returnTo,
-			message: context.message,
-			sent: false,
-			accessOutcome: idleOutcome(),
-			passkeyOutcome: idleOutcome(),
+			queryParamMap: toSignal(route.queryParamMap, {
+				initialValue: route.snapshot.queryParamMap,
+			}),
+			gateway: inject(AuthenticationGateway),
+			passkey: inject(PasskeyCapability),
+			session: inject(OwnerSessionStore),
+			router: inject(Router),
+			nextOperationId: { value: 0 },
 		};
 	}),
-	withProps(() => ({
-		gateway: inject(AuthenticationGateway),
-		passkey: inject(PasskeyCapability),
-		session: inject(OwnerSessionStore),
-		router: inject(Router),
-		nextOperationId: { value: 0 },
-	})),
-	withComputed((store) => ({
-		sending: computed(() => store.accessOutcome().status === 'pending'),
-		working: computed(() => store.passkeyOutcome().status === 'pending'),
-		webAuthnAvailable: computed(() => store.passkey.available),
-	})),
+	withComputed((store) => {
+		const routeContext = computed(() =>
+			authenticationRouteContext(store.queryParamMap()),
+		);
+		const routeKey = computed(() => JSON.stringify(routeContext()));
+		return {
+			routeContext,
+			routeKey,
+			returnTo: computed(() => routeContext().returnTo),
+			message: computed(() =>
+				store.feedbackRouteKey() === routeKey()
+					? store.feedbackMessage()
+					: routeContext().message,
+			),
+			sent: computed(
+				() => store.feedbackRouteKey() === routeKey() && store.feedbackSent(),
+			),
+			sending: computed(() => store.accessOutcome().status === 'pending'),
+			working: computed(() => store.passkeyOutcome().status === 'pending'),
+			webAuthnAvailable: computed(() => store.passkey.available),
+		};
+	}),
 	withMethods((store) => {
 		const access = rxMethod<AccessCommand>((commands$) =>
 			commands$.pipe(
 				exhaustMap((command) => {
 					const operationId = ++store.nextOperationId.value;
+					const routeKey = store.routeKey();
+					const returnTo = store.returnTo();
 					patchState(store, {
-						message: '',
-						sent: false,
+						feedbackRouteKey: routeKey,
+						feedbackMessage: '',
+						feedbackSent: false,
 						accessOutcome: {
 							status: 'pending',
 							operation: command.operation,
@@ -113,16 +135,17 @@ export const AuthenticationStore = signalStore(
 					});
 					const request =
 						command.operation === 'request-magic-link'
-							? store.gateway.requestMagicLink(command, store.returnTo())
-							: store.gateway.register(command, store.returnTo());
+							? store.gateway.requestMagicLink(command, returnTo)
+							: store.gateway.register(command, returnTo);
 					return request.pipe(
 						tap(() =>
 							patchState(store, {
-								message:
+								feedbackRouteKey: routeKey,
+								feedbackMessage:
 									command.operation === 'request-magic-link'
 										? 'If that address is allowed, a sign-in link is on its way.'
 										: 'If the email and invite code are valid, a registration link is on its way.',
-								sent: true,
+								feedbackSent: true,
 								accessOutcome: {
 									status: 'succeeded',
 									operation: command.operation,
@@ -132,7 +155,8 @@ export const AuthenticationStore = signalStore(
 						),
 						catchError((error: AuthenticationGatewayFailure) => {
 							patchState(store, {
-								message: accessFailureMessage(error, command.operation),
+								feedbackRouteKey: routeKey,
+								feedbackMessage: accessFailureMessage(error, command.operation),
 								accessOutcome: {
 									status: 'failed',
 									operation: command.operation,
@@ -152,8 +176,10 @@ export const AuthenticationStore = signalStore(
 				exhaustMap((command) => {
 					if (!store.passkey.available) return EMPTY;
 					const operationId = ++store.nextOperationId.value;
+					const routeKey = store.routeKey();
 					patchState(store, {
-						message: '',
+						feedbackRouteKey: routeKey,
+						feedbackMessage: '',
 						passkeyOutcome: {
 							status: 'pending',
 							operation: command.operation,
@@ -179,7 +205,8 @@ export const AuthenticationStore = signalStore(
 						catchError((error: unknown) => {
 							const failure = authenticationFailure(error);
 							patchState(store, {
-								message: passkeyFailureMessage(failure),
+								feedbackRouteKey: routeKey,
+								feedbackMessage: passkeyFailureMessage(failure),
 								passkeyOutcome: {
 									status: 'failed',
 									operation: command.operation,
@@ -205,7 +232,11 @@ export const AuthenticationStore = signalStore(
 				authenticate(command);
 			},
 			resetFeedback(): void {
-				patchState(store, { message: '', sent: false });
+				patchState(store, {
+					feedbackRouteKey: store.routeKey(),
+					feedbackMessage: '',
+					feedbackSent: false,
+				});
 			},
 		};
 	}),

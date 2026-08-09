@@ -1,6 +1,12 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router } from '@angular/router';
-import { of, Subject, throwError, type Observable } from 'rxjs';
+import {
+	BehaviorSubject,
+	of,
+	Subject,
+	throwError,
+	type Observable,
+} from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OwnerSessionStore } from '../owner-session-store';
 import { AuthenticationGateway } from './authentication-gateway';
@@ -60,12 +66,19 @@ describe('AuthenticationStore', () => {
 	let refresh: ReturnType<typeof vi.fn>;
 	let navigateByUrl: ReturnType<typeof vi.fn>;
 	let store: InstanceType<typeof AuthenticationStore>;
+	let routeParameters: BehaviorSubject<ReturnType<typeof query>>;
 
 	beforeEach(() => {
 		gateway = new FakeAuthenticationGateway();
 		passkey = new FakePasskeyCapability();
 		refresh = vi.fn().mockResolvedValue(null);
 		navigateByUrl = vi.fn().mockResolvedValue(true);
+		routeParameters = new BehaviorSubject(
+			query({
+				returnTo: '/garage/car-42/photos',
+				reason: 'session-expired',
+			}),
+		);
 		TestBed.configureTestingModule({
 			providers: [
 				AuthenticationStore,
@@ -76,11 +89,9 @@ describe('AuthenticationStore', () => {
 				{
 					provide: ActivatedRoute,
 					useValue: {
+						queryParamMap: routeParameters,
 						snapshot: {
-							queryParamMap: query({
-								returnTo: '/garage/car-42/photos',
-								reason: 'session-expired',
-							}),
+							queryParamMap: routeParameters.value,
 						},
 					},
 				},
@@ -109,6 +120,33 @@ describe('AuthenticationStore', () => {
 		store.resetFeedback();
 		expect(store.message()).toBe('');
 		expect(store.sent()).toBe(false);
+	});
+
+	it('reacts to query-only navigation without retaining stale feedback', () => {
+		store.requestMagicLink({
+			operation: 'request-magic-link',
+			email: 'owner@example.test',
+		});
+		gateway.accessResponse.next();
+		gateway.accessResponse.complete();
+		expect(store.sent()).toBe(true);
+
+		routeParameters.next(
+			query({ returnTo: '/settings', error_description: 'expired' }),
+		);
+		expect(store.returnTo()).toBe('/settings');
+		expect(store.message()).toContain('recovery link could not be used');
+		expect(store.sent()).toBe(false);
+
+		gateway.accessResponse = new Subject<void>();
+		store.requestMagicLink({
+			operation: 'request-magic-link',
+			email: 'owner@example.test',
+		});
+		expect(gateway.requestMagicLink).toHaveBeenLastCalledWith(
+			expect.anything(),
+			'/settings',
+		);
 	});
 
 	it('suppresses duplicate magic-link commands and publishes success', () => {

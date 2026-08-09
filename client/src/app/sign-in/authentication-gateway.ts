@@ -58,6 +58,17 @@ export const AUTHENTICATION_ORIGIN = new InjectionToken<string>(
 	},
 );
 
+export const authenticationCallbackUrl = (
+	origin: string,
+	returnTo: string,
+): string => {
+	const base = new URL(origin);
+	const callback = new URL(returnTo, base);
+	return callback.origin === base.origin
+		? callback.toString()
+		: new URL('/garage', base).toString();
+};
+
 @Injectable()
 export class AuthenticationGateway {
 	private readonly http = inject(HttpClient);
@@ -72,7 +83,7 @@ export class AuthenticationGateway {
 				'/api/auth/sign-in/magic-link',
 				{
 					email: command.email,
-					callbackURL: new URL(returnTo, this.origin).toString(),
+					callbackURL: authenticationCallbackUrl(this.origin, returnTo),
 				},
 				{ withCredentials: true },
 			)

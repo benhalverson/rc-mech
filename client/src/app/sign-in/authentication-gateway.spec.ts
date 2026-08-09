@@ -10,6 +10,7 @@ import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	AUTHENTICATION_ORIGIN,
+	authenticationCallbackUrl,
 	authenticationGatewayFailure,
 	AuthenticationGateway,
 	parseAccessResponse,
@@ -90,6 +91,18 @@ describe('AuthenticationGateway', () => {
 		expect(authenticationGatewayFailure('offline')).toEqual({
 			kind: 'unavailable',
 		});
+	});
+
+	it('normalizes callback URLs without allowing external origins', () => {
+		expect(
+			authenticationCallbackUrl('https://rc.example', '/garage/car-42/photos'),
+		).toBe('https://rc.example/garage/car-42/photos');
+		expect(
+			authenticationCallbackUrl('https://rc.example', '/\\evil.test'),
+		).toBe('https://rc.example/garage');
+		expect(
+			authenticationCallbackUrl('https://rc.example', 'https://evil.test'),
+		).toBe('https://rc.example/garage');
 	});
 
 	it('derives its default origin from the injected document', () => {

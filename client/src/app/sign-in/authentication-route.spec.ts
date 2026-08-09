@@ -18,7 +18,7 @@ describe('authentication route context', () => {
 		});
 	});
 
-	it.each(['//evil.test', 'https://evil.test', 'garage'])(
+	it.each(['//evil.test', '/\\evil.test', 'https://evil.test', 'garage'])(
 		'normalizes the unsafe destination %s',
 		(returnTo) => {
 			expect(authenticationRouteContext(query({ returnTo })).returnTo).toBe(
