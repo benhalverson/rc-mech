@@ -1,27 +1,54 @@
-import { provideHttpClient } from '@angular/common/http';
-import {
-	HttpTestingController,
-	provideHttpClientTesting,
-	TestRequest,
-} from '@angular/common/http/testing';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import {
 	provideRouter,
-	Routes,
+	type Routes,
 	withComponentInputBinding,
 } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { GarageCar, GarageCarInput } from '../garage/garage-store';
 import type { VoiceOperationOutcome } from '../voice/voice.models';
 import { VoiceLogStore } from '../voice/voice-log-store';
-import { CarGateway } from './car-gateway';
-import { CarOverview } from './car-overview';
+import type { CarUpdateOutcome } from './car.models';
+import { CarOverview, carFormValidationMessage } from './car-overview';
+import type { CarReadFailure } from './car-read-failure';
 import { CarStore } from './car-store';
 import { CurrentSetupStore } from './current-setup/current-setup-store';
 import { DRIVE_SESSION_CONTEXT } from './drive-sessions/drive-session-context';
 
-type TestSignal<T> = (() => T) & { set(value: T): void };
+const idleUpdateOutcome = (): CarUpdateOutcome => ({
+	status: 'idle',
+	operationId: null,
+});
+
+class FakeCarStore {
+	private readonly selectedCarId = signal<string | null>(null);
+	readonly car = signal<GarageCar | null>(null);
+	readonly loading = signal(false);
+	readonly failure = signal<CarReadFailure | null>(null);
+	readonly updateOutcome = signal<CarUpdateOutcome>(idleUpdateOutcome());
+	readonly carAction = signal<'update' | null>(null);
+	readonly carMutationError = signal('');
+	readonly carMessage = signal('');
+	readonly lifecycleAction = signal<'archive' | 'restore' | null>(null);
+	readonly lifecycleError = signal('');
+	readonly selectCar = vi.fn((carId: string): void => {
+		if (this.selectedCarId() === carId) return;
+		this.selectedCarId.set(carId);
+	});
+	readonly retry = vi.fn((): void => undefined);
+	readonly updateCar = vi.fn((_input: GarageCarInput): void => undefined);
+	readonly changeArchiveState = vi.fn(
+		(_action: 'archive' | 'restore'): void => undefined,
+	);
+	readonly clearCarMutationState = vi.fn((): void => {
+		this.updateOutcome.set(idleUpdateOutcome());
+		this.carAction.set(null);
+		this.carMutationError.set('');
+		this.carMessage.set('');
+	});
+}
 
 const emptyCurrentSetupStore = {
 	current: () => null,
@@ -45,11 +72,6 @@ const emptyCurrentSetupStore = {
 	retry: (): void => undefined,
 };
 
-const emptyVoiceOutcome = signal<VoiceOperationOutcome>({
-	status: 'idle',
-	operation: null,
-	operationId: null,
-});
 const emptyVoiceStore = {
 	localCaptures: signal([]),
 	updates: signal([]),
@@ -59,7 +81,11 @@ const emptyVoiceStore = {
 	error: signal(''),
 	message: signal(''),
 	pending: signal(false),
-	outcome: emptyVoiceOutcome,
+	outcome: signal<VoiceOperationOutcome>({
+		status: 'idle',
+		operation: null,
+		operationId: null,
+	}),
 	recorderError: signal(''),
 	recordingMode: signal(null),
 	checking: signal(false),
@@ -85,455 +111,307 @@ const emptyVoiceStore = {
 	discardServer: (): void => undefined,
 	retryRead: (): void => undefined,
 };
+
 const emptyDriveSessionContext = {
 	sessions: signal([]),
 	timezone: signal('UTC'),
 	selectCar: (): void => undefined,
 };
 
-const testRoutes: Routes = [
-	{
-		path: 'garage/:carId/overview',
-		component: CarOverview,
-		providers: [
-			CarGateway,
-			CarStore,
-			{ provide: CurrentSetupStore, useValue: emptyCurrentSetupStore },
-			{ provide: VoiceLogStore, useValue: emptyVoiceStore },
-			{ provide: DRIVE_SESSION_CONTEXT, useValue: emptyDriveSessionContext },
-		],
-	},
-];
+const car = (overrides: Partial<GarageCar> = {}): GarageCar => ({
+	id: 'car-1',
+	name: 'Red Runner',
+	make: 'Associated',
+	model: 'B7',
+	archivedAt: null,
+	...overrides,
+});
+
+it('selects accessible car form validation feedback', () => {
+	expect(carFormValidationMessage([{ message: 'Name the car.' }])).toBe(
+		'Name the car.',
+	);
+	expect(carFormValidationMessage([{}])).toBe('Review the car details.');
+	expect(carFormValidationMessage([])).toBe('Review the car details.');
+});
 
 describe('Car overview', () => {
 	let harness: RouterTestingHarness;
-
-	let http: HttpTestingController;
+	let store: FakeCarStore;
 
 	beforeEach(async () => {
+		store = new FakeCarStore();
+		const routes: Routes = [
+			{
+				path: 'garage/:carId/overview',
+				component: CarOverview,
+				providers: [
+					{ provide: CarStore, useValue: store },
+					{ provide: CurrentSetupStore, useValue: emptyCurrentSetupStore },
+					{ provide: VoiceLogStore, useValue: emptyVoiceStore },
+					{
+						provide: DRIVE_SESSION_CONTEXT,
+						useValue: emptyDriveSessionContext,
+					},
+				],
+			},
+		];
 		await TestBed.configureTestingModule({
 			imports: [CarOverview],
 			providers: [
-				provideHttpClient(),
-				provideHttpClientTesting(),
-				provideRouter(testRoutes, withComponentInputBinding()),
-				CarGateway,
-				CarStore,
+				provideRouter(routes, withComponentInputBinding()),
+				{ provide: CarStore, useValue: store },
+				{ provide: CurrentSetupStore, useValue: emptyCurrentSetupStore },
+				{ provide: VoiceLogStore, useValue: emptyVoiceStore },
+				{
+					provide: DRIVE_SESSION_CONTEXT,
+					useValue: emptyDriveSessionContext,
+				},
 			],
 		}).compileComponents();
-		http = TestBed.inject(HttpTestingController);
 		harness = await RouterTestingHarness.create();
 	});
 
-	afterEach(() => http.verify());
+	afterEach(() => TestBed.resetTestingModule());
 
-	const car = {
-		id: 'car-1',
-		name: 'Red Runner',
-		make: 'Associated',
-		model: 'B7',
-		archivedAt: null,
+	const navigate = async (carId = 'car-1'): Promise<HTMLElement> => {
+		await harness.navigateByUrl(`/garage/${carId}/overview`);
+		harness.detectChanges();
+		return harness.routeNativeElement as HTMLElement;
 	};
 
-	it('stays idle until route input binding supplies a car', () => {
+	const root = (): HTMLElement => harness.routeNativeElement as HTMLElement;
+
+	const button = (label: string): HTMLButtonElement => {
+		const match = [...root().querySelectorAll('button')].find(
+			(candidate) => candidate.textContent?.trim() === label,
+		);
+		if (!match) throw new Error(`Button not found: ${label}`);
+		return match;
+	};
+
+	it('stays idle without route input and selects reused route context', async () => {
 		const withoutInput = TestBed.createComponent(CarOverview);
 		withoutInput.detectChanges();
-		http.expectNone((request) => request.url.includes('/cars//'));
+		expect(store.selectCar).not.toHaveBeenCalled();
 		withoutInput.destroy();
-	});
 
-	it('shows a loading state and retries a failed car read', async () => {
-		await harness.navigateByUrl('/garage/car-1/overview');
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Opening the car overview',
-		);
-		http
-			.expectOne('/api/v1/cars/car-1')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		await Promise.resolve();
-		harness.detectChanges();
-		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
-		expect(alert?.textContent).toContain('could not be loaded');
-
-		(alert?.querySelector('button') as HTMLButtonElement).click();
-		let retry: TestRequest | undefined;
-		await vi.waitFor(() => {
-			retry = http.expectOne('/api/v1/cars/car-1');
-		});
-		retry?.flush({ car });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain('Car overview');
-	});
-
-	it('edits car details and refreshes the overview resource', async () => {
-		await harness.navigateByUrl('/garage/car-1/overview');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const edit = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find((button) => button.textContent?.trim() === 'Edit details') as
-			| HTMLButtonElement
-			| undefined;
-		edit?.click();
-		harness.detectChanges();
-		const form = harness.routeNativeElement?.querySelector(
-			'.car-form',
-		) as HTMLFormElement;
-		const name = form.querySelector('input') as HTMLInputElement;
-		name.value = 'Red Runner Evo';
-		name.dispatchEvent(new Event('input'));
-		const make = [...form.querySelectorAll('label')]
-			.find((label) => label.textContent?.trim().startsWith('Make'))
-			?.querySelector('input') as HTMLInputElement;
-		make.value = '';
-		make.dispatchEvent(new Event('input'));
-		form.dispatchEvent(new Event('submit'));
-
-		const mutation = http.expectOne('/api/v1/cars/car-1');
-		expect(mutation.request.method).toBe('PATCH');
-		expect(mutation.request.body).toMatchObject({
-			name: 'Red Runner Evo',
-			make: '',
-			model: 'B7',
-			scale: '',
-			vehicleType: '',
-			powerType: '',
-			notes: '',
-		});
-		mutation.flush({ car: { ...car, name: 'Red Runner Evo' } });
-		let refresh: TestRequest | undefined;
-		await vi.waitFor(() => {
-			refresh = http.expectOne('/api/v1/cars/car-1');
-		});
-		refresh?.flush({ car: { ...car, name: 'Red Runner Evo' } });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Car details saved.',
-		);
-	});
-
-	it('closes an open editor when a reused overview route changes cars', async () => {
-		await harness.navigateByUrl('/garage/car-1/overview');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const edit = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find((button) => button.textContent?.trim() === 'Edit details') as
-			| HTMLButtonElement
-			| undefined;
-		edit?.click();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeTruthy();
-
-		await harness.navigateByUrl('/garage/car-2/overview');
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeNull();
-		let nextCar: TestRequest | undefined;
-		await vi.waitFor(() => {
-			nextCar = http.expectOne('/api/v1/cars/car-2');
-		});
-		nextCar?.flush({ car: { ...car, id: 'car-2', name: 'Blue Runner' } });
-	});
-
-	it('identifies an expired session when archiving a car', async () => {
-		await harness.navigateByUrl('/garage/car-1/overview');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const archive = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find((button) => button.textContent?.trim() === 'Archive car') as
-			| HTMLButtonElement
-			| undefined;
-		archive?.click();
-		http
-			.expectOne('/api/v1/cars/car-1/archive')
-			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-
-		expect(
-			harness.routeNativeElement?.querySelector('[role="alert"]')?.textContent,
-		).toContain('Your garage session has expired');
-	});
-
-	it('shows missing-car guidance without a connection retry', async () => {
-		await harness.navigateByUrl('/garage/missing/overview');
-		http
-			.expectOne('/api/v1/cars/missing')
-			.flush('missing', { status: 404, statusText: 'Not Found' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-
-		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
-		expect(alert?.textContent).toContain('Car not found');
-		expect(alert?.textContent).not.toContain('Check the connection');
-		expect(alert?.querySelector('button')).toBeNull();
-	});
-
-	it('explains an expired car read without offering retry', async () => {
-		await harness.navigateByUrl('/garage/car-1/overview');
-		http
-			.expectOne('/api/v1/cars/car-1')
-			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-
-		const alert = harness.routeNativeElement?.querySelector('[role="alert"]');
-		expect(alert?.textContent).toContain('Your garage session has expired');
-		expect(alert?.querySelector('button')).toBeNull();
-	});
-
-	it('clears lifecycle state when selecting a different car', async () => {
-		await harness.navigateByUrl('/garage/car-1/overview');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const store = (
-			harness.routeDebugElement?.componentInstance as unknown as {
-				store: {
-					lifecycleAction(): 'archive' | 'restore' | null;
-					lifecycleError(): string;
-					changeArchiveState(action: 'archive' | 'restore'): void;
-				};
-			}
-		).store;
-		store.changeArchiveState('archive');
-		const mutation = http.expectOne('/api/v1/cars/car-1/archive');
-		expect(store.lifecycleAction()).toBe('archive');
-
-		await harness.navigateByUrl('/garage/car-2/overview');
-		expect(store.lifecycleAction()).toBeNull();
-		let nextCar: TestRequest | undefined;
-		await vi.waitFor(() => {
-			nextCar = http.expectOne('/api/v1/cars/car-2');
-		});
-		nextCar?.flush({ car: { ...car, id: 'car-2' } });
-		mutation.flush('offline', { status: 503, statusText: 'Unavailable' });
-		expect(store.lifecycleAction()).toBeNull();
-		expect(store.lifecycleError()).toBe('');
-	});
-
-	it('validates overview edits and completes archive and restore lifecycles', async () => {
-		const legacyCar = {
-			...car,
-			make: null,
-			manufacturer: 'Legacy Works',
-			model: null,
-			scale: null,
-			vehicleType: null,
-			powerType: null,
-			notes: null,
-		};
-		await harness.navigateByUrl('/garage/car-1/overview');
-		http.expectOne('/api/v1/cars/car-1').flush({ car: legacyCar });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Legacy Works · Model not recorded',
-		);
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'No notes recorded yet',
-		);
-
-		const button = (label: string): HTMLButtonElement =>
-			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
-				(candidate) => candidate.textContent?.trim() === label,
-			) as HTMLButtonElement;
+		store.car.set(car());
+		await navigate();
+		expect(store.selectCar).toHaveBeenCalledWith('car-1');
 		button('Edit details').click();
 		harness.detectChanges();
-		let form = harness.routeNativeElement?.querySelector(
-			'.car-form',
-		) as HTMLFormElement;
+		expect(root().querySelector('.car-form')).toBeTruthy();
+
+		store.car.set(car({ id: 'car-2', name: 'Blue Runner' }));
+		await navigate('car-2');
+		expect(store.selectCar).toHaveBeenLastCalledWith('car-2');
+		expect(store.clearCarMutationState).toHaveBeenCalled();
+		expect(root().querySelector('.car-form')).toBeNull();
+		expect(root().textContent).toContain('Blue Runner');
+	});
+
+	it('renders loading and retryable or terminal read failures', async () => {
+		store.loading.set(true);
+		const view = await navigate();
+		expect(view.textContent).toContain('Opening the car overview');
+
+		store.loading.set(false);
+		store.failure.set({
+			message: 'The car could not be loaded.',
+			retryable: true,
+		});
+		harness.detectChanges();
+		let alert = view.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('could not be loaded');
+		button('Try again').click();
+		expect(store.retry).toHaveBeenCalledOnce();
+
+		store.failure.set({ message: 'Car not found.', retryable: false });
+		harness.detectChanges();
+		alert = view.querySelector('[role="alert"]');
+		expect(alert?.textContent).toContain('Car not found');
+		expect(alert?.querySelector('button')).toBeNull();
+	});
+
+	it('dispatches immutable edit commands and renders mutation state accessibly', async () => {
+		store.car.set(
+			car({
+				make: null,
+				manufacturer: 'Legacy Works',
+				model: null,
+				scale: null,
+				vehicleType: null,
+				powerType: null,
+				notes: null,
+			}),
+		);
+		const view = await navigate();
+		expect(view.textContent).toContain('Legacy Works · Model not recorded');
+		expect(view.textContent).toContain('No notes recorded yet');
+		button('Edit details').click();
+		harness.detectChanges();
+
+		const form = view.querySelector('.car-form') as HTMLFormElement;
+		const fields = form.querySelectorAll<
+			HTMLInputElement | HTMLTextAreaElement
+		>('input, textarea');
+		for (const [field, value] of [...fields].map(
+			(field, index) =>
+				[
+					field,
+					[
+						'  Red Runner Evo  ',
+						'  Associated  ',
+						'  B7.1  ',
+						'  1/10  ',
+						'  Buggy  ',
+						'  Electric  ',
+						'  Race car  ',
+					][index],
+				] as const,
+		)) {
+			field.value = value;
+			field.dispatchEvent(new Event('input'));
+		}
+		form.dispatchEvent(new Event('submit'));
+		expect(store.updateCar).toHaveBeenCalledWith({
+			name: 'Red Runner Evo',
+			make: 'Associated',
+			model: 'B7.1',
+			scale: '1/10',
+			vehicleType: 'Buggy',
+			powerType: 'Electric',
+			notes: 'Race car',
+		});
+
+		store.carAction.set('update');
+		harness.detectChanges();
+		expect(view.textContent).toContain('Saving…');
+		expect(button('Cancel').disabled).toBe(true);
+		store.carAction.set(null);
+		store.carMutationError.set('The car could not be saved.');
+		harness.detectChanges();
+		expect(form.getAttribute('aria-describedby')).toBe('car-form-error');
+		expect(view.querySelector('[role="alert"]')?.textContent).toContain(
+			'could not be saved',
+		);
+	});
+
+	it('validates the local form, restores focus, and cancels editing', async () => {
+		store.car.set(car());
+		const view = await navigate();
+		button('Edit details').click();
+		harness.detectChanges();
+		const form = view.querySelector('.car-form') as HTMLFormElement;
 		const name = form.querySelector('input') as HTMLInputElement;
 		name.value = '   ';
 		name.dispatchEvent(new Event('input'));
 		form.dispatchEvent(new Event('submit'));
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Give this car a name before saving',
-		);
+		expect(view.textContent).toContain('Give this car a name before saving');
 		expect(document.activeElement).toBe(name);
+		expect(name.getAttribute('aria-describedby')).toBe('car-form-error');
+		expect(store.updateCar).not.toHaveBeenCalled();
 		button('Cancel').click();
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeNull();
+		expect(view.querySelector('.car-form')).toBeNull();
+		expect(store.clearCarMutationState).toHaveBeenCalled();
+	});
 
-		button('Archive car').click();
+	it('reacts once to each successful update operation ID', async () => {
+		store.car.set(car());
+		await navigate();
+		button('Edit details').click();
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain('Archiving…');
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			store: {
-				updateCar(value: { name: string }): void;
-				changeArchiveState(action: 'archive' | 'restore'): void;
-			};
-		};
-		component.store.updateCar({ name: 'Blocked' });
-		component.store.changeArchiveState('archive');
-		const archive = http.expectOne('/api/v1/cars/car-1/archive');
-		archive.flush({
-			car: { ...legacyCar, archivedAt: '2026-08-08T00:00:00.000Z' },
-		});
-		let refresh: TestRequest | undefined;
-		await vi.waitFor(() => {
-			refresh = http.expectOne('/api/v1/cars/car-1');
-		});
-		refresh?.flush({
-			car: { ...legacyCar, archivedAt: '2026-08-08T00:00:00.000Z' },
-		});
-		await harness.fixture.whenStable();
+		store.updateOutcome.set({ status: 'succeeded', operationId: 1 });
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Archived record',
-		);
-
-		button('Restore car').click();
-		http
-			.expectOne('/api/v1/cars/car-1/restore')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'could not be restored',
-		);
-
-		button('Restore car').click();
-		http.expectOne('/api/v1/cars/car-1/restore').flush({ car: legacyCar });
-		await vi.waitFor(() => {
-			refresh = http.expectOne('/api/v1/cars/car-1');
-		});
-		refresh?.flush({ car: legacyCar });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain('Active car');
+		expect(root().querySelector('.car-form')).toBeNull();
 
 		button('Edit details').click();
 		harness.detectChanges();
-		form = harness.routeNativeElement?.querySelector(
-			'.car-form',
-		) as HTMLFormElement;
-		const editedName = form.querySelector('input') as HTMLInputElement;
-		editedName.value = 'Still legacy';
-		editedName.dispatchEvent(new Event('input'));
-		form.dispatchEvent(new Event('submit'));
-		http
-			.expectOne('/api/v1/cars/car-1')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		await harness.fixture.whenStable();
+		store.updateOutcome.set({ status: 'succeeded', operationId: 1 });
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'could not be saved',
-		);
-		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeTruthy();
+		expect(root().querySelector('.car-form')).toBeTruthy();
+		store.updateOutcome.set({
+			status: 'failed',
+			operationId: 2,
+			error: { kind: 'unavailable' },
+		});
+		harness.detectChanges();
+		expect(root().querySelector('.car-form')).toBeTruthy();
+		store.updateOutcome.set({ status: 'succeeded', operationId: 3 });
+		harness.detectChanges();
+		expect(root().querySelector('.car-form')).toBeNull();
 	});
 
-	it('covers guarded overview actions and validation fallback copy', async () => {
-		const carWithoutDetails = {
-			...car,
-			make: null,
-			manufacturer: null,
-			model: null,
-		};
-		await harness.navigateByUrl('/garage/car-1/overview');
-		http.expectOne('/api/v1/cars/car-1').flush({ car: carWithoutDetails });
-		await harness.fixture.whenStable();
+	it('dispatches archive and restore intents and renders lifecycle status', async () => {
+		store.car.set(car());
+		const view = await navigate();
+		button('Archive car').click();
+		expect(store.changeArchiveState).toHaveBeenCalledWith('archive');
+		store.lifecycleAction.set('archive');
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Make not recorded · Model not recorded',
+		expect(view.textContent).toContain('Archiving…');
+		expect(button('Edit details').disabled).toBe(true);
+
+		store.lifecycleAction.set(null);
+		store.lifecycleError.set('The car could not be archived.');
+		store.carMessage.set('Car details saved.');
+		harness.detectChanges();
+		expect(view.querySelector('[role="alert"]')?.textContent).toContain(
+			'could not be archived',
+		);
+		expect(view.querySelector('[role="status"]')?.textContent).toContain(
+			'Car details saved',
 		);
 
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			openEdit(value: typeof carWithoutDetails): void;
-			cancelEdit(): void;
-			save(event: Event): void;
-			form: TestSignal<{
-				name: string;
-				make: string;
-				model: string;
-				scale: string;
-				vehicleType: string;
-				powerType: string;
-				notes: string;
-			}>;
-			carFields(): { errorSummary(): Array<{ message?: string }> };
-			store: {
-				updateCar(value: { name: string }): void;
-			};
-		};
-		component.openEdit(carWithoutDetails);
-		component.form.set({ ...component.form(), name: '   ' });
-		await harness.fixture.whenStable();
-		Object.defineProperty(component.carFields(), 'errorSummary', {
-			configurable: true,
-			value: () => [],
-		});
-		component.save(new Event('submit'));
+		store.lifecycleError.set('');
+		store.car.set(car({ archivedAt: '2026-08-08T00:00:00.000Z' }));
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Review the car details',
-		);
-
-		component.form.set({ ...component.form(), name: 'Updated car' });
-		await harness.fixture.whenStable();
-		component.store.updateCar({ name: 'Updated car' });
-		component.openEdit(carWithoutDetails);
-		component.cancelEdit();
-		component.save(new Event('submit'));
+		expect(view.textContent).toContain('Archived record');
+		button('Restore car').click();
+		expect(store.changeArchiveState).toHaveBeenLastCalledWith('restore');
+		store.lifecycleAction.set('restore');
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain('Saving…');
-		http
-			.expectOne('/api/v1/cars/car-1')
-			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		expect(component.store).toBeTruthy();
+		expect(view.textContent).toContain('Restoring…');
 	});
 
-	it('covers overview action-listener cancellation branches', async () => {
-		await harness.navigateByUrl('/garage/car-3/overview');
-		http
-			.expectOne('/api/v1/cars/car-3')
-			.flush({ car: { ...car, id: 'car-3' } });
-		await harness.fixture.whenStable();
+	it('guards overlapping local actions at the component seam', async () => {
+		store.car.set(car());
+		await navigate();
+
+		store.carAction.set('update');
 		harness.detectChanges();
-		const overview = harness.routeDebugElement
-			?.componentInstance as unknown as { openEdit(value: typeof car): void };
-		Object.defineProperty(overview, 'openEdit', {
-			configurable: true,
-			value: () => true,
-		});
-		const edit = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find(
-			(button) => button.textContent?.trim() === 'Edit details',
-		) as HTMLButtonElement;
+		button('Edit details').dispatchEvent(new MouseEvent('click'));
+		expect(root().querySelector('.car-form')).toBeNull();
+		store.carAction.set(null);
+		store.lifecycleAction.set('archive');
+		harness.detectChanges();
+		button('Edit details').dispatchEvent(new MouseEvent('click'));
+		expect(root().querySelector('.car-form')).toBeNull();
+		store.lifecycleAction.set(null);
+		store.car.set(car({ make: null, manufacturer: null, model: null }));
+		harness.detectChanges();
+		button('Edit details').click();
+		harness.detectChanges();
+		const form = root().querySelector('.car-form') as HTMLFormElement;
 		expect(
-			edit.dispatchEvent(new MouseEvent('click', { cancelable: true })),
-		).toBe(true);
+			[...form.querySelectorAll<HTMLInputElement>('input')].map(
+				(input) => input.value,
+			),
+		).toContain('');
 
-		await harness.navigateByUrl('/garage/car-4/overview');
-		http.expectOne('/api/v1/cars/car-4').flush({
-			car: {
-				...car,
-				id: 'car-4',
-				archivedAt: '2026-08-08T00:00:00.000Z',
-			},
-		});
-		await harness.fixture.whenStable();
+		store.carAction.set('update');
 		harness.detectChanges();
-		const restore = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find(
-			(button) => button.textContent?.trim() === 'Restore car',
-		) as HTMLButtonElement;
-		restore.click();
+		button('Cancel').dispatchEvent(new MouseEvent('click'));
+		form.dispatchEvent(new Event('submit'));
+		expect(root().querySelector('.car-form')).toBeTruthy();
+		expect(store.updateCar).not.toHaveBeenCalled();
+		store.carAction.set(null);
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain('Restoring…');
-		http
-			.expectOne('/api/v1/cars/car-4/restore')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
+		button('Cancel').click();
+		harness.detectChanges();
+		expect(root().querySelector('.car-form')).toBeNull();
 	});
 });
