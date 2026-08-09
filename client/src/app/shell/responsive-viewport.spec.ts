@@ -28,7 +28,7 @@ describe('ResponsiveViewport', () => {
 		});
 
 		const viewport = TestBed.inject(ResponsiveViewport);
-		expect(observe).toHaveBeenCalledWith('(max-width: 700px)');
+		expect(observe).toHaveBeenCalledWith('(max-width: 1023px)');
 		expect(viewport.mobile()).toBe(false);
 		states.next({ matches: true, breakpoints: {} });
 		expect(viewport.mobile()).toBe(true);

@@ -1,46 +1,58 @@
-import { z } from 'zod';
+import {
+	array,
+	nullable,
+	number,
+	object,
+	optional,
+	pipe,
+	readonly,
+	string,
+	transform,
+} from 'zod/mini';
+import type * as z from 'zod/mini';
 
-const nullableString = z
-	.string()
-	.nullable()
-	.optional()
-	.transform((value) => value ?? null);
-const nullableNumber = z
-	.number()
-	.nullable()
-	.optional()
-	.transform((value) => value ?? null);
+const nullableString = pipe(
+	optional(nullable(string())),
+	transform((value) => value ?? null),
+);
+const nullableNumber = pipe(
+	optional(nullable(number())),
+	transform((value) => value ?? null),
+);
 
-export const driveSessionSchema = z
-	.object({
-		id: z.string(),
-		carId: z.string(),
-		startedAt: z.string(),
+export const driveSessionSchema = readonly(
+	object({
+		id: string(),
+		carId: string(),
+		startedAt: string(),
 		durationMinutes: nullableNumber,
 		conditions: nullableString,
 		notes: nullableString,
 		deletedAt: nullableString,
-	})
-	.readonly();
+	}),
+);
 
-export const driveSessionCollectionSchema = z
-	.object({
-		driveSessions: z.array(driveSessionSchema).optional(),
-		sessions: z.array(driveSessionSchema).optional(),
-		timezone: z.string().nullable().optional(),
-	})
-	.transform((value) => ({
+export const driveSessionCollectionSchema = pipe(
+	object({
+		driveSessions: optional(array(driveSessionSchema)),
+		sessions: optional(array(driveSessionSchema)),
+		timezone: optional(nullable(string())),
+	}),
+	transform((value) => ({
 		sessions: value.driveSessions ?? value.sessions ?? [],
 		timezone: value.timezone ?? null,
-	}));
+	})),
+);
 
-export const driveSessionMutationSchema = z
-	.object({ driveSession: driveSessionSchema })
-	.transform((value) => value.driveSession);
+export const driveSessionMutationSchema = pipe(
+	object({ driveSession: driveSessionSchema }),
+	transform((value) => value.driveSession),
+);
 
-export const driveSessionTimezoneSchema = z
-	.object({ timezone: z.string().nullable().optional() })
-	.transform((value) => ({ timezone: value.timezone ?? null }));
+export const driveSessionTimezoneSchema = pipe(
+	object({ timezone: optional(nullable(string())) }),
+	transform((value) => ({ timezone: value.timezone ?? null })),
+);
 
 export type DriveSession = z.infer<typeof driveSessionSchema>;
 export type DriveSessionCollection = z.infer<

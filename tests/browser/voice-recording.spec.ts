@@ -1,21 +1,9 @@
-import { execFileSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 
 test('uploads one finalized recording containing audio through the end', async ({
 	page,
 }) => {
 	let voiceBytes: Buffer | undefined;
-	execFileSync('pnpm', [
-		'exec',
-		'tsx',
-		'scripts/invite-cli.ts',
-		'--url',
-		'http://127.0.0.1:8787',
-		'--owner-email',
-		'owner@example.com',
-		'--code',
-		'OWNER-VOICE',
-	]);
 
 	await page.addInitScript(() => {
 		const mediaDevices = navigator.mediaDevices;
@@ -33,8 +21,12 @@ test('uploads one finalized recording containing audio through the end', async (
 
 	await page.goto('/garage/private-car/voice');
 	await expect(page).toHaveURL(/sign-in/);
+	await page.setExtraHTTPHeaders({
+		'CF-Connecting-IP': 'voice-recording-owner',
+	});
 	await page.getByLabel('Email address').fill('owner@example.com');
 	await page.getByRole('button', { name: 'Send magic link' }).click();
+	await expect(page.getByRole('status')).toContainText('link is on its way');
 	await page.goto(
 		'/api/auth/magic-link/verify?token=local-test-token&callbackURL=%2Fgarage',
 	);

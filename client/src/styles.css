@@ -13,10 +13,16 @@
 	--color-alloy-control: var(--alloy-control);
 	--color-alloy-text: var(--alloy-text);
 	--color-alloy-text-secondary: var(--alloy-text-secondary);
+	--color-alloy-text-on-canvas-secondary: var(--alloy-text-on-canvas-secondary);
 	--color-alloy-separator: var(--alloy-separator);
 	--color-alloy-accent: var(--alloy-accent);
 	--color-alloy-focus: var(--alloy-focus);
 	--color-alloy-overlay: var(--alloy-overlay);
+	--color-alloy-command-text: var(--alloy-command-text);
+	--color-alloy-command-secondary: var(--alloy-command-secondary);
+	--color-alloy-command-separator: var(--alloy-command-separator);
+	--color-alloy-command-accent: var(--alloy-command-accent);
+	--color-alloy-command-control: var(--alloy-command-control);
 	--font-interface: 'Commissioner Variable', ui-sans-serif, sans-serif;
 	--font-technical: 'Fragment Mono', ui-monospace, monospace;
 	--radius-alloy-control: 0.25rem;

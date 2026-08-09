@@ -5,14 +5,16 @@ import {
 } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { catchError, map, throwError, type Observable } from 'rxjs';
-import { z } from 'zod';
+import { minLength, nullable, object, optional, string, trim } from 'zod/mini';
 import type { SaveTimezoneCommand } from './timezone-store';
 import type { TimezonePreference } from './settings.models';
 
-const timezoneResponseSchema = z.object({
-	timezone: z.string().nullable().optional(),
+const timezoneResponseSchema = object({
+	timezone: optional(nullable(string())),
 });
-const apiErrorSchema = z.object({ error: z.string().trim().min(1) });
+const apiErrorSchema = object({
+	error: string().check(trim(), minLength(1)),
+});
 
 export type TimezoneGatewayFailure =
 	| { kind: 'http'; status: number; message: string }

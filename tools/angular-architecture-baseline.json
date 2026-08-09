@@ -11,8 +11,6 @@
 		"client/src/app/car/car-overview.ts:173:7:await",
 		"client/src/app/car/car-overview.ts:63:2:inline-template",
 		"client/src/app/car/car-photos.ts:9:2:inline-template",
-		"client/src/app/car/car-section-shell.ts:16:2:inline-template",
-		"client/src/app/car/car-section-shell.ts:31:2:inline-styles",
 		"client/src/app/car/car-setups.ts:13:2:inline-template",
 		"client/src/app/car/car-setups.ts:31:33:http-client",
 		"client/src/app/car/car-setups.ts:69:3:manual-subscribe",
