@@ -8,8 +8,14 @@ import { routes } from './app.routes';
 // Route tests verify lazy wiring; component specs and the production build
 // exercise Lucide without evaluating its 12 MB barrel in this architecture test.
 vi.mock('@lucide/angular', () => ({
+	LucideArchive: class {},
+	LucideArchiveRestore: class {},
+	LucideCarFront: class {},
+	LucideChevronRight: class {},
 	LucideMonitor: class {},
 	LucideMoon: class {},
+	LucidePlus: class {},
+	LucideRefreshCw: class {},
 	LucideSun: class {},
 	LucideTriangleAlert: class {},
 }));

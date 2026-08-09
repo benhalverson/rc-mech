@@ -1,44 +1,158 @@
-<section class="garage-collection" aria-labelledby="garage-collection-title">
-	<div class="eyebrow">Today’s workbench</div>
-	<h2 id="garage-collection-title" data-route-focus tabindex="-1">The garage</h2>
-	<p class="section-intro">Keep the cars you actually drive close at hand. Their build sheets, sessions, and service history will follow.</p>
-	@if (store.carMessage()) { <p role="status">{{ store.carMessage() }}</p> }
+<section class="garage-collection grid gap-6 border-t border-alloy-separator pt-6" aria-labelledby="garage-collection-title">
+	<header class="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+		<div class="min-w-0">
+			<div class="alloy-section-heading">Garage collection</div>
+			<h2 id="garage-collection-title" class="alloy-screen-title" data-route-focus tabindex="-1">The garage</h2>
+			<p class="alloy-supporting-text mb-0 max-w-2xl">Keep the cars you drive close at hand. Build sheets, sessions, and service history stay with each car.</p>
+		</div>
+		@if (!editing() && !store.showArchived()) {
+			<button class="alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" (click)="openCreate()">
+				<svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+				Add a car
+			</button>
+		}
+	</header>
+	@if (store.carMessage()) {
+		<p class="alloy-state alloy-live-state mt-0" role="status"><span>{{ store.carMessage() }}</span></p>
+	}
 
 	@if (editing()) {
-		<form class="car-form" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : null" novalidate>
-			<div class="eyebrow">New car</div>
-			<h3 id="car-form-title">Put a car on the bench.</h3>
-			<p class="section-intro">Use the names you use in the workshop. Empty optional fields stay empty.</p>
-			@if (formError()) { <p id="car-form-error" role="alert">{{ formError() }}</p> }
-			<div class="form-grid">
-				<label class="wide">Name <input [formField]="carFields.name" [attr.aria-describedby]="formError() && carFields.name().invalid() ? 'car-form-error' : null" /></label>
-				<label>Make <input [formField]="carFields.make" [attr.aria-describedby]="formError() && carFields.make().invalid() ? 'car-form-error' : null" /></label>
-				<label>Model <input [formField]="carFields.model" [attr.aria-describedby]="formError() && carFields.model().invalid() ? 'car-form-error' : null" /></label>
-				<label>Scale <input placeholder="1/10" [formField]="carFields.scale" [attr.aria-describedby]="formError() && carFields.scale().invalid() ? 'car-form-error' : null" /></label>
-				<label>Vehicle type <input placeholder="Buggy, truck…" [formField]="carFields.vehicleType" [attr.aria-describedby]="formError() && carFields.vehicleType().invalid() ? 'car-form-error' : null" /></label>
-				<label>Power type <input placeholder="Electric, nitro…" [formField]="carFields.powerType" [attr.aria-describedby]="formError() && carFields.powerType().invalid() ? 'car-form-error' : null" /></label>
-				<label class="wide">Notes <textarea rows="5" [formField]="carFields.notes" [attr.aria-describedby]="formError() && carFields.notes().invalid() ? 'car-form-error' : null"></textarea></label>
+		<form class="car-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : 'car-form-intro'" novalidate>
+			<div>
+				<div class="alloy-section-heading">New car</div>
+				<h3 id="car-form-title" class="alloy-screen-title">Add a car</h3>
+				<p id="car-form-intro" class="alloy-supporting-text mb-0">Use the names you use in the workshop. Optional details can stay empty.</p>
 			</div>
-			<div class="form-actions"><button type="submit" [disabled]="store.carAction() !== null">{{ store.carAction() === 'create' ? 'Adding…' : 'Save car' }}</button><button type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button></div>
+			@if (formError()) {
+				<p id="car-form-error" class="alloy-state alloy-error-state mt-0" role="alert">
+					<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+					<span>{{ formError() }}</span>
+				</p>
+			}
+			<div class="grid gap-4 sm:grid-cols-2">
+				<label class="grid gap-1 sm:col-span-2">
+					<span class="text-sm font-semibold text-alloy-text">Name</span>
+					<input class="alloy-field w-full" [formField]="carFields.name" [attr.aria-describedby]="carFields.name().touched() && carFields.name().invalid() ? 'car-name-error' : 'car-name-help'" />
+					@if (carFields.name().touched() && carFields.name().invalid()) {
+						<span id="car-name-error" class="text-sm text-alloy-text">{{ carFields.name().errors()[0]?.message }}</span>
+					} @else {
+						<span id="car-name-help" class="text-sm text-alloy-text-secondary">The familiar name you use at the track or workbench.</span>
+					}
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Make</span>
+					<input class="alloy-field w-full" [formField]="carFields.make" [attr.aria-describedby]="carFields.make().touched() && carFields.make().invalid() ? 'car-make-error' : null" />
+					@if (carFields.make().touched() && carFields.make().invalid()) {
+						<span id="car-make-error" class="text-sm text-alloy-text">{{ carFields.make().errors()[0]?.message }}</span>
+					}
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Model</span>
+					<input class="alloy-field w-full" [formField]="carFields.model" [attr.aria-describedby]="carFields.model().touched() && carFields.model().invalid() ? 'car-model-error' : null" />
+					@if (carFields.model().touched() && carFields.model().invalid()) {
+						<span id="car-model-error" class="text-sm text-alloy-text">{{ carFields.model().errors()[0]?.message }}</span>
+					}
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Scale</span>
+					<input class="alloy-field w-full font-technical" placeholder="1/10" [formField]="carFields.scale" [attr.aria-describedby]="carFields.scale().touched() && carFields.scale().invalid() ? 'car-scale-error' : null" />
+					@if (carFields.scale().touched() && carFields.scale().invalid()) {
+						<span id="car-scale-error" class="text-sm text-alloy-text">{{ carFields.scale().errors()[0]?.message }}</span>
+					}
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Vehicle type</span>
+					<input class="alloy-field w-full" placeholder="Buggy, truck…" [formField]="carFields.vehicleType" [attr.aria-describedby]="carFields.vehicleType().touched() && carFields.vehicleType().invalid() ? 'car-vehicle-type-error' : null" />
+					@if (carFields.vehicleType().touched() && carFields.vehicleType().invalid()) {
+						<span id="car-vehicle-type-error" class="text-sm text-alloy-text">{{ carFields.vehicleType().errors()[0]?.message }}</span>
+					}
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Power type</span>
+					<input class="alloy-field w-full" placeholder="Electric, nitro…" [formField]="carFields.powerType" [attr.aria-describedby]="carFields.powerType().touched() && carFields.powerType().invalid() ? 'car-power-type-error' : null" />
+					@if (carFields.powerType().touched() && carFields.powerType().invalid()) {
+						<span id="car-power-type-error" class="text-sm text-alloy-text">{{ carFields.powerType().errors()[0]?.message }}</span>
+					}
+				</label>
+				<label class="grid gap-1 sm:col-span-2">
+					<span class="text-sm font-semibold text-alloy-text">Notes</span>
+					<textarea class="alloy-field min-h-32 w-full py-3" rows="5" [formField]="carFields.notes" [attr.aria-describedby]="carFields.notes().touched() && carFields.notes().invalid() ? 'car-notes-error' : null"></textarea>
+					@if (carFields.notes().touched() && carFields.notes().invalid()) {
+						<span id="car-notes-error" class="text-sm text-alloy-text">{{ carFields.notes().errors()[0]?.message }}</span>
+					}
+				</label>
+			</div>
+			<div class="flex flex-col gap-2 sm:flex-row">
+				<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="store.carAction() !== null">
+					<svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+					{{ store.carAction() === 'create' ? 'Adding…' : 'Save car' }}
+				</button>
+				<button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button>
+			</div>
 		</form>
 	} @else {
-		<div class="garage-toolbar">
-			<span><strong>{{ store.cars().length }}</strong> {{ store.showArchived() ? 'active and archived' : 'active' }} cars</span>
-			<div class="toolbar-actions">@if (!store.showArchived()) { <button type="button" (click)="openCreate()">Add a car</button> }<button type="button" (click)="store.toggleArchived()">{{ store.showArchived() ? 'Show active cars' : 'Inspect archived cars' }}</button></div>
+		<div class="garage-toolbar flex flex-col gap-3 border-b border-alloy-separator pb-4 sm:flex-row sm:items-center sm:justify-between">
+			<p class="m-0 text-sm text-alloy-text-secondary"><strong class="alloy-technical text-alloy-text">{{ store.cars().length }}</strong> {{ store.showArchived() ? 'active and archived' : 'active' }} cars</p>
+			<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" (click)="store.toggleArchived()">
+				@if (store.showArchived()) {
+					<svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+				} @else {
+					<svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+				}
+				{{ store.showArchived() ? 'Show active cars' : 'Inspect archived cars' }}
+			</button>
 		</div>
 		@if (store.collectionLoading()) {
-			<div class="state-card" role="status"><span aria-hidden="true">•••</span><p>Opening the garage ledger…</p></div>
+			<div class="alloy-state alloy-live-state mt-0" role="status">
+				<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Loading cars</strong></span>
+				<span>Opening the garage ledger…</span>
+			</div>
 		} @else if (store.collectionError()) {
-			<div class="state-card" role="alert"><p>{{ store.collectionError() }}</p><button type="button" (click)="store.retryCollection()">Try again</button></div>
+			<div class="alloy-state alloy-error-state mt-0" role="alert">
+				<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+				<span>{{ store.collectionError() }}</span>
+				<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="store.retryCollection()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+			</div>
 		} @else if (!store.cars().length) {
-			<div class="state-card"><span aria-hidden="true">＋</span><h3>{{ store.showArchived() ? 'No archived cars' : 'The garage is waiting' }}</h3><p>{{ store.showArchived() ? 'Archived cars will stay here with their history.' : 'Add the first car to start a build sheet.' }}</p>@if (!store.showArchived()) { <button type="button" (click)="openCreate()">Add the first car</button> }</div>
+			<div class="alloy-empty-state grid gap-3">
+				<svg lucideCarFront size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+				<div>
+					<h3 class="m-0 text-base font-semibold text-alloy-text">{{ store.showArchived() ? 'No archived cars' : 'The garage is waiting' }}</h3>
+					<p class="m-0 mt-1">{{ store.showArchived() ? 'Archived cars will stay here with their history.' : 'Add the first car to start a build sheet.' }}</p>
+				</div>
+			</div>
 		} @else {
-			<nav class="car-list" aria-label="Cars">
-				@for (car of store.cars(); track car.id) {
-					<a class="car-row" [routerLink]="['/garage', car.id, 'overview']">
-						<strong>{{ car.name }}</strong><span>{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</span>
-					</a>
-				}
+			<nav class="car-list border-y border-alloy-separator" aria-label="Cars">
+				<ul class="m-0 list-none divide-y divide-alloy-separator p-0">
+					@for (car of store.cars(); track car.id) {
+						<li>
+							<a class="car-row alloy-focus-ring grid min-h-20 grid-cols-[24px_minmax(0,1fr)_20px] items-center gap-3 px-2 py-3 text-alloy-text no-underline sm:grid-cols-[24px_minmax(0,1fr)_auto_20px] sm:px-3" [routerLink]="['/garage', car.id, 'overview']">
+								<svg lucideCarFront size="20" strokeWidth="1.8" aria-hidden="true"></svg>
+								<span class="min-w-0">
+									<strong class="block break-words text-base font-semibold leading-5">{{ car.name }}</strong>
+									<span class="mt-1 block break-words text-sm text-alloy-text-secondary">{{ car.make || car.manufacturer || 'Make not recorded' }} · {{ car.model || 'Model not recorded' }}</span>
+									@if (car.scale || car.vehicleType || car.powerType) {
+									<span class="alloy-technical mt-2 flex flex-wrap gap-x-3 gap-y-1 text-alloy-text-secondary">
+											@if (car.scale) { <span>{{ car.scale }}</span> }
+											@if (car.vehicleType) { <span>{{ car.vehicleType }}</span> }
+											@if (car.powerType) { <span>{{ car.powerType }}</span> }
+										</span>
+									}
+								</span>
+								<span class="col-start-2 row-start-2 inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-wider text-alloy-text-secondary sm:col-start-auto sm:row-start-auto">
+									@if (car.archivedAt) {
+										<svg lucideArchive size="16" strokeWidth="1.8" aria-hidden="true"></svg>
+										Archived
+									} @else {
+										<span class="size-2 rounded-full bg-alloy-accent" aria-hidden="true"></span>
+										Active
+									}
+								</span>
+								<svg lucideChevronRight size="20" strokeWidth="1.8" aria-hidden="true"></svg>
+							</a>
+						</li>
+					}
+				</ul>
 			</nav>
 		}
 	}

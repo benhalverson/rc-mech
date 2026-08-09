@@ -7,6 +7,15 @@ import {
 	validate,
 } from '@angular/forms/signals';
 import { Router, RouterLink } from '@angular/router';
+import {
+	LucideArchive,
+	LucideArchiveRestore,
+	LucideCarFront,
+	LucideChevronRight,
+	LucidePlus,
+	LucideRefreshCw,
+	LucideTriangleAlert,
+} from '@lucide/angular';
 import { type GarageCarInput, GarageStore } from './garage-store';
 
 type CarForm = {
@@ -45,9 +54,19 @@ const carPayload = (form: CarForm): GarageCarInput => {
 
 @Component({
 	selector: 'app-garage',
-	imports: [RouterLink, FormField],
+	host: { class: 'block' },
+	imports: [
+		RouterLink,
+		FormField,
+		LucideArchive,
+		LucideArchiveRestore,
+		LucideCarFront,
+		LucideChevronRight,
+		LucidePlus,
+		LucideRefreshCw,
+		LucideTriangleAlert,
+	],
 	templateUrl: './garage.html',
-	styleUrl: './garage.css',
 })
 export class Garage {
 	protected readonly store = inject(GarageStore);
