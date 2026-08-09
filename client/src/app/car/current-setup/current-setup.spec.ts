@@ -140,7 +140,7 @@ describe('CurrentSetup', () => {
 		]);
 		const root = detect();
 		expect(root.textContent).toContain('Long clay baseline');
-		expect(root.textContent).toContain('Aug 8, 2026');
+		expect(root.textContent).toContain('Aug 9, 2026');
 		expect(
 			root.querySelectorAll('[aria-label="Priority setup values"] > div'),
 		).toHaveLength(2);

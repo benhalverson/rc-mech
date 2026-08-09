@@ -24,7 +24,7 @@
 				<strong class="block text-[15px] font-[650]">{{ setup.name }}</strong>
 				<span class="mt-1 block text-[13px] text-alloy-text-secondary">{{ setup.context.track || 'Track not recorded' }} · {{ setup.context.condition || 'Condition not recorded' }}</span>
 			</div>
-			<span class="mt-1 shrink-0 text-right text-[13px] text-alloy-text-secondary">{{ setup.context.recordedAt ? (setup.context.recordedAt | date: 'mediumDate') : 'Date not recorded' }}</span>
+			<span class="mt-1 shrink-0 text-right text-[13px] text-alloy-text-secondary">{{ setup.context.recordedAt ? (setup.context.recordedAt | date: 'mediumDate':'UTC') : 'Date not recorded' }}</span>
 		</div>
 
 		<dl class="m-0" aria-label="Priority setup values">
