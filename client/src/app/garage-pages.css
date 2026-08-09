@@ -34,11 +34,6 @@ main {
 	place-items: center;
 	max-width: 720px;
 }
-.access-card {
-	width: min(100%, 520px);
-	border-top: 2px solid var(--accent);
-	padding: 34px 0 16px;
-}
 .intro {
 	color: var(--muted);
 	max-width: 430px;
@@ -114,9 +109,6 @@ h1 {
 	letter-spacing: -0.05em;
 	margin-bottom: 24px;
 }
-.access-card h1 {
-	margin: 16px 0 22px;
-}
 h2 {
 	font:
 		700 1.15rem ui-monospace,
@@ -164,27 +156,6 @@ form .button {
 	color: var(--ink);
 	padding: 9px 12px;
 	font-size: 0.78rem;
-}
-.divider {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	color: var(--muted);
-	font-size: 0.75rem;
-	margin: 24px 0 14px;
-}
-.divider::before,
-.divider::after {
-	content: '';
-	height: 1px;
-	background: var(--line);
-	flex: 1;
-}
-.passkey-button {
-	width: 100%;
-	background: transparent;
-	border: 1px solid var(--accent);
-	color: var(--accent);
 }
 .garage-panel {
 	border-top: 1px solid var(--line);

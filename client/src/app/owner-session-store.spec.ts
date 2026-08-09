@@ -63,6 +63,26 @@ describe('OwnerSessionStore', () => {
 		expect(await store.refresh()).toBeNull();
 	});
 
+	it('reloads and resolves the refreshed owner session', async () => {
+		const initial = store.resolved();
+		await vi.waitFor(() => http.expectOne('/api/auth/get-session').flush(null));
+		await initial;
+
+		const refreshed = store.refresh();
+		await vi.waitFor(() =>
+			http.expectOne('/api/auth/get-session').flush({
+				session: { id: 'session-2' },
+				user: { email: 'refreshed@example.test' },
+			}),
+		);
+
+		expect(await refreshed).toEqual({
+			session: { id: 'session-2' },
+			user: { email: 'refreshed@example.test' },
+		});
+		expect(store.authenticated()).toBe(true);
+	});
+
 	it('expires local session state and starts a background refresh', () => {
 		store.session.set({
 			session: { id: 'session-1' },
