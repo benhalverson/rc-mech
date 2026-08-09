@@ -22,17 +22,31 @@ import { CarPhotos } from './car-photos';
 import { CarSetups } from './car-setups';
 import { CarSetupsStore } from './car-setups-store';
 import { CarStore } from './car-store';
+import { CurrentSetupStore } from './current-setup/current-setup-store';
 import { DriveSessionGateway } from './drive-sessions/drive-session-gateway';
 import { DriveSessionStore } from './drive-sessions/drive-session-store';
 import { DriveSessions } from './drive-sessions/drive-sessions';
 
 type TestSignal<T> = (() => T) & { set(value: T): void };
 
+const emptyCurrentSetupStore = {
+	current: () => null,
+	loading: () => false,
+	failure: () => null,
+	priorityRows: () => [],
+	remainingRows: () => [],
+	changes: () => [],
+	retry: (): void => undefined,
+};
+
 const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/overview',
 		component: CarOverview,
-		providers: [CarStore],
+		providers: [
+			CarStore,
+			{ provide: CurrentSetupStore, useValue: emptyCurrentSetupStore },
+		],
 	},
 	{
 		path: 'garage/:carId/build',

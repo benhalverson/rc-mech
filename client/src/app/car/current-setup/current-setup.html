@@ -1,0 +1,84 @@
+<section class="current-setup-sheet rounded-alloy-panel border border-alloy-separator bg-alloy-control" aria-labelledby="current-setup-title">
+	<header class="flex items-center justify-between gap-4 border-b border-alloy-separator p-4">
+		<div>
+			<span class="alloy-section-heading">Trackside readout</span>
+			<h3 id="current-setup-title" class="m-0 mt-1 font-interface text-[22px] font-[650] leading-7">Current setup</h3>
+		</div>
+		@if (!archived() && store.current()) {
+			<a class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-h-12 items-center justify-center no-underline" [routerLink]="setupRoute()">Open setup</a>
+		}
+	</header>
+
+	@if (store.loading()) {
+		<div class="alloy-state m-0 p-4" role="status">Reading the current setup…</div>
+	} @else if (store.failure(); as failure) {
+		<div class="alloy-state alloy-error-state m-0 p-4" role="alert">
+			<p class="m-0">{{ failure.message }}</p>
+			@if (failure.retryable) {
+				<button class="alloy-control alloy-control-secondary mt-3" type="button" (click)="store.retry()">Try again</button>
+			}
+		</div>
+	} @else if (store.current(); as setup) {
+		<div class="flex items-start justify-between gap-4 border-b border-alloy-separator px-4 py-3.5">
+			<div>
+				<strong class="block text-[15px] font-[650]">{{ setup.name }}</strong>
+				<span class="mt-1 block text-[13px] text-alloy-text-secondary">{{ setup.context.track || 'Track not recorded' }} · {{ setup.context.condition || 'Condition not recorded' }}</span>
+			</div>
+			<span class="mt-1 shrink-0 text-right text-[13px] text-alloy-text-secondary">{{ setup.context.recordedAt ? (setup.context.recordedAt | date: 'mediumDate':'UTC') : 'Date not recorded' }}</span>
+		</div>
+
+		<dl class="m-0" aria-label="Priority setup values">
+			@for (row of store.priorityRows(); track row.id) {
+				<div class="instrument-row flex min-h-[50px] items-center justify-between gap-3 border-b border-alloy-separator px-4 py-2.5 max-[480px]:items-start">
+					<dt class="min-w-[116px] text-sm font-semibold leading-5 text-alloy-text-secondary max-[480px]:min-w-[96px]">{{ row.label }}</dt>
+					<dd class="m-0 min-w-0 [overflow-wrap:anywhere] text-right font-technical text-[15px] leading-5" [class.text-alloy-text-secondary]="row.value.includes('Not recorded')">{{ row.value }}</dd>
+				</div>
+			}
+		</dl>
+
+		@if (store.changes().length) {
+			<section class="setup-changes border-t-8 border-t-alloy-surface" aria-labelledby="setup-changes-title">
+				<h4 id="setup-changes-title" class="m-0 border-b border-alloy-separator px-4 py-3 text-sm font-[650]">Changes from previous</h4>
+				<ul class="m-0 list-none p-0">
+					@for (change of store.changes(); track change.id) {
+						<li class="flex min-h-12 items-center justify-between gap-4 border-b border-alloy-separator px-4 py-2.5 text-sm max-[480px]:items-start max-[480px]:flex-col max-[480px]:gap-1">
+							<span>{{ change.label }}</span>
+							<code class="[overflow-wrap:anywhere] text-right font-technical text-[13px] text-alloy-text max-[480px]:text-left">{{ change.previousValue }} → {{ change.currentValue }}</code>
+						</li>
+					}
+				</ul>
+			</section>
+		}
+
+		@if (store.remainingRows().length) {
+			<section class="border-t-8 border-t-alloy-surface" aria-labelledby="remaining-setup-title">
+				<h4 id="remaining-setup-title" class="m-0 border-b border-alloy-separator px-4 py-3 text-sm font-[650]">Remaining setup</h4>
+				<dl class="m-0">
+					@for (row of store.remainingRows(); track row.id) {
+						<div class="instrument-row flex min-h-[50px] items-center justify-between gap-3 border-b border-alloy-separator px-4 py-2.5 max-[480px]:items-start">
+							<dt class="min-w-[116px] text-sm font-semibold leading-5 text-alloy-text-secondary max-[480px]:min-w-[96px]">{{ row.label }}</dt>
+							<dd class="m-0 min-w-0 [overflow-wrap:anywhere] text-right font-technical text-[15px] leading-5" [class.text-alloy-text-secondary]="row.value === 'Not recorded'">{{ row.value }}</dd>
+						</div>
+					}
+				</dl>
+			</section>
+		}
+		@if (archived()) {
+			<p class="m-0 px-4 py-3 text-[13px] text-alloy-text-secondary">Archived record · this setup remains readable, but changes are disabled.</p>
+		}
+	} @else {
+		<div class="m-0 p-4 sm:p-6">
+			<span class="alloy-section-heading">Setup required</span>
+			<h4 class="m-0 mt-1 font-interface text-[22px] font-[650] leading-7">No current setup</h4>
+			<p class="m-0 mt-2">Record the car as it sits now, or review an existing setup source before saving it.</p>
+			@if (!archived()) {
+				<div class="mt-5 flex flex-wrap gap-3">
+					<a class="alloy-control alloy-control-primary alloy-focus-ring inline-flex min-h-12 items-center justify-center no-underline" [routerLink]="setupRoute()">Record setup</a>
+					<a class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-h-12 items-center justify-center no-underline" [routerLink]="setupRoute()">Import setup</a>
+				</div>
+			} @else {
+				<a class="alloy-control alloy-control-secondary alloy-focus-ring mt-5 inline-flex min-h-12 items-center justify-center no-underline" [routerLink]="setupRoute()">View setup history</a>
+			}
+		</div>
+	}
+</section>

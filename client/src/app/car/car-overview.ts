@@ -16,6 +16,7 @@ import {
 import type { GarageCar, GarageCarInput } from '../garage/garage-store';
 import { CarSectionShell } from './car-section-shell';
 import { CarStore } from './car-store';
+import { CurrentSetup } from './current-setup/current-setup';
 
 type CarForm = {
 	name: string;
@@ -59,7 +60,7 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 
 @Component({
 	selector: 'app-car-overview',
-	imports: [CarSectionShell, FormField],
+	imports: [CarSectionShell, CurrentSetup, FormField],
 	template: `
 		@if (store.loading()) {
 			<div class="state-card" role="status">Opening the car overview…</div>
@@ -67,6 +68,7 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 			<div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="store.retry()">Try again</button> }</div>
 		} @else if (store.car(); as car) {
 			<app-car-section-shell [car]="car" section="overview">
+				<app-current-setup [carId]="car.id" [archived]="!!car.archivedAt" />
 				@if (editing()) {
 					<form class="car-form" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : null" novalidate>
 						<div class="eyebrow">Edit car</div><h3 id="car-form-title">Update the car record.</h3>
