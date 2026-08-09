@@ -7,6 +7,8 @@ RC Mech treats a car setup as a historical snapshot rather than as mutable car o
 **Consequences**
 
 - A car can have multiple setups for different tracks, surfaces, grip levels, and events.
+- An intentional tuning change may contain multiple field changes, but one save creates one coherent copied setup snapshot, preserves the prior snapshot, and makes the new snapshot current only after a successful save. Canceling or failing to save leaves the prior current setup unchanged. Updating an existing snapshot is reserved for an explicitly labeled correction of a recording mistake.
+- Confirmed setup changes extracted from a voice note follow the same copied-snapshot rule and retain the voice note as provenance.
 - Setup context and tuning fields can be optional, so a baseline can be saved quickly and enriched later.
 - The import flow needs an owner review step and a durable source reference.
 - Diagram-style source values need editable controls or an explicit unmapped state; the PDF remains the visual fallback.

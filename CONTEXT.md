@@ -52,9 +52,61 @@ _Avoid_: Automatic sync, scrape
 The setup a user is using as the starting point for the next change. A car can have many setups, but only one needs to be current at a time.
 _Avoid_: Permanent setup, active component list
 
+**Setup change**:
+A new setup copied from the current setup and modified to represent intentional tuning work while preserving the previous setup in history.
+_Avoid_: Edit setup, overwrite setup
+
+**Setup correction**:
+An explicit repair to a recording mistake in an existing setup. It corrects history rather than representing new tuning work.
+_Avoid_: Setup change, new setup
+
+**Changes from previous**:
+The recorded field differences between a setup and the setup it was copied from.
+_Avoid_: Diff, delta
+
+**Ride height**:
+The setup's single chassis-clearance value, such as 12 mm or 14 mm. RC Mech does not split ride height into front and rear values or model a raked ride height.
+_Avoid_: Front ride height, rear ride height, rake
+
+**Rear toe setting**:
+The pair of physical pill positions recorded by the current setup for a car's rear C and D suspension blocks. RC Mech preserves those positions and does not derive a numeric toe angle.
+_Avoid_: Rear toe value, rear toe angle
+
+**Pill position**:
+The vertical and lateral placement of an adjustment pill within a suspension block, such as up and in or center and in.
+_Avoid_: Toe number, pill value
+
+**Gear differential setting**:
+The setup-sheet values that describe an oil-filled gear differential. A 2WD setting includes differential oil and height; a 4WD setting identifies each applicable front, center, or rear differential and its oil.
+_Avoid_: Diff value, universal diff oil
+
+**Center slipper**:
+A 4WD center-drive configuration that can be decoupled and therefore has no center differential-oil value.
+_Avoid_: Center differential, missing center oil
+
+**Shock package**:
+The front and rear spring and shock-oil choices recorded together in a setup.
+_Avoid_: Suspension package, shock configuration
+
 **Drive session**:
 A recorded occasion on which a user drives a car, including the conditions and usage that matter for maintenance.
 _Avoid_: Run, outing, trip
+
+**Voice note**:
+A spoken trackside observation captured for a car and optionally associated with a drive session. It retains the original private audio and its transcript until the user deletes the note.
+_Avoid_: Voice command, prompt
+
+**Voice transcript**:
+The textual transcription of what the user said in a voice note. It is not setup guidance or a tuning recommendation.
+_Avoid_: Translation, advice, recommendation
+
+**Voice draft**:
+A reviewable set of proposed garage records extracted only from facts the user explicitly stated in a voice note. It does not alter garage history until the user confirms it.
+_Avoid_: Setup guidance, automatic update
+
+**Trackside observation**:
+A recorded statement about car behavior or driving conditions that does not claim a setup change was made.
+_Avoid_: Setup recommendation, inferred change
 
 **Consumable maintenance entry**:
 A record of replacing or servicing something whose condition or life matters to driving, such as a front or rear tire set, shock fluid, or differential fluid.
