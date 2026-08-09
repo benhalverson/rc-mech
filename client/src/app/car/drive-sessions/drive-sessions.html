@@ -1,86 +1,160 @@
 @if (carStore.loading()) {
-	<div class="state-card" role="status">Opening the car record…</div>
+	<div class="alloy-state alloy-live-state mt-0" role="status">
+		<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening car</strong></span>
+		<span>Loading the selected car record…</span>
+	</div>
 } @else if (carStore.failure(); as failure) {
-	<div class="state-card" role="alert">
-		<p>{{ failure.message }}</p>
+	<div class="alloy-state alloy-error-state mt-0" role="alert">
+		<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+		<span>{{ failure.message }}</span>
 		@if (failure.retryable) {
-			<button type="button" (click)="carStore.retry()">Try again</button>
+			<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="carStore.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
 		}
 	</div>
 } @else if (carStore.car(); as car) {
 	<app-car-section-shell [car]="car" section="drive-sessions">
-		<section class="session-log" aria-labelledby="drive-sessions-title">
-			<div class="section-heading">
+		<section class="session-log grid gap-6 border-t border-alloy-separator pt-6" aria-labelledby="drive-sessions-title">
+			<header class="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
 				<div>
-					<div class="eyebrow">Drive history</div>
-					<h3 id="drive-sessions-title">Drive sessions</h3>
+					<div class="alloy-section-heading">Drive history</div>
+					<h3 id="drive-sessions-title" class="alloy-screen-title" tabindex="-1">Drive sessions</h3>
+					<p class="alloy-supporting-text mb-0 max-w-2xl">Record manual track time and review the selected car’s history.</p>
 				</div>
-				<span><strong>{{ driveSessionStore.activeCount() }}</strong> recorded</span>
-				@if (!car.archivedAt && !editing()) {
-					<a class="button" [routerLink]="['/garage', car.id, 'voice']">Voice track log</a>
-					<button class="button" type="button" (click)="openAdd()" [disabled]="driveSessionStore.pending()">Record a drive session</button>
-				}
-			</div>
-			@if (editing()) {
-				<form (submit)="save($event)" aria-labelledby="drive-session-form-title" [attr.aria-describedby]="formError() ? 'drive-session-form-error' : null" novalidate>
-					<h4 id="drive-session-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive session' }}</h4>
-					@if (formError()) {
-						<p id="drive-session-form-error" role="alert">{{ formError() }}</p>
+				<div class="grid justify-items-stretch gap-3 sm:justify-items-end">
+					<span class="alloy-technical text-alloy-text-secondary"><strong class="font-normal text-alloy-text">{{ driveSessionStore.activeCount() }}</strong> recorded</span>
+					@if (!car.archivedAt && !editing()) {
+						<div class="flex flex-col gap-2 sm:flex-row">
+							<a class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2" [routerLink]="['/garage', car.id, 'voice']"><svg lucideMic size="18" strokeWidth="1.8" aria-hidden="true"></svg>Voice track log</a>
+							@if (driveSessionStore.sessions().length) {
+								<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" data-drive-session-launcher="record" (click)="openAdd()" [disabled]="driveSessionStore.pending()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Record a drive session</button>
+							}
+						</div>
 					}
-					<div class="form-grid">
-						<label>Started <input type="datetime-local" [formField]="driveSessionForm.startedAt" [attr.aria-describedby]="driveSessionForm.startedAt().invalid() && formError() ? 'drive-session-form-error' : null" /></label>
-						<label>Duration (minutes) <input type="text" inputmode="numeric" [formField]="driveSessionForm.durationMinutes" [attr.aria-describedby]="driveSessionForm.durationMinutes().invalid() && formError() ? 'drive-session-form-error' : null" /></label>
-						<label class="wide">Conditions <input [formField]="driveSessionForm.conditions" /></label>
-						<label class="wide">Notes <textarea rows="3" [formField]="driveSessionForm.notes"></textarea></label>
+				</div>
+			</header>
+
+			@if (editing()) {
+				<form class="alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="drive-session-form-title" [attr.aria-describedby]="formError() ? 'drive-session-form-error' : 'drive-session-form-intro'" novalidate>
+					<div>
+						<div class="alloy-section-heading">Session editor</div>
+						<h4 id="drive-session-form-title" class="alloy-screen-title" tabindex="-1">{{ editingId() ? 'Edit drive session' : 'Record a drive session' }}</h4>
+						<p id="drive-session-form-intro" class="alloy-supporting-text mb-0">Keep the timestamp and optional context with this car’s drive history.</p>
 					</div>
-					<p>Saved in {{ driveSessionStore.timezone() }}.</p>
-					<div class="form-actions">
-						<button class="button" type="submit" [disabled]="driveSessionStore.pending()">Save session</button>
-						<button type="button" (click)="cancel()" [disabled]="driveSessionStore.pending()">Cancel</button>
+					@if (formError()) {
+						<p id="drive-session-form-error" class="alloy-state alloy-error-state mt-0" role="alert">
+							<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+							<span>{{ formError() }}</span>
+						</p>
+					}
+					<div class="grid gap-4 sm:grid-cols-2">
+						<label class="grid gap-1">
+							<span class="text-sm font-semibold text-alloy-text">Started</span>
+							<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="driveSessionForm.startedAt" [attr.aria-describedby]="driveSessionForm.startedAt().touched() && driveSessionForm.startedAt().invalid() ? 'drive-session-started-error' : 'drive-session-started-help'" />
+							@if (driveSessionForm.startedAt().touched() && driveSessionForm.startedAt().invalid()) {
+								<span id="drive-session-started-error" class="text-sm text-alloy-text">{{ driveSessionForm.startedAt().errors()[0]?.message }}</span>
+							} @else {
+								<span id="drive-session-started-help" class="text-sm text-alloy-text-secondary">Date and time in the garage timezone.</span>
+							}
+						</label>
+						<label class="grid gap-1">
+							<span class="text-sm font-semibold text-alloy-text">Duration (minutes)</span>
+							<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" [formField]="driveSessionForm.durationMinutes" [attr.aria-describedby]="driveSessionForm.durationMinutes().touched() && driveSessionForm.durationMinutes().invalid() ? 'drive-session-duration-error' : 'drive-session-duration-help'" />
+							@if (driveSessionForm.durationMinutes().touched() && driveSessionForm.durationMinutes().invalid()) {
+								<span id="drive-session-duration-error" class="text-sm text-alloy-text">{{ driveSessionForm.durationMinutes().errors()[0]?.message }}</span>
+							} @else {
+								<span id="drive-session-duration-help" class="text-sm text-alloy-text-secondary">Optional, from 1 to 1,440 minutes.</span>
+							}
+						</label>
+						<label class="grid gap-1 sm:col-span-2">
+							<span class="text-sm font-semibold text-alloy-text">Conditions</span>
+							<input class="alloy-field alloy-focus-ring w-full" [formField]="driveSessionForm.conditions" aria-describedby="drive-session-conditions-help" />
+							<span id="drive-session-conditions-help" class="text-sm text-alloy-text-secondary">Optional surface, weather, or track context.</span>
+						</label>
+						<label class="grid gap-1 sm:col-span-2">
+							<span class="text-sm font-semibold text-alloy-text">Notes</span>
+							<textarea class="alloy-field alloy-focus-ring min-h-24 w-full resize-y py-3" rows="3" [formField]="driveSessionForm.notes" aria-describedby="drive-session-notes-help"></textarea>
+							<span id="drive-session-notes-help" class="text-sm text-alloy-text-secondary">Optional observations recorded after the drive session.</span>
+						</label>
+					</div>
+					<p class="alloy-technical m-0 text-alloy-text-secondary">Saved in {{ driveSessionStore.timezone() }}.</p>
+					<div class="flex flex-col gap-2 sm:flex-row">
+						<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="driveSessionStore.pending()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ driveSessionStore.pending() ? 'Saving…' : 'Save session' }}</button>
+						<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center" type="button" (click)="cancel()" [disabled]="driveSessionStore.pending()">Cancel</button>
 					</div>
 				</form>
 			} @else if (driveSessionStore.loading()) {
-				<div class="state-card" role="status">Opening drive session history…</div>
+				<div class="alloy-state alloy-live-state mt-0" role="status">
+					<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening drive sessions</strong></span>
+					<span>Loading the selected car’s drive history…</span>
+				</div>
 			} @else if (driveSessionStore.failure(); as failure) {
-				<div class="state-card" role="alert">
-					<p>{{ failure.message }}</p>
+				<div class="alloy-state alloy-error-state mt-0" role="alert">
+					<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+					<span>{{ failure.message }}</span>
 					@if (failure.retryable) {
-						<button type="button" (click)="driveSessionStore.retry()">Try again</button>
+						<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="driveSessionStore.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
 					}
 				</div>
 			} @else if (!driveSessionStore.sessions().length) {
-				<div class="state-card">
-					<h4>No drive sessions recorded</h4>
+				<div class="alloy-empty-state grid gap-3">
+					<svg lucideClock size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+					<div>
+						<h4 class="m-0 text-base font-semibold text-alloy-text">No drive sessions recorded</h4>
+						<p class="m-0 mt-1">{{ car.archivedAt ? 'This archived car has no drive session history.' : 'Record the first manual drive session for this car.' }}</p>
+					</div>
 					@if (!car.archivedAt) {
-						<button type="button" (click)="openAdd()" [disabled]="driveSessionStore.pending()">Record the first drive session</button>
+						<button class="alloy-control alloy-focus-ring inline-flex w-fit items-center gap-2" type="button" data-drive-session-launcher="record" (click)="openAdd()" [disabled]="driveSessionStore.pending()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Record the first drive session</button>
 					}
 				</div>
 			} @else {
-				<div class="session-list" aria-label="Drive session history">
-					@for (session of driveSessionStore.sessions(); track session.id) {
-						<article class="session-row">
-							<div><time [dateTime]="session.startedAt">{{ session.startedAt | date: 'medium':driveSessionStore.timezone() }}</time></div>
-							<div>
-								<strong>{{ session.conditions || 'Conditions not recorded' }}</strong>
-								@if (session.durationMinutes) {
-									<span> · {{ session.durationMinutes }} min</span>
-								}
-								@if (session.notes) {
-									<p>{{ session.notes }}</p>
-								}
-							</div>
-							@if (!session.deletedAt && !car.archivedAt) {
-								<div class="form-actions">
-									<button type="button" (click)="openEdit(session)" [disabled]="driveSessionStore.pending()">Edit</button>
-									<button type="button" (click)="archive(session)" [disabled]="driveSessionStore.pending()">Archive</button>
+				<ol class="session-list m-0 list-none divide-y divide-alloy-separator border-y border-alloy-separator p-0" aria-label="Drive session history">
+					@for (session of driveSessionStore.sessions(); track session.id; let index = $index) {
+						<li>
+							<article class="session-row grid min-h-12 gap-3 py-4 md:grid-cols-[minmax(180px,240px)_minmax(0,1fr)_auto] md:items-start">
+								<div class="min-w-0">
+									<time class="alloy-technical block break-words text-alloy-text" [dateTime]="session.startedAt">{{ session.startedAt | date: 'medium':driveSessionStore.timezone() }}</time>
+									@if (session.deletedAt) {
+										<span class="mt-1 block text-[13px] text-alloy-text-secondary">Archived drive session</span>
+									}
 								</div>
-							}
-						</article>
+								<div class="min-w-0">
+									<strong class="block break-words text-base font-semibold text-alloy-text">{{ session.conditions || 'Conditions not recorded' }}</strong>
+									@if (session.durationMinutes) {
+										<span class="alloy-technical mt-1 block text-alloy-text-secondary">{{ session.durationMinutes }} min</span>
+									}
+									@if (session.notes) {
+										<p class="m-0 mt-2 break-words whitespace-pre-wrap text-alloy-text-secondary">{{ session.notes }}</p>
+									}
+								</div>
+								@if (!session.deletedAt && !car.archivedAt) {
+									<div class="drive-session-actions flex flex-col gap-2 sm:flex-row md:justify-end" role="group" [attr.aria-label]="'Drive session ' + (index + 1) + ' actions'">
+										<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openEdit(session)" [disabled]="driveSessionStore.pending()" [attr.data-drive-session-launcher]="session.id" [attr.aria-label]="'Edit drive session ' + (index + 1)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit drive session</button>
+										<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="archive(session)" [disabled]="driveSessionStore.pending()" [attr.aria-label]="'Archive drive session ' + (index + 1)"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive drive session</button>
+									</div>
+								}
+							</article>
+						</li>
 					}
-				</div>
+				</ol>
+			}
+			@if (driveSessionStore.pending()) {
+				<p class="alloy-state alloy-live-state mt-0" role="status">
+					<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Updating drive sessions</strong></span>
+					<span>{{ editing() ? 'Saving the drive session…' : 'Archiving the drive session…' }}</span>
+				</p>
 			}
 			@if (message()) {
-				<p role="status">{{ message() }}</p>
+				@if (driveSessionStore.outcome().status === 'failed') {
+					<p class="alloy-state alloy-error-state mt-0" role="alert">
+						<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+						<span>{{ message() }}</span>
+					</p>
+				} @else {
+					<p class="alloy-state alloy-live-state mt-0" role="status">
+						<span class="alloy-state-heading"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Saved</strong></span>
+						<span>{{ message() }}</span>
+					</p>
+				}
 			}
 		</section>
 	</app-car-section-shell>
