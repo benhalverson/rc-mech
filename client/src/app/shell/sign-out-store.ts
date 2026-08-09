@@ -11,7 +11,8 @@ import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { Router } from '@angular/router';
 import { catchError, exhaustMap, from, of, switchMap, tap } from 'rxjs';
 import { OwnerSessionStore } from '../owner-session-store';
-import { SignOutGateway, type SignOutGatewayFailure } from './sign-out-gateway';
+import type { SignOutGatewayFailure } from './sign-out-contract';
+import { SignOutGateway } from './sign-out-gateway';
 
 export type SignOutCommand = { readonly operation: 'sign-out' };
 
