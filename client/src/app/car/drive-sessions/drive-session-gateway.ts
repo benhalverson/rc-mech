@@ -93,13 +93,18 @@ export class DriveSessionGateway {
 
 	saveDriveSession(command: SaveDriveSessionCommand): Observable<DriveSession> {
 		const carUrl = `/api/v1/cars/${encodeURIComponent(command.carId)}/drives`;
+		const { durationMinutes, ...requiredCreateFields } = command.draft;
+		const createBody =
+			durationMinutes === null
+				? requiredCreateFields
+				: { ...requiredCreateFields, durationMinutes };
 		const request = command.sessionId
 			? this.http.patch<unknown>(
 					`${carUrl}/${encodeURIComponent(command.sessionId)}`,
 					command.draft,
 					{ withCredentials: true },
 				)
-			: this.http.post<unknown>(carUrl, command.draft, {
+			: this.http.post<unknown>(carUrl, createBody, {
 					withCredentials: true,
 				});
 		return request.pipe(

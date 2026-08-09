@@ -161,6 +161,21 @@ describe('DriveSessions', () => {
 		);
 		detect();
 		expect(document.activeElement).toBe(duration);
+
+		const component = fixture.componentInstance as unknown as {
+			driveSessionForm(): { errorSummary(): Array<{ message?: string }> };
+		};
+		Object.defineProperty(component.driveSessionForm(), 'errorSummary', {
+			configurable: true,
+			value: () => [],
+		});
+		(root.querySelector('form') as HTMLFormElement).dispatchEvent(
+			new Event('submit'),
+		);
+		detect();
+		expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+			'Review the drive session fields',
+		);
 	});
 
 	it('dispatches one immutable save command and reacts to typed outcomes', () => {
@@ -241,18 +256,112 @@ describe('DriveSessions', () => {
 			carId: 'car-1',
 			sessionId: 'drive-1',
 		});
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'archive-drive-session',
+			operationId: 1,
+			session: driveSession({ deletedAt: 'now' }),
+		});
+		detect();
 
 		carStore.car.update((car) => (car ? { ...car, archivedAt: 'now' } : car));
 		root = detect();
 		expect(root.textContent).not.toContain('Record a drive session');
 		expect(root.querySelector('.session-row .form-actions')).toBeNull();
+		store.sessions.set([]);
+		root = detect();
+		expect(root.textContent).toContain('No drive sessions recorded');
+		expect(root.querySelector('.state-card button')).toBeNull();
 	});
 
-	it('guards editor entry while pending or archived', () => {
+	it('edits, clears, cancels, and completes an existing drive session', () => {
+		store.sessions.set([
+			driveSession({
+				conditions: null,
+				notes: null,
+			}),
+		]);
+		const root = detect();
+		button('Record a drive session').click();
+		detect();
+		button('Cancel').click();
+		detect();
+		button('Edit').click();
+		detect();
+		expect(
+			root.querySelector('#drive-session-form-title')?.textContent,
+		).toContain('Edit drive session');
+		expect(
+			(root.querySelector('input[inputmode="numeric"]') as HTMLInputElement)
+				.value,
+		).toBe('20');
+		const duration = root.querySelector(
+			'input[inputmode="numeric"]',
+		) as HTMLInputElement;
+		duration.value = '';
+		duration.dispatchEvent(new Event('input'));
+		(root.querySelector('form') as HTMLFormElement).dispatchEvent(
+			new Event('submit'),
+		);
+		expect(store.saveDriveSession).toHaveBeenCalledWith({
+			carId: 'car-1',
+			sessionId: 'drive-1',
+			draft: expect.objectContaining({
+				durationMinutes: null,
+				conditions: '',
+				notes: '',
+			}),
+		});
+
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'save-drive-session',
+			operationId: 1,
+			session: driveSession(),
+		});
+		detect();
+		expect(root.textContent).toContain('Drive session updated');
+
+		button('Edit').click();
+		detect();
+		button('Cancel').click();
+		detect();
+		expect(root.querySelector('form')).toBeNull();
+
+		const component = fixture.componentInstance as unknown as {
+			openEdit(session: DriveSession): void;
+			cancel(): void;
+		};
+		component.openEdit(driveSession({ durationMinutes: null }));
+		detect();
+		expect(
+			(root.querySelector('input[inputmode="numeric"]') as HTMLInputElement)
+				.value,
+		).toBe('');
+		component.cancel();
+	});
+
+	it('guards editor and save actions while pending, missing, or archived', () => {
 		const component = fixture.componentInstance as unknown as {
 			openAdd(): void;
+			openEdit(session: DriveSession): void;
+			cancel(): void;
+			save(): void;
 			archive(session: DriveSession): void;
+			formError(): string;
 		};
+		detect();
+		carStore.car.set(null);
+		component.save();
+		expect(component.formError()).toContain('Restore this car');
+		carStore.car.set({
+			id: 'car-1',
+			name: 'Buggy',
+			make: 'Associated',
+			model: 'B7',
+			archivedAt: null,
+		});
+		component.openAdd();
 		detect();
 		store.outcome.set({
 			status: 'pending',
@@ -260,17 +369,25 @@ describe('DriveSessions', () => {
 			operationId: 1,
 		});
 		component.openAdd();
+		component.openEdit(driveSession());
+		component.cancel();
+		component.save();
 		component.archive(driveSession());
 		expect(
 			(fixture.nativeElement as HTMLElement).querySelector('form'),
-		).toBeNull();
+		).toBeTruthy();
 
 		store.outcome.set({ status: 'idle', operation: null, operationId: null });
+		component.cancel();
 		carStore.car.update((car) => (car ? { ...car, archivedAt: 'now' } : car));
 		component.openAdd();
+		component.openEdit(driveSession());
 		component.archive(driveSession());
+		carStore.car.update((car) => (car ? { ...car, archivedAt: null } : car));
+		component.openEdit(driveSession({ deletedAt: 'now' }));
 		carStore.car.set(null);
 		component.archive(driveSession());
+		detect();
 		expect(
 			(fixture.nativeElement as HTMLElement).querySelector('form'),
 		).toBeNull();

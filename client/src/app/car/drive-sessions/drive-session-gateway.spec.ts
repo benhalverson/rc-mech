@@ -160,9 +160,25 @@ describe('DriveSessionGateway', () => {
 		let request = http.expectOne('/api/v1/cars/car%2Fone/drives');
 		expect(request.request.method).toBe('POST');
 		expect(request.request.withCredentials).toBe(true);
-		expect(request.request.body).toEqual(draft);
+		expect(request.request.body).toEqual({
+			startedAt: draft.startedAt,
+			conditions: draft.conditions,
+			notes: draft.notes,
+		});
 		request.flush({ driveSession: session });
 		await expect(createResult).resolves.toMatchObject(session);
+
+		const durationResult = firstValueFrom(
+			gateway.saveDriveSession({
+				carId: 'car/one',
+				sessionId: null,
+				draft: { ...draft, durationMinutes: 20 },
+			}),
+		);
+		request = http.expectOne('/api/v1/cars/car%2Fone/drives');
+		expect(request.request.body).toMatchObject({ durationMinutes: 20 });
+		request.flush({ driveSession: session });
+		await expect(durationResult).resolves.toMatchObject(session);
 
 		const updateResult = firstValueFrom(
 			gateway.saveDriveSession({
@@ -173,6 +189,7 @@ describe('DriveSessionGateway', () => {
 		);
 		request = http.expectOne('/api/v1/cars/car%2Fone/drives/drive%2Fone');
 		expect(request.request.method).toBe('PATCH');
+		expect(request.request.body).toEqual(draft);
 		request.flush({ driveSession: session });
 		await expect(updateResult).resolves.toMatchObject(session);
 

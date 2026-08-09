@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DriveSessionContextStore } from './drive-session-context';
 import { DriveSessionGateway } from './drive-session-gateway';
 import type { DriveSessionCollection } from './drive-session.models';
+import { browserTimezone } from './drive-session-time';
 
 class FakeDriveSessionGateway {
 	private readonly collectionValue = signal<DriveSessionCollection | undefined>(
@@ -75,7 +76,10 @@ describe('DriveSessionContextStore', () => {
 		gateway.setCollection({ sessions: [], timezone: null });
 		gateway.setTimezone('America/New_York');
 		expect(store.timezone()).toBe('America/New_York');
+		gateway.setCollection({ sessions: [], timezone: 'invalid' });
+		expect(store.timezone()).toBe('America/New_York');
+		gateway.setCollection({ sessions: [], timezone: null });
 		gateway.setTimezone('invalid');
-		expect(store.timezone()).toBe('UTC');
+		expect(store.timezone()).toBe(browserTimezone());
 	});
 });

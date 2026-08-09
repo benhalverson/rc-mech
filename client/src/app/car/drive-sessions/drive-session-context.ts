@@ -9,7 +9,7 @@ import {
 } from '@ngrx/signals';
 import { DriveSessionGateway } from './drive-session-gateway';
 import type { DriveSession } from './drive-session.models';
-import { browserTimezone, safeTimezone } from './drive-session-time';
+import { resolveTimezone } from './drive-session-time';
 
 export type DriveSessionContext = {
 	readonly sessions: Signal<readonly DriveSession[]>;
@@ -37,9 +37,7 @@ export const DriveSessionContextStore = signalStore(
 			const preferenceTimezone = store.gateway.timezone.hasValue()
 				? store.gateway.timezone.value().timezone
 				: null;
-			return collectionTimezone || preferenceTimezone
-				? safeTimezone(collectionTimezone ?? preferenceTimezone)
-				: browserTimezone();
+			return resolveTimezone(collectionTimezone, preferenceTimezone);
 		}),
 	})),
 	withMethods((store) => ({

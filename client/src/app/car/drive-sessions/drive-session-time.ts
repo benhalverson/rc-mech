@@ -19,6 +19,9 @@ export const browserTimezone = (): string => {
 	}
 };
 
+export const resolveTimezone = (...candidates: readonly unknown[]): string =>
+	candidates.find(isValidTimezone) ?? browserTimezone();
+
 export const localDateTime = (iso: string, timezone: string): string => {
 	const parts = new Intl.DateTimeFormat('en-CA', {
 		timeZone: safeTimezone(timezone),

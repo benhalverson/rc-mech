@@ -11,6 +11,7 @@ import type {
 	SaveDriveSessionCommand,
 } from './drive-session.models';
 import { DriveSessionStore } from './drive-session-store';
+import { browserTimezone } from './drive-session-time';
 
 const session = (overrides: Partial<DriveSession> = {}): DriveSession => ({
 	id: 'drive-1',
@@ -150,8 +151,11 @@ describe('DriveSessionStore', () => {
 		gateway.setCollection({ sessions: [], timezone: null });
 		gateway.setTimezone('America/Los_Angeles');
 		expect(store.timezone()).toBe('America/Los_Angeles');
+		gateway.setCollection({ sessions: [], timezone: 'Not/A-Timezone' });
+		expect(store.timezone()).toBe('America/Los_Angeles');
+		gateway.setCollection({ sessions: [], timezone: null });
 		gateway.setTimezone('Not/A-Timezone');
-		expect(store.timezone()).toBe('UTC');
+		expect(store.timezone()).toBe(browserTimezone());
 		gateway.setLoading(true);
 		expect(store.loading()).toBe(true);
 
@@ -266,5 +270,44 @@ describe('DriveSessionStore', () => {
 		store.selectCar('car-3');
 		gateway.failArchive({ kind: 'http', status: 503 });
 		expect(store.outcome().status).toBe('idle');
+	});
+
+	it('accepts a new-car command and rejects A-B-A stale completions', () => {
+		store.selectCar('car-1');
+		store.saveDriveSession(saveCommand);
+		expect(gateway.saveDriveSession).toHaveBeenCalledOnce();
+
+		store.selectCar('car-2');
+		gateway.resetSave();
+		store.saveDriveSession({ ...saveCommand, carId: 'car-2' });
+		expect(gateway.saveDriveSession).toHaveBeenCalledTimes(2);
+		expect(store.outcome()).toMatchObject({
+			status: 'pending',
+			operationId: 2,
+		});
+
+		store.selectCar('car-1');
+		gateway.succeedSave(session({ carId: 'car-2' }));
+		expect(store.outcome().status).toBe('idle');
+		expect(gateway.refresh).not.toHaveBeenCalled();
+	});
+
+	it('guards outcomes with the captured route generation', () => {
+		store.selectCar('car-1');
+		store.saveDriveSession(saveCommand);
+		(
+			store as unknown as { selectionGeneration: { value: number } }
+		).selectionGeneration.value += 1;
+		gateway.succeedSave();
+		expect(store.outcome().status).toBe('pending');
+		expect(gateway.refresh).not.toHaveBeenCalled();
+
+		gateway.resetSave();
+		store.saveDriveSession(saveCommand);
+		(
+			store as unknown as { selectionGeneration: { value: number } }
+		).selectionGeneration.value += 1;
+		gateway.failSave({ kind: 'unavailable' });
+		expect(store.outcome().status).toBe('pending');
 	});
 });

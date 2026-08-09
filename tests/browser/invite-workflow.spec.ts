@@ -97,6 +97,39 @@ test('invite registration, management, isolation, and accessible states', async 
 	).toBeVisible();
 	violations = await scan(page);
 	expect(violations).toEqual([]);
+
+	await page
+		.getByRole('button', { name: 'Record the first drive session' })
+		.click();
+	await expect(
+		page.getByRole('heading', { name: 'Record a drive session' }),
+	).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
+	await page.getByLabel('Conditions').fill('Dry clay');
+	await page.getByLabel('Notes').fill('Created through the browser workflow.');
+	await page.getByRole('button', { name: 'Save session' }).click();
+	await expect(page.locator('.session-log > p[role="status"]')).toContainText(
+		'Drive session recorded.',
+	);
+	await expect(page.getByText('Dry clay')).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
+
+	await page.getByRole('button', { name: 'Edit' }).click();
+	await page.getByLabel('Notes').fill('Updated through the browser workflow.');
+	await page.getByRole('button', { name: 'Save session' }).click();
+	await expect(page.locator('.session-log > p[role="status"]')).toContainText(
+		'Drive session updated.',
+	);
+	await expect(
+		page.getByText('Updated through the browser workflow.'),
+	).toBeVisible();
+	await page.getByRole('button', { name: 'Archive' }).click();
+	await expect(page.getByRole('button', { name: 'Archive' })).toHaveCount(0);
+	await expect(page.getByText('0 recorded')).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
 	for (const destination of [
 		['Garage', '/garage'],
 		['Maintenance', '/maintenance'],
