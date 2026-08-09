@@ -49,8 +49,7 @@ describe('Garage', () => {
 		await fixture.whenStable();
 		fixture.detectChanges();
 		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
-			(button: HTMLButtonElement) =>
-				button.textContent?.trim() === 'Add the first car',
+			(button: HTMLButtonElement) => button.textContent?.trim() === 'Add a car',
 		) as HTMLButtonElement;
 		add.click();
 		fixture.detectChanges();
@@ -80,6 +79,39 @@ describe('Garage', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Review the car details',
 		);
+		const inputs = [...form.querySelectorAll('input')];
+		const oversizedValues = [
+			'Valid name',
+			'M'.repeat(121),
+			'D'.repeat(121),
+			'S'.repeat(21),
+			'V'.repeat(81),
+			'P'.repeat(81),
+		];
+		for (const [index, input] of inputs.entries()) {
+			input.value = oversizedValues[index] ?? '';
+			input.dispatchEvent(new Event('input'));
+		}
+		const notes = form.querySelector('textarea') as HTMLTextAreaElement;
+		notes.value = 'N'.repeat(4001);
+		notes.dispatchEvent(new Event('input'));
+		form.dispatchEvent(new Event('submit'));
+		fixture.detectChanges();
+		for (const id of [
+			'car-make-error',
+			'car-model-error',
+			'car-scale-error',
+			'car-vehicle-type-error',
+			'car-power-type-error',
+			'car-notes-error',
+		])
+			expect(form.querySelector(`#${id}`)).toBeTruthy();
+		for (const input of inputs.slice(1)) {
+			input.value = '';
+			input.dispatchEvent(new Event('input'));
+		}
+		notes.value = '';
+		notes.dispatchEvent(new Event('input'));
 
 		name.value = 'Red Runner';
 		name.dispatchEvent(new Event('input'));
@@ -197,7 +229,7 @@ describe('Garage', () => {
 		(
 			[...fixture.nativeElement.querySelectorAll('button')].find(
 				(button: HTMLButtonElement) =>
-					button.textContent?.trim() === 'Add the first car',
+					button.textContent?.trim() === 'Add a car',
 			) as HTMLButtonElement
 		).click();
 		fixture.detectChanges();
@@ -261,9 +293,23 @@ describe('Garage', () => {
 	it('renders make and model fallbacks for mixed legacy car records', async () => {
 		http.expectOne('/api/v1/cars').flush({
 			cars: [
-				{ id: 'car-1', name: 'Modern', make: 'Associated', model: 'B7' },
-				{ id: 'car-2', name: 'Legacy', manufacturer: 'Tamiya' },
-				{ id: 'car-3', name: 'Unknown' },
+				{
+					id: 'car-1',
+					name: 'Modern',
+					make: 'Associated',
+					model: 'B7',
+					scale: '1/10',
+					vehicleType: 'Buggy',
+					powerType: 'Electric',
+					archivedAt: '2026-08-09T00:00:00.000Z',
+				},
+				{
+					id: 'car-2',
+					name: 'Legacy',
+					manufacturer: 'Tamiya',
+					scale: '1/12',
+				},
+				{ id: 'car-3', name: 'Unknown', vehicleType: 'Touring car' },
 			],
 		});
 		await fixture.whenStable();
@@ -272,6 +318,11 @@ describe('Garage', () => {
 		expect(text).toContain('Associated · B7');
 		expect(text).toContain('Tamiya · Model not recorded');
 		expect(text).toContain('Make not recorded · Model not recorded');
+		expect(text).toContain('1/10');
+		expect(text).toContain('Buggy');
+		expect(text).toContain('Electric');
+		expect(text).toContain('Archived');
+		expect(text).toContain('Active');
 	});
 
 	it('shows the archived empty state and toggles back to active cars', async () => {
