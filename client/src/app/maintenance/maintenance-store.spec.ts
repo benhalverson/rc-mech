@@ -113,9 +113,11 @@ describe('maintenance workflow stores', () => {
 		expect(serviceStore.loading()).toBe(true);
 		expect(planStore.cars()).toEqual([]);
 		expect(planStore.timezone()).toBe('UTC');
+		expect(serviceStore.cars()).toEqual([]);
+		expect(serviceStore.timezone()).toBe('UTC');
 		expect(planStore.plans()).toEqual([]);
 		expect(serviceStore.records()).toEqual([]);
-		expect(planStore.activity()).toEqual([]);
+		expect(serviceStore.activity()).toEqual([]);
 		expect(planStore.action()).toBeNull();
 		expect(serviceStore.action()).toBeNull();
 		await flushReads({
@@ -133,7 +135,9 @@ describe('maintenance workflow stores', () => {
 		expect(planStore.cars()).toEqual([car]);
 		expect(planStore.plans()).toEqual([plan]);
 		expect(planStore.timezone()).toBe('UTC');
-		expect(planStore.activity().map((item) => item.action)).toEqual([
+		expect(serviceStore.cars()).toEqual([car]);
+		expect(serviceStore.timezone()).toBe('UTC');
+		expect(serviceStore.activity().map((item) => item.action)).toEqual([
 			'Scheduled service',
 			'Ad hoc service',
 		]);
@@ -156,7 +160,7 @@ describe('maintenance workflow stores', () => {
 			carsStatus: 401,
 		});
 		await vi.waitFor(() => expect(planStore.loading()).toBe(false));
-		expect(planStore.activity()[0]?.action).toBe('Server activity');
+		expect(serviceStore.activity()[0]?.action).toBe('Server activity');
 		expect(planStore.error()).toContain('session has expired');
 	});
 

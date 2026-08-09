@@ -1,0 +1,121 @@
+@if (!siblingEditing()) {
+	@if (mutationError()) {
+		<p class="message alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+			<span>{{ mutationError() }}</span>
+		</p>
+	}
+
+	@if (editing()) {
+		<form class="maintenance-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="maintenance-form-title" [attr.aria-describedby]="formError() ? 'maintenance-form-error' : 'maintenance-form-intro'" novalidate>
+			<div>
+				<div class="alloy-section-heading">{{ editingId() ? 'Edit plan' : 'New maintenance plan' }}</div>
+				<h3 id="maintenance-form-title" class="alloy-screen-title" tabindex="-1">Set the care rule</h3>
+				<p id="maintenance-form-intro" class="alloy-supporting-text mb-0 max-w-3xl">Use a calendar interval, a drive-session threshold, or both. The first service date and prior drive-session count become the baseline.</p>
+			</div>
+			@if (formError()) {
+				<p id="maintenance-form-error" class="message alloy-state alloy-error-state mt-0" role="alert">
+					<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+					<span>{{ formError() }}</span>
+				</p>
+			}
+			<div class="form-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Car</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="fields.carId" (change)="changeCar($event)" [attr.aria-describedby]="fields.carId().touched() && fields.carId().invalid() ? 'plan-car-error' : null">
+						@for (car of garage(); track car.id) { @if (!car.archivedAt) { <option [value]="car.id">{{ car.name }}</option> } }
+					</select>
+					@if (fields.carId().touched() && fields.carId().invalid()) { <span id="plan-car-error" class="text-sm text-alloy-text">{{ fields.carId().errors()[0]?.message }}</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Installed component</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="fields.componentId">
+						<option value="">Car-level plan</option>
+						@for (component of components(); track component.id) { <option [value]="component.id">{{ component.slot }} · {{ component.name }}</option> }
+					</select>
+				</label>
+				<label class="wide grid gap-1 sm:col-span-2 lg:col-span-3">
+					<span class="text-sm font-semibold text-alloy-text">Plan name</span>
+					<input class="alloy-field alloy-focus-ring w-full" placeholder="Clean and re-oil bearings" [formField]="fields.name" [attr.aria-describedby]="fields.name().touched() && fields.name().invalid() ? 'plan-name-error' : null" />
+					@if (fields.name().touched() && fields.name().invalid()) { <span id="plan-name-error" class="text-sm text-alloy-text">{{ fields.name().errors()[0]?.message }}</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Calendar interval</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" placeholder="Optional" [formField]="fields.calendarValue" [attr.aria-describedby]="fields.calendarValue().touched() && fields.calendarValue().invalid() ? 'plan-calendar-error' : 'plan-calendar-help'" />
+					@if (fields.calendarValue().touched() && fields.calendarValue().invalid()) { <span id="plan-calendar-error" class="text-sm text-alloy-text">{{ fields.calendarValue().errors()[0]?.message }}</span> } @else { <span id="plan-calendar-help" class="text-sm text-alloy-text-secondary">Whole days, weeks, or months.</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Calendar unit</span>
+					<select class="alloy-field alloy-focus-ring w-full" [formField]="fields.calendarUnit"><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select>
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Drive-session threshold</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" placeholder="Optional" [formField]="fields.sessionInterval" [attr.aria-describedby]="fields.sessionInterval().touched() && fields.sessionInterval().invalid() ? 'plan-session-error' : 'plan-session-help'" />
+					@if (fields.sessionInterval().touched() && fields.sessionInterval().invalid()) { <span id="plan-session-error" class="text-sm text-alloy-text">{{ fields.sessionInterval().errors()[0]?.message }}</span> } @else { <span id="plan-session-help" class="text-sm text-alloy-text-secondary">Whole drive sessions.</span> }
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Last service</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="datetime-local" [formField]="fields.baselineAt" />
+				</label>
+				<label class="grid gap-1">
+					<span class="text-sm font-semibold text-alloy-text">Prior drive sessions</span>
+					<input class="alloy-field alloy-focus-ring alloy-technical w-full" type="text" inputmode="numeric" [formField]="fields.baselineSessions" [attr.aria-describedby]="fields.baselineSessions().touched() && fields.baselineSessions().invalid() ? 'plan-baseline-error' : null" />
+					@if (fields.baselineSessions().touched() && fields.baselineSessions().invalid()) { <span id="plan-baseline-error" class="text-sm text-alloy-text">{{ fields.baselineSessions().errors()[0]?.message }}</span> }
+				</label>
+			</div>
+			<p class="hint alloy-technical m-0 text-alloy-text-secondary">Dates are entered in <strong class="font-normal text-alloy-text">{{ timezone() }}</strong>. Completing this plan starts a fresh baseline.</p>
+			<div class="form-actions flex flex-col gap-2 sm:flex-row">
+				<button class="button alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ action() === 'create' ? 'Creating…' : action() === 'edit' ? 'Saving…' : 'Save plan' }}</button>
+				<button class="button quiet alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelEdit()" [disabled]="action()">Cancel</button>
+			</div>
+		</form>
+	} @else {
+		<div class="maintenance-totals grid grid-cols-2 divide-x divide-y divide-alloy-separator border-y border-alloy-separator sm:grid-cols-4 sm:divide-y-0" aria-label="Maintenance plan totals">
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().overdue.length }}</strong><span class="text-sm text-alloy-text-secondary">Overdue</span></div>
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().due.length }}</strong><span class="text-sm text-alloy-text-secondary">Due now</span></div>
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ grouped().upcoming.length }}</strong><span class="text-sm text-alloy-text-secondary">Upcoming</span></div>
+			<div class="grid min-h-20 content-center gap-1 px-4 py-3"><strong class="alloy-technical text-xl text-alloy-text">{{ activeCount() }}</strong><span class="text-sm text-alloy-text-secondary">Active plans</span></div>
+		</div>
+		<div>
+			<span class="alloy-section-heading mb-2 block">Show plans</span>
+			<div class="flex flex-wrap gap-2" role="group" aria-label="Filter maintenance plans">
+				@for (filter of filterOptions; track filter) {
+					<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="selectedFilter() === filter" [class.text-alloy-text]="selectedFilter() === filter" [attr.aria-pressed]="selectedFilter() === filter" (click)="setFilter(filter)">{{ filterLabel(filter) }}</button>
+				}
+			</div>
+		</div>
+
+		@if (!visiblePlans().length) {
+			<div class="state-card empty-state alloy-empty-state grid gap-3">
+				<svg lucideClock size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+				<div><h3 class="m-0 text-base font-semibold text-alloy-text">No plans in this view</h3><p class="m-0 mt-1">Start with a component that needs attention on a regular cadence.</p></div>
+				<button class="button alloy-control alloy-focus-ring inline-flex w-fit items-center gap-2" type="button" data-maintenance-launcher="new-plan" (click)="openCreate()" [disabled]="!hasActiveCars()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Create a plan</button>
+			</div>
+		} @else {
+			<div class="plan-list border-y border-alloy-separator" aria-label="Maintenance plans">
+				@for (plan of visiblePlans(); track plan.id) {
+					<article class="plan-row grid gap-3 border-b border-alloy-separator py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center" [class.plan-overdue]="planState(plan) === 'overdue'" [class.plan-due]="planState(plan) === 'due'" [class.plan-upcoming]="planState(plan) === 'upcoming'" [class.plan-paused]="planState(plan) === 'paused'" [class.plan-archived]="planState(plan) === 'archived'">
+						<div class="plan-copy min-w-0 border-l-4 pl-4" [class.border-alloy-text]="planState(plan) === 'overdue' || planState(plan) === 'due'" [class.border-alloy-separator]="planState(plan) !== 'overdue' && planState(plan) !== 'due'">
+							<div class="plan-kicker flex flex-wrap gap-x-3 gap-y-1 text-[12px] font-semibold tracking-[0.08em] text-alloy-text-secondary uppercase">
+								<span class="plan-state inline-flex items-center gap-1 text-alloy-text">@if (planState(plan) === 'overdue' || planState(plan) === 'due') { <svg lucideTriangleAlert size="16" strokeWidth="1.8" aria-hidden="true"></svg>Attention · }{{ stateLabel(planState(plan)) }}</span>
+								<span>{{ carName(plan.carId) }} · {{ componentName(plan.componentId) }}</span>
+							</div>
+							<h3 class="m-0 mt-1 break-words text-base font-semibold text-alloy-text">{{ plan.name }}</h3>
+							<p class="m-0 mt-1 text-sm text-alloy-text-secondary">{{ dueText(plan) }}@if (plan.intervalValue) { · every {{ plan.intervalValue }} {{ plan.intervalUnit || 'days' }} }@if (plan.intervalSessions) { · every {{ plan.intervalSessions }} sessions }</p>
+						</div>
+						<div class="plan-actions flex flex-wrap gap-2 md:justify-end" role="group" [attr.aria-label]="plan.name + ' actions'">
+							<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'plan:' + plan.id" (click)="openEdit(plan)" [disabled]="isReadOnly(plan)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button>
+							@if (plan.status === 'active') {
+								<button class="text-button muted alloy-control alloy-control-tertiary alloy-focus-ring" type="button" (click)="transition(plan, 'pause')" [disabled]="isReadOnly(plan)">Pause</button>
+								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'complete:' + plan.id" (click)="complete(plan)" [disabled]="isReadOnly(plan)"><svg lucideCircleCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg>Complete</button>
+							} @else if (plan.status === 'paused') {
+								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="transition(plan, 'resume')" [disabled]="isReadOnly(plan)">Resume</button>
+							}
+							@if (plan.status !== 'archived') { <button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="transition(plan, 'archive')" [disabled]="isReadOnly(plan)"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> }
+						</div>
+					</article>
+				}
+			</div>
+		}
+	}
+}

@@ -87,9 +87,6 @@ export const MaintenancePlanStore = signalStore(
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => {
-		const serviceRecords = computed(() =>
-			store.gateway.services.hasValue() ? store.gateway.services.value() : [],
-		);
 		const failures = computed(() =>
 			[
 				store.gateway.cars.error(),
@@ -109,21 +106,6 @@ export const MaintenancePlanStore = signalStore(
 			plans: computed(() =>
 				store.gateway.plans.hasValue() ? store.gateway.plans.value().plans : [],
 			),
-			activity: computed(() => {
-				const activity = store.gateway.plans.hasValue()
-					? store.gateway.plans.value().activity
-					: [];
-				if (activity.length) return activity;
-				return serviceRecords()
-					.filter((record) => !record.deletedAt)
-					.map((record) => ({
-						id: record.id,
-						planId: record.planId ?? undefined,
-						action: record.planId ? 'Scheduled service' : 'Ad hoc service',
-						occurredAt: record.performedAt,
-						note: record.description,
-					}));
-			}),
 			loading: computed(() =>
 				[store.gateway.cars, store.gateway.timezone, store.gateway.plans].some(
 					(resource) => resource.isLoading(),

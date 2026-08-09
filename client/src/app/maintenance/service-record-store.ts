@@ -96,7 +96,30 @@ export const ServiceRecordStore = signalStore(
 			store.gateway.services.hasValue() ? store.gateway.services.value() : [],
 		);
 		return {
+			cars: computed(() =>
+				store.gateway.cars.hasValue() ? store.gateway.cars.value() : [],
+			),
+			timezone: computed(() =>
+				store.gateway.timezone.hasValue()
+					? store.gateway.timezone.value()
+					: 'UTC',
+			),
 			records,
+			activity: computed(() => {
+				const activity = store.gateway.plans.hasValue()
+					? store.gateway.plans.value().activity
+					: [];
+				if (activity.length) return activity;
+				return records()
+					.filter((record) => !record.deletedAt)
+					.map((record) => ({
+						id: record.id,
+						planId: record.planId ?? undefined,
+						action: record.planId ? 'Scheduled service' : 'Ad hoc service',
+						occurredAt: record.performedAt,
+						note: record.description,
+					}));
+			}),
 			loading: computed(() => store.gateway.services.isLoading()),
 			error: computed(() =>
 				resourceMessage(store.gateway.failure(store.gateway.services.error())),
