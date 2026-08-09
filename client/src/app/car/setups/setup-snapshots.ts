@@ -5,7 +5,6 @@ import {
 	effect,
 	inject,
 	input,
-	linkedSignal,
 	output,
 	signal,
 } from '@angular/core';
@@ -27,30 +26,31 @@ import {
 	LucideSave,
 	LucideTriangleAlert,
 } from '@lucide/angular';
-import { switchMap } from 'rxjs';
 import {
 	emptySetupForm,
 	importKnownValues,
 	parseSetupJsonObject,
+	setupDraftFromForm,
 	setupFormFromImport,
 	setupFormFromSnapshot,
-	setupPayloadFromForm,
 	setupSectionFields,
 } from './setup-form';
 import {
 	type ImportCarOption,
+	type SetupGatewayFailure,
 	type SetupSectionKey,
 	type SetupSectionValues,
 	type SetupSnapshot,
-	SetupSnapshotService,
-	SoDialedImporterClient,
+	SoDialedImportGateway,
 	type SoDialedImportPreview,
 	setupSectionKeys,
 } from './setup-snapshot';
-import { SetupSnapshotStore } from './setup-snapshot-store';
+import {
+	SetupSnapshotStore,
+	type SetupWorkflowResult,
+} from './setup-snapshot-store';
 
 type SetupMode = 'add' | 'edit';
-type SetupAction = 'save' | 'copy' | 'current' | null;
 type ImportState = 'idle' | 'loading' | 'review' | 'error';
 
 const SETUP_VALIDATION_MESSAGE =
@@ -76,11 +76,8 @@ const isValidOptionalUrl = (value: string): boolean => {
 	}
 };
 
-const isSessionExpired = (error: unknown): boolean =>
-	typeof error === 'object' &&
-	error !== null &&
-	'status' in error &&
-	error.status === 401;
+const isSessionExpired = (error: SetupGatewayFailure): boolean =>
+	error.kind === 'http' && error.status === 401;
 
 @Component({
 	selector: 'app-setup-snapshots',
@@ -104,8 +101,6 @@ const isSessionExpired = (error: unknown): boolean =>
 	templateUrl: './setup-snapshots.html',
 })
 export class SetupSnapshots {
-	private readonly service = inject(SetupSnapshotService);
-	private readonly importer = inject(SoDialedImporterClient);
 	private readonly readStore = inject(SetupSnapshotStore);
 	readonly carId = input('');
 	readonly archived = input(false);
@@ -115,7 +110,7 @@ export class SetupSnapshots {
 		make: string;
 		model: string;
 	}>();
-	protected readonly setups = linkedSignal(() => this.readStore.setups());
+	protected readonly setups = this.readStore.setups;
 	protected readonly selectedId = signal<string | null>(null);
 	protected readonly state = computed(() =>
 		this.readStore.loading()
@@ -129,7 +124,7 @@ export class SetupSnapshots {
 	protected readonly readFailure = this.readStore.failure;
 	protected readonly mode = signal<SetupMode>('add');
 	protected readonly editing = signal(false);
-	protected readonly action = signal<SetupAction>(null);
+	protected readonly action = this.readStore.action;
 	protected readonly formModel = signal(emptySetupForm());
 	protected readonly setupForm = form(this.formModel, (path) => {
 		required(path.name, { message: 'Name this setup before saving.' });
@@ -196,7 +191,7 @@ export class SetupSnapshots {
 					kind: 'blankUrl',
 					message: 'Paste a So Dialed setup URL.',
 				};
-			return SoDialedImporterClient.isSupportedUrl(url)
+			return SoDialedImportGateway.isSupportedUrl(url)
 				? undefined
 				: {
 						kind: 'supportedUrl',
@@ -247,13 +242,29 @@ export class SetupSnapshots {
 			)
 				this.formError.set('');
 		});
+		let handledOperationId = 0;
+		effect(() => {
+			const outcome = this.readStore.outcome();
+			if (
+				outcome.status === 'idle' ||
+				outcome.status === 'pending' ||
+				outcome.operationId === handledOperationId
+			)
+				return;
+			handledOperationId = outcome.operationId;
+			if (outcome.status === 'failed') {
+				this.handleFailure(outcome.command.kind, outcome.error);
+				return;
+			}
+			this.handleSuccess(outcome.result);
+		});
 	}
 
 	private resetRouteState(): void {
 		this.selectedId.set(null);
 		this.mode.set('add');
 		this.editing.set(false);
-		this.action.set(null);
+		this.readStore.clearOutcome();
 		this.setupForm().reset(emptySetupForm());
 		this.formError.set('');
 		this.actionError.set('');
@@ -302,34 +313,12 @@ export class SetupSnapshots {
 		if (this.archived()) return;
 		const carId = this.carId();
 		this.importState.set('loading');
-		this.importer.preview(url, carId).subscribe({
-			next: (preview) => {
-				if (this.carId() !== carId) return;
-				this.importPreview.set(preview);
-				this.importCarModel.set({ carId });
-				this.mode.set('add');
-				this.setupForm().reset(setupFormFromImport(preview, url));
-				this.formError.set('');
-				this.editing.set(true);
-				this.importState.set('review');
-			},
-			error: (error: unknown) => {
-				if (this.carId() !== carId) return;
-				this.importState.set('error');
-				this.importError.set(
-					isSessionExpired(error)
-						? 'Your garage session has expired. Sign in again to continue.'
-						: error instanceof Error && error.message
-							? error.message
-							: 'That source could not be read. Check the link and try again.',
-				);
-			},
-		});
+		this.readStore.mutate({ kind: 'preview', url, carId });
 	}
 
 	protected cancelImport(): void {
 		const draftId = this.importPreview()?.draftId;
-		if (draftId) this.importer.cancel(draftId).subscribe();
+		if (draftId) this.readStore.mutate({ kind: 'cancel-import', draftId });
 		this.importPreview.set(null);
 		this.importState.set('idle');
 		this.importError.set('');
@@ -389,7 +378,6 @@ export class SetupSnapshots {
 			return;
 		}
 		if (this.action()) return;
-		this.action.set('save');
 		this.actionError.set('');
 		this.actionMessage.set('');
 		this.formError.set('');
@@ -400,61 +388,34 @@ export class SetupSnapshots {
 		const targetCarId = importDraft
 			? this.importCarModel().carId || sourceCarId
 			: sourceCarId;
-		const payload = setupPayloadFromForm(formModel);
-		const request =
-			this.mode() === 'edit' && setup
-				? this.service.update(sourceCarId, setup.id, payload)
-				: importDraft
-					? this.importer
-							.update(importDraft.draftId, {
-								carId: targetCarId,
-								knownValues: importKnownValues(payload),
-								uncertainValues:
-									(reviewValues['uncertain'] as
-										| Record<string, unknown>
-										| undefined) ?? importDraft.uncertainValues,
-								rawValues: parseSetupJsonObject(formModel.rawValues),
-								unmappedValues:
-									(reviewValues['unmapped'] as
-										| Record<string, unknown>
-										| undefined) ?? {},
-								sourceMetadata: { ...payload.sourceMetadata },
-							})
-							.pipe(
-								switchMap(() =>
-									this.importer.accept(
-										importDraft.draftId,
-										targetCarId,
-										formModel.name.trim(),
-									),
-								),
-							)
-					: this.service.create(targetCarId, payload);
-		request.subscribe({
-			next: ({ setup: saved }) => {
-				if (this.carId() !== sourceCarId) return;
-				this.editing.set(false);
-				this.action.set(null);
-				this.importPreview.set(null);
-				this.importState.set('idle');
-				this.importUrlForm().reset({ url: '' });
-				if (targetCarId === sourceCarId) {
-					this.replaceSetup(saved);
-					this.selectedId.set(saved.id);
-					this.readStore.refresh();
-				} else {
-					this.actionMessage.set('Imported setup saved to the selected car.');
-				}
-			},
-			error: (error: unknown) => {
-				if (this.carId() !== sourceCarId) return;
-				this.action.set(null);
-				this.formError.set(
-					isSessionExpired(error)
-						? 'Your garage session has expired. Sign in again to continue.'
-						: 'The setup could not be saved. Check the details and try again.',
-				);
-			},
+		const snapshot = setupDraftFromForm(formModel);
+		this.readStore.mutate({
+			kind: 'save',
+			sourceCarId,
+			targetCarId,
+			mode: this.mode(),
+			setupId: setup?.id ?? null,
+			snapshot,
+			importDraft: importDraft
+				? {
+						draftId: importDraft.draftId,
+						name: formModel.name.trim(),
+						review: {
+							carId: targetCarId,
+							knownValues: importKnownValues(snapshot),
+							uncertainValues:
+								(reviewValues['uncertain'] as
+									| Record<string, unknown>
+									| undefined) ?? importDraft.uncertainValues,
+							rawValues: parseSetupJsonObject(formModel.rawValues),
+							unmappedValues:
+								(reviewValues['unmapped'] as
+									| Record<string, unknown>
+									| undefined) ?? {},
+							sourceMetadata: { ...snapshot.sourceMetadata },
+						},
+					}
+				: null,
 		});
 	}
 
@@ -466,58 +427,99 @@ export class SetupSnapshots {
 	private copySetup(setup: SetupSnapshot): void {
 		if (!setup || this.archived() || this.action()) return;
 		const carId = this.carId();
-		this.action.set('copy');
 		this.actionError.set('');
 		this.actionMessage.set('');
-		this.service.copy(carId, setup.id).subscribe({
-			next: ({ setup: copied }) => {
-				if (this.carId() !== carId) return;
-				this.action.set(null);
-				this.replaceSetup(copied);
-				this.selectedId.set(copied.id);
-				this.mode.set('edit');
-				this.setupForm().reset(setupFormFromSnapshot(copied));
-				this.editing.set(true);
-				this.readStore.refresh();
-			},
-			error: (error: unknown) => {
-				if (this.carId() !== carId) return;
-				this.action.set(null);
-				this.actionError.set(
-					isSessionExpired(error)
-						? 'Your garage session has expired. Sign in again to continue.'
-						: 'The setup could not be copied.',
-				);
-			},
-		});
+		this.readStore.mutate({ kind: 'copy', carId, setupId: setup.id });
 	}
 
 	protected makeCurrent(): void {
 		const setup = this.selected();
 		if (!setup || setup.current || this.archived() || this.action()) return;
 		const carId = this.carId();
-		this.action.set('current');
 		this.actionError.set('');
 		this.actionMessage.set('');
-		this.service.selectCurrent(carId, setup.id).subscribe({
-			next: ({ setup: current }) => {
-				if (this.carId() !== carId) return;
-				this.action.set(null);
-				this.setups.update((setups) =>
-					setups.map((item) => ({ ...item, current: item.id === current.id })),
-				);
-				this.readStore.refresh();
-			},
-			error: (error: unknown) => {
-				if (this.carId() !== carId) return;
-				this.action.set(null);
-				this.actionError.set(
-					isSessionExpired(error)
-						? 'Your garage session has expired. Sign in again to continue.'
-						: 'The current setup could not be changed.',
-				);
-			},
+		this.readStore.mutate({
+			kind: 'select-current',
+			carId,
+			setupId: setup.id,
 		});
+	}
+
+	private handleFailure(
+		kind: 'preview' | 'cancel-import' | 'save' | 'copy' | 'select-current',
+		error: SetupGatewayFailure,
+	): void {
+		const expired = isSessionExpired(error);
+		if (kind === 'preview') {
+			this.importState.set('error');
+			this.importError.set(
+				expired
+					? 'Your garage session has expired. Sign in again to continue.'
+					: error.kind === 'rejected'
+						? error.message
+						: 'That source could not be read. Check the link and try again.',
+			);
+			return;
+		}
+		if (kind === 'save') {
+			this.formError.set(
+				expired
+					? 'Your garage session has expired. Sign in again to continue.'
+					: 'The setup could not be saved. Check the details and try again.',
+			);
+			return;
+		}
+		if (kind === 'copy')
+			this.actionError.set(
+				expired
+					? 'Your garage session has expired. Sign in again to continue.'
+					: 'The setup could not be copied.',
+			);
+		else if (kind === 'select-current')
+			this.actionError.set(
+				expired
+					? 'Your garage session has expired. Sign in again to continue.'
+					: 'The current setup could not be changed.',
+			);
+	}
+
+	private handleSuccess(result: SetupWorkflowResult): void {
+		if (result.kind === 'preview') {
+			const preview = result.preview;
+			this.importPreview.set(preview);
+			this.importCarModel.set({ carId: this.carId() });
+			this.mode.set('add');
+			this.setupForm().reset(
+				setupFormFromImport(
+					preview,
+					preview.source.url ?? this.importUrlModel().url.trim(),
+				),
+			);
+			this.formError.set('');
+			this.editing.set(true);
+			this.importState.set('review');
+			return;
+		}
+		if (result.kind === 'cancel-import') return;
+		if (result.kind === 'save') {
+			this.editing.set(false);
+			this.importPreview.set(null);
+			this.importState.set('idle');
+			this.importUrlForm().reset({ url: '' });
+			if (result.targetCarId === this.carId()) {
+				this.selectedId.set(result.setup.id);
+			} else {
+				this.actionMessage.set('Imported setup saved to the selected car.');
+			}
+			return;
+		}
+		if (result.kind === 'copy') {
+			this.selectedId.set(result.setup.id);
+			this.mode.set('edit');
+			this.setupForm().reset(setupFormFromSnapshot(result.setup));
+			this.editing.set(true);
+			return;
+		}
 	}
 
 	protected displayName(field: string): string {
@@ -532,14 +534,5 @@ export class SetupSnapshots {
 
 	protected sectionHasValues(section: SetupSectionValues): boolean {
 		return Object.values(section).some((value) => Boolean(value));
-	}
-
-	private replaceSetup(updated: SetupSnapshot): void {
-		this.setups.update((setups) => {
-			const found = setups.some((setup) => setup.id === updated.id);
-			return found
-				? setups.map((setup) => (setup.id === updated.id ? updated : setup))
-				: [updated, ...setups];
-		});
 	}
 }

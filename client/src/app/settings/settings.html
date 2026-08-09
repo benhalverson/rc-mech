@@ -45,8 +45,8 @@
 				<div class="alloy-section-heading">Invite access</div>
 				<h2 id="invite-codes-title" class="alloy-screen-title mb-0">Your invite codes</h2>
 			</div>
-			@if (!store.inviteLoading() && !store.inviteError()) {
-				<span class="alloy-technical text-[13px] text-alloy-text-secondary">{{ store.inviteAllowance().remaining }} of {{ store.inviteAllowance().allowance }} remaining</span>
+			@if (!invites.loading() && !invites.readError()) {
+				<span class="alloy-technical text-[13px] text-alloy-text-secondary">{{ invites.allowance().remaining }} of {{ invites.allowance().allowance }} remaining</span>
 			}
 		</header>
 		<p class="alloy-supporting-text m-0 max-w-3xl">Create up to five lifetime codes for people you trust. A revoked or redeemed code does not replenish the allowance.</p>
@@ -56,7 +56,7 @@
 				<label class="text-sm font-semibold text-alloy-text" for="new-invite-code">New invite code</label>
 				<div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
 					<input class="alloy-field alloy-focus-ring alloy-technical min-w-0 w-full max-w-full flex-1" id="new-invite-code" type="text" autocomplete="off" placeholder="TRACK-DAY-01" [formField]="inviteForm.code" [attr.aria-describedby]="inviteForm.code().touched() && inviteForm.code().invalid() ? 'invite-validation' : 'invite-help'" />
-					<button class="alloy-control alloy-focus-ring inline-flex shrink-0 items-center justify-center gap-2" type="submit" [disabled]="store.inviteLoading() || !!store.inviteError() || store.inviteAction() !== null || store.inviteAllowance().remaining === 0"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.inviteAction() === 'create' ? 'Creating…' : 'Create code' }}</button>
+					<button class="alloy-control alloy-focus-ring inline-flex shrink-0 items-center justify-center gap-2" type="submit" [disabled]="invites.loading() || !!invites.readError() || invites.action() !== null || invites.allowance().remaining === 0"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ invites.action() === 'create' ? 'Creating…' : 'Create code' }}</button>
 				</div>
 			</div>
 			@if (inviteForm.code().touched() && inviteForm.code().invalid()) {
@@ -66,31 +66,31 @@
 			}
 		</form>
 
-		@if (store.inviteMessage()) {
-			<p class="alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Invite updated</strong></span><span>{{ store.inviteMessage() }}</span></p>
+		@if (invites.message()) {
+			<p class="alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Invite updated</strong></span><span>{{ invites.message() }}</span></p>
 		}
-		@if (store.inviteActionError()) {
-			<p class="alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ store.inviteActionError() }}</span></p>
+		@if (invites.actionError()) {
+			<p class="alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ invites.actionError() }}</span></p>
 		}
-		@if (store.inviteLoading()) {
+		@if (invites.loading()) {
 			<p class="alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Loading invites</strong></span><span>Loading invite history…</span></p>
-		} @else if (store.inviteError()) {
+		} @else if (invites.readError()) {
 			<div class="alloy-state alloy-error-state mt-0" role="alert">
 				<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
-				<span>{{ store.inviteError() }}</span>
-				<button class="alloy-control alloy-control-secondary alloy-focus-ring mt-2 inline-flex w-fit items-center justify-center gap-2" type="button" (click)="store.retryInvites()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+				<span>{{ invites.readError() }}</span>
+				<button class="alloy-control alloy-control-secondary alloy-focus-ring mt-2 inline-flex w-fit items-center justify-center gap-2" type="button" (click)="invites.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
 			</div>
-		} @else if (!store.inviteCodes().length) {
+		} @else if (!invites.codes().length) {
 			<p class="alloy-empty-state m-0">No invite codes yet.</p>
 		} @else {
 			<ul class="m-0 list-none divide-y divide-alloy-separator border-y border-alloy-separator p-0" aria-label="Invite code history">
-				@for (code of store.inviteCodes(); track code.id) {
+				@for (code of invites.codes(); track code.id) {
 					<li class="flex min-h-16 flex-col justify-between gap-3 py-3 sm:flex-row sm:items-center">
 						<span class="min-w-0"><strong class="alloy-technical block break-all font-normal text-alloy-text">{{ code.code }}</strong><small class="mt-1 block text-[13px] capitalize text-alloy-text-secondary">{{ code.status }}</small></span>
 						<span class="flex flex-wrap gap-2 sm:justify-end">
-							<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="store.copyInviteCode(code.code)"><svg lucideClipboardCopy size="18" strokeWidth="1.8" aria-hidden="true"></svg>Copy</button>
+							<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="invites.copy(code.code)"><svg lucideClipboardCopy size="18" strokeWidth="1.8" aria-hidden="true"></svg>Copy</button>
 							@if (code.status === 'available') {
-								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="store.revokeInviteCode(code)" [disabled]="store.inviteAction() !== null"><svg lucideTrash2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.inviteAction() === 'revoke:' + code.id ? 'Revoking…' : 'Revoke' }}</button>
+								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="invites.revoke(code)" [disabled]="invites.action() !== null"><svg lucideTrash2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ invites.action() === 'revoke:' + code.id ? 'Revoking…' : 'Revoke' }}</button>
 							}
 						</span>
 					</li>
@@ -109,7 +109,7 @@
 		</header>
 		<p class="alloy-supporting-text m-0 max-w-3xl">Register the devices you trust. Your browser handles platform prompts and cross-device handoff, including QR where supported.</p>
 
-		@if (!store.webAuthnAvailable()) {
+		@if (!passkeys.webAuthnAvailable()) {
 			<p class="alloy-state alloy-attention-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span>Passkey registration is unavailable in this browser. Your existing passkeys and magic-link recovery remain available.</span></p>
 		}
 
@@ -118,7 +118,7 @@
 				<label class="text-sm font-semibold text-alloy-text" for="passkey-name">Name a new passkey</label>
 				<div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
 					<input class="alloy-field alloy-focus-ring min-w-0 w-full max-w-full flex-1" id="passkey-name" type="text" placeholder="Workshop laptop, phone…" [formField]="passkeyForm.name" [attr.aria-describedby]="passkeyForm.name().touched() && passkeyForm.name().invalid() ? 'passkey-validation' : 'passkey-help'" />
-					<button class="alloy-control alloy-focus-ring inline-flex shrink-0 items-center justify-center gap-2" type="submit" [disabled]="!store.webAuthnAvailable() || store.passkeyAction() !== null"><svg lucideKeyRound size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.passkeyAction() === 'register' ? 'Waiting…' : 'Add passkey' }}</button>
+					<button class="alloy-control alloy-focus-ring inline-flex shrink-0 items-center justify-center gap-2" type="submit" [disabled]="!passkeys.webAuthnAvailable() || passkeys.action() !== null"><svg lucideKeyRound size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ passkeys.action() === 'register' ? 'Waiting…' : 'Add passkey' }}</button>
 				</div>
 			</div>
 			@if (passkeyForm.name().touched() && passkeyForm.name().invalid()) {
@@ -128,30 +128,30 @@
 			}
 		</form>
 
-		@if (store.passkeyMessage()) {
-			<p class="alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Passkey updated</strong></span><span>{{ store.passkeyMessage() }}</span></p>
+		@if (passkeys.message()) {
+			<p class="alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Passkey updated</strong></span><span>{{ passkeys.message() }}</span></p>
 		}
-		@if (store.passkeyActionError()) {
-			<p class="alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ store.passkeyActionError() }}</span></p>
+		@if (passkeys.actionError()) {
+			<p class="alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ passkeys.actionError() }}</span></p>
 		}
-		@if (store.passkeysLoading()) {
+		@if (passkeys.loading()) {
 			<p class="alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Loading passkeys</strong></span><span>Loading registered passkeys…</span></p>
-		} @else if (store.passkeyError()) {
+		} @else if (passkeys.readError()) {
 			<div class="alloy-state alloy-error-state mt-0" role="alert">
 				<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
-				<span>{{ store.passkeyError() }}</span>
-				<button class="alloy-control alloy-control-secondary alloy-focus-ring mt-2 inline-flex w-fit items-center justify-center gap-2" type="button" (click)="store.retryPasskeys()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+				<span>{{ passkeys.readError() }}</span>
+				<button class="alloy-control alloy-control-secondary alloy-focus-ring mt-2 inline-flex w-fit items-center justify-center gap-2" type="button" (click)="passkeys.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
 			</div>
-		} @else if (!store.passkeys().length) {
+		} @else if (!passkeys.passkeys().length) {
 			<p class="alloy-empty-state m-0">No passkeys yet. Add the first one after this magic-link session.</p>
 		} @else {
 			<ul class="m-0 list-none divide-y divide-alloy-separator border-y border-alloy-separator p-0" aria-label="Registered passkeys">
-				@for (passkey of store.passkeys(); track passkey.id) {
+				@for (passkey of passkeys.passkeys(); track passkey.id) {
 					<li class="grid min-h-16 gap-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
 						@if (editingPasskeyId() === passkey.id) {
 							<form class="grid min-w-0 gap-3 sm:col-span-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-start" (submit)="renamePasskey($event, passkey)" novalidate>
 								<label class="grid min-w-0 gap-2 text-sm font-semibold text-alloy-text" [for]="'rename-' + passkey.id"><span>Passkey name</span><input class="alloy-field alloy-focus-ring min-w-0" [id]="'rename-' + passkey.id" type="text" [formField]="renameForm.name" [attr.aria-describedby]="renameForm.name().touched() && renameForm.name().invalid() ? 'rename-validation-' + passkey.id : null" /></label>
-								<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="store.passkeyAction() !== null"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>Save</button>
+								<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="passkeys.action() !== null"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>Save</button>
 								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="cancelRename(passkey)"><svg lucideX size="18" strokeWidth="1.8" aria-hidden="true"></svg>Cancel</button>
 								@if (renameForm.name().touched() && renameForm.name().invalid()) {
 									<span [id]="'rename-validation-' + passkey.id" class="flex items-start gap-2 text-sm text-alloy-text sm:col-span-3" role="alert"><svg class="mt-0.5 shrink-0" lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><span><strong>Error.</strong> {{ renameForm.name().errors()[0]?.message }}</span></span>
@@ -161,7 +161,7 @@
 							<div class="min-w-0"><strong class="block break-words text-alloy-text">{{ passkey.name || 'Unnamed passkey' }}</strong><span class="mt-1 block text-[13px] text-alloy-text-secondary">Added {{ passkey.createdAt ? (passkey.createdAt | date:'mediumDate') : 'recently' }}</span></div>
 							<div class="flex flex-wrap gap-2 sm:justify-end">
 								<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" [id]="'rename-launcher-' + passkey.id" type="button" (click)="beginRename(passkey)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Rename</button>
-								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="store.revokePasskey(passkey)" [disabled]="store.passkeyAction() !== null"><svg lucideTrash2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.passkeyAction() === 'revoke:' + passkey.id ? 'Revoking…' : 'Revoke' }}</button>
+								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="passkeys.revoke(passkey)" [disabled]="passkeys.action() !== null"><svg lucideTrash2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ passkeys.action() === 'revoke:' + passkey.id ? 'Revoking…' : 'Revoke' }}</button>
 							</div>
 						}
 					</li>

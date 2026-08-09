@@ -1,9 +1,5 @@
-import {
-	HttpClient,
-	HttpErrorResponse,
-	httpResource,
-} from '@angular/common/http';
 import { computed, inject } from '@angular/core';
+import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import {
 	patchState,
 	signalStore,
@@ -12,112 +8,116 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { firstValueFrom } from 'rxjs';
+import { catchError, exhaustMap, of, tap } from 'rxjs';
+import { GarageGateway } from './garage-gateway';
+import type {
+	CreateCarCommand,
+	GarageCreateOutcome,
+	GarageGatewayFailure,
+} from './garage.models';
 
-export type GarageCar = {
-	id: string;
-	name: string;
-	manufacturer?: string | null;
-	make?: string | null;
-	model?: string | null;
-	scale?: string | null;
-	vehicleType?: string | null;
-	powerType?: string | null;
-	notes?: string | null;
-	archivedAt?: string | null;
-	createdAt?: string;
-};
-
-export type GarageCarInput = {
-	name: string;
-	make?: string;
-	model?: string;
-	scale?: string;
-	vehicleType?: string;
-	powerType?: string;
-	notes?: string;
-};
+export type { GarageCar, GarageCarInput } from './garage.models';
 
 type GarageState = {
 	showArchived: boolean;
-	carAction: 'create' | null;
-	carMutationError: string;
-	carMessage: string;
+	createOutcome: GarageCreateOutcome;
 };
 
-const collectionErrorMessage = (error: unknown): string => {
-	if (error instanceof HttpErrorResponse && error.status === 401)
+const collectionErrorMessage = (
+	failure: GarageGatewayFailure | null,
+): string => {
+	if (failure?.kind === 'http' && failure.status === 401)
 		return 'Your garage session has expired. Sign in again to continue.';
-	return 'The garage could not be loaded. Check the connection and try again.';
+	return failure
+		? 'The garage could not be loaded. Check the connection and try again.'
+		: '';
 };
+
+const mutationErrorMessage = (failure: GarageGatewayFailure): string =>
+	failure.kind === 'http' && failure.status === 401
+		? 'Your garage session has expired. Sign in again to continue.'
+		: 'The car could not be saved. Check the details and try again.';
 
 export const GarageStore = signalStore(
 	withState<GarageState>({
 		showArchived: false,
-		carAction: null,
-		carMutationError: '',
-		carMessage: '',
+		createOutcome: { status: 'idle', operationId: null },
 	}),
-	withProps(({ showArchived }) => {
-		const collection = httpResource<{ cars: GarageCar[] }>(() => ({
-			url: '/api/v1/cars',
-			withCredentials: true,
-			params: showArchived() ? { archived: 'all' } : undefined,
-		}));
-		return { collection, http: inject(HttpClient) };
-	}),
-	withComputed((store) => {
-		const cars = computed(() =>
-			store.collection.hasValue() ? (store.collection.value()?.cars ?? []) : [],
+	withProps(() => ({
+		gateway: inject(GarageGateway),
+		nextOperationId: { value: 0 },
+	})),
+	withComputed((store) => ({
+		cars: computed(() =>
+			store.gateway.collection.hasValue()
+				? store.gateway.collection.value().cars
+				: [],
+		),
+		collectionLoading: computed(() => store.gateway.collection.isLoading()),
+		collectionError: computed(() =>
+			collectionErrorMessage(store.gateway.collectionFailure()),
+		),
+		carAction: computed(() =>
+			store.createOutcome().status === 'pending' ? ('create' as const) : null,
+		),
+		carMutationError: computed(() => {
+			const outcome = store.createOutcome();
+			return outcome.status === 'failed'
+				? mutationErrorMessage(outcome.error)
+				: '';
+		}),
+		carMessage: computed(() =>
+			store.createOutcome().status === 'succeeded'
+				? 'Car added to the garage.'
+				: '',
+		),
+	})),
+	withMethods((store) => {
+		const create = rxMethod<CreateCarCommand>((commands$) =>
+			commands$.pipe(
+				exhaustMap(({ input }) => {
+					const operationId = ++store.nextOperationId.value;
+					patchState(store, {
+						createOutcome: { status: 'pending', operationId },
+					});
+					return store.gateway.createCar(input).pipe(
+						tap((car) => {
+							store.gateway.refresh();
+							patchState(store, {
+								createOutcome: {
+									status: 'succeeded',
+									operationId,
+									car,
+								},
+							});
+						}),
+						catchError((error: GarageGatewayFailure) => {
+							patchState(store, {
+								createOutcome: { status: 'failed', operationId, error },
+							});
+							return of(null);
+						}),
+					);
+				}),
+			),
 		);
 		return {
-			cars,
-			collectionLoading: computed(() => store.collection.isLoading()),
-			collectionError: computed(() => {
-				const error = store.collection.error();
-				return error ? collectionErrorMessage(error) : '';
-			}),
+			toggleArchived(): void {
+				const showArchived = !store.showArchived();
+				patchState(store, { showArchived });
+				store.gateway.setShowArchived(showArchived);
+			},
+			retryCollection(): void {
+				store.gateway.refresh();
+			},
+			clearCarMutationState(): void {
+				patchState(store, {
+					createOutcome: { status: 'idle', operationId: null },
+				});
+			},
+			createCar(command: CreateCarCommand): void {
+				create(command);
+			},
 		};
 	}),
-	withMethods((store) => ({
-		toggleArchived(): void {
-			patchState(store, { showArchived: !store.showArchived() });
-		},
-		retryCollection(): void {
-			store.collection.reload();
-		},
-		clearCarMutationState(): void {
-			patchState(store, { carMutationError: '', carMessage: '' });
-		},
-		async createCar(input: GarageCarInput): Promise<GarageCar | null> {
-			if (store.carAction()) return null;
-			patchState(store, {
-				carAction: 'create',
-				carMutationError: '',
-				carMessage: '',
-			});
-			try {
-				const { car } = await firstValueFrom(
-					store.http.post<{ car: GarageCar }>('/api/v1/cars', input, {
-						withCredentials: true,
-					}),
-				);
-				store.collection.reload();
-				patchState(store, {
-					carAction: null,
-					carMessage: 'Car added to the garage.',
-				});
-				return car;
-			} catch (error) {
-				patchState(store, {
-					carAction: null,
-					carMutationError:
-						error instanceof HttpErrorResponse && error.status === 401
-							? 'Your garage session has expired. Sign in again to continue.'
-							: 'The car could not be saved. Check the details and try again.',
-				});
-				return null;
-			}
-		},
-	})),
 );

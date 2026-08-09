@@ -2,7 +2,7 @@ import {
 	type SetupSectionKey,
 	type SetupSections,
 	type SetupSnapshot,
-	type SetupSnapshotPayload,
+	type SetupSnapshotDraft,
 	type SoDialedImportPreview,
 	setupSectionKeys,
 } from './setup-snapshot';
@@ -179,9 +179,9 @@ export const parseSetupJsonObject = (
 	}
 };
 
-export const setupPayloadFromForm = (
+export const setupDraftFromForm = (
 	form: SetupFormModel,
-): SetupSnapshotPayload => {
+): SetupSnapshotDraft => {
 	const unmappedValues = parseSetupJsonObject(form.unmappedValues);
 	const rawValues = parseSetupJsonObject(form.rawValues);
 	return {
@@ -215,7 +215,7 @@ export const setupPayloadFromForm = (
 	};
 };
 
-export const importKnownValues = (payload: SetupSnapshotPayload) => ({
-	...payload,
+export const importKnownValues = (draft: SetupSnapshotDraft) => ({
+	...draft,
 	makeCurrent: undefined,
 });

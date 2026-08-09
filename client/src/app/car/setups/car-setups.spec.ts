@@ -13,18 +13,27 @@ import {
 } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GarageGateway } from '../../garage/garage-gateway';
+import { CarGateway } from '../car-gateway';
 import { CarStore } from '../car-store';
 import { CarSetups } from './car-setups';
 import { CarSetupsStore } from './car-setups-store';
 import { SetupSnapshotStore } from './setup-snapshot-store';
-
-type TestSignal<T> = (() => T) & { set(value: T): void };
+import { SetupSnapshotGateway, SoDialedImportGateway } from './setup-snapshot';
 
 const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/setups',
 		component: CarSetups,
-		providers: [CarSetupsStore, CarStore, SetupSnapshotStore],
+		providers: [
+			CarGateway,
+			GarageGateway,
+			CarSetupsStore,
+			CarStore,
+			SetupSnapshotGateway,
+			SetupSnapshotStore,
+			SoDialedImportGateway,
+		],
 	},
 ];
 
@@ -40,9 +49,13 @@ describe('Car setup route', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter(testRoutes, withComponentInputBinding()),
+				CarGateway,
+				GarageGateway,
 				CarSetupsStore,
 				CarStore,
+				SetupSnapshotGateway,
 				SetupSnapshotStore,
+				SoDialedImportGateway,
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -141,11 +154,13 @@ describe('Car setup route', () => {
 		harness.detectChanges();
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
-			createAction: TestSignal<boolean>;
-			createError: TestSignal<string>;
+			createAction: () => boolean;
+			createError: () => string;
+			createCar(identity: { name: string; make: string; model: string }): void;
 		};
-		component.createAction.set(true);
-		component.createError.set('Old setup error');
+		component.createCar({ name: 'Pending import', make: '', model: '' });
+		const staleCreation = http.expectOne('/api/v1/cars');
+		expect(component.createAction()).toBe(true);
 
 		await harness.navigateByUrl('/garage/car-2/setups');
 		harness.detectChanges();
@@ -159,6 +174,7 @@ describe('Car setup route', () => {
 			nextSetups = http.expectOne('/api/v1/cars/car-2/setups');
 		});
 		nextSetups?.flush({ setups: [] });
+		staleCreation.flush({ car: { ...car, id: 'stale-car' } });
 	});
 
 	it('identifies an expired setup-import car creation', async () => {

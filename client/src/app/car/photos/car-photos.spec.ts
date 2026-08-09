@@ -12,7 +12,9 @@ import {
 } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CarGateway } from '../car-gateway';
 import { CarStore } from '../car-store';
+import { CarPhotoGateway } from './car-photo-gateway';
 import { CarPhotoStore } from './car-photo-store';
 import { CarPhotos } from './car-photos';
 
@@ -20,7 +22,7 @@ const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/photos',
 		component: CarPhotos,
-		providers: [CarPhotoStore, CarStore],
+		providers: [CarGateway, CarPhotoGateway, CarPhotoStore, CarStore],
 	},
 ];
 
@@ -36,6 +38,8 @@ describe('Car photos route', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter(testRoutes, withComponentInputBinding()),
+				CarGateway,
+				CarPhotoGateway,
 				CarPhotoStore,
 				CarStore,
 			],

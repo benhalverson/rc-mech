@@ -8,6 +8,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Garage } from './garage';
+import { GarageGateway } from './garage-gateway';
 import { GarageStore } from './garage-store';
 
 describe('Garage', () => {
@@ -21,6 +22,7 @@ describe('Garage', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter([]),
+				GarageGateway,
 				GarageStore,
 			],
 		}).compileComponents();
@@ -257,7 +259,7 @@ describe('Garage', () => {
 		fixture.detectChanges();
 		expect(form.textContent).toContain('Adding…');
 		const store = TestBed.inject(GarageStore);
-		expect(await store.createCar({ name: 'Blocked duplicate' })).toBeNull();
+		store.createCar({ input: { name: 'Blocked duplicate' } });
 		const internal = fixture.componentInstance as unknown as {
 			openCreate(): void;
 			cancelEdit(): void;

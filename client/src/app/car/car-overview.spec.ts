@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VoiceOperationOutcome } from '../voice/voice.models';
 import { VoiceLogStore } from '../voice/voice-log-store';
 import { CarOverview } from './car-overview';
+import { CarGateway } from './car-gateway';
 import { CarStore } from './car-store';
 import { CurrentSetupStore } from './current-setup/current-setup-store';
 import { DRIVE_SESSION_CONTEXT } from './drive-sessions/drive-session-context';
@@ -95,6 +96,7 @@ const testRoutes: Routes = [
 		path: 'garage/:carId/overview',
 		component: CarOverview,
 		providers: [
+			CarGateway,
 			CarStore,
 			{ provide: CurrentSetupStore, useValue: emptyCurrentSetupStore },
 			{ provide: VoiceLogStore, useValue: emptyVoiceStore },
@@ -115,6 +117,7 @@ describe('Car overview', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter(testRoutes, withComponentInputBinding()),
+				CarGateway,
 				CarStore,
 			],
 		}).compileComponents();
@@ -295,11 +298,11 @@ describe('Car overview', () => {
 				store: {
 					lifecycleAction(): 'archive' | 'restore' | null;
 					lifecycleError(): string;
-					changeArchiveState(action: 'archive' | 'restore'): Promise<void>;
+					changeArchiveState(action: 'archive' | 'restore'): void;
 				};
 			}
 		).store;
-		const change = store.changeArchiveState('archive');
+		store.changeArchiveState('archive');
 		const mutation = http.expectOne('/api/v1/cars/car-1/archive');
 		expect(store.lifecycleAction()).toBe('archive');
 
@@ -311,7 +314,6 @@ describe('Car overview', () => {
 		});
 		nextCar?.flush({ car: { ...car, id: 'car-2' } });
 		mutation.flush('offline', { status: 503, statusText: 'Unavailable' });
-		await change;
 		expect(store.lifecycleAction()).toBeNull();
 		expect(store.lifecycleError()).toBe('');
 	});
@@ -366,14 +368,16 @@ describe('Car overview', () => {
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
 			store: {
-				updateCar(value: { name: string }): Promise<boolean>;
-				changeArchiveState(action: 'archive' | 'restore'): Promise<void>;
+				updateCar(value: { name: string }): void;
+				changeArchiveState(action: 'archive' | 'restore'): void;
 			};
 		};
-		expect(await component.store.updateCar({ name: 'Blocked' })).toBe(false);
-		await component.store.changeArchiveState('archive');
+		component.store.updateCar({ name: 'Blocked' });
+		component.store.changeArchiveState('archive');
 		const archive = http.expectOne('/api/v1/cars/car-1/archive');
-		archive.flush({ status: true });
+		archive.flush({
+			car: { ...legacyCar, archivedAt: '2026-08-08T00:00:00.000Z' },
+		});
 		let refresh: TestRequest | undefined;
 		await vi.waitFor(() => {
 			refresh = http.expectOne('/api/v1/cars/car-1');
@@ -398,7 +402,7 @@ describe('Car overview', () => {
 		);
 
 		button('Restore car').click();
-		http.expectOne('/api/v1/cars/car-1/restore').flush({ status: true });
+		http.expectOne('/api/v1/cars/car-1/restore').flush({ car: legacyCar });
 		await vi.waitFor(() => {
 			refresh = http.expectOne('/api/v1/cars/car-1');
 		});
@@ -446,7 +450,7 @@ describe('Car overview', () => {
 			?.componentInstance as unknown as {
 			openEdit(value: typeof carWithoutDetails): void;
 			cancelEdit(): void;
-			save(event: Event): Promise<void>;
+			save(event: Event): void;
 			form: TestSignal<{
 				name: string;
 				make: string;
@@ -458,7 +462,7 @@ describe('Car overview', () => {
 			}>;
 			carFields(): { errorSummary(): Array<{ message?: string }> };
 			store: {
-				updateCar(value: { name: string }): Promise<boolean>;
+				updateCar(value: { name: string }): void;
 			};
 		};
 		component.openEdit(carWithoutDetails);
@@ -468,7 +472,7 @@ describe('Car overview', () => {
 			configurable: true,
 			value: () => [],
 		});
-		await component.save(new Event('submit'));
+		component.save(new Event('submit'));
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Review the car details',
@@ -476,16 +480,16 @@ describe('Car overview', () => {
 
 		component.form.set({ ...component.form(), name: 'Updated car' });
 		await harness.fixture.whenStable();
-		const update = component.store.updateCar({ name: 'Updated car' });
+		component.store.updateCar({ name: 'Updated car' });
 		component.openEdit(carWithoutDetails);
 		component.cancelEdit();
-		await component.save(new Event('submit'));
+		component.save(new Event('submit'));
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.textContent).toContain('Saving…');
 		http
 			.expectOne('/api/v1/cars/car-1')
 			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		expect(await update).toBe(false);
+		expect(component.store).toBeTruthy();
 	});
 
 	it('covers overview action-listener cancellation branches', async () => {

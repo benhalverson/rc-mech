@@ -13,7 +13,9 @@ import {
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CarBuild } from './car-build';
+import { CarBuildGateway } from './car-build-gateway';
 import { CarBuildStore } from './car-build-store';
+import { CarGateway } from './car-gateway';
 import { CarStore } from './car-store';
 
 type TestSignal<T> = (() => T) & { set(value: T): void };
@@ -22,7 +24,7 @@ const testRoutes: Routes = [
 	{
 		path: 'garage/:carId/build',
 		component: CarBuild,
-		providers: [CarBuildStore, CarStore],
+		providers: [CarBuildGateway, CarBuildStore, CarGateway, CarStore],
 	},
 ];
 
@@ -38,7 +40,9 @@ describe('Car build', () => {
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter(testRoutes, withComponentInputBinding()),
+				CarBuildGateway,
 				CarBuildStore,
+				CarGateway,
 				CarStore,
 			],
 		}).compileComponents();
@@ -102,19 +106,22 @@ describe('Car build', () => {
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
 			openAdd(): void;
-			formError: TestSignal<string>;
-			message: TestSignal<string>;
+			save(): void;
 		};
 		component.openAdd();
-		component.formError.set('Old build error');
-		component.message.set('Old build message');
+		component.save();
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Review the highlighted component fields',
+		);
 
 		await harness.navigateByUrl('/garage/car-2/build');
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
-		expect(harness.routeNativeElement?.textContent).not.toContain('Old build');
+		expect(harness.routeNativeElement?.textContent).not.toContain(
+			'Review the highlighted component fields',
+		);
 		http
 			.expectOne('/api/v1/cars/car-2')
 			.flush({ car: { ...car, id: 'car-2' } });
@@ -144,10 +151,13 @@ describe('Car build', () => {
 				serialNumber: string;
 				notes: string;
 			}>;
-			formError: TestSignal<string>;
-			message: TestSignal<string>;
 		};
 		component.openAdd();
+		component.save();
+		harness.detectChanges();
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Review the highlighted component fields',
+		);
 		component.form.set({
 			slotType: 'standard',
 			slot: 'motor',
@@ -157,13 +167,13 @@ describe('Car build', () => {
 			serialNumber: '',
 			notes: '',
 		});
-		component.formError.set('Old build error');
-		component.message.set('Old build success');
 		await harness.fixture.whenStable();
 		component.save();
 		harness.detectChanges();
 
-		expect(harness.routeNativeElement?.textContent).not.toContain('Old build');
+		expect(harness.routeNativeElement?.textContent).not.toContain(
+			'Review the highlighted component fields',
+		);
 		http
 			.expectOne('/api/v1/cars/car-1/components')
 			.flush('expired', { status: 401, statusText: 'Unauthorized' });
@@ -190,17 +200,29 @@ describe('Car build', () => {
 		harness.detectChanges();
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
-			action: TestSignal<string | null>;
+			buildStore: {
+				save(command: {
+					mode: 'edit';
+					componentId: string;
+					input: { name: string };
+				}): void;
+			};
 			openAdd(slot?: string): void;
 			openEdit(value: typeof installed): void;
 			openReplace(value: typeof installed): void;
 		};
-		component.action.set('edit');
+		component.buildStore.save({
+			mode: 'edit',
+			componentId: installed.id,
+			input: { name: 'Pending edit' },
+		});
+		const pending = http.expectOne('/api/v1/cars/car-1/components/component-1');
 		component.openAdd();
 		component.openEdit(installed);
 		component.openReplace(installed);
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
+		pending.flush('offline', { status: 503, statusText: 'Unavailable' });
 	});
 
 	it('keeps an archived car readable while hiding build mutations', async () => {
@@ -324,11 +346,22 @@ describe('Car build', () => {
 		).toBe('component-form-intro');
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
-			action: TestSignal<string | null>;
 			cancel(): void;
 			save(): void;
+			form: TestSignal<{
+				slotType: 'standard' | 'custom';
+				slot: string;
+				name: string;
+				manufacturer: string;
+				model: string;
+				serialNumber: string;
+				notes: string;
+			}>;
 		};
-		component.action.set('save');
+		component.form.set({ ...component.form(), name: 'Pending motor' });
+		await harness.fixture.whenStable();
+		component.save();
+		const pending = http.expectOne('/api/v1/cars/car-1/components');
 		harness.detectChanges();
 		const cancel = [
 			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
@@ -341,11 +374,7 @@ describe('Car build', () => {
 		component.save();
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
-		http.expectNone(
-			(request) =>
-				request.method !== 'GET' &&
-				request.url === '/api/v1/cars/car-1/components',
-		);
+		pending.flush('offline', { status: 503, statusText: 'Unavailable' });
 	});
 
 	it('retries a failed build read and renders current and historical slots', async () => {

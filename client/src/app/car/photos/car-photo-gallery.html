@@ -20,6 +20,16 @@
 			<span class="text-alloy-text">This car is archived. Its photos remain visible, but photo changes are disabled until the car is restored.</span>
 		</p>
 	}
+	@if (pendingDelete(); as photo) {
+		<div class="alloy-state alloy-attention-state mt-0 grid gap-3" role="alertdialog" aria-labelledby="delete-photo-title" aria-describedby="delete-photo-description">
+			<strong id="delete-photo-title">Delete this private car photo?</strong>
+			<span id="delete-photo-description">This removes the photo from this car and cannot be undone.</span>
+			<div class="flex flex-wrap gap-2">
+				<button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelDelete()">Keep photo</button>
+				<button class="alloy-control alloy-focus-ring" type="button" (click)="confirmDelete()">Delete photo</button>
+			</div>
+		</div>
+	}
 	@if (validationError()) {
 		<p class="alloy-state alloy-error-state mt-0" role="alert">
 			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>

@@ -1,7 +1,6 @@
-import { HttpClient } from '@angular/common/http';
-import { Component, effect, inject, input, signal } from '@angular/core';
+import { Component, effect, inject, input } from '@angular/core';
 import { Router } from '@angular/router';
-import type { GarageCar, GarageCarInput } from '../../garage/garage-store';
+import type { GarageCarInput } from '../../garage/garage-store';
 import { CarSectionShell } from '../car-section-shell';
 import { CarStore } from '../car-store';
 import { CarSetupsStore } from './car-setups-store';
@@ -16,10 +15,9 @@ export class CarSetups {
 	readonly carId = input('');
 	protected readonly carStore = inject(CarStore);
 	protected readonly setupsStore = inject(CarSetupsStore);
-	private readonly http = inject(HttpClient);
 	private readonly router = inject(Router);
-	protected readonly createError = signal('');
-	protected readonly createAction = signal(false);
+	protected readonly createError = this.setupsStore.createError;
+	protected readonly createAction = this.setupsStore.createAction;
 
 	constructor() {
 		let previousCarId: string | undefined;
@@ -27,11 +25,22 @@ export class CarSetups {
 			const carId = this.carId();
 			if (!carId) return;
 			if (previousCarId !== undefined && carId !== previousCarId) {
-				this.createAction.set(false);
-				this.createError.set('');
+				this.setupsStore.clearCreateOutcome();
 			}
 			previousCarId = carId;
+			this.setupsStore.selectSourceCar(carId);
 			this.carStore.selectCar(carId);
+		});
+		let handledOperationId = 0;
+		effect(() => {
+			const outcome = this.setupsStore.createOutcome();
+			if (
+				outcome.status !== 'succeeded' ||
+				outcome.operationId === handledOperationId
+			)
+				return;
+			handledOperationId = outcome.operationId;
+			void this.router.navigate(['/garage', outcome.car.id, 'setups']);
 		});
 	}
 
@@ -52,28 +61,7 @@ export class CarSetups {
 			...(make ? { make } : {}),
 			...(model ? { model } : {}),
 		};
-		this.createAction.set(true);
-		this.createError.set('');
-		this.http
-			.post<{ car: GarageCar }>('/api/v1/cars', payload, {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: ({ car }) => {
-					if (this.carId() !== sourceCarId) return;
-					this.createAction.set(false);
-					this.setupsStore.refresh();
-					void this.router.navigate(['/garage', car.id, 'setups']);
-				},
-				error: (error: { status?: number }) => {
-					if (this.carId() !== sourceCarId) return;
-					this.createAction.set(false);
-					this.createError.set(
-						error.status === 401
-							? 'Your garage session has expired. Sign in again to continue.'
-							: 'The new car could not be created from this reviewed import.',
-					);
-				},
-			});
+		if (sourceCarId)
+			this.setupsStore.createCar({ sourceCarId, input: payload });
 	}
 }

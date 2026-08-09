@@ -1,9 +1,5 @@
-import {
-	HttpClient,
-	HttpErrorResponse,
-	httpResource,
-} from '@angular/common/http';
 import { computed, inject } from '@angular/core';
+import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import {
 	patchState,
 	signalStore,
@@ -12,135 +8,196 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { firstValueFrom } from 'rxjs';
-import type { GarageCar, GarageCarInput } from '../garage/garage-store';
+import { catchError, exhaustMap, of, tap } from 'rxjs';
+import type { GarageCarInput } from '../garage/garage-store';
+import { CarGateway } from './car-gateway';
 import { carReadFailure, type CarReadFailure } from './car-read-failure';
+import type {
+	CarGatewayFailure,
+	CarLifecycleOutcome,
+	CarUpdateOutcome,
+	ChangeCarLifecycleCommand,
+	UpdateCarCommand,
+} from './car.models';
 
 type CarState = {
 	carId: string | null;
-	lifecycleAction: 'archive' | 'restore' | null;
-	lifecycleError: string;
-	carAction: 'update' | null;
-	carMutationError: string;
-	carMessage: string;
+	updateOutcome: CarUpdateOutcome;
+	lifecycleOutcome: CarLifecycleOutcome;
 };
 
-const carFailure = (error: unknown): CarReadFailure | null =>
-	error instanceof HttpErrorResponse && error.status === 404
+const idleUpdate = (): CarUpdateOutcome => ({
+	status: 'idle',
+	operationId: null,
+});
+
+const idleLifecycle = (): CarLifecycleOutcome => ({
+	status: 'idle',
+	operationId: null,
+	action: null,
+});
+
+const carFailure = (
+	failure: CarGatewayFailure | null,
+): CarReadFailure | null =>
+	failure?.kind === 'http' && failure.status === 404
 		? {
 				message:
 					'Car not found. Return to the Garage collection and choose another car.',
 				retryable: false,
 			}
-		: carReadFailure(
-				error,
-				'The car could not be loaded. Check the connection and try again.',
-			);
+		: failure
+			? carReadFailure(
+					failure.kind === 'http' ? { status: failure.status } : failure,
+					'The car could not be loaded. Check the connection and try again.',
+				)
+			: null;
+
+const mutationError = (failure: CarGatewayFailure): string =>
+	failure.kind === 'http' && failure.status === 401
+		? 'Your garage session has expired. Sign in again to continue.'
+		: 'The car could not be saved. Check the details and try again.';
 
 export const CarStore = signalStore(
 	withState<CarState>({
 		carId: null,
-		lifecycleAction: null,
-		lifecycleError: '',
-		carAction: null,
-		carMutationError: '',
-		carMessage: '',
+		updateOutcome: idleUpdate(),
+		lifecycleOutcome: idleLifecycle(),
 	}),
-	withProps(({ carId }) => ({
-		http: inject(HttpClient),
-		carResource: httpResource<{ car: GarageCar }>(() => {
-			const id = carId();
-			return id
-				? {
-						url: `/api/v1/cars/${encodeURIComponent(id)}`,
-						withCredentials: true,
-					}
-				: undefined;
-		}),
+	withProps(() => ({
+		gateway: inject(CarGateway),
+		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => ({
 		car: computed(() =>
-			store.carResource.hasValue() ? store.carResource.value().car : null,
+			store.gateway.car.hasValue() ? store.gateway.car.value() : null,
 		),
-		loading: computed(() => store.carResource.isLoading()),
-		failure: computed(() => carFailure(store.carResource.error())),
+		loading: computed(() => store.gateway.car.isLoading()),
+		failure: computed(() => carFailure(store.gateway.failure())),
+		carAction: computed(() =>
+			store.updateOutcome().status === 'pending' ? ('update' as const) : null,
+		),
+		carMutationError: computed(() => {
+			const outcome = store.updateOutcome();
+			return outcome.status === 'failed' ? mutationError(outcome.error) : '';
+		}),
+		carMessage: computed(() =>
+			store.updateOutcome().status === 'succeeded' ? 'Car details saved.' : '',
+		),
+		lifecycleAction: computed(() => {
+			const outcome = store.lifecycleOutcome();
+			return outcome.status === 'pending' ? outcome.action : null;
+		}),
+		lifecycleError: computed(() => {
+			const outcome = store.lifecycleOutcome();
+			if (outcome.status !== 'failed') return '';
+			return outcome.error.kind === 'http' && outcome.error.status === 401
+				? 'Your garage session has expired. Sign in again to continue.'
+				: `The car could not be ${outcome.action === 'archive' ? 'archived' : 'restored'}.`;
+		}),
 	})),
-	withMethods((store) => ({
-		selectCar(carId: string): void {
-			if (store.carId() !== carId)
+	withMethods((store) => {
+		const update = rxMethod<UpdateCarCommand>((commands$) =>
+			commands$.pipe(
+				exhaustMap((command) => {
+					const operationId = ++store.nextOperationId.value;
+					patchState(store, {
+						updateOutcome: { status: 'pending', operationId },
+					});
+					return store.gateway.updateCar(command).pipe(
+						tap(() => {
+							if (store.carId() !== command.carId) return;
+							store.gateway.refresh();
+							patchState(store, {
+								updateOutcome: { status: 'succeeded', operationId },
+							});
+						}),
+						catchError((error: CarGatewayFailure) => {
+							if (store.carId() === command.carId)
+								patchState(store, {
+									updateOutcome: { status: 'failed', operationId, error },
+								});
+							return of(null);
+						}),
+					);
+				}),
+			),
+		);
+		const changeLifecycle = rxMethod<ChangeCarLifecycleCommand>((commands$) =>
+			commands$.pipe(
+				exhaustMap((command) => {
+					const operationId = ++store.nextOperationId.value;
+					patchState(store, {
+						lifecycleOutcome: {
+							status: 'pending',
+							operationId,
+							action: command.action,
+						},
+					});
+					return store.gateway.changeLifecycle(command).pipe(
+						tap(() => {
+							if (store.carId() !== command.carId) return;
+							store.gateway.refresh();
+							patchState(store, {
+								lifecycleOutcome: {
+									status: 'succeeded',
+									operationId,
+									action: command.action,
+								},
+							});
+						}),
+						catchError((error: CarGatewayFailure) => {
+							if (store.carId() === command.carId)
+								patchState(store, {
+									lifecycleOutcome: {
+										status: 'failed',
+										operationId,
+										action: command.action,
+										error,
+									},
+								});
+							return of(null);
+						}),
+					);
+				}),
+			),
+		);
+		return {
+			selectCar(carId: string): void {
+				if (store.carId() === carId) return;
 				patchState(store, {
 					carId,
-					lifecycleAction: null,
-					lifecycleError: '',
-					carAction: null,
-					carMutationError: '',
-					carMessage: '',
+					updateOutcome: idleUpdate(),
+					lifecycleOutcome: idleLifecycle(),
 				});
-		},
-		retry(): void {
-			store.carResource.reload();
-		},
-		clearCarMutationState(): void {
-			patchState(store, { carMutationError: '', carMessage: '' });
-		},
-		async updateCar(input: GarageCarInput): Promise<boolean> {
-			const carId = store.carId();
-			if (!carId || store.carAction() || store.lifecycleAction()) return false;
-			patchState(store, {
-				carAction: 'update',
-				carMutationError: '',
-				carMessage: '',
-			});
-			try {
-				await firstValueFrom(
-					store.http.patch(`/api/v1/cars/${encodeURIComponent(carId)}`, input, {
-						withCredentials: true,
-					}),
-				);
-				if (store.carId() !== carId) return false;
-				store.carResource.reload();
-				patchState(store, {
-					carAction: null,
-					carMessage: 'Car details saved.',
-				});
-				return true;
-			} catch (error) {
-				if (store.carId() !== carId) return false;
-				patchState(store, {
-					carAction: null,
-					carMutationError:
-						error instanceof HttpErrorResponse && error.status === 401
-							? 'Your garage session has expired. Sign in again to continue.'
-							: 'The car could not be saved. Check the details and try again.',
-				});
-				return false;
-			}
-		},
-		async changeArchiveState(action: 'archive' | 'restore'): Promise<void> {
-			const carId = store.carId();
-			if (!carId || store.lifecycleAction() || store.carAction()) return;
-			patchState(store, { lifecycleAction: action, lifecycleError: '' });
-			try {
-				await firstValueFrom(
-					store.http.post(
-						`/api/v1/cars/${encodeURIComponent(carId)}/${action}`,
-						{},
-						{ withCredentials: true },
-					),
-				);
-				if (store.carId() !== carId) return;
-				store.carResource.reload();
-				patchState(store, { lifecycleAction: null });
-			} catch (error) {
-				if (store.carId() !== carId) return;
-				patchState(store, {
-					lifecycleAction: null,
-					lifecycleError:
-						error instanceof HttpErrorResponse && error.status === 401
-							? 'Your garage session has expired. Sign in again to continue.'
-							: `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`,
-				});
-			}
-		},
-	})),
+				store.gateway.selectCar(carId);
+			},
+			retry(): void {
+				store.gateway.refresh();
+			},
+			clearCarMutationState(): void {
+				patchState(store, { updateOutcome: idleUpdate() });
+			},
+			updateCar(input: GarageCarInput): void {
+				const carId = store.carId();
+				if (
+					!carId ||
+					store.updateOutcome().status === 'pending' ||
+					store.lifecycleOutcome().status === 'pending'
+				)
+					return;
+				update({ carId, input });
+			},
+			changeArchiveState(action: 'archive' | 'restore'): void {
+				const carId = store.carId();
+				if (
+					!carId ||
+					store.lifecycleOutcome().status === 'pending' ||
+					store.updateOutcome().status === 'pending'
+				)
+					return;
+				changeLifecycle({ carId, action });
+			},
+		};
+	}),
 );

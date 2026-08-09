@@ -1,14 +1,15 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
 import {
 	afterNextRender,
 	Component,
 	computed,
 	ElementRef,
-	inject,
+	effect,
 	Injector,
+	inject,
 	linkedSignal,
 	signal,
+	untracked,
 } from '@angular/core';
 import {
 	FormField,
@@ -29,11 +30,13 @@ import {
 } from '@lucide/angular';
 import type {
 	ConsumableEntry,
+	ConsumableMaintenanceDraft,
 	FluidArea,
+	MaintenanceGatewayFailure,
+	MaintenanceReport,
 	TireAxle,
 } from '../maintenance.models';
-import { MaintenanceLookups } from '../maintenance-lookups';
-import { type MaintenanceReport, MaintenanceStore } from '../maintenance-store';
+import { type ConsumableCommand, ConsumableStore } from './consumable-store';
 
 export type { ConsumableEntry } from '../maintenance.models';
 
@@ -59,7 +62,6 @@ export type TireReportAxle = {
 	averageDays: number | null;
 	missingDetails: boolean;
 };
-type EntryResponse = { consumableMaintenance: ConsumableEntry };
 type EntryForm = {
 	carId: string;
 	kind: 'shock-fluid' | 'differential-fluid' | 'tires';
@@ -210,30 +212,22 @@ export const spendLabel = (value: number | null): string =>
 	host: { class: 'block' },
 })
 export class ConsumableMaintenance {
-	private readonly http = inject(HttpClient);
-	private readonly lookups = inject(MaintenanceLookups);
-	private readonly store = inject(MaintenanceStore);
+	private readonly store = inject(ConsumableStore);
 	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 	private readonly injector = inject(Injector);
 	private returnFocusSelector = '[data-consumable-launcher="record"]';
 	protected readonly garage = linkedSignal(() => this.store.cars());
-	protected readonly entries = linkedSignal(() =>
-		this.store.consumableEntries(),
-	);
+	protected readonly entries = linkedSignal(() => this.store.entries());
 	protected readonly timezone = this.store.timezone;
 	protected readonly mutationError = signal('');
 	protected readonly state = computed(() =>
-		this.store.consumablesLoading()
-			? 'loading'
-			: this.store.consumablesError()
-				? 'error'
-				: 'ready',
+		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
 	);
-	protected readonly error = this.store.consumablesError;
+	protected readonly error = this.store.error;
 	protected readonly formError = signal('');
 	protected readonly editing = signal(false);
 	protected readonly editingId = signal<string | null>(null);
-	protected readonly action = signal<string | null>(null);
+	protected readonly action = this.store.action;
 	protected readonly historyFilter = signal<'active' | 'archived'>('active');
 	protected readonly hasActiveCars = computed(() =>
 		this.garage().some((car) => !car.archivedAt),
@@ -280,9 +274,51 @@ export class ConsumableMaintenance {
 	);
 	protected readonly spendLabel = spendLabel;
 
+	constructor() {
+		let handledOperationId = 0;
+		effect(() => {
+			const outcome = this.store.outcome();
+			if (
+				outcome.status === 'idle' ||
+				outcome.status === 'pending' ||
+				outcome.operationId === handledOperationId
+			)
+				return;
+			handledOperationId = outcome.operationId;
+			if (outcome.status === 'failed') {
+				this.handleFailure(outcome.command, outcome.error);
+				return;
+			}
+			if (outcome.command.kind === 'save') {
+				this.returnFocusSelector = '#consumable-title';
+				this.cancelEdit();
+			}
+		});
+		effect(() => {
+			const lookup = this.store.tireLookup();
+			const currentForm = untracked(this.form);
+			if (
+				lookup.status !== 'succeeded' ||
+				lookup.carId !== currentForm.carId ||
+				!lookup.tires
+			)
+				return;
+			const details = Object.entries(lookup.tires)
+				.map(([key, value]) => `${key}: ${String(value)}`)
+				.join('\n');
+			untracked(() =>
+				this.form.update((current) => ({
+					...current,
+					frontDetails: current.frontDetails || details,
+					rearDetails: current.rearDetails || details,
+				})),
+			);
+		});
+	}
+
 	protected load(): void {
 		this.mutationError.set('');
-		this.store.retryConsumables();
+		this.store.retry();
 	}
 	protected visibleEntries(): ConsumableEntry[] {
 		return this.entries().filter((entry) =>
@@ -404,7 +440,7 @@ export class ConsumableMaintenance {
 		}
 		if (this.action()) return;
 		this.mutationError.set('');
-		const payload =
+		const maintenance: ConsumableMaintenanceDraft =
 			form.kind === 'tires'
 				? {
 						kind: form.kind,
@@ -433,77 +469,43 @@ export class ConsumableMaintenance {
 						...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
 					};
 		const id = this.editingId();
-		this.action.set(id ? 'edit' : 'create');
 		this.formError.set('');
-		const request = id
-			? this.http.patch<EntryResponse>(
-					`${this.path(form.carId)}/${id}`,
-					payload,
-					{ withCredentials: true },
-				)
-			: this.http.post<EntryResponse>(this.path(form.carId), payload, {
-					withCredentials: true,
-				});
-		request.subscribe({
-			next: () => {
-				this.store.refreshConsumables();
-				this.action.set(null);
-				this.returnFocusSelector = '#consumable-title';
-				this.cancelEdit();
-			},
-			error: (error: { status?: number }) => {
-				this.action.set(null);
-				this.formError.set(
-					error.status === 409
-						? 'This car is archived. Restore it before recording maintenance.'
-						: 'The consumable entry could not be saved.',
-				);
-			},
+		this.store.mutate({
+			kind: 'save',
+			mode: id ? 'edit' : 'create',
+			carId: form.carId,
+			id,
+			maintenance,
 		});
 	}
 	protected archive(entry: ConsumableEntry): void {
 		if (this.isReadOnly(entry) || this.action()) return;
 		this.mutationError.set('');
-		this.action.set(`archive:${entry.id}`);
-		this.http
-			.delete<EntryResponse>(`${this.path(entry.carId)}/${entry.id}`, {
-				withCredentials: true,
-			})
-			.subscribe({
-				next: () => {
-					this.store.refreshConsumables();
-					this.action.set(null);
-				},
-				error: () => {
-					this.action.set(null);
-					this.mutationError.set(
-						'That consumable entry could not be archived.',
-					);
-				},
-			});
+		this.store.mutate({ kind: 'change', action: 'archive', entry });
 	}
 	protected restore(entry: ConsumableEntry): void {
 		if (this.action()) return;
 		this.mutationError.set('');
-		this.action.set(`restore:${entry.id}`);
-		this.http
-			.post<EntryResponse>(
-				`${this.path(entry.carId)}/${entry.id}/restore`,
-				{},
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: () => {
-					this.store.refreshConsumables();
-					this.action.set(null);
-				},
-				error: () => {
-					this.action.set(null);
-					this.mutationError.set(
-						'That consumable entry could not be restored.',
-					);
-				},
-			});
+		this.store.mutate({ kind: 'change', action: 'restore', entry });
+	}
+
+	private handleFailure(
+		command: ConsumableCommand,
+		error: MaintenanceGatewayFailure,
+	): void {
+		if (command.kind === 'save') {
+			this.formError.set(
+				error.kind === 'http' && error.status === 409
+					? 'This car is archived. Restore it before recording maintenance.'
+					: 'The consumable entry could not be saved.',
+			);
+			return;
+		}
+		this.mutationError.set(
+			command.action === 'archive'
+				? 'That consumable entry could not be archived.'
+				: 'That consumable entry could not be restored.',
+		);
 	}
 	protected isReadOnly(entry: ConsumableEntry): boolean {
 		return (
@@ -554,9 +556,6 @@ export class ConsumableMaintenance {
 	protected setHistoryFilter(value: 'active' | 'archived'): void {
 		this.historyFilter.set(value);
 	}
-	private path(carId: string): string {
-		return `/api/v1/cars/${carId}/consumable-maintenance`;
-	}
 	private optionalCost(value: string): number | null | 'invalid' {
 		if (!value.trim()) return null;
 		const number = Number(value);
@@ -564,19 +563,7 @@ export class ConsumableMaintenance {
 	}
 	private prefillTires(carId: string): void {
 		if (!carId) return;
-		this.lookups.currentTires(carId).subscribe({
-			next: (tires) => {
-				if (!tires) return;
-				const details = Object.entries(tires)
-					.map(([key, value]) => `${key}: ${String(value)}`)
-					.join('\n');
-				this.form.update((current) => ({
-					...current,
-					frontDetails: current.frontDetails || details,
-					rearDetails: current.rearDetails || details,
-				}));
-			},
-		});
+		this.store.loadTires(carId);
 	}
 	private localDateTime(date: Date): string {
 		const parts = new Intl.DateTimeFormat('en-CA', {

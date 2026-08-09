@@ -35,6 +35,18 @@ export type MaintenancePlan = {
 	dueStatus?: PlanState;
 };
 
+export type MaintenancePlanDraft = {
+	readonly carId: string;
+	readonly componentId?: string;
+	readonly name: string;
+	readonly intervalUnit: 'none' | 'days' | 'weeks' | 'months';
+	readonly intervalValue: number;
+	readonly intervalDays?: number;
+	readonly intervalSessions?: number;
+	readonly baselineAt?: string;
+	readonly baselineSessionCount: number;
+};
+
 export type MaintenanceActivity = {
 	id: string;
 	planId?: string;
@@ -54,6 +66,15 @@ export type ServiceRecord = {
 	cost?: number | null;
 	currency?: string | null;
 	deletedAt?: string | null;
+};
+
+export type ServiceRecordDraft = {
+	readonly performedAt: string;
+	readonly description: string;
+	readonly notes?: string;
+	readonly componentId?: string;
+	readonly cost?: number;
+	readonly currency?: string;
 };
 
 export type FluidArea =
@@ -82,3 +103,44 @@ export type ConsumableEntry = {
 	notes?: string | null;
 	deletedAt?: string | null;
 };
+
+type ConsumableDraftBase = {
+	readonly performedAt: string;
+	readonly notes?: string;
+};
+
+export type ConsumableMaintenanceDraft =
+	| (ConsumableDraftBase & {
+			readonly kind: 'tires';
+			readonly axle: TireAxle;
+			readonly frontDetails?: string;
+			readonly rearDetails?: string;
+			readonly frontCost?: number;
+			readonly rearCost?: number;
+	  })
+	| (ConsumableDraftBase & {
+			readonly kind: 'shock-fluid' | 'differential-fluid';
+			readonly fluidArea: FluidArea;
+			readonly customArea?: string;
+			readonly cost?: number;
+	  });
+
+export type MaintenanceReport = {
+	tires: {
+		frequency: {
+			front: { eventCount: number; averageIntervalDays: number | null };
+			rear: { eventCount: number; averageIntervalDays: number | null };
+		};
+		spend: {
+			front: { total: number | null };
+			rear: { total: number | null };
+			combined: { total: number | null };
+		};
+	};
+	fluidHistory: unknown[];
+};
+
+export type MaintenanceGatewayFailure =
+	| { readonly kind: 'http'; readonly status: number }
+	| { readonly kind: 'invalid-response' }
+	| { readonly kind: 'unavailable' };

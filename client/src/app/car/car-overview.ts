@@ -117,6 +117,7 @@ export class CarOverview {
 
 	constructor() {
 		let previousCarId = this.carId();
+		let handledOperationId: number | null = null;
 		effect(() => {
 			const carId = this.carId();
 			if (!carId) return;
@@ -128,6 +129,16 @@ export class CarOverview {
 				this.carFields().reset(emptyCarForm());
 			}
 			this.store.selectCar(carId);
+		});
+		effect(() => {
+			const outcome = this.store.updateOutcome();
+			if (
+				outcome.status !== 'succeeded' ||
+				outcome.operationId === handledOperationId
+			)
+				return;
+			handledOperationId = outcome.operationId;
+			this.editing.set(false);
 		});
 	}
 
@@ -147,7 +158,7 @@ export class CarOverview {
 		this.carFields().reset();
 	}
 
-	protected async save(event: Event): Promise<void> {
+	protected save(event: Event): void {
 		event.preventDefault();
 		if (this.store.carAction()) return;
 		this.carFields().markAsTouched();
@@ -160,7 +171,6 @@ export class CarOverview {
 			return;
 		}
 		this.formValidationError.set('');
-		if (await this.store.updateCar(carPayload(this.form())))
-			this.editing.set(false);
+		this.store.updateCar(carPayload(this.form()));
 	}
 }

@@ -1,11 +1,9 @@
-import { HttpClient } from '@angular/common/http';
 import {
 	Component,
 	computed,
 	effect,
 	inject,
 	input,
-	linkedSignal,
 	signal,
 } from '@angular/core';
 import {
@@ -20,12 +18,8 @@ import {
 	LucideTriangleAlert,
 	LucideUpload,
 } from '@lucide/angular';
-import { firstValueFrom } from 'rxjs';
 import type { CarPhoto } from '../car.models';
 import { CarPhotoStore } from './car-photo-store';
-
-type PhotosResponse = { photos: CarPhoto[] };
-type PhotoResponse = { photo: CarPhoto };
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -48,31 +42,27 @@ const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 	templateUrl: './car-photo-gallery.html',
 })
 export class CarPhotoGallery {
-	private readonly http = inject(HttpClient);
 	private readonly store = inject(CarPhotoStore);
 	readonly carId = input('');
 	readonly archived = input(false);
 
-	protected readonly photos = linkedSignal(() =>
-		this.ordered(this.store.photos()),
-	);
+	protected readonly photos = computed(() => this.ordered(this.store.photos()));
 	protected readonly state = computed(() =>
 		this.store.loading() ? 'loading' : this.store.failure() ? 'error' : 'ready',
 	);
 	protected readonly readFailure = this.store.failure;
-	private readonly mutationError = signal('');
-	protected readonly error = computed(() => this.mutationError());
-	protected readonly action = signal<string | null>(null);
+	protected readonly error = this.store.error;
+	protected readonly action = this.store.action;
 	protected readonly validationError = signal('');
+	protected readonly pendingDelete = signal<CarPhoto | null>(null);
 
 	constructor() {
 		let previousCarId: string | undefined;
 		effect(() => {
 			const carId = this.carId();
 			if (previousCarId !== undefined && carId !== previousCarId) {
-				this.action.set(null);
-				this.mutationError.set('');
 				this.validationError.set('');
+				this.pendingDelete.set(null);
 			}
 			previousCarId = carId;
 			if (carId) this.store.selectCar(carId);
@@ -134,87 +124,33 @@ export class CarPhotoGallery {
 			this.isPrimary(photo)
 		)
 			return;
-		const carId = photo.carId;
-		this.action.set(`primary:${photo.id}`);
-		this.mutationError.set('');
-		this.http
-			.patch<PhotoResponse>(
-				this.photoEndpoint(photo),
-				{ isPrimary: true },
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: ({ photo: updated }) => {
-					if (this.carId() !== carId) return;
-					this.photos.update((photos) =>
-						photos.map((item) =>
-							item.id === updated.id
-								? updated
-								: { ...item, isPrimary: false, primary: false },
-						),
-					);
-					this.store.refresh();
-					this.action.set(null);
-				},
-				error: (error: { status?: number }) => {
-					if (this.carId() !== carId) return;
-					this.fail(error, 'The primary photo could not be saved.');
-				},
-			});
+		this.store.mutate({ kind: 'primary', photo });
 	}
 
 	protected delete(photo: CarPhoto): void {
-		if (
-			photo.carId !== this.carId() ||
-			this.archived() ||
-			this.action() ||
-			!window.confirm('Delete this private car photo?')
-		)
+		if (photo.carId !== this.carId() || this.archived() || this.action())
 			return;
-		const carId = photo.carId;
-		this.action.set(`delete:${photo.id}`);
-		this.mutationError.set('');
-		this.http
-			.delete<{ deleted: boolean; primaryPhotoId?: string | null }>(
-				this.photoEndpoint(photo),
-				{ withCredentials: true },
-			)
-			.subscribe({
-				next: ({ primaryPhotoId }) => {
-					if (this.carId() !== carId) return;
-					this.photos.update((photos) =>
-						photos
-							.filter((item) => item.id !== photo.id)
-							.map((item) => ({
-								...item,
-								isPrimary: item.id === primaryPhotoId,
-								primary: item.id === primaryPhotoId,
-							})),
-					);
-					this.store.refresh();
-					this.action.set(null);
-				},
-				error: (error: { status?: number }) => {
-					if (this.carId() !== carId) return;
-					this.fail(error, 'The photo could not be deleted.');
-				},
-			});
+		this.pendingDelete.set(photo);
+	}
+
+	protected confirmDelete(): void {
+		const photo = this.pendingDelete();
+		if (!photo || this.action()) return;
+		this.pendingDelete.set(null);
+		this.store.mutate({ kind: 'delete', photo });
+	}
+
+	protected cancelDelete(): void {
+		if (!this.action()) this.pendingDelete.set(null);
 	}
 
 	protected retry(): void {
-		this.mutationError.set('');
 		this.store.retry();
 	}
 
 	private upload(file: File): void {
 		if (!this.validate(file) || this.archived() || this.action()) return;
-		const carId = this.carId();
-		this.sendFile(
-			`/api/v1/cars/${encodeURIComponent(carId)}/photos`,
-			file,
-			'upload',
-			carId,
-		);
+		this.sendFile(file, 'upload');
 	}
 
 	private replace(photo: CarPhoto, file: File): void {
@@ -225,85 +161,22 @@ export class CarPhotoGallery {
 			this.action()
 		)
 			return;
-		this.sendFile(
-			`${this.photoEndpoint(photo)}/replace`,
-			file,
-			`replace:${photo.id}`,
-			photo.carId,
-		);
+		this.sendFile(file, 'replace', photo);
 	}
 
 	private sendFile(
-		url: string,
 		file: File,
-		action: string,
-		carId: string,
+		action: 'upload' | 'replace',
+		photo?: CarPhoto,
 	): void {
-		const body = new FormData();
-		body.append('file', file, file.name);
-		this.action.set(action);
-		this.mutationError.set('');
-		this.http
-			.post<PhotoResponse>(url, body, { withCredentials: true })
-			.subscribe({
-				next: ({ photo }) => {
-					if (this.carId() !== carId) return;
-					this.photos.set(
-						this.ordered(
-							action === 'upload'
-								? [...this.photos(), photo]
-								: this.photos().map((item) =>
-										item.id === photo.id ? photo : item,
-									),
-						),
-					);
-					this.store.refresh();
-					this.action.set(null);
-				},
-				error: (error: { status?: number }) => {
-					if (this.carId() !== carId) return;
-					this.fail(
-						error,
-						action === 'upload'
-							? 'The photo could not be uploaded.'
-							: 'The photo could not be replaced.',
-					);
-				},
-			});
+		if (action === 'upload') this.store.mutate({ kind: 'upload', file });
+		else if (photo) this.store.mutate({ kind: 'replace', photo, file });
 	}
 
 	private persistOrder(photos: CarPhoto[]): void {
 		const carId = this.carId();
 		if (photos.some((photo) => photo.carId !== carId)) return;
-		this.action.set('reorder');
-		this.mutationError.set('');
-		// Keep the new order visible immediately, then roll back if any owner-scoped update fails.
-		const previous = this.photos();
-		const optimistic = photos.map((photo, position) => ({
-			...photo,
-			sortOrder: position,
-		}));
-		this.photos.set(optimistic);
-		firstValueFrom(
-			this.http.patch<PhotosResponse>(
-				`/api/v1/cars/${encodeURIComponent(carId)}/photos/reorder`,
-				{
-					photoIds: photos.map((photo) => photo.id),
-				},
-				{ withCredentials: true },
-			),
-		)
-			.then(({ photos: saved }) => {
-				if (this.carId() !== carId) return;
-				this.photos.set(saved?.length ? this.ordered(saved) : optimistic);
-				this.store.refresh();
-				this.action.set(null);
-			})
-			.catch((error: { status?: number }) => {
-				if (this.carId() !== carId) return;
-				this.photos.set(previous);
-				this.fail(error, 'The photo order could not be saved.');
-			});
+		this.store.mutate({ kind: 'reorder', photos });
 	}
 
 	private validate(file: File): boolean {
@@ -329,27 +202,6 @@ export class CarPhotoGallery {
 				this.photoPosition(left, 0) - this.photoPosition(right, 0) ||
 				left.createdAt.localeCompare(right.createdAt) ||
 				left.id.localeCompare(right.id),
-		);
-	}
-
-	private photoEndpoint(photo: CarPhoto): string {
-		return `/api/v1/cars/${encodeURIComponent(photo.carId)}/photos/${encodeURIComponent(photo.id)}`;
-	}
-
-	private fail(error: { status?: number }, fallback: string): void {
-		this.action.set(null);
-		this.mutationError.set(
-			error.status === 401
-				? 'Your garage session has expired. Sign in again to continue.'
-				: error.status === 403 || error.status === 404
-					? 'This photo is not available in your garage.'
-					: error.status === 409
-						? 'The car is archived. Restore it before changing photos.'
-						: error.status === 413 ||
-								error.status === 415 ||
-								error.status === 422
-							? 'The Worker rejected this image. Check its format, size, and metadata.'
-							: fallback,
 		);
 	}
 }

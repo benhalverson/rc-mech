@@ -8,8 +8,12 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppearanceService } from '../appearance.service';
+import { ClipboardCapability } from './clipboard-capability';
+import { InviteStore } from './invite-store';
+import { PasskeyRegistrationCapability } from './passkey-registration-capability';
+import { PasskeyStore } from './passkey-store';
 import { Settings } from './settings';
-import { SettingsStore } from './settings-store';
+import { SettingsGateway } from './settings-gateway';
 import { TimezoneStore } from './timezone-store';
 
 class FakeTimezoneStore {
@@ -86,7 +90,11 @@ describe('Settings workspace', () => {
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				SettingsStore,
+				ClipboardCapability,
+				InviteStore,
+				PasskeyRegistrationCapability,
+				PasskeyStore,
+				SettingsGateway,
 				{ provide: AppearanceService, useValue: appearanceService },
 				{ provide: TimezoneStore, useValue: timezoneStore },
 			],
@@ -170,35 +178,40 @@ describe('Settings workspace', () => {
 		TestBed.resetTestingModule();
 		timezoneStore = new FakeTimezoneStore();
 		timezoneStore.resolve();
-		const unavailableStore = {
-			copyInviteCode: vi.fn(),
-			createInviteCode: vi.fn().mockResolvedValue(false),
-			inviteAction: signal<string | null>(null),
-			inviteActionError: signal(''),
-			inviteAllowance: signal({ allowance: 5, used: 0, remaining: 5 }),
-			inviteCodes: signal([]),
-			inviteError: signal(''),
-			inviteLoading: signal(false),
-			inviteMessage: signal(''),
-			passkeyAction: signal<string | null>(null),
-			passkeyActionError: signal(''),
-			passkeyError: signal(''),
+		const unavailableInvites = {
+			outcome: signal({ status: 'idle', operationId: null }),
+			action: signal<string | null>(null),
+			actionError: signal(''),
+			allowance: signal({ allowance: 5, used: 0, remaining: 5 }),
+			codes: signal([]),
+			readError: signal(''),
+			loading: signal(false),
+			message: signal(''),
+			copy: vi.fn(),
+			create: vi.fn(),
+			retry: vi.fn(),
+			revoke: vi.fn(),
+		};
+		const unavailablePasskeys = {
+			outcome: signal({ status: 'idle', operationId: null }),
+			action: signal<string | null>(null),
+			actionError: signal(''),
+			readError: signal(''),
 			passkeys: signal([]),
-			passkeysLoading: signal(false),
-			passkeyMessage: signal(''),
-			registerPasskey: vi.fn().mockResolvedValue(false),
-			renamePasskey: vi.fn().mockResolvedValue(false),
-			retryInvites: vi.fn(),
-			retryPasskeys: vi.fn(),
-			revokeInviteCode: vi.fn(),
-			revokePasskey: vi.fn(),
+			loading: signal(false),
+			message: signal(''),
+			register: vi.fn(),
+			rename: vi.fn(),
+			retry: vi.fn(),
+			revoke: vi.fn(),
 			webAuthnAvailable: signal(false),
 		};
 		await TestBed.configureTestingModule({
 			imports: [Settings],
 			providers: [
 				{ provide: AppearanceService, useValue: appearanceService },
-				{ provide: SettingsStore, useValue: unavailableStore },
+				{ provide: InviteStore, useValue: unavailableInvites },
+				{ provide: PasskeyStore, useValue: unavailablePasskeys },
 				{ provide: TimezoneStore, useValue: timezoneStore },
 			],
 		}).compileComponents();
@@ -372,14 +385,12 @@ describe('Settings workspace', () => {
 	it('rejects overlong passkey names at the store mutation boundary', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
-		const store = TestBed.inject(SettingsStore);
+		const store = TestBed.inject(PasskeyStore);
 		const overlong = 'x'.repeat(81);
 
-		expect(await store.registerPasskey(overlong)).toBe(false);
-		expect(await store.renamePasskey(store.passkeys()[0], overlong)).toBe(
-			false,
-		);
-		expect(store.passkeyActionError()).toContain('80 characters or fewer');
+		store.register(overlong);
+		store.rename(store.passkeys()[0], overlong);
+		expect(store.actionError()).toContain('80 characters or fewer');
 		expect(createCredential).not.toHaveBeenCalled();
 		http.expectNone('/api/auth/passkey/update-passkey');
 	});
@@ -401,7 +412,14 @@ describe('Settings workspace', () => {
 		const mutation = http.expectOne('/api/v1/invite-codes');
 		expect(mutation.request.method).toBe('POST');
 		expect(mutation.request.body).toEqual({ code: 'TRACK-DAY-02' });
-		mutation.flush({ code: { id: 'invite-2', code: 'TRACK-DAY-02' } });
+		mutation.flush({
+			code: {
+				id: 'invite-2',
+				code: 'TRACK-DAY-02',
+				status: 'available',
+				createdAt: '2026-08-08T00:00:00.000Z',
+			},
+		});
 		let refresh: TestRequest | undefined;
 		await vi.waitFor(() => {
 			refresh = http.expectOne('/api/v1/invite-codes');
@@ -425,12 +443,10 @@ describe('Settings workspace', () => {
 	it('rejects an invalid invite code at the store mutation boundary', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
-		const store = TestBed.inject(SettingsStore);
+		const store = TestBed.inject(InviteStore);
 
-		expect(await store.createInviteCode('bad code!')).toBe(false);
-		expect(store.inviteActionError()).toContain(
-			'only letters, numbers, or hyphens',
-		);
+		store.create('bad code!');
+		expect(store.actionError()).toContain('only letters, numbers, or hyphens');
 		http.expectNone('/api/v1/invite-codes');
 	});
 
@@ -438,19 +454,21 @@ describe('Settings workspace', () => {
 		flushInitialReads();
 		await fixture.whenStable();
 		fixture.detectChanges();
-		const store = TestBed.inject(SettingsStore);
+		const store = TestBed.inject(InviteStore);
 		writeClipboardText
 			.mockRejectedValueOnce(new Error('Clipboard unavailable'))
 			.mockResolvedValueOnce(undefined);
 
-		await store.copyInviteCode('OWNER-01');
+		store.copy('OWNER-01');
+		await vi.waitFor(() => expect(store.actionError()).toBeTruthy());
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
 			'The invite code could not be copied.',
 		);
 		expect(fixture.nativeElement.textContent).toContain('OWNER-01');
 
-		await store.copyInviteCode('OWNER-01');
+		store.copy('OWNER-01');
+		await vi.waitFor(() => expect(store.message()).toContain('OWNER-01'));
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Copied OWNER-01.');
 		expect(fixture.nativeElement.textContent).not.toContain(
@@ -633,8 +651,9 @@ describe('Settings workspace', () => {
 	});
 
 	it('blocks unavailable invite creation and handles create and revoke failures', async () => {
-		const store = TestBed.inject(SettingsStore);
-		expect(await store.createInviteCode('EARLY-01')).toBe(false);
+		const store = TestBed.inject(InviteStore);
+		store.create('EARLY-01');
+		expect(store.outcome().status).toBe('idle');
 		timezoneStore.resolve('UTC');
 		http.expectOne('/api/v1/invite-codes').flush({
 			allowance: 5,
@@ -659,72 +678,73 @@ describe('Settings workspace', () => {
 	it('serializes invite mutations and supports their failure paths', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
-		const store = TestBed.inject(SettingsStore);
+		const store = TestBed.inject(InviteStore);
 
-		const create = store.createInviteCode('TRACK-03');
-		expect(await store.createInviteCode('TRACK-04')).toBe(false);
+		store.create('TRACK-03');
+		store.create('TRACK-04');
 		http
 			.expectOne('/api/v1/invite-codes')
 			.flush(
 				{ error: 'That invite code already exists.' },
 				{ status: 409, statusText: 'Conflict' },
 			);
-		expect(await create).toBe(false);
-		expect(store.inviteActionError()).toContain('already exists');
+		expect(store.actionError()).toContain('already exists');
 
-		const usedCode = { ...store.inviteCodes()[0], status: 'redeemed' };
-		await store.revokeInviteCode(usedCode);
+		const usedCode = { ...store.codes()[0], status: 'redeemed' };
+		store.revoke(usedCode);
 		http.expectNone(`/api/v1/invite-codes/${usedCode.id}/revoke`);
 
-		const available = store.inviteCodes()[0];
-		const revoke = store.revokeInviteCode(available);
-		await store.revokeInviteCode(available);
+		const available = store.codes()[0];
+		store.revoke(available);
+		store.revoke(available);
 		http
 			.expectOne(`/api/v1/invite-codes/${available.id}/revoke`)
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		await revoke;
-		expect(store.inviteActionError()).toContain('could not be revoked');
+		expect(store.actionError()).toContain('could not be revoked');
 	});
 
 	it('handles empty, malformed, and concurrent passkey registration', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
-		const store = TestBed.inject(SettingsStore);
-		expect(await store.registerPasskey('')).toBe(false);
+		const store = TestBed.inject(PasskeyStore);
+		store.register('');
+		expect(store.actionError()).toContain('80 characters or fewer');
 
 		createCredential.mockResolvedValue({});
-		const malformed = store.registerPasskey('Track tablet');
+		store.register('Track tablet');
 		http
 			.expectOne(
 				(request) =>
 					request.url === '/api/auth/passkey/generate-register-options',
 			)
 			.flush({ challenge: 'AQ' });
-		expect(await malformed).toBe(false);
-		expect(store.passkeyActionError()).toContain(
-			'No passkey was returned by the browser',
+		await vi.waitFor(() =>
+			expect(store.actionError()).toContain(
+				'No passkey was returned by the browser',
+			),
 		);
 
-		const pending = store.registerPasskey('Track tablet');
-		expect(await store.registerPasskey('Track phone')).toBe(false);
+		store.register('Track tablet');
+		store.register('Track phone');
 		http
 			.expectOne(
 				(request) =>
 					request.url === '/api/auth/passkey/generate-register-options',
 			)
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		expect(await pending).toBe(false);
+		expect(store.outcome().status).toBe('failed');
 	});
 
 	it('renames and revokes passkeys while serializing actions', async () => {
 		flushInitialReads();
 		await fixture.whenStable();
-		const store = TestBed.inject(SettingsStore);
+		const store = TestBed.inject(PasskeyStore);
 		const passkey = store.passkeys()[0];
-		expect(await store.renamePasskey(passkey, '')).toBe(false);
+		store.rename(passkey, '');
+		expect(store.actionError()).toContain('80 characters or fewer');
 
-		const rename = store.renamePasskey(passkey, ' Track laptop ');
-		expect(await store.renamePasskey(passkey, 'Other name')).toBe(false);
+		store.rename(passkey, ' Track laptop ');
+		store.rename(passkey, 'Other name');
 		const renameRequest = http.expectOne('/api/auth/passkey/update-passkey');
 		expect(renameRequest.request.body).toEqual({
 			id: 'passkey-1',
@@ -736,15 +756,14 @@ describe('Settings workspace', () => {
 			refresh = http.expectOne('/api/auth/passkey/list-user-passkeys');
 		});
 		refresh?.flush([passkey]);
-		expect(await rename).toBe(true);
+		expect(store.outcome().status).toBe('succeeded');
 
-		const revoke = store.revokePasskey(passkey);
-		await store.revokePasskey(passkey);
+		store.revoke(passkey);
+		store.revoke(passkey);
 		http
 			.expectOne('/api/auth/passkey/delete-passkey')
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		await revoke;
-		expect(store.passkeyActionError()).toContain('could not be completed');
+		expect(store.actionError()).toContain('could not be completed');
 	});
 
 	it('drives invite and passkey row actions through their rendered controls', async () => {
