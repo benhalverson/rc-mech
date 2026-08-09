@@ -1,0 +1,279 @@
+import { computed, signal } from '@angular/core';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CarStore } from '../car-store';
+import type {
+	ArchiveDriveSessionCommand,
+	DriveSession,
+	DriveSessionOutcome,
+	SaveDriveSessionCommand,
+} from './drive-session.models';
+import { DriveSessionStore } from './drive-session-store';
+import { DriveSessions } from './drive-sessions';
+
+const driveSession = (overrides: Partial<DriveSession> = {}): DriveSession => ({
+	id: 'drive-1',
+	carId: 'car-1',
+	startedAt: '2026-08-08T01:00:00.000Z',
+	durationMinutes: 20,
+	conditions: 'Dry',
+	notes: 'Fast',
+	deletedAt: null,
+	...overrides,
+});
+
+class FakeCarStore {
+	readonly loading = signal(false);
+	readonly failure = signal<{ message: string; retryable: boolean } | null>(
+		null,
+	);
+	readonly car = signal<{
+		id: string;
+		name: string;
+		make: string;
+		model: string;
+		archivedAt: string | null;
+	} | null>({
+		id: 'car-1',
+		name: 'Buggy',
+		make: 'Associated',
+		model: 'B7',
+		archivedAt: null,
+	});
+	readonly selectCar = vi.fn();
+	readonly retry = vi.fn();
+}
+
+class FakeDriveSessionStore {
+	readonly sessions = signal<readonly DriveSession[]>([]);
+	readonly timezone = signal('UTC');
+	readonly loading = signal(false);
+	readonly failure = signal<{ message: string; retryable: boolean } | null>(
+		null,
+	);
+	readonly outcome = signal<DriveSessionOutcome>({
+		status: 'idle',
+		operation: null,
+		operationId: null,
+	});
+	readonly pending = computed(() => this.outcome().status === 'pending');
+	readonly error = signal('');
+	readonly activeCount = computed(
+		() => this.sessions().filter((session) => !session.deletedAt).length,
+	);
+	readonly selectCar = vi.fn();
+	readonly retry = vi.fn();
+	readonly saveDriveSession = vi.fn(
+		(_command: SaveDriveSessionCommand): void => undefined,
+	);
+	readonly archiveDriveSession = vi.fn(
+		(_command: ArchiveDriveSessionCommand): void => undefined,
+	);
+}
+
+describe('DriveSessions', () => {
+	let fixture: ComponentFixture<DriveSessions>;
+	let carStore: FakeCarStore;
+	let store: FakeDriveSessionStore;
+
+	beforeEach(async () => {
+		carStore = new FakeCarStore();
+		store = new FakeDriveSessionStore();
+		await TestBed.configureTestingModule({
+			imports: [DriveSessions],
+			providers: [
+				provideRouter([]),
+				{ provide: CarStore, useValue: carStore },
+				{ provide: DriveSessionStore, useValue: store },
+			],
+		}).compileComponents();
+		fixture = TestBed.createComponent(DriveSessions);
+		fixture.componentRef.setInput('carId', 'car-1');
+	});
+
+	afterEach(() => TestBed.resetTestingModule());
+
+	const detect = (): HTMLElement => {
+		fixture.detectChanges();
+		return fixture.nativeElement as HTMLElement;
+	};
+
+	const button = (label: string): HTMLButtonElement => {
+		const match = [
+			...(fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+		].find((candidate) => candidate.textContent?.includes(label));
+		if (!match) throw new Error(`Button not found: ${label}`);
+		return match;
+	};
+
+	it('selects route context and renders loading and failure states', () => {
+		let root = detect();
+		expect(carStore.selectCar).toHaveBeenCalledWith('car-1');
+		expect(store.selectCar).toHaveBeenCalledWith('car-1');
+		expect(root.textContent).toContain('No drive sessions recorded');
+
+		store.loading.set(true);
+		root = detect();
+		expect(root.textContent).toContain('Opening drive session history');
+		store.loading.set(false);
+		store.failure.set({ message: 'History failed.', retryable: true });
+		root = detect();
+		expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+			'History failed',
+		);
+		button('Try again').click();
+		expect(store.retry).toHaveBeenCalledOnce();
+
+		store.failure.set({ message: 'Expired.', retryable: false });
+		root = detect();
+		expect(root.querySelector('[role="alert"] button')).toBeNull();
+	});
+
+	it('validates and focuses local Signal Form fields', () => {
+		const root = detect();
+		button('Record the first drive session').click();
+		detect();
+		const startedAt = root.querySelector(
+			'input[type="datetime-local"]',
+		) as HTMLInputElement;
+		const duration = root.querySelector(
+			'input[inputmode="numeric"]',
+		) as HTMLInputElement;
+		startedAt.value = '';
+		startedAt.dispatchEvent(new Event('input'));
+		duration.value = '2000';
+		duration.dispatchEvent(new Event('input'));
+		(root.querySelector('form') as HTMLFormElement).dispatchEvent(
+			new Event('submit'),
+		);
+		detect();
+		expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+			'Add when this drive session started',
+		);
+		expect(document.activeElement).toBe(startedAt);
+		expect(store.saveDriveSession).not.toHaveBeenCalled();
+
+		startedAt.value = '2026-08-08T01:00';
+		startedAt.dispatchEvent(new Event('input'));
+		(root.querySelector('form') as HTMLFormElement).dispatchEvent(
+			new Event('submit'),
+		);
+		detect();
+		expect(document.activeElement).toBe(duration);
+	});
+
+	it('dispatches one immutable save command and reacts to typed outcomes', () => {
+		const root = detect();
+		button('Record the first drive session').click();
+		detect();
+		const duration = root.querySelector(
+			'input[inputmode="numeric"]',
+		) as HTMLInputElement;
+		duration.value = '30';
+		duration.dispatchEvent(new Event('input'));
+		(root.querySelector('form') as HTMLFormElement).dispatchEvent(
+			new Event('submit'),
+		);
+		expect(store.saveDriveSession).toHaveBeenCalledOnce();
+		expect(store.saveDriveSession).toHaveBeenCalledWith({
+			carId: 'car-1',
+			sessionId: null,
+			draft: expect.objectContaining({
+				durationMinutes: 30,
+				conditions: '',
+				notes: '',
+			}),
+		});
+
+		store.outcome.set({
+			status: 'pending',
+			operation: 'save-drive-session',
+			operationId: 1,
+		});
+		detect();
+		expect(button('Save session').disabled).toBe(true);
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'save-drive-session',
+			operationId: 1,
+			session: driveSession(),
+		});
+		detect();
+		expect(root.querySelector('form')).toBeNull();
+		expect(root.textContent).toContain('Drive session recorded');
+	});
+
+	it('renders save and archive failures from store outcomes', () => {
+		const root = detect();
+		button('Record the first drive session').click();
+		detect();
+		store.error.set('The drive session could not be saved.');
+		store.outcome.set({
+			status: 'failed',
+			operation: 'save-drive-session',
+			operationId: 1,
+			error: { kind: 'unavailable' },
+		});
+		detect();
+		expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+			'could not be saved',
+		);
+
+		store.error.set('The drive session could not be archived.');
+		store.outcome.set({
+			status: 'failed',
+			operation: 'archive-drive-session',
+			operationId: 2,
+			error: { kind: 'unavailable' },
+		});
+		detect();
+		expect(root.querySelector('[role="status"]')?.textContent).toContain(
+			'could not be archived',
+		);
+	});
+
+	it('dispatches archive intent and keeps archived cars read-only', () => {
+		store.sessions.set([driveSession()]);
+		let root = detect();
+		button('Archive').click();
+		expect(store.archiveDriveSession).toHaveBeenCalledWith({
+			carId: 'car-1',
+			sessionId: 'drive-1',
+		});
+
+		carStore.car.update((car) => (car ? { ...car, archivedAt: 'now' } : car));
+		root = detect();
+		expect(root.textContent).not.toContain('Record a drive session');
+		expect(root.querySelector('.session-row .form-actions')).toBeNull();
+	});
+
+	it('guards editor entry while pending or archived', () => {
+		const component = fixture.componentInstance as unknown as {
+			openAdd(): void;
+			archive(session: DriveSession): void;
+		};
+		detect();
+		store.outcome.set({
+			status: 'pending',
+			operation: 'save-drive-session',
+			operationId: 1,
+		});
+		component.openAdd();
+		component.archive(driveSession());
+		expect(
+			(fixture.nativeElement as HTMLElement).querySelector('form'),
+		).toBeNull();
+
+		store.outcome.set({ status: 'idle', operation: null, operationId: null });
+		carStore.car.update((car) => (car ? { ...car, archivedAt: 'now' } : car));
+		component.openAdd();
+		component.archive(driveSession());
+		carStore.car.set(null);
+		component.archive(driveSession());
+		expect(
+			(fixture.nativeElement as HTMLElement).querySelector('form'),
+		).toBeNull();
+		expect(store.archiveDriveSession).not.toHaveBeenCalled();
+	});
+});

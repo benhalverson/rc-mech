@@ -2,8 +2,8 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CarRunsStore } from '../car/car-runs-store';
 import { CarStore } from '../car/car-store';
+import { DRIVE_SESSION_CONTEXT } from '../car/drive-sessions/drive-session-context';
 import { VoiceLogStore } from './voice-log-store';
 import type {
 	PendingVoiceCapture,
@@ -105,7 +105,7 @@ describe('VoiceTrackLog', () => {
 		selectCar: ReturnType<typeof vi.fn>;
 		retry: ReturnType<typeof vi.fn>;
 	};
-	let runsStore: {
+	let driveSessionContext: {
 		sessions: ReturnType<typeof signal<Array<Record<string, unknown>>>>;
 		timezone: ReturnType<typeof signal<string>>;
 		selectCar: ReturnType<typeof vi.fn>;
@@ -181,10 +181,10 @@ describe('VoiceTrackLog', () => {
 			selectCar: vi.fn(),
 			retry: vi.fn(),
 		};
-		runsStore = {
+		driveSessionContext = {
 			sessions: signal([
 				{
-					id: 'deleted-run',
+					id: 'deleted-drive-session',
 					startedAt: '2026-08-07T01:00:00.000Z',
 					conditions: null,
 					deletedAt: '2026-08-08T00:00:00.000Z',
@@ -241,7 +241,7 @@ describe('VoiceTrackLog', () => {
 			providers: [
 				provideRouter([]),
 				{ provide: CarStore, useValue: carStore },
-				{ provide: CarRunsStore, useValue: runsStore },
+				{ provide: DRIVE_SESSION_CONTEXT, useValue: driveSessionContext },
 				{ provide: VoiceLogStore, useValue: voiceStore },
 				{ provide: VoiceRecorder, useValue: recorder },
 			],
@@ -325,7 +325,7 @@ describe('VoiceTrackLog', () => {
 	it('supports microphone, text fallback, cancellation, and capture errors', async () => {
 		await detect();
 		expect(carStore.selectCar).toHaveBeenCalledWith('car-1');
-		expect(runsStore.selectCar).toHaveBeenCalledWith('car-1');
+		expect(driveSessionContext.selectCar).toHaveBeenCalledWith('car-1');
 		expect(voiceStore.selectCar).toHaveBeenCalledWith('car-1');
 		expect(recorder.detectSupport).toHaveBeenCalledOnce();
 
@@ -378,7 +378,7 @@ describe('VoiceTrackLog', () => {
 			'drive-1',
 		);
 
-		runsStore.sessions.set([]);
+		driveSessionContext.sessions.set([]);
 		await detect();
 		button('Start voice note').click();
 		await detect();
@@ -390,15 +390,15 @@ describe('VoiceTrackLog', () => {
 		);
 		internal().showTextFallback();
 		await detect();
-		const noteWithoutRun = fixture.nativeElement.querySelector(
+		const noteWithoutDriveSession = fixture.nativeElement.querySelector(
 			'#voice-text-note',
 		) as HTMLTextAreaElement;
-		noteWithoutRun.value = 'No run selected';
-		noteWithoutRun.dispatchEvent(new Event('input'));
+		noteWithoutDriveSession.value = 'No drive session selected';
+		noteWithoutDriveSession.dispatchEvent(new Event('input'));
 		button('Keep text note').click();
 		await detect();
 		expect(voiceStore.enqueueText).toHaveBeenLastCalledWith(
-			'No run selected',
+			'No drive session selected',
 			null,
 		);
 
@@ -479,7 +479,7 @@ describe('VoiceTrackLog', () => {
 	});
 
 	it('renders and controls local, pending, failed, and processing notes', async () => {
-		runsStore.sessions.set([
+		driveSessionContext.sessions.set([
 			{
 				id: 'drive-1',
 				startedAt: '2026-08-08T01:00:00.000Z',
@@ -529,9 +529,11 @@ describe('VoiceTrackLog', () => {
 
 		voiceStore.updateContext.mockResolvedValueOnce(null);
 		await internal().saveContext(voiceUpdate({ id: 'same-car' }));
-		runsStore.sessions.set([]);
+		driveSessionContext.sessions.set([]);
 		await detect();
-		await internal().saveContext(voiceUpdate({ id: 'same-car-no-run' }));
+		await internal().saveContext(
+			voiceUpdate({ id: 'same-car-no-drive-session' }),
+		);
 		expect(internal().contextCar(voiceUpdate({ id: 'unmapped' }))).toBe(
 			'car-1',
 		);

@@ -7,7 +7,7 @@ export type CarSection =
 	| 'build'
 	| 'setups'
 	| 'photos'
-	| 'runs'
+	| 'drive-sessions'
 	| 'voice';
 
 @Component({
@@ -46,7 +46,7 @@ export class CarSectionShell {
 		{ path: 'build', label: 'Build' },
 		{ path: 'setups', label: 'Setups' },
 		{ path: 'photos', label: 'Photos' },
-		{ path: 'runs', label: 'Runs' },
+		{ path: 'drive-sessions', label: 'Drive sessions' },
 		{ path: 'voice', label: 'Voice log' },
 	];
 }

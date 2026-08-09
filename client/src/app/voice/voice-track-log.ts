@@ -9,9 +9,9 @@ import {
 	signal,
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { CarRunsStore } from '../car/car-runs-store';
 import { CarSectionShell } from '../car/car-section-shell';
 import { CarStore } from '../car/car-store';
+import { DRIVE_SESSION_CONTEXT } from '../car/drive-sessions/drive-session-context';
 import type { VoiceUpdate } from './voice.models';
 import { VoiceLogStore } from './voice-log-store';
 import { VoiceRecorder } from './voice-recorder';
@@ -28,7 +28,7 @@ type RecordingMode = { kind: 'capture' } | { kind: 'correction'; id: string };
 export class VoiceTrackLog {
 	readonly carId = input('');
 	protected readonly carStore = inject(CarStore);
-	protected readonly runsStore = inject(CarRunsStore);
+	protected readonly driveSessionContext = inject(DRIVE_SESSION_CONTEXT);
 	protected readonly voiceStore = inject(VoiceLogStore);
 	protected readonly recorder = inject(VoiceRecorder);
 	private readonly router = inject(Router);
@@ -40,9 +40,10 @@ export class VoiceTrackLog {
 	protected readonly correctionText = signal('');
 	protected readonly correctingId = signal<string | null>(null);
 	protected readonly contextCars = signal<Record<string, string>>({});
-	protected readonly selectedDriveId = linkedSignal(
+	protected readonly selectedDriveSessionId = linkedSignal(
 		() =>
-			this.runsStore.sessions().find((session) => !session.deletedAt)?.id ?? '',
+			this.driveSessionContext.sessions().find((session) => !session.deletedAt)
+				?.id ?? '',
 	);
 	protected readonly hasHistory = computed(
 		() =>
@@ -67,7 +68,7 @@ export class VoiceTrackLog {
 			const carId = this.carId();
 			if (!carId) return;
 			this.carStore.selectCar(carId);
-			this.runsStore.selectCar(carId);
+			this.driveSessionContext.selectCar(carId);
 			this.voiceStore.selectCar(carId);
 			void this.voiceStore.retryQueued();
 		});
@@ -75,7 +76,9 @@ export class VoiceTrackLog {
 	}
 
 	protected setDriveSession(event: Event): void {
-		this.selectedDriveId.set((event.currentTarget as HTMLSelectElement).value);
+		this.selectedDriveSessionId.set(
+			(event.currentTarget as HTMLSelectElement).value,
+		);
 	}
 
 	protected showTextFallback(): void {
@@ -124,7 +127,7 @@ export class VoiceTrackLog {
 			if (mode.kind === 'capture')
 				await this.voiceStore.enqueueAudio(
 					blob,
-					this.selectedDriveId() || null,
+					this.selectedDriveSessionId() || null,
 				);
 			else await this.voiceStore.correctAudio(mode.id, blob);
 			this.focusHistory();
@@ -152,7 +155,10 @@ export class VoiceTrackLog {
 			return;
 		}
 		this.recorderError.set('');
-		await this.voiceStore.enqueueText(note, this.selectedDriveId() || null);
+		await this.voiceStore.enqueueText(
+			note,
+			this.selectedDriveSessionId() || null,
+		);
 		this.textNote.set('');
 		this.textFallback.set(false);
 		this.focusHistory();
@@ -205,7 +211,7 @@ export class VoiceTrackLog {
 		const result = await this.voiceStore.updateContext(
 			update.id,
 			carId,
-			carId === this.carId() ? this.selectedDriveId() || null : null,
+			carId === this.carId() ? this.selectedDriveSessionId() || null : null,
 		);
 		if (result && carId !== this.carId())
 			await this.router.navigate(['/garage', carId, 'voice']);

@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { Component } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { provideRouter, Router } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
+import { afterEach, describe, expect, it } from 'vitest';
 import { routes } from './app.routes';
+
+@Component({ template: '' })
+class RedirectTarget {}
+
+afterEach(() => TestBed.resetTestingModule());
 
 describe('protected workspace routes', () => {
 	it('lazy-loads Garage behind an owner canMatch gate', () => {
@@ -23,8 +32,8 @@ describe('protected workspace routes', () => {
 	});
 
 	it('gives every car leaf its own protected lazy route boundary', () => {
-		const carRoutes = routes.filter((route) =>
-			route.path?.startsWith('garage/:carId/'),
+		const carRoutes = routes.filter(
+			(route) => route.path?.startsWith('garage/:carId/') && route.loadChildren,
 		);
 
 		expect(carRoutes.map((route) => route.path)).toEqual([
@@ -32,7 +41,7 @@ describe('protected workspace routes', () => {
 			'garage/:carId/setups',
 			'garage/:carId/build',
 			'garage/:carId/photos',
-			'garage/:carId/runs',
+			'garage/:carId/drive-sessions',
 			'garage/:carId/voice',
 		]);
 		expect(new Set(carRoutes.map((route) => route.loadChildren)).size).toBe(6);
@@ -43,11 +52,48 @@ describe('protected workspace routes', () => {
 		}
 	});
 
+	it('keeps the legacy Drive-session URL as a preserving redirect to the protected canonical route', async () => {
+		const legacyRoute = routes.find(
+			(route) => route.path === 'garage/:carId/runs',
+		);
+		expect(legacyRoute?.canMatch).toBeUndefined();
+		expect(
+			routes.find((route) => route.path === 'garage/:carId/drive-sessions')
+				?.canMatch,
+		).toHaveLength(1);
+		expect(legacyRoute?.pathMatch).toBe('full');
+		expect(legacyRoute?.redirectTo).toBeTypeOf('function');
+
+		await TestBed.configureTestingModule({
+			imports: [RedirectTarget],
+			providers: [
+				provideRouter([
+					{ ...legacyRoute },
+					{
+						path: 'garage/:carId/drive-sessions',
+						component: RedirectTarget,
+					},
+				]),
+			],
+		}).compileComponents();
+		const harness = await RouterTestingHarness.create();
+		await harness.navigateByUrl(
+			'/garage/car%2Fone/runs?source=bookmark&filter=archived#session-2',
+		);
+
+		expect(TestBed.inject(Router).url).toBe(
+			'/garage/car%2Fone/drive-sessions?source=bookmark&filter=archived#session-2',
+		);
+		await harness.navigateByUrl('/garage/car-2/runs');
+		expect(TestBed.inject(Router).url).toBe('/garage/car-2/drive-sessions');
+	});
+
 	it('keeps feature stores beside lazy leaf components', async () => {
 		for (const route of routes.filter(
 			(candidate) =>
-				candidate.path === 'garage' ||
-				candidate.path?.startsWith('garage/:carId/'),
+				(candidate.path === 'garage' ||
+					candidate.path?.startsWith('garage/:carId/')) &&
+				Boolean(candidate.loadChildren),
 		)) {
 			const lazyRoutes = await route.loadChildren?.();
 			expect(Array.isArray(lazyRoutes)).toBe(true);
@@ -82,11 +128,13 @@ describe('protected workspace routes', () => {
 	it('keeps every protected workspace behind the session gate', () => {
 		for (const route of routes.filter(
 			(candidate) =>
-				candidate.path?.startsWith('garage') ||
+				(candidate.path?.startsWith('garage') && !candidate.redirectTo) ||
 				['maintenance', 'settings'].includes(candidate.path ?? ''),
 		)) {
 			expect(route.canMatch).toHaveLength(1);
-			expect(route.loadComponent ?? route.loadChildren).toBeTypeOf('function');
+			expect(
+				route.loadComponent ?? route.loadChildren ?? route.redirectTo,
+			).toBeTypeOf('function');
 		}
 	});
 

@@ -19,11 +19,12 @@ import { CarBuild } from './car-build';
 import { CarBuildStore } from './car-build-store';
 import { CarOverview } from './car-overview';
 import { CarPhotos } from './car-photos';
-import { CarRuns } from './car-runs';
-import { CarRunsStore } from './car-runs-store';
 import { CarSetups } from './car-setups';
 import { CarSetupsStore } from './car-setups-store';
 import { CarStore } from './car-store';
+import { DriveSessionGateway } from './drive-sessions/drive-session-gateway';
+import { DriveSessionStore } from './drive-sessions/drive-session-store';
+import { DriveSessions } from './drive-sessions/drive-sessions';
 
 type TestSignal<T> = (() => T) & { set(value: T): void };
 
@@ -49,9 +50,9 @@ const testRoutes: Routes = [
 		providers: [CarPhotoStore, CarStore],
 	},
 	{
-		path: 'garage/:carId/runs',
-		component: CarRuns,
-		providers: [CarRunsStore, CarStore],
+		path: 'garage/:carId/drive-sessions',
+		component: DriveSessions,
+		providers: [DriveSessionGateway, DriveSessionStore, CarStore],
 	},
 ];
 
@@ -61,14 +62,15 @@ describe('Car section routes', () => {
 
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
-			imports: [CarBuild, CarOverview, CarPhotos, CarRuns, CarSetups],
+			imports: [CarBuild, CarOverview, CarPhotos, DriveSessions, CarSetups],
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter(testRoutes, withComponentInputBinding()),
 				CarBuildStore,
 				CarPhotoStore,
-				CarRunsStore,
+				DriveSessionGateway,
+				DriveSessionStore,
 				CarSetupsStore,
 				CarStore,
 				SetupSnapshotStore,
@@ -125,7 +127,7 @@ describe('Car section routes', () => {
 			visible: 'No photos yet',
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			urls: [
 				'/api/v1/cars/car-1',
 				'/api/v1/cars/car-1/drives',
@@ -174,7 +176,7 @@ describe('Car section routes', () => {
 						'nav[aria-label="Car detail sections"] a[aria-current="page"]',
 					)
 					?.textContent?.toLowerCase(),
-			).toContain(path);
+			).toContain(path.replaceAll('-', ' '));
 		},
 	);
 
@@ -188,7 +190,7 @@ describe('Car section routes', () => {
 			reads: [] as const,
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			reads: [
 				['/api/v1/cars/car-1/drives', { driveSessions: [] }],
 				['/api/v1/preferences/timezone', { timezone: 'UTC' }],
@@ -245,7 +247,7 @@ describe('Car section routes', () => {
 			endpoint: '/api/v1/cars/car-1/components',
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			endpoint: '/api/v1/cars/car-1/drives',
 		},
 	])(
@@ -256,7 +258,7 @@ describe('Car section routes', () => {
 			http
 				.expectOne((request) => request.url === endpoint)
 				.flush('expired', { status: 401, statusText: 'Unauthorized' });
-			if (path === 'runs')
+			if (path === 'drive-sessions')
 				http
 					.expectOne('/api/v1/preferences/timezone')
 					.flush({ timezone: 'UTC' });
@@ -411,8 +413,8 @@ describe('Car section routes', () => {
 			.flush({ components: [] });
 	});
 
-	it('resets run editor state when a reused route changes cars', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
+	it('resets drive session editor state when a reused route changes cars', async () => {
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -427,15 +429,17 @@ describe('Car section routes', () => {
 			message: TestSignal<string>;
 		};
 		component.openAdd();
-		component.formError.set('Old run error');
-		component.message.set('Old run message');
+		component.formError.set('Old drive session error');
+		component.message.set('Old drive session message');
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
 
-		await harness.navigateByUrl('/garage/car-2/runs');
+		await harness.navigateByUrl('/garage/car-2/drive-sessions');
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
-		expect(harness.routeNativeElement?.textContent).not.toContain('Old run');
+		expect(harness.routeNativeElement?.textContent).not.toContain(
+			'Old drive session',
+		);
 		http
 			.expectOne('/api/v1/cars/car-2')
 			.flush({ car: { ...car, id: 'car-2' } });
@@ -527,13 +531,13 @@ describe('Car section routes', () => {
 		);
 	});
 
-	it('clears stale run feedback and identifies expired mutations', async () => {
+	it('clears stale drive session feedback and identifies expired mutations', async () => {
 		const drive = {
 			id: 'drive-1',
 			carId: 'car-1',
 			startedAt: '2026-08-07T10:00:00.000Z',
 		};
-		await harness.navigateByUrl('/garage/car-1/runs');
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -562,12 +566,14 @@ describe('Car section routes', () => {
 			conditions: '',
 			notes: '',
 		});
-		component.formError.set('Old run error');
-		component.message.set('Old run success');
+		component.formError.set('Old drive session error');
+		component.message.set('Old drive session success');
 		await harness.fixture.whenStable();
 		component.save();
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).not.toContain('Old run');
+		expect(harness.routeNativeElement?.textContent).not.toContain(
+			'Old drive session',
+		);
 		http
 			.expectOne('/api/v1/cars/car-1/drives')
 			.flush('expired', { status: 401, statusText: 'Unauthorized' });
@@ -648,7 +654,7 @@ describe('Car section routes', () => {
 			body: { components: [] },
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			endpoint: '/api/v1/cars/car%2Fone/drives',
 			body: { driveSessions: [] },
 		},
@@ -660,7 +666,7 @@ describe('Car section routes', () => {
 				car: { ...car, id: 'car/one' },
 			});
 			http.expectOne((request) => request.url === endpoint).flush(body);
-			if (path === 'runs')
+			if (path === 'drive-sessions')
 				http
 					.expectOne('/api/v1/preferences/timezone')
 					.flush({ timezone: 'UTC' });
@@ -675,7 +681,7 @@ describe('Car section routes', () => {
 			carId: 'car/one',
 			startedAt: '2026-08-07T00:00:00.000Z',
 		};
-		await harness.navigateByUrl('/garage/car%2Fone/runs');
+		await harness.navigateByUrl('/garage/car%2Fone/drive-sessions');
 		http.expectOne('/api/v1/cars/car%2Fone').flush({
 			car: { ...car, id: 'car/one' },
 		});
@@ -824,7 +830,7 @@ describe('Car section routes', () => {
 			body: { components: [] },
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			endpoint: '/api/v1/cars/car%2Fone/drives',
 			body: { driveSessions: [] },
 		},
@@ -836,7 +842,7 @@ describe('Car section routes', () => {
 				car: { ...car, id: 'car/one' },
 			});
 			http.expectOne((request) => request.url === endpoint).flush(body);
-			if (path === 'runs')
+			if (path === 'drive-sessions')
 				http
 					.expectOne('/api/v1/preferences/timezone')
 					.flush({ timezone: 'UTC' });
@@ -990,8 +996,8 @@ describe('Car section routes', () => {
 		);
 	});
 
-	it('blocks run editor actions while a mutation is in flight', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
+	it('blocks drive session editor actions while a mutation is in flight', async () => {
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -1001,40 +1007,20 @@ describe('Car section routes', () => {
 		harness.detectChanges();
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
-			action: TestSignal<string | null>;
-			openAdd(): void;
 			cancel(): void;
 			save(): void;
 		};
-		component.action.set('archive:drive-1');
-		component.openAdd();
+		(
+			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
+				(button) =>
+					button.textContent?.includes('Record the first drive session'),
+			) as HTMLButtonElement
+		).click();
 		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeFalsy();
-		expect(
-			(
-				[
-					...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-				].find((button) =>
-					button.textContent?.includes('Record the first drive'),
-				) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
-
-		component.action.set(null);
-		component.openAdd();
-		harness.detectChanges();
-		const startedAt = harness.routeNativeElement?.querySelector(
-			'input[type="datetime-local"]',
-		) as HTMLInputElement;
-		startedAt.value = '';
-		startedAt.dispatchEvent(new Event('input'));
-		harness.detectChanges();
-		expect(
-			harness.routeNativeElement
-				?.querySelector('form')
-				?.getAttribute('aria-describedby'),
-		).toBeNull();
-		component.action.set('save');
+		(
+			harness.routeNativeElement?.querySelector('form') as HTMLFormElement
+		).dispatchEvent(new Event('submit'));
+		const mutation = http.expectOne('/api/v1/cars/car-1/drives');
 		harness.detectChanges();
 		const cancel = [
 			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
@@ -1046,14 +1032,23 @@ describe('Car section routes', () => {
 		component.save();
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
-		http.expectNone(
-			(request) =>
-				request.method !== 'GET' && request.url === '/api/v1/cars/car-1/drives',
+		http.expectNone('/api/v1/cars/car-1/drives');
+		mutation.flush({
+			driveSession: {
+				id: 'drive-1',
+				carId: 'car-1',
+				startedAt: '2026-08-08T00:00:00.000Z',
+			},
+		});
+		await vi.waitFor(() =>
+			http
+				.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
+				.flush({ driveSessions: [] }),
 		);
 	});
 
 	it('normalizes a number input with an invalid stored timezone', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -1086,7 +1081,13 @@ describe('Car section routes', () => {
 		expect(mutation.request.method).toBe('POST');
 		expect(mutation.request.body.durationMinutes).toBe(30);
 		expect(mutation.request.body.startedAt).toMatch(/Z$/);
-		mutation.flush({ driveSession: { id: 'drive-1' } });
+		mutation.flush({
+			driveSession: {
+				id: 'drive-1',
+				carId: 'car-1',
+				startedAt: mutation.request.body.startedAt,
+			},
+		});
 		let refresh: TestRequest | undefined;
 		await vi.waitFor(() => {
 			refresh = http.expectOne(
@@ -1096,8 +1097,8 @@ describe('Car section routes', () => {
 		refresh?.flush({ driveSessions: [] });
 	});
 
-	it('falls back to UTC before rendering a run with an invalid stored timezone', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
+	it('falls back to UTC before rendering a drive session with an invalid stored timezone', async () => {
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -1119,9 +1120,9 @@ describe('Car section routes', () => {
 
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
-			runsStore: { timezone(): string };
+			driveSessionStore: { timezone(): string };
 		};
-		expect(component.runsStore.timezone()).toBe('UTC');
+		expect(component.driveSessionStore.timezone()).toBe('UTC');
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Conditions not recorded',
 		);
@@ -1496,7 +1497,7 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeTruthy();
 	});
 
-	it('retries the run log and completes edit and archive actions', async () => {
+	it('retries the drive session history and completes edit and archive actions', async () => {
 		const active = {
 			id: 'drive-1',
 			carId: 'car-1',
@@ -1511,15 +1512,15 @@ describe('Car section routes', () => {
 			startedAt: '2026-08-06T10:00:00.000Z',
 			durationMinutes: 20,
 			conditions: 'Dusty',
-			notes: 'Archived run',
+			notes: 'Archived drive session',
 			deletedAt: '2026-08-07T00:00:00.000Z',
 		};
-		await harness.navigateByUrl('/garage/car-1/runs');
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		await Promise.resolve();
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.textContent).toContain(
-			'Opening the run log',
+			'Opening drive session history',
 		);
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -1544,7 +1545,9 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Conditions not recorded',
 		);
-		expect(harness.routeNativeElement?.textContent).toContain('Archived run');
+		expect(harness.routeNativeElement?.textContent).toContain(
+			'Archived drive session',
+		);
 
 		const button = (label: string): HTMLButtonElement =>
 			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
@@ -1583,7 +1586,9 @@ describe('Car section routes', () => {
 		);
 
 		button('Archive').click();
-		http.expectOne('/api/v1/cars/car-1/drives/drive-1').flush({ status: true });
+		http.expectOne('/api/v1/cars/car-1/drives/drive-1').flush({
+			driveSession: { ...active, deletedAt: 'now' },
+		});
 		await vi.waitFor(() => {
 			refresh = http.expectOne(
 				(request) => request.url === '/api/v1/cars/car-1/drives',
@@ -1597,8 +1602,8 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.textContent).toContain('0 recorded');
 	});
 
-	it('focuses invalid run fields and falls back to a generic summary', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
+	it('focuses invalid drive session fields and falls back to a generic summary', async () => {
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -1638,9 +1643,9 @@ describe('Car section routes', () => {
 
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
-			runForm(): { errorSummary(): Array<{ message?: string }> };
+			driveSessionForm(): { errorSummary(): Array<{ message?: string }> };
 		};
-		Object.defineProperty(component.runForm(), 'errorSummary', {
+		Object.defineProperty(component.driveSessionForm(), 'errorSummary', {
 			configurable: true,
 			value: () => [],
 		});
@@ -1765,7 +1770,7 @@ describe('Car section routes', () => {
 			TestBed.createComponent(CarOverview),
 			TestBed.createComponent(CarBuild),
 			TestBed.createComponent(CarPhotos),
-			TestBed.createComponent(CarRuns),
+			TestBed.createComponent(DriveSessions),
 			TestBed.createComponent(CarSetups),
 		];
 		for (const fixture of fixtures) fixture.detectChanges();
@@ -1779,7 +1784,7 @@ describe('Car section routes', () => {
 
 	it.each([
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			preRetryReads: [
 				['/api/v1/cars/car-1/drives', { driveSessions: [] }],
 				['/api/v1/preferences/timezone', { timezone: 'UTC' }],
@@ -1972,7 +1977,7 @@ describe('Car section routes', () => {
 			reads: [] as const,
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			reads: [
 				['/api/v1/cars/car-1/drives', { driveSessions: [] }],
 				['/api/v1/preferences/timezone', { timezone: 'UTC' }],
@@ -2117,7 +2122,7 @@ describe('Car section routes', () => {
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
 	});
 
-	it('covers run editor guards, conversions, and action listeners', async () => {
+	it('covers drive session editor guards, conversions, and action listeners', async () => {
 		const active = {
 			id: 'drive-1',
 			carId: 'car-1',
@@ -2129,7 +2134,7 @@ describe('Car section routes', () => {
 			id: 'drive-2',
 			deletedAt: '2026-08-08T00:00:00.000Z',
 		};
-		await harness.navigateByUrl('/garage/car-1/runs');
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
 		http
 			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
@@ -2139,7 +2144,6 @@ describe('Car section routes', () => {
 		harness.detectChanges();
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
-			action: TestSignal<string | null>;
 			openAdd(): void;
 			openEdit(value: typeof active): void;
 			cancel(): void;
@@ -2149,7 +2153,7 @@ describe('Car section routes', () => {
 			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
 				(candidate) => candidate.textContent?.trim() === label,
 			) as HTMLButtonElement;
-		button('Record a drive').click();
+		button('Record a drive session').click();
 		harness.detectChanges();
 		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
 		component.cancel();
@@ -2175,10 +2179,6 @@ describe('Car section routes', () => {
 			).value,
 		).toBe('20');
 		component.cancel();
-		component.action.set('busy');
-		component.openEdit(active);
-		component.archive(active);
-		component.action.set(null);
 		component.openEdit(deleted);
 
 		Object.defineProperty(component, 'openAdd', {
@@ -2187,12 +2187,12 @@ describe('Car section routes', () => {
 		});
 		harness.detectChanges();
 		expect(
-			button('Record a drive').dispatchEvent(
+			button('Record a drive session').dispatchEvent(
 				new MouseEvent('click', { cancelable: true }),
 			),
 		).toBe(true);
 
-		await harness.navigateByUrl('/garage/car-2/runs');
+		await harness.navigateByUrl('/garage/car-2/drive-sessions');
 		http
 			.expectOne('/api/v1/cars/car-2')
 			.flush({ car: { ...car, id: 'car-2' } });
@@ -2210,7 +2210,7 @@ describe('Car section routes', () => {
 			firstDrive.dispatchEvent(new MouseEvent('click', { cancelable: true })),
 		).toBe(true);
 
-		await harness.navigateByUrl('/garage/car-3/runs');
+		await harness.navigateByUrl('/garage/car-3/drive-sessions');
 		http.expectOne('/api/v1/cars/car-3').flush({
 			car: {
 				...car,
@@ -2234,8 +2234,8 @@ describe('Car section routes', () => {
 		).toBe(false);
 	});
 
-	it('covers run save guards and current mutation errors', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
+	it('covers drive session save guards and current mutation errors', async () => {
+		await harness.navigateByUrl('/garage/car-1/drive-sessions');
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
 			openAdd(): void;
@@ -2269,14 +2269,16 @@ describe('Car section routes', () => {
 		let mutation = http.expectOne('/api/v1/cars/car-1/drives');
 		expect(mutation.request.body.startedAt).toBe('');
 		mutation.flush('archived', { status: 409, statusText: 'Conflict' });
+		harness.detectChanges();
 		expect(component.formError()).toContain('Restore this car');
 		component.save();
 		mutation = http.expectOne('/api/v1/cars/car-1/drives');
 		mutation.flush('offline', { status: 503, statusText: 'Unavailable' });
+		harness.detectChanges();
 		expect(component.formError()).toContain('could not be saved');
 	});
 
-	it('ignores stale run save and archive responses', async () => {
+	it('ignores stale drive session save and archive responses', async () => {
 		const session = {
 			id: 'drive-1',
 			carId: 'car-1',
@@ -2294,7 +2296,7 @@ describe('Car section routes', () => {
 			}>;
 		} => harness.routeDebugElement?.componentInstance as never;
 		const open = async (carId: string): Promise<void> => {
-			await harness.navigateByUrl(`/garage/${carId}/runs`);
+			await harness.navigateByUrl(`/garage/${carId}/drive-sessions`);
 			http.expectOne(`/api/v1/cars/${carId}`).flush({
 				car: { ...car, id: carId },
 			});

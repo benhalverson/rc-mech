@@ -1,0 +1,87 @@
+@if (carStore.loading()) {
+	<div class="state-card" role="status">Opening the car record…</div>
+} @else if (carStore.failure(); as failure) {
+	<div class="state-card" role="alert">
+		<p>{{ failure.message }}</p>
+		@if (failure.retryable) {
+			<button type="button" (click)="carStore.retry()">Try again</button>
+		}
+	</div>
+} @else if (carStore.car(); as car) {
+	<app-car-section-shell [car]="car" section="drive-sessions">
+		<section class="session-log" aria-labelledby="drive-sessions-title">
+			<div class="section-heading">
+				<div>
+					<div class="eyebrow">Drive history</div>
+					<h3 id="drive-sessions-title">Drive sessions</h3>
+				</div>
+				<span><strong>{{ driveSessionStore.activeCount() }}</strong> recorded</span>
+				@if (!car.archivedAt && !editing()) {
+					<a class="button" [routerLink]="['/garage', car.id, 'voice']">Voice track log</a>
+					<button class="button" type="button" (click)="openAdd()" [disabled]="driveSessionStore.pending()">Record a drive session</button>
+				}
+			</div>
+			@if (editing()) {
+				<form (submit)="save($event)" aria-labelledby="drive-session-form-title" [attr.aria-describedby]="formError() ? 'drive-session-form-error' : null" novalidate>
+					<h4 id="drive-session-form-title">{{ editingId() ? 'Edit drive session' : 'Record a drive session' }}</h4>
+					@if (formError()) {
+						<p id="drive-session-form-error" role="alert">{{ formError() }}</p>
+					}
+					<div class="form-grid">
+						<label>Started <input type="datetime-local" [formField]="driveSessionForm.startedAt" [attr.aria-describedby]="driveSessionForm.startedAt().invalid() && formError() ? 'drive-session-form-error' : null" /></label>
+						<label>Duration (minutes) <input type="text" inputmode="numeric" [formField]="driveSessionForm.durationMinutes" [attr.aria-describedby]="driveSessionForm.durationMinutes().invalid() && formError() ? 'drive-session-form-error' : null" /></label>
+						<label class="wide">Conditions <input [formField]="driveSessionForm.conditions" /></label>
+						<label class="wide">Notes <textarea rows="3" [formField]="driveSessionForm.notes"></textarea></label>
+					</div>
+					<p>Saved in {{ driveSessionStore.timezone() }}.</p>
+					<div class="form-actions">
+						<button class="button" type="submit" [disabled]="driveSessionStore.pending()">Save session</button>
+						<button type="button" (click)="cancel()" [disabled]="driveSessionStore.pending()">Cancel</button>
+					</div>
+				</form>
+			} @else if (driveSessionStore.loading()) {
+				<div class="state-card" role="status">Opening drive session history…</div>
+			} @else if (driveSessionStore.failure(); as failure) {
+				<div class="state-card" role="alert">
+					<p>{{ failure.message }}</p>
+					@if (failure.retryable) {
+						<button type="button" (click)="driveSessionStore.retry()">Try again</button>
+					}
+				</div>
+			} @else if (!driveSessionStore.sessions().length) {
+				<div class="state-card">
+					<h4>No drive sessions recorded</h4>
+					@if (!car.archivedAt) {
+						<button type="button" (click)="openAdd()" [disabled]="driveSessionStore.pending()">Record the first drive session</button>
+					}
+				</div>
+			} @else {
+				<div class="session-list" aria-label="Drive session history">
+					@for (session of driveSessionStore.sessions(); track session.id) {
+						<article class="session-row">
+							<div><time [dateTime]="session.startedAt">{{ session.startedAt | date: 'medium':driveSessionStore.timezone() }}</time></div>
+							<div>
+								<strong>{{ session.conditions || 'Conditions not recorded' }}</strong>
+								@if (session.durationMinutes) {
+									<span> · {{ session.durationMinutes }} min</span>
+								}
+								@if (session.notes) {
+									<p>{{ session.notes }}</p>
+								}
+							</div>
+							@if (!session.deletedAt && !car.archivedAt) {
+								<div class="form-actions">
+									<button type="button" (click)="openEdit(session)" [disabled]="driveSessionStore.pending()">Edit</button>
+									<button type="button" (click)="archive(session)" [disabled]="driveSessionStore.pending()">Archive</button>
+								</div>
+							}
+						</article>
+					}
+				</div>
+			}
+			@if (message()) {
+				<p role="status">{{ message() }}</p>
+			}
+		</section>
+	</app-car-section-shell>
+}

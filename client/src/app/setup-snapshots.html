@@ -6,7 +6,7 @@
     </div>
     @if (!archived() && !editing() && state() === 'ready') { <button class="button quiet" type="button" (click)="openAdd()">New setup</button> }
   </div>
-  <p class="section-intro">Keep each baseline intact. Copy the setup you are starting from, then change only what the next run needs.</p>
+  <p class="section-intro">Keep each baseline intact. Copy the setup you are starting from, then change only what the next drive session needs.</p>
   @if (archived()) { <p class="archive-note">This car is archived. Setup history remains available, but snapshots cannot be changed.</p> }
   @if (!archived()) {
     <form class="import-strip" (submit)="previewImport($event)" aria-labelledby="import-setup-title" novalidate>

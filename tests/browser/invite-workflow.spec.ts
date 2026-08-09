@@ -70,7 +70,7 @@ test('invite registration, management, isolation, and accessible states', async 
 		'build',
 		'setups',
 		'photos',
-		'runs',
+		'drive-sessions',
 		'voice',
 	]) {
 		await page.goto(`/garage/${created.car.id}/${section}`);
@@ -84,6 +84,19 @@ test('invite registration, management, isolation, and accessible states', async 
 		violations = await scan(page);
 		expect(violations).toEqual([]);
 	}
+	await page.goto(
+		`/garage/${created.car.id}/runs?source=legacy-bookmark&filter=archived#session-2`,
+	);
+	await expect(page).toHaveURL(
+		new RegExp(
+			`/garage/${created.car.id}/drive-sessions\\?source=legacy-bookmark&filter=archived#session-2$`,
+		),
+	);
+	await expect(
+		page.getByRole('heading', { name: 'Drive sessions', exact: true }),
+	).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
 	for (const destination of [
 		['Garage', '/garage'],
 		['Maintenance', '/maintenance'],

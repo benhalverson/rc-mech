@@ -16,17 +16,17 @@
 					<h3 id="voice-title">Voice track log</h3>
 					<p>Say what changed, what the car did, and what the track felt like. Nothing changes in garage history until you review it.</p>
 				</div>
-				<a [routerLink]="['/garage', car.id, 'runs']">Run history</a>
+				<a [routerLink]="['/garage', car.id, 'drive-sessions']">Drive session history</a>
 			</div>
 
 			@if (!car.archivedAt) {
 				<div class="capture-panel">
 					<label for="voice-drive-session">Drive-session context</label>
-					<select id="voice-drive-session" [value]="selectedDriveId()" (change)="setDriveSession($event)">
+					<select id="voice-drive-session" [value]="selectedDriveSessionId()" (change)="setDriveSession($event)">
 						<option value="">No specific drive session</option>
-						@for (session of runsStore.sessions(); track session.id) {
+						@for (session of driveSessionContext.sessions(); track session.id) {
 							@if (!session.deletedAt) {
-								<option [value]="session.id">{{ session.startedAt | date: 'short':runsStore.timezone() }} · {{ session.conditions || 'Conditions not recorded' }}</option>
+							<option [value]="session.id">{{ session.startedAt | date: 'short':driveSessionContext.timezone() }} · {{ session.conditions || 'Conditions not recorded' }}</option>
 							}
 						}
 					</select>
@@ -178,7 +178,7 @@
 											<div class="draft-fact"><span>Problem</span><strong>{{ item.text }}</strong><small [class.needs-review]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
 										}
 										@for (item of draft.driveSessionNotes; track $index) {
-											<div class="draft-fact"><span>Run note</span><strong>{{ item.text }}</strong><small [class.needs-review]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
+											<div class="draft-fact"><span>Drive session note</span><strong>{{ item.text }}</strong><small [class.needs-review]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>
 										}
 										@for (item of draft.consumables; track $index) {
 											<div class="draft-fact"><span>Maintenance</span><strong>{{ item.kind }} {{ item.axle || item.fluidArea || '' }} · {{ item.details || item.notes || item.sourceText }}</strong><small [class.needs-review]="item.needsReview">{{ confidenceLabel(item.confidence, item.needsReview) }}</small></div>

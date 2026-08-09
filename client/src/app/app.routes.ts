@@ -1,4 +1,5 @@
-import { Routes } from '@angular/router';
+import { inject } from '@angular/core';
+import { Router, type Routes } from '@angular/router';
 import { ownerSessionCanMatch } from './owner-session.guard';
 
 const loadGarageRoutes = () =>
@@ -19,9 +20,9 @@ const loadCarPhotosRoutes = () =>
 	import('./car/car-photos.routes').then(
 		({ CAR_PHOTOS_ROUTES }) => CAR_PHOTOS_ROUTES,
 	);
-const loadCarRunsRoutes = () =>
-	import('./car/car-runs.routes').then(
-		({ CAR_RUNS_ROUTES }) => CAR_RUNS_ROUTES,
+const loadDriveSessionRoutes = () =>
+	import('./car/drive-sessions/drive-sessions.routes').then(
+		({ DRIVE_SESSIONS_ROUTES }) => DRIVE_SESSIONS_ROUTES,
 	);
 const loadVoiceRoutes = () =>
 	import('./voice/voice.routes').then(({ VOICE_ROUTES }) => VOICE_ROUTES);
@@ -69,9 +70,18 @@ export const routes: Routes = [
 		loadChildren: loadCarPhotosRoutes,
 	},
 	{
-		path: 'garage/:carId/runs',
+		path: 'garage/:carId/drive-sessions',
 		canMatch: [ownerSessionCanMatch],
-		loadChildren: loadCarRunsRoutes,
+		loadChildren: loadDriveSessionRoutes,
+	},
+	{
+		path: 'garage/:carId/runs',
+		pathMatch: 'full',
+		redirectTo: ({ params, queryParams, fragment }) =>
+			inject(Router).createUrlTree(
+				['/garage', params['carId'], 'drive-sessions'],
+				{ queryParams, fragment: fragment ?? undefined },
+			),
 	},
 	{
 		path: 'garage/:carId/voice',
