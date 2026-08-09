@@ -173,13 +173,13 @@ describe('ConsumableStore', () => {
 		expect(store.report()).toEqual(report);
 
 		gateway.cars.setLoading(true);
-		expect(store.loading()).toBe(false);
+		expect(store.loading()).toBe(true);
 		gateway.cars.setLoading(false);
 		gateway.consumables.setLoading(true);
-		expect(store.action()).toBe('refresh');
+		expect(store.action()).toBeNull();
 		gateway.consumables.setLoading(false);
 		gateway.report.setLoading(true);
-		expect(store.action()).toBe('refresh');
+		expect(store.action()).toBeNull();
 		gateway.report.setLoading(false);
 		expect(store.action()).toBeNull();
 		gateway.cars.setError({ kind: 'http', status: 401 });

@@ -6,7 +6,8 @@ import {
 } from '@lucide/angular';
 import type { ConsumableEntry } from '../maintenance.models';
 import {
-	consumableEntryIsReadOnly,
+	canCreateConsumableEntry,
+	canEditConsumableEntry,
 	visibleConsumableEntries,
 } from './consumable.rules';
 import {
@@ -51,12 +52,12 @@ export class ConsumableMaintenance {
 	);
 
 	protected createEntry(): void {
-		if (!this.hasActiveCars() || this.action()) return;
+		if (!canCreateConsumableEntry(this.store.cars(), this.action())) return;
 		this.activeRequest.set({ kind: 'create' });
 	}
 
 	protected editEntry(entry: ConsumableEntry): void {
-		if (this.action() || consumableEntryIsReadOnly(entry, this.store.cars()))
+		if (!canEditConsumableEntry(entry, this.store.cars(), this.action()))
 			return;
 		this.activeRequest.set({ kind: 'edit', entry });
 	}

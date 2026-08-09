@@ -19,47 +19,24 @@ import {
 	validate,
 } from '@angular/forms/signals';
 import { LucideSave, LucideTriangleAlert } from '@lucide/angular';
-import type {
-	ConsumableEntry,
-	ConsumableMaintenanceDraft,
-	FluidArea,
-	TireAxle,
-} from '../maintenance.models';
-import { localDateTime, localDateTimeToIso } from '../maintenance-time';
+import type { ConsumableEntry } from '../maintenance.models';
 import { consumableEntryIsReadOnly } from './consumable.rules';
+import {
+	type ConsumableEntryForm,
+	emptyConsumableEntryForm,
+	existingConsumableEntryForm,
+	hasConsumableTireSnapshot,
+	mapConsumableSaveCommand,
+	newConsumableEntryForm,
+	parseConsumableCost,
+} from './consumable-entry.rules';
 import { type ConsumableFailure, ConsumableStore } from './consumable-store';
+
+export type { ConsumableEntryForm } from './consumable-entry.rules';
 
 export type ConsumableEntryEditorRequest =
 	| { readonly kind: 'create' }
 	| { readonly kind: 'edit'; readonly entry: ConsumableEntry };
-
-export type ConsumableEntryForm = {
-	carId: string;
-	kind: 'shock-fluid' | 'differential-fluid' | 'tires';
-	performedAt: string;
-	fluidArea: FluidArea;
-	customArea: string;
-	axle: TireAxle;
-	frontDetails: string;
-	rearDetails: string;
-	frontCost: string;
-	rearCost: string;
-	notes: string;
-};
-
-const emptyForm = (): ConsumableEntryForm => ({
-	carId: '',
-	kind: 'shock-fluid',
-	performedAt: '',
-	fluidArea: 'front-shocks',
-	customArea: '',
-	axle: 'front',
-	frontDetails: '',
-	rearDetails: '',
-	frontCost: '',
-	rearCost: '',
-	notes: '',
-});
 
 @Component({
 	selector: 'app-consumable-entry-editor',
@@ -86,7 +63,9 @@ export class ConsumableEntryEditor {
 	protected readonly timezone = this.store.timezone;
 	protected readonly action = this.store.action;
 	protected readonly formError = signal('');
-	protected readonly form = signal<ConsumableEntryForm>(emptyForm());
+	protected readonly form = signal<ConsumableEntryForm>(
+		emptyConsumableEntryForm(),
+	);
 	protected readonly entryFields = signalForm(this.form, (path) => {
 		required(path.carId, { message: 'Choose a car.' });
 		required(path.performedAt, { message: 'Add the change date.' });
@@ -95,16 +74,17 @@ export class ConsumableEntryEditor {
 		});
 		for (const cost of [path.frontCost, path.rearCost])
 			validate(cost, ({ value }) =>
-				!value().trim() ||
-				(Number.isFinite(Number(value())) && Number(value()) >= 0)
+				parseConsumableCost(value()) !== 'invalid'
 					? undefined
 					: { kind: 'cost', message: 'Costs must be zero or greater.' },
 			);
 		validate(path.frontDetails, (context) =>
 			context.valueOf(path.kind) === 'tires' &&
 			context.valueOf(path.axle) !== 'rear' &&
-			!context.value().trim() &&
-			!context.valueOf(path.frontCost).trim()
+			!hasConsumableTireSnapshot(
+				context.value(),
+				context.valueOf(path.frontCost),
+			)
 				? {
 						kind: 'tireDetailsRequired',
 						message: 'Add front tire details or cost.',
@@ -114,8 +94,10 @@ export class ConsumableEntryEditor {
 		validate(path.rearDetails, (context) =>
 			context.valueOf(path.kind) === 'tires' &&
 			context.valueOf(path.axle) !== 'front' &&
-			!context.value().trim() &&
-			!context.valueOf(path.rearCost).trim()
+			!hasConsumableTireSnapshot(
+				context.value(),
+				context.valueOf(path.rearCost),
+			)
 				? {
 						kind: 'tireDetailsRequired',
 						message: 'Add rear tire details or cost.',
@@ -206,63 +188,21 @@ export class ConsumableEntryEditor {
 			else this.entryFields.notes().focusBoundControl();
 			return;
 		}
-		if (
-			form.kind === 'tires' &&
-			((form.axle !== 'rear' &&
-				!form.frontDetails.trim() &&
-				!form.frontCost.trim()) ||
-				(form.axle !== 'front' &&
-					!form.rearDetails.trim() &&
-					!form.rearCost.trim()))
-		) {
-			this.formError.set('Add front or rear tire details before saving.');
-			return;
-		}
-		const frontCost = this.optionalCost(form.frontCost);
-		const rearCost = this.optionalCost(form.rearCost);
-		if (frontCost === 'invalid' || rearCost === 'invalid') {
-			this.formError.set('Costs must be zero or greater.');
-			return;
-		}
 		if (this.action()) return;
 		const request = this.request();
 		if (!request) return;
-		const maintenance: ConsumableMaintenanceDraft =
-			form.kind === 'tires'
-				? {
-						kind: form.kind,
-						performedAt: localDateTimeToIso(form.performedAt, this.timezone()),
-						axle: form.axle,
-						...(form.axle !== 'rear' && form.frontDetails.trim()
-							? { frontDetails: form.frontDetails.trim() }
-							: {}),
-						...(form.axle !== 'rear' && frontCost !== null
-							? { frontCost }
-							: {}),
-						...(form.axle !== 'front' && form.rearDetails.trim()
-							? { rearDetails: form.rearDetails.trim() }
-							: {}),
-						...(form.axle !== 'front' && rearCost !== null ? { rearCost } : {}),
-						...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
-					}
-				: {
-						kind: form.kind,
-						performedAt: localDateTimeToIso(form.performedAt, this.timezone()),
-						fluidArea: form.fluidArea,
-						...(form.fluidArea === 'custom' && form.customArea.trim()
-							? { customArea: form.customArea.trim() }
-							: {}),
-						...(frontCost !== null ? { cost: frontCost } : {}),
-						...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
-					};
+		const mapping = mapConsumableSaveCommand(
+			form,
+			this.timezone(),
+			request.kind === 'edit' ? 'edit' : 'create',
+			request.kind === 'edit' ? request.entry.id : null,
+		);
+		if (!mapping.ok) {
+			this.formError.set(mapping.message);
+			return;
+		}
 		this.formError.set('');
-		this.store.mutate({
-			kind: 'save',
-			mode: request.kind === 'edit' ? 'edit' : 'create',
-			carId: form.carId,
-			id: request.kind === 'edit' ? request.entry.id : null,
-			maintenance,
-		});
+		this.store.mutate(mapping.command);
 	}
 
 	private open(request: ConsumableEntryEditorRequest): void {
@@ -273,11 +213,9 @@ export class ConsumableEntryEditor {
 				return;
 			}
 			this.returnFocusSelector.set('[data-consumable-launcher="record"]');
-			this.entryFields().reset({
-				...emptyForm(),
-				carId: car.id,
-				performedAt: localDateTime(new Date(), this.timezone()),
-			});
+			this.entryFields().reset(
+				newConsumableEntryForm(car.id, this.timezone(), new Date()),
+			);
 		} else {
 			const entry = request.entry;
 			if (consumableEntryIsReadOnly(entry, this.garage())) {
@@ -287,30 +225,9 @@ export class ConsumableEntryEditor {
 			this.returnFocusSelector.set(
 				`[data-consumable-launcher="entry:${entry.id}"]`,
 			);
-			this.entryFields().reset({
-				...emptyForm(),
-				carId: entry.carId,
-				kind: entry.kind,
-				performedAt: localDateTime(
-					new Date(entry.performedAt),
-					this.timezone(),
-				),
-				fluidArea: entry.fluidArea ?? 'front-shocks',
-				customArea: entry.customArea ?? '',
-				axle: entry.axle ?? 'front',
-				frontDetails: entry.frontDetails ?? '',
-				rearDetails: entry.rearDetails ?? '',
-				frontCost:
-					entry.kind === 'tires'
-						? entry.frontCost == null
-							? ''
-							: String(entry.frontCost)
-						: entry.cost == null
-							? ''
-							: String(entry.cost),
-				rearCost: entry.rearCost == null ? '' : String(entry.rearCost),
-				notes: entry.notes ?? '',
-			});
+			this.entryFields().reset(
+				existingConsumableEntryForm(entry, this.timezone()),
+			);
 		}
 		this.formError.set('');
 		this.focusAfterRender('#consumable-form-title');
@@ -327,12 +244,6 @@ export class ConsumableEntryEditor {
 			return;
 		}
 		this.store.loadTires(this.form().carId);
-	}
-
-	private optionalCost(value: string): number | null | 'invalid' {
-		if (!value.trim()) return null;
-		const number = Number(value);
-		return Number.isFinite(number) && number >= 0 ? number : 'invalid';
 	}
 
 	private failureMessage(failure: ConsumableFailure): string {

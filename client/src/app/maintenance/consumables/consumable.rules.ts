@@ -139,3 +139,14 @@ export const consumableEntryIsReadOnly = (
 ): boolean =>
 	Boolean(cars.find((car) => car.id === entry.carId)?.archivedAt) ||
 	Boolean(entry.deletedAt);
+
+export const canCreateConsumableEntry = (
+	cars: readonly MaintenanceCar[],
+	action: string | null,
+): boolean => !action && cars.some((car) => !car.archivedAt);
+
+export const canEditConsumableEntry = (
+	entry: ConsumableEntry,
+	cars: readonly MaintenanceCar[],
+	action: string | null,
+): boolean => !action && !consumableEntryIsReadOnly(entry, cars);

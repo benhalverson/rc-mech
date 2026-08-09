@@ -16,19 +16,21 @@ import type {
 } from '../maintenance.models';
 import { MaintenanceGateway } from '../maintenance-gateway';
 
-export type ConsumableCommand =
-	| {
-			readonly kind: 'save';
-			readonly mode: 'create' | 'edit';
-			readonly carId: string;
-			readonly id: string | null;
-			readonly maintenance: ConsumableMaintenanceDraft;
-	  }
-	| {
-			readonly kind: 'change';
-			readonly action: 'archive' | 'restore';
-			readonly entry: ConsumableEntry;
-	  };
+export type ConsumableSaveCommand = {
+	readonly kind: 'save';
+	readonly mode: 'create' | 'edit';
+	readonly carId: string;
+	readonly id: string | null;
+	readonly maintenance: ConsumableMaintenanceDraft;
+};
+
+export type ConsumableChangeCommand = {
+	readonly kind: 'change';
+	readonly action: 'archive' | 'restore';
+	readonly entry: ConsumableEntry;
+};
+
+export type ConsumableCommand = ConsumableSaveCommand | ConsumableChangeCommand;
 
 export type ConsumableFailure =
 	| 'car-archived'
@@ -125,23 +127,17 @@ export const ConsumableStore = signalStore(
 			),
 			loading: computed(
 				() =>
-					(store.gateway.cars.isLoading() && !store.gateway.cars.hasValue()) ||
-					(store.gateway.timezone.isLoading() &&
-						!store.gateway.timezone.hasValue()) ||
-					(store.gateway.consumables.isLoading() &&
-						!store.gateway.consumables.hasValue()),
+					store.gateway.cars.isLoading() ||
+					store.gateway.timezone.isLoading() ||
+					store.gateway.consumables.isLoading(),
 			),
 			error: computed(() => resourceError(failures())),
 			action: computed(() => {
 				const outcome = store.outcome();
-				if (outcome.status === 'pending')
-					return outcome.command.kind === 'save'
-						? outcome.command.mode
-						: `${outcome.command.action}:${outcome.command.entry.id}`;
-				return store.gateway.consumables.isLoading() ||
-					store.gateway.report.isLoading()
-					? 'refresh'
-					: null;
+				if (outcome.status !== 'pending') return null;
+				return outcome.command.kind === 'save'
+					? outcome.command.mode
+					: `${outcome.command.action}:${outcome.command.entry.id}`;
 			}),
 		};
 	}),

@@ -19,6 +19,8 @@ import {
 import type { ConsumableEntry } from '../maintenance.models';
 import {
 	buildTireReport,
+	canCreateConsumableEntry,
+	canEditConsumableEntry,
 	consumableEntryIsReadOnly,
 	mergeTireReport,
 	spendLabel,
@@ -86,12 +88,12 @@ export class ConsumableHistory {
 	}
 
 	protected create(): void {
-		if (!this.hasActiveCars() || this.action()) return;
+		if (!canCreateConsumableEntry(this.garage(), this.action())) return;
 		this.createRequested.emit();
 	}
 
 	protected edit(entry: ConsumableEntry): void {
-		if (this.isReadOnly(entry) || this.action()) return;
+		if (!canEditConsumableEntry(entry, this.garage(), this.action())) return;
 		this.editRequested.emit(entry);
 	}
 

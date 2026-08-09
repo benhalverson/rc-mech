@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ConsumableEntry, MaintenanceReport } from '../maintenance.models';
 import {
 	buildTireReport,
+	canCreateConsumableEntry,
+	canEditConsumableEntry,
 	consumableEntryIsReadOnly,
 	mergeTireReport,
 	spendLabel,
@@ -102,6 +104,16 @@ describe('consumable rules', () => {
 				{ id: 'car-1', name: 'Buggy', archivedAt: 'x' },
 			]),
 		).toBe(true);
+		expect(canCreateConsumableEntry([], null)).toBe(false);
+		expect(
+			canCreateConsumableEntry([{ id: 'car-1', name: 'Buggy' }], null),
+		).toBe(true);
+		expect(
+			canCreateConsumableEntry([{ id: 'car-1', name: 'Buggy' }], 'create'),
+		).toBe(false);
+		expect(canEditConsumableEntry(active, [], null)).toBe(true);
+		expect(canEditConsumableEntry(active, [], 'refresh')).toBe(false);
+		expect(canEditConsumableEntry(archived, [], null)).toBe(false);
 	});
 });
 
