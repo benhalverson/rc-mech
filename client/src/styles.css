@@ -4,10 +4,6 @@
 
 @theme inline {
 	--color-graphite: #171b1d;
-	--color-workbench: var(--alloy-control);
-	--color-bone: var(--alloy-text);
-	--color-brass: var(--alloy-accent);
-	--color-oxidized-teal: var(--alloy-text-secondary);
 	--color-alloy-canvas: var(--alloy-canvas);
 	--color-alloy-surface: var(--alloy-surface);
 	--color-alloy-control: var(--alloy-control);
@@ -56,11 +52,6 @@
 	--alloy-motion-feedback: 120ms;
 	--alloy-motion-exit: 170ms;
 	--alloy-motion-spatial: 220ms;
-	--paper: var(--alloy-canvas);
-	--ink: var(--alloy-text);
-	--muted: var(--alloy-text-on-canvas-secondary);
-	--accent: var(--alloy-accent);
-	--line: var(--alloy-separator);
 }
 
 :root[data-appearance='dark'] {
@@ -185,6 +176,7 @@ body {
 	}
 
 	.alloy-segment:has(input:focus-visible),
+	.workspace-shell [data-route-focus]:focus-visible,
 	.alloy-focus-ring:focus-visible,
 	.alloy-control:focus-visible,
 	.alloy-field:focus-visible {

@@ -41,14 +41,6 @@
 	color: var(--alloy-text-secondary);
 }
 
-.command-bar,
-.workspace-nav {
-	--ink: var(--alloy-command-text);
-	--muted: var(--alloy-command-secondary);
-	--accent: var(--alloy-command-accent);
-	--line: var(--alloy-command-separator);
-}
-
 .command-link,
 .command-action,
 .command-icon,

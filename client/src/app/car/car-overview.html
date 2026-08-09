@@ -1,0 +1,73 @@
+@if (store.loading()) {
+	<div class="alloy-state alloy-live-state mt-0" role="status">
+		<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening car</strong></span>
+		<span>Opening the car overview…</span>
+	</div>
+} @else if (store.failure(); as failure) {
+	<div class="alloy-state alloy-error-state mt-0" role="alert">
+		<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+		<span>{{ failure.message }}</span>
+		@if (failure.retryable) {
+			<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="store.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+		}
+	</div>
+} @else if (store.car(); as car) {
+	<app-car-section-shell [car]="car" section="overview">
+		<app-current-setup [carId]="car.id" [archived]="!!car.archivedAt" />
+		<app-voice-note-workspace class="mt-6" [carId]="car.id" [archived]="!!car.archivedAt" />
+		@if (editing()) {
+			<form class="car-form alloy-panel mb-0 mt-6 grid gap-5" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : 'car-form-intro'" novalidate>
+				<div>
+					<div class="alloy-section-heading">Car record</div>
+					<h3 id="car-form-title" class="alloy-screen-title">Edit car details</h3>
+					<p id="car-form-intro" class="alloy-supporting-text mb-0">Keep the identity and workshop notes current without changing its history.</p>
+				</div>
+				@if (formError()) {
+					<p id="car-form-error" class="alloy-state alloy-error-state mt-0" role="alert">
+						<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+						<span>{{ formError() }}</span>
+					</p>
+				}
+				<div class="form-grid grid gap-4 sm:grid-cols-2">
+					<label class="wide grid gap-1 sm:col-span-2"><span class="text-sm font-semibold text-alloy-text">Name</span><input class="alloy-field w-full" [formField]="carFields.name" [attr.aria-describedby]="formError() && carFields.name().invalid() ? 'car-form-error' : null" /></label>
+					<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Make</span><input class="alloy-field w-full" [formField]="carFields.make" [attr.aria-describedby]="formError() && carFields.make().invalid() ? 'car-form-error' : null" /></label>
+					<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Model</span><input class="alloy-field w-full" [formField]="carFields.model" [attr.aria-describedby]="formError() && carFields.model().invalid() ? 'car-form-error' : null" /></label>
+					<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Scale</span><input class="alloy-field w-full font-technical" placeholder="1/10" [formField]="carFields.scale" [attr.aria-describedby]="formError() && carFields.scale().invalid() ? 'car-form-error' : null" /></label>
+					<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Vehicle type</span><input class="alloy-field w-full" placeholder="Buggy, truck…" [formField]="carFields.vehicleType" [attr.aria-describedby]="formError() && carFields.vehicleType().invalid() ? 'car-form-error' : null" /></label>
+					<label class="grid gap-1"><span class="text-sm font-semibold text-alloy-text">Power type</span><input class="alloy-field w-full" placeholder="Electric, nitro…" [formField]="carFields.powerType" [attr.aria-describedby]="formError() && carFields.powerType().invalid() ? 'car-form-error' : null" /></label>
+					<label class="wide grid gap-1 sm:col-span-2"><span class="text-sm font-semibold text-alloy-text">Notes</span><textarea class="alloy-field min-h-32 w-full py-3" rows="5" [formField]="carFields.notes" [attr.aria-describedby]="formError() && carFields.notes().invalid() ? 'car-form-error' : null"></textarea></label>
+				</div>
+				<div class="form-actions flex flex-col gap-2 sm:flex-row">
+					<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="store.carAction() !== null"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.carAction() === 'update' ? 'Saving…' : 'Save car' }}</button>
+					<button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button>
+				</div>
+			</form>
+		} @else {
+			<section class="overview alloy-panel mb-0 mt-6 grid gap-5" aria-labelledby="overview-title">
+				<header class="grid items-end gap-4 border-b border-alloy-separator pb-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+					<div><div class="alloy-section-heading">Car record</div><h3 id="overview-title" class="alloy-screen-title mb-0">Car overview</h3></div>
+					<div class="overview-actions flex flex-col gap-2 sm:flex-row">
+						<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openEdit(car)" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit details</button>
+						@if (car.archivedAt) {
+							<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="store.changeArchiveState('restore')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.lifecycleAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button>
+						} @else {
+							<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="store.changeArchiveState('archive')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.lifecycleAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button>
+						}
+					</div>
+				</header>
+				@if (store.lifecycleError()) {
+					<p class="alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ store.lifecycleError() }}</span></p>
+				}
+				@if (store.carMessage()) {
+					<p class="alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Car updated</strong></span><span>{{ store.carMessage() }}</span></p>
+				}
+				<dl class="grid border-y border-alloy-separator sm:grid-cols-3 sm:divide-x sm:divide-alloy-separator">
+					<div class="grid min-h-20 content-center gap-1 border-b border-alloy-separator px-3 py-2 sm:border-b-0"><dt class="alloy-section-heading">Scale</dt><dd class="alloy-technical m-0 text-alloy-text">{{ car.scale || 'Not recorded' }}</dd></div>
+					<div class="grid min-h-20 content-center gap-1 border-b border-alloy-separator px-3 py-2 sm:border-b-0"><dt class="alloy-section-heading">Vehicle type</dt><dd class="alloy-technical m-0 text-alloy-text">{{ car.vehicleType || 'Not recorded' }}</dd></div>
+					<div class="grid min-h-20 content-center gap-1 px-3 py-2"><dt class="alloy-section-heading">Power type</dt><dd class="alloy-technical m-0 text-alloy-text">{{ car.powerType || 'Not recorded' }}</dd></div>
+				</dl>
+				<p class="m-0 text-alloy-text"><strong class="alloy-section-heading mb-2 block">Workshop notes</strong>{{ car.notes || 'No notes recorded yet.' }}</p>
+			</section>
+		}
+	</app-car-section-shell>
+}

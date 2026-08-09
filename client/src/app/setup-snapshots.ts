@@ -16,6 +16,17 @@ import {
 	required,
 	validate,
 } from '@angular/forms/signals';
+import {
+	LucideCheck,
+	LucideClipboardList,
+	LucideCopy,
+	LucideExternalLink,
+	LucideFileInput,
+	LucidePlus,
+	LucideRefreshCw,
+	LucideSave,
+	LucideTriangleAlert,
+} from '@lucide/angular';
 import { switchMap } from 'rxjs';
 import {
 	emptySetupForm,
@@ -73,9 +84,24 @@ const isSessionExpired = (error: unknown): boolean =>
 
 @Component({
 	selector: 'app-setup-snapshots',
-	imports: [DatePipe, DecimalPipe, FormField, JsonPipe, KeyValuePipe],
+	host: { class: 'block' },
+	imports: [
+		DatePipe,
+		DecimalPipe,
+		FormField,
+		JsonPipe,
+		KeyValuePipe,
+		LucideCheck,
+		LucideClipboardList,
+		LucideCopy,
+		LucideExternalLink,
+		LucideFileInput,
+		LucidePlus,
+		LucideRefreshCw,
+		LucideSave,
+		LucideTriangleAlert,
+	],
 	templateUrl: './setup-snapshots.html',
-	styleUrl: './setup-snapshots.css',
 })
 export class SetupSnapshots {
 	private readonly service = inject(SetupSnapshotService);

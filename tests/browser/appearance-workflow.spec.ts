@@ -113,19 +113,26 @@ test('appearance resolves before the workspace, persists, follows the system, an
 	expect(
 		await page.evaluate(() => {
 			const rootStyles = getComputedStyle(document.documentElement);
-			const navigationStyles = getComputedStyle(
-				document.querySelector('.command-bar') as HTMLElement,
-			);
 			return {
-				legacyMuted: rootStyles.getPropertyValue('--muted').trim(),
-				navigationMuted: navigationStyles.getPropertyValue('--muted').trim(),
-				navigationAccent: navigationStyles.getPropertyValue('--accent').trim(),
+				canvasSecondary: rootStyles
+					.getPropertyValue('--alloy-text-on-canvas-secondary')
+					.trim(),
+				commandSecondary: rootStyles
+					.getPropertyValue('--alloy-command-secondary')
+					.trim(),
+				commandAccent: rootStyles
+					.getPropertyValue('--alloy-command-accent')
+					.trim(),
+				legacyAliases: ['--muted', '--accent', '--line'].map((property) =>
+					rootStyles.getPropertyValue(property).trim(),
+				),
 			};
 		}),
 	).toEqual({
-		legacyMuted: '#465251',
-		navigationMuted: '#a6b0ae',
-		navigationAccent: '#78a4ad',
+		canvasSecondary: '#465251',
+		commandSecondary: '#a6b0ae',
+		commandAccent: '#78a4ad',
+		legacyAliases: ['', '', ''],
 	});
 	expect(await scan(page)).toEqual([]);
 

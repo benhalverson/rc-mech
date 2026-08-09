@@ -13,6 +13,15 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
+import {
+	LucideArchive,
+	LucideArchiveRestore,
+	LucideCheck,
+	LucidePencil,
+	LucideRefreshCw,
+	LucideSave,
+	LucideTriangleAlert,
+} from '@lucide/angular';
 import type { GarageCar, GarageCarInput } from '../garage/garage-store';
 import { VoiceNoteWorkspace } from '../voice/voice-note-workspace';
 import { CarSectionShell } from './car-section-shell';
@@ -61,44 +70,21 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 
 @Component({
 	selector: 'app-car-overview',
-	imports: [CarSectionShell, CurrentSetup, FormField, VoiceNoteWorkspace],
-	template: `
-		@if (store.loading()) {
-			<div class="state-card" role="status">Opening the car overview…</div>
-		} @else if (store.failure(); as failure) {
-			<div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="store.retry()">Try again</button> }</div>
-		} @else if (store.car(); as car) {
-			<app-car-section-shell [car]="car" section="overview">
-				<app-current-setup [carId]="car.id" [archived]="!!car.archivedAt" />
-				<app-voice-note-workspace class="mt-6" [carId]="car.id" [archived]="!!car.archivedAt" />
-				@if (editing()) {
-					<form class="car-form" (submit)="save($event)" aria-labelledby="car-form-title" [attr.aria-describedby]="formError() ? 'car-form-error' : null" novalidate>
-						<div class="eyebrow">Edit car</div><h3 id="car-form-title">Update the car record.</h3>
-						@if (formError()) { <p id="car-form-error" role="alert">{{ formError() }}</p> }
-						<div class="form-grid">
-							<label class="wide">Name <input [formField]="carFields.name" [attr.aria-describedby]="formError() && carFields.name().invalid() ? 'car-form-error' : null" /></label>
-							<label>Make <input [formField]="carFields.make" [attr.aria-describedby]="formError() && carFields.make().invalid() ? 'car-form-error' : null" /></label>
-							<label>Model <input [formField]="carFields.model" [attr.aria-describedby]="formError() && carFields.model().invalid() ? 'car-form-error' : null" /></label>
-							<label>Scale <input placeholder="1/10" [formField]="carFields.scale" [attr.aria-describedby]="formError() && carFields.scale().invalid() ? 'car-form-error' : null" /></label>
-							<label>Vehicle type <input placeholder="Buggy, truck…" [formField]="carFields.vehicleType" [attr.aria-describedby]="formError() && carFields.vehicleType().invalid() ? 'car-form-error' : null" /></label>
-							<label>Power type <input placeholder="Electric, nitro…" [formField]="carFields.powerType" [attr.aria-describedby]="formError() && carFields.powerType().invalid() ? 'car-form-error' : null" /></label>
-							<label class="wide">Notes <textarea rows="5" [formField]="carFields.notes" [attr.aria-describedby]="formError() && carFields.notes().invalid() ? 'car-form-error' : null"></textarea></label>
-						</div>
-						<div class="form-actions"><button type="submit" [disabled]="store.carAction() !== null">{{ store.carAction() === 'update' ? 'Saving…' : 'Save car' }}</button><button type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button></div>
-					</form>
-				} @else { <section class="overview" aria-labelledby="overview-title">
-					<div class="section-heading"><div><div class="eyebrow">Inspection plate</div><h3 id="overview-title">Car overview</h3></div>
-					<div class="overview-actions"><button type="button" (click)="openEdit(car)" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null">Edit details</button>@if (car.archivedAt) { <button type="button" (click)="store.changeArchiveState('restore')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null">{{ store.lifecycleAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button> }
-					@else { <button type="button" (click)="store.changeArchiveState('archive')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null">{{ store.lifecycleAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button> }</div></div>
-					@if (store.lifecycleError()) { <p role="alert">{{ store.lifecycleError() }}</p> }
-					@if (store.carMessage()) { <p role="status">{{ store.carMessage() }}</p> }
-					<dl><div><dt>Scale</dt><dd>{{ car.scale || 'Not recorded' }}</dd></div><div><dt>Vehicle type</dt><dd>{{ car.vehicleType || 'Not recorded' }}</dd></div><div><dt>Power type</dt><dd>{{ car.powerType || 'Not recorded' }}</dd></div></dl>
-					<p><strong>Workshop notes</strong><br />{{ car.notes || 'No notes recorded yet.' }}</p>
-				</section> }
-			</app-car-section-shell>
-		}
-	`,
-	styleUrl: '../garage/garage.css',
+	host: { class: 'block' },
+	imports: [
+		CarSectionShell,
+		CurrentSetup,
+		FormField,
+		LucideArchive,
+		LucideArchiveRestore,
+		LucideCheck,
+		LucidePencil,
+		LucideRefreshCw,
+		LucideSave,
+		LucideTriangleAlert,
+		VoiceNoteWorkspace,
+	],
+	templateUrl: './car-overview.html',
 })
 export class CarOverview {
 	readonly carId = input('');
