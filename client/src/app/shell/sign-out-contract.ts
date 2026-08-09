@@ -1,5 +1,3 @@
-export type SignOutResponse = { success: true };
-
 export type SignOutGatewayFailure =
 	| { kind: 'http'; status: number }
 	| { kind: 'unavailable' }

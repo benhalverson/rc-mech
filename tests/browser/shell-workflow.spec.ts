@@ -47,11 +47,11 @@ test('responsive shell navigation, route transitions, sign-out, and AXE', async 
 	await expect(toggle).toBeFocused();
 
 	await toggle.click();
-	await navigation.getByRole('link', { name: 'Settings' }).click();
-	await expect(page).toHaveURL(/\/settings$/);
+	await navigation.getByRole('link', { name: 'Maintenance' }).click();
+	await expect(page).toHaveURL(/\/maintenance$/);
 	await expect(page.locator('[data-route-focus]')).toBeFocused();
 	await expect(page.locator('.route-announcement')).toContainText(
-		'Opened Settings',
+		'Opened Maintenance',
 	);
 	expect(await scan(page)).toEqual([]);
 

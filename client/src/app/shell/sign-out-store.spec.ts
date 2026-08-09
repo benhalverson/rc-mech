@@ -3,11 +3,9 @@ import { Router } from '@angular/router';
 import { Subject, type Observable } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OwnerSessionStore } from '../owner-session-store';
-import {
-	type SignOutGatewayFailure,
-	type SignOutResponse,
-} from './sign-out-contract';
+import { type SignOutGatewayFailure } from './sign-out-contract';
 import { SignOutGateway } from './sign-out-gateway';
+import type { SignOutResponse } from './sign-out-response';
 import { type SignOutCommand, SignOutStore } from './sign-out-store';
 
 class FakeSignOutGateway {

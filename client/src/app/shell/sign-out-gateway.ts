@@ -1,8 +1,8 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { inject, Service } from '@angular/core';
+import { inject, InjectionToken, Service } from '@angular/core';
 import {
 	catchError,
-	from,
+	defer,
 	map,
 	switchMap,
 	throwError,
@@ -11,8 +11,17 @@ import {
 import {
 	InvalidSignOutResponse,
 	type SignOutGatewayFailure,
-	type SignOutResponse,
 } from './sign-out-contract';
+import type { SignOutResponse } from './sign-out-response';
+
+export type SignOutResponseModule = typeof import('./sign-out-response');
+export type SignOutResponseLoader = () => Promise<SignOutResponseModule>;
+
+export const SIGN_OUT_RESPONSE_LOADER =
+	new InjectionToken<SignOutResponseLoader>('SIGN_OUT_RESPONSE_LOADER', {
+		providedIn: 'root',
+		factory: () => () => import('./sign-out-response'),
+	});
 
 export const signOutGatewayFailure = (
 	error: unknown,
@@ -29,19 +38,18 @@ export const signOutGatewayFailure = (
 @Service()
 export class SignOutGateway {
 	private readonly http = inject(HttpClient);
+	private readonly loadResponseParser = inject(SIGN_OUT_RESPONSE_LOADER);
 
 	signOut(): Observable<SignOutResponse> {
-		return this.http
-			.post<unknown>('/api/auth/sign-out', {}, { withCredentials: true })
-			.pipe(
-				switchMap((response) =>
-					from(import('./sign-out-response')).pipe(
-						map(({ parseSignOutResponse }) => parseSignOutResponse(response)),
-					),
-				),
-				catchError((error: unknown) =>
-					throwError(() => signOutGatewayFailure(error)),
-				),
-			);
+		return defer(this.loadResponseParser).pipe(
+			switchMap(({ parseSignOutResponse }) =>
+				this.http
+					.post<unknown>('/api/auth/sign-out', {}, { withCredentials: true })
+					.pipe(map(parseSignOutResponse)),
+			),
+			catchError((error: unknown) =>
+				throwError(() => signOutGatewayFailure(error)),
+			),
+		);
 	}
 }

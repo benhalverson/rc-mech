@@ -1,10 +1,10 @@
 import { literal, object } from 'zod/mini';
-import {
-	InvalidSignOutResponse,
-	type SignOutResponse,
-} from './sign-out-contract';
+import type * as z from 'zod/mini';
+import { InvalidSignOutResponse } from './sign-out-contract';
 
 const signOutResponseSchema = object({ success: literal(true) });
+
+export type SignOutResponse = z.infer<typeof signOutResponseSchema>;
 
 export const parseSignOutResponse = (value: unknown): SignOutResponse => {
 	const parsed = signOutResponseSchema.safeParse(value);
