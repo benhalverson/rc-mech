@@ -246,6 +246,39 @@ describe('App workspace shell', () => {
 		expect(navigation.classList.contains('nav-open')).toBe(true);
 	});
 
+	it('preserves explicit drawer commands during breakpoint changes', () => {
+		session.authenticate();
+		const root = render();
+		const navigation = root.querySelector('.workspace-nav');
+		const toggle = root.querySelector('.nav-toggle') as HTMLButtonElement;
+		if (!navigation) throw new Error('Workspace navigation was not rendered.');
+
+		viewport.mobile.set(true);
+		(
+			fixture.componentInstance as unknown as {
+				openNav(navToggle: HTMLButtonElement): void;
+			}
+		).openNav(toggle);
+		fixture.detectChanges();
+		expect(navigation.classList.contains('nav-open')).toBe(true);
+		expect(navigation.hasAttribute('aria-hidden')).toBe(false);
+		expect(navigation.hasAttribute('inert')).toBe(false);
+
+		(fixture.componentInstance as unknown as { closeNav(): void }).closeNav();
+		fixture.detectChanges();
+		expect(navigation.classList.contains('nav-open')).toBe(false);
+		expect(navigation.getAttribute('aria-hidden')).toBe('true');
+		expect(navigation.hasAttribute('inert')).toBe(true);
+		expect(document.activeElement).toBe(toggle);
+
+		viewport.mobile.set(false);
+		(fixture.componentInstance as unknown as { closeNav(): void }).closeNav();
+		fixture.detectChanges();
+		expect(navigation.classList.contains('nav-open')).toBe(false);
+		expect(navigation.hasAttribute('aria-hidden')).toBe(false);
+		expect(navigation.hasAttribute('inert')).toBe(false);
+	});
+
 	it('shows route failures with a working retry control', () => {
 		transition.error.set('This page could not be loaded. Try again.');
 		const root = render();
