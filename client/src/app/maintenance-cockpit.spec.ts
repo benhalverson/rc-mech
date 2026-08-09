@@ -168,7 +168,7 @@ describe('MaintenanceCockpit', () => {
 
 	afterEach(() => http.verify());
 
-	it('groups date, run, combined, timezone, and lifecycle states', () => {
+	it('groups date, drive-session, combined, timezone, and lifecycle states', () => {
 		expect(calendarDays(2, 'weeks')).toBe(14);
 		expect(calendarDays(1, 'months')).toBe(30);
 		expect(calendarDays(3, 'days')).toBe(3);
@@ -332,9 +332,9 @@ describe('MaintenanceCockpit', () => {
 			name: 'Clean bearings',
 			calendarValue: '2',
 			calendarUnit: 'weeks',
-			runInterval: '',
+			sessionInterval: '',
 			baselineAt: '2026-08-01T10:00',
-			baselineRuns: '3',
+			baselineSessions: '3',
 		});
 		app.save();
 		const request = http.expectOne('/api/v1/maintenance-plans');
@@ -628,9 +628,9 @@ describe('MaintenanceCockpit', () => {
 			componentId: '',
 			calendarValue: '',
 			calendarUnit: 'days',
-			runInterval: '',
+			sessionInterval: '',
 			baselineAt: '',
-			baselineRuns: '0',
+			baselineSessions: '0',
 		});
 		app.cancelEdit();
 
@@ -645,8 +645,8 @@ describe('MaintenanceCockpit', () => {
 		expect(app.form()).toMatchObject({
 			calendarValue: '2',
 			calendarUnit: 'months',
-			runInterval: '5',
-			baselineRuns: '4',
+			sessionInterval: '5',
+			baselineSessions: '4',
 		});
 		app.cancelEdit();
 		app.openEdit({
@@ -710,25 +710,29 @@ describe('MaintenanceCockpit', () => {
 		});
 		app.save();
 		expect(app.formError()).toContain('whole numbers');
-		app.form.set({ ...app.form(), calendarValue: '', runInterval: '0' });
+		app.form.set({ ...app.form(), calendarValue: '', sessionInterval: '0' });
 		app.save();
 		expect(app.formError()).toContain('at least one');
 		app.form.set({
 			...app.form(),
-			runInterval: '2',
-			baselineRuns: 'half',
+			sessionInterval: '2',
+			baselineSessions: 'half',
 		});
 		app.save();
-		expect(app.formError()).toContain('Prior runs');
+		expect(app.formError()).toContain('Prior sessions');
 
 		Object.defineProperty(app.planFields(), 'invalid', { value: () => false });
-		app.form.set({ ...app.form(), baselineRuns: '0', runInterval: '1.5' });
+		app.form.set({
+			...app.form(),
+			baselineSessions: '0',
+			sessionInterval: '1.5',
+		});
 		app.save();
 		expect(app.formError()).toContain('whole numbers greater than zero');
-		app.form.set({ ...app.form(), calendarValue: '0', runInterval: '' });
+		app.form.set({ ...app.form(), calendarValue: '0', sessionInterval: '' });
 		app.save();
 		expect(app.formError()).toContain('whole numbers greater than zero');
-		app.form.set({ ...app.form(), calendarValue: '', runInterval: '' });
+		app.form.set({ ...app.form(), calendarValue: '', sessionInterval: '' });
 		app.save();
 		expect(app.formError()).toContain('calendar interval');
 		app.action.set('busy');
@@ -755,9 +759,9 @@ describe('MaintenanceCockpit', () => {
 			name: 'Plan',
 			calendarValue: '1',
 			calendarUnit: 'days',
-			runInterval: '',
+			sessionInterval: '',
 			baselineAt: '',
-			baselineRuns: '',
+			baselineSessions: '',
 			componentId: '',
 		});
 		for (const [status, message] of [
@@ -773,16 +777,16 @@ describe('MaintenanceCockpit', () => {
 		}
 	});
 
-	it('updates a plan with only a run threshold', async () => {
+	it('updates a plan with only a drive-session threshold', async () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
 		app.openEdit(plan);
 		http.expectOne('/api/v1/cars/car-1/components').flush({ components: [] });
 		app.form.set({
 			...app.form(),
 			calendarValue: '',
-			runInterval: '3',
+			sessionInterval: '3',
 			baselineAt: '',
-			baselineRuns: '0',
+			baselineSessions: '0',
 		});
 		app.save();
 		const update = http.expectOne('/api/v1/maintenance-plans/plan-1');

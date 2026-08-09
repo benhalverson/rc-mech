@@ -12,16 +12,6 @@ export type InstalledComponent = {
 	removedAt?: string | null;
 };
 
-export type DriveSession = {
-	id: string;
-	carId: string;
-	startedAt: string;
-	durationMinutes?: number | null;
-	conditions?: string | null;
-	notes?: string | null;
-	deletedAt?: string | null;
-};
-
 export type CarPhoto = {
 	id: string;
 	carId: string;

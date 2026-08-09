@@ -48,7 +48,7 @@
 						<button #navToggle class="nav-toggle" type="button" (click)="openNav(navToggle)" [attr.aria-expanded]="navOpen()" aria-controls="workspace-navigation" aria-label="Open workspace navigation">☰</button>
 						<div>
 							<div class="eyebrow">RC Mech / Field notebook</div>
-							<h1>Garage control<br />for the next run.</h1>
+							<h1>Garage control<br />for the next drive session.</h1>
 							<p class="stamp">OWNER ACCESS · {{ ownerEmail() }} · PRIVATE BY DEFAULT</p>
 						</div>
 						<div class="actions"><span class="workspace-label">{{ ownerEmail() }}</span><button class="button quiet" type="button" (click)="signOut()" [disabled]="signOutStore.signingOut()" [attr.aria-busy]="signOutStore.signingOut()">{{ signOutStore.signingOut() ? 'Signing out…' : 'Sign out' }}</button></div>

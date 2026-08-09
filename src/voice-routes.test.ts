@@ -423,9 +423,9 @@ describe('voice capture and provenance routes', () => {
 		};
 		expect(body.voiceUpdate.results.map((item) => item.url)).toEqual([
 			'/garage/car-1/setups',
-			'/garage/car-1/runs',
+			'/garage/car-1/drive-sessions',
 			'/maintenance',
-			'/garage/car-1/runs',
+			'/garage/car-1/drive-sessions',
 		]);
 		expect(body.voiceUpdate.corrections).toHaveLength(1);
 	});

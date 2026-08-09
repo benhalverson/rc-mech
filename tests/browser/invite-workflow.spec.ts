@@ -70,7 +70,7 @@ test('invite registration, management, isolation, and accessible states', async 
 		'build',
 		'setups',
 		'photos',
-		'runs',
+		'drive-sessions',
 		'voice',
 	]) {
 		await page.goto(`/garage/${created.car.id}/${section}`);
@@ -84,6 +84,70 @@ test('invite registration, management, isolation, and accessible states', async 
 		violations = await scan(page);
 		expect(violations).toEqual([]);
 	}
+	await page.goto(
+		`/garage/${created.car.id}/runs?source=legacy-bookmark&filter=archived#session-2`,
+	);
+	await expect(page).toHaveURL(
+		new RegExp(
+			`/garage/${created.car.id}/drive-sessions\\?source=legacy-bookmark&filter=archived#session-2$`,
+		),
+	);
+	await expect(
+		page.getByRole('heading', { name: 'Drive sessions', exact: true }),
+	).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
+
+	await page
+		.getByRole('button', { name: 'Record the first drive session' })
+		.click();
+	await expect(
+		page.getByRole('heading', { name: 'Record a drive session' }),
+	).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
+	await page.getByLabel('Conditions').fill('Dry clay');
+	await page.getByLabel('Notes').fill('Created through the browser workflow.');
+	await page.getByRole('button', { name: 'Save session' }).click();
+	await expect(page.locator('.session-log > p[role="status"]')).toContainText(
+		'Drive session recorded.',
+	);
+	await expect(page.getByText('Dry clay')).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
+
+	await page.getByRole('button', { name: 'Edit' }).click();
+	await page.getByLabel('Notes').fill('Updated through the browser workflow.');
+	await page.getByRole('button', { name: 'Save session' }).click();
+	await expect(page.locator('.session-log > p[role="status"]')).toContainText(
+		'Drive session updated.',
+	);
+	await expect(
+		page.getByText('Updated through the browser workflow.'),
+	).toBeVisible();
+	await page.getByRole('button', { name: 'Archive' }).click();
+	await expect(page.getByRole('button', { name: 'Archive' })).toHaveCount(0);
+	await expect(page.getByText('0 recorded')).toBeVisible();
+	let archivedSession = page.locator('.session-row').filter({
+		hasText: 'Updated through the browser workflow.',
+	});
+	await expect(archivedSession).toBeVisible();
+	await expect(archivedSession.getByRole('button')).toHaveCount(0);
+	violations = await scan(page);
+	expect(violations).toEqual([]);
+
+	await page.reload();
+	await expect(
+		page.getByRole('heading', { name: 'Drive sessions', exact: true }),
+	).toBeVisible();
+	archivedSession = page.locator('.session-row').filter({
+		hasText: 'Updated through the browser workflow.',
+	});
+	await expect(archivedSession).toBeVisible();
+	await expect(archivedSession.getByRole('button')).toHaveCount(0);
+	await expect(page.getByText('0 recorded')).toBeVisible();
+	violations = await scan(page);
+	expect(violations).toEqual([]);
 	for (const destination of [
 		['Garage', '/garage'],
 		['Maintenance', '/maintenance'],

@@ -19,11 +19,12 @@ import { CarBuild } from './car-build';
 import { CarBuildStore } from './car-build-store';
 import { CarOverview } from './car-overview';
 import { CarPhotos } from './car-photos';
-import { CarRuns } from './car-runs';
-import { CarRunsStore } from './car-runs-store';
 import { CarSetups } from './car-setups';
 import { CarSetupsStore } from './car-setups-store';
 import { CarStore } from './car-store';
+import { DriveSessionGateway } from './drive-sessions/drive-session-gateway';
+import { DriveSessionStore } from './drive-sessions/drive-session-store';
+import { DriveSessions } from './drive-sessions/drive-sessions';
 
 type TestSignal<T> = (() => T) & { set(value: T): void };
 
@@ -49,9 +50,9 @@ const testRoutes: Routes = [
 		providers: [CarPhotoStore, CarStore],
 	},
 	{
-		path: 'garage/:carId/runs',
-		component: CarRuns,
-		providers: [CarRunsStore, CarStore],
+		path: 'garage/:carId/drive-sessions',
+		component: DriveSessions,
+		providers: [DriveSessionGateway, DriveSessionStore, CarStore],
 	},
 ];
 
@@ -61,14 +62,15 @@ describe('Car section routes', () => {
 
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
-			imports: [CarBuild, CarOverview, CarPhotos, CarRuns, CarSetups],
+			imports: [CarBuild, CarOverview, CarPhotos, DriveSessions, CarSetups],
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				provideRouter(testRoutes, withComponentInputBinding()),
 				CarBuildStore,
 				CarPhotoStore,
-				CarRunsStore,
+				DriveSessionGateway,
+				DriveSessionStore,
 				CarSetupsStore,
 				CarStore,
 				SetupSnapshotStore,
@@ -125,7 +127,7 @@ describe('Car section routes', () => {
 			visible: 'No photos yet',
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			urls: [
 				'/api/v1/cars/car-1',
 				'/api/v1/cars/car-1/drives',
@@ -174,7 +176,7 @@ describe('Car section routes', () => {
 						'nav[aria-label="Car detail sections"] a[aria-current="page"]',
 					)
 					?.textContent?.toLowerCase(),
-			).toContain(path);
+			).toContain(path.replaceAll('-', ' '));
 		},
 	);
 
@@ -188,7 +190,7 @@ describe('Car section routes', () => {
 			reads: [] as const,
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			reads: [
 				['/api/v1/cars/car-1/drives', { driveSessions: [] }],
 				['/api/v1/preferences/timezone', { timezone: 'UTC' }],
@@ -245,7 +247,7 @@ describe('Car section routes', () => {
 			endpoint: '/api/v1/cars/car-1/components',
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			endpoint: '/api/v1/cars/car-1/drives',
 		},
 	])(
@@ -256,7 +258,7 @@ describe('Car section routes', () => {
 			http
 				.expectOne((request) => request.url === endpoint)
 				.flush('expired', { status: 401, statusText: 'Unauthorized' });
-			if (path === 'runs')
+			if (path === 'drive-sessions')
 				http
 					.expectOne('/api/v1/preferences/timezone')
 					.flush({ timezone: 'UTC' });
@@ -411,39 +413,6 @@ describe('Car section routes', () => {
 			.flush({ components: [] });
 	});
 
-	it('resets run editor state when a reused route changes cars', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			openAdd(): void;
-			formError: TestSignal<string>;
-			message: TestSignal<string>;
-		};
-		component.openAdd();
-		component.formError.set('Old run error');
-		component.message.set('Old run message');
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
-
-		await harness.navigateByUrl('/garage/car-2/runs');
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeNull();
-		expect(harness.routeNativeElement?.textContent).not.toContain('Old run');
-		http
-			.expectOne('/api/v1/cars/car-2')
-			.flush({ car: { ...car, id: 'car-2' } });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-2/drives')
-			.flush({ driveSessions: [] });
-	});
-
 	it('resets setup creation state when a reused route changes cars', async () => {
 		await harness.navigateByUrl('/garage/car-1/setups');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
@@ -527,70 +496,6 @@ describe('Car section routes', () => {
 		);
 	});
 
-	it('clears stale run feedback and identifies expired mutations', async () => {
-		const drive = {
-			id: 'drive-1',
-			carId: 'car-1',
-			startedAt: '2026-08-07T10:00:00.000Z',
-		};
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [drive] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			openAdd(): void;
-			save(): void;
-			archive(value: typeof drive): void;
-			form: TestSignal<{
-				startedAt: string;
-				durationMinutes: string;
-				conditions: string;
-				notes: string;
-			}>;
-			formError: TestSignal<string>;
-			message: TestSignal<string>;
-		};
-		component.openAdd();
-		component.form.set({
-			startedAt: '2026-08-07T10:00',
-			durationMinutes: '15',
-			conditions: '',
-			notes: '',
-		});
-		component.formError.set('Old run error');
-		component.message.set('Old run success');
-		await harness.fixture.whenStable();
-		component.save();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).not.toContain('Old run');
-		http
-			.expectOne('/api/v1/cars/car-1/drives')
-			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Your garage session has expired',
-		);
-
-		component.message.set('Old archive error');
-		component.archive(drive);
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).not.toContain(
-			'Old archive error',
-		);
-		http
-			.expectOne('/api/v1/cars/car-1/drives/drive-1')
-			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Your garage session has expired',
-		);
-	});
-
 	it('identifies an expired setup-import car creation', async () => {
 		await harness.navigateByUrl('/garage/car-1/setups');
 		http.expectOne('/api/v1/cars/car-1').flush({ car });
@@ -648,7 +553,7 @@ describe('Car section routes', () => {
 			body: { components: [] },
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			endpoint: '/api/v1/cars/car%2Fone/drives',
 			body: { driveSessions: [] },
 		},
@@ -660,7 +565,7 @@ describe('Car section routes', () => {
 				car: { ...car, id: 'car/one' },
 			});
 			http.expectOne((request) => request.url === endpoint).flush(body);
-			if (path === 'runs')
+			if (path === 'drive-sessions')
 				http
 					.expectOne('/api/v1/preferences/timezone')
 					.flush({ timezone: 'UTC' });
@@ -668,32 +573,6 @@ describe('Car section routes', () => {
 			harness.detectChanges();
 		},
 	);
-
-	it('encodes reserved identifiers for drive mutations', async () => {
-		const session = {
-			id: 'drive/one',
-			carId: 'car/one',
-			startedAt: '2026-08-07T00:00:00.000Z',
-		};
-		await harness.navigateByUrl('/garage/car%2Fone/runs');
-		http.expectOne('/api/v1/cars/car%2Fone').flush({
-			car: { ...car, id: 'car/one' },
-		});
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car%2Fone/drives')
-			.flush({ driveSessions: [session] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			archive(value: typeof session): void;
-		};
-		component.archive(session);
-		const request = http.expectOne('/api/v1/cars/car%2Fone/drives/drive%2Fone');
-		expect(request.request.method).toBe('DELETE');
-		request.flush('offline', { status: 503, statusText: 'Unavailable' });
-	});
 
 	it('blocks build editor entry while a mutation is in flight', async () => {
 		const installed = {
@@ -824,7 +703,7 @@ describe('Car section routes', () => {
 			body: { components: [] },
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			endpoint: '/api/v1/cars/car%2Fone/drives',
 			body: { driveSessions: [] },
 		},
@@ -836,7 +715,7 @@ describe('Car section routes', () => {
 				car: { ...car, id: 'car/one' },
 			});
 			http.expectOne((request) => request.url === endpoint).flush(body);
-			if (path === 'runs')
+			if (path === 'drive-sessions')
 				http
 					.expectOne('/api/v1/preferences/timezone')
 					.flush({ timezone: 'UTC' });
@@ -988,146 +867,6 @@ describe('Car section routes', () => {
 				request.method !== 'GET' &&
 				request.url === '/api/v1/cars/car-1/components',
 		);
-	});
-
-	it('blocks run editor actions while a mutation is in flight', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			action: TestSignal<string | null>;
-			openAdd(): void;
-			cancel(): void;
-			save(): void;
-		};
-		component.action.set('archive:drive-1');
-		component.openAdd();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeFalsy();
-		expect(
-			(
-				[
-					...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-				].find((button) =>
-					button.textContent?.includes('Record the first drive'),
-				) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
-
-		component.action.set(null);
-		component.openAdd();
-		harness.detectChanges();
-		const startedAt = harness.routeNativeElement?.querySelector(
-			'input[type="datetime-local"]',
-		) as HTMLInputElement;
-		startedAt.value = '';
-		startedAt.dispatchEvent(new Event('input'));
-		harness.detectChanges();
-		expect(
-			harness.routeNativeElement
-				?.querySelector('form')
-				?.getAttribute('aria-describedby'),
-		).toBeNull();
-		component.action.set('save');
-		harness.detectChanges();
-		const cancel = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find(
-			(button) => button.textContent?.trim() === 'Cancel',
-		) as HTMLButtonElement;
-		expect(cancel.disabled).toBe(true);
-		component.cancel();
-		component.save();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
-		http.expectNone(
-			(request) =>
-				request.method !== 'GET' && request.url === '/api/v1/cars/car-1/drives',
-		);
-	});
-
-	it('normalizes a number input with an invalid stored timezone', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [] });
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush({ timezone: 'Not/A-Timezone' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const add = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find((button) =>
-			button.textContent?.includes('Record the first drive'),
-		) as HTMLButtonElement | undefined;
-		add?.click();
-		harness.detectChanges();
-		const durationLabel = [
-			...(harness.routeNativeElement?.querySelectorAll('label') ?? []),
-		].find((label) => label.textContent?.includes('Duration'));
-		const duration = durationLabel?.querySelector('input') as HTMLInputElement;
-		duration.value = '30';
-		duration.dispatchEvent(new Event('input', { bubbles: true }));
-		harness.detectChanges();
-		await harness.fixture.whenStable();
-		harness.routeNativeElement
-			?.querySelector('form')
-			?.dispatchEvent(new Event('submit'));
-
-		const mutation = http.expectOne('/api/v1/cars/car-1/drives');
-		expect(mutation.request.method).toBe('POST');
-		expect(mutation.request.body.durationMinutes).toBe(30);
-		expect(mutation.request.body.startedAt).toMatch(/Z$/);
-		mutation.flush({ driveSession: { id: 'drive-1' } });
-		let refresh: TestRequest | undefined;
-		await vi.waitFor(() => {
-			refresh = http.expectOne(
-				(request) => request.url === '/api/v1/cars/car-1/drives',
-			);
-		});
-		refresh?.flush({ driveSessions: [] });
-	});
-
-	it('falls back to UTC before rendering a run with an invalid stored timezone', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({
-				driveSessions: [
-					{
-						id: 'drive-1',
-						carId: 'car-1',
-						startedAt: '2026-08-07T12:00:00.000Z',
-						durationMinutes: 10,
-					},
-				],
-			});
-		http
-			.expectOne('/api/v1/preferences/timezone')
-			.flush({ timezone: 'Not/A-Timezone' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			runsStore: { timezone(): string };
-		};
-		expect(component.runsStore.timezone()).toBe('UTC');
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Conditions not recorded',
-		);
-		expect(
-			harness.routeNativeElement?.querySelector('.session-row p'),
-		).toBeNull();
 	});
 
 	it('retries a failed build read and renders current and historical slots', async () => {
@@ -1496,159 +1235,6 @@ describe('Car section routes', () => {
 		expect(harness.routeNativeElement?.querySelector('.car-form')).toBeTruthy();
 	});
 
-	it('retries the run log and completes edit and archive actions', async () => {
-		const active = {
-			id: 'drive-1',
-			carId: 'car-1',
-			startedAt: '2026-08-07T10:00:00.000Z',
-			durationMinutes: 0,
-			conditions: null,
-			notes: null,
-		};
-		const deleted = {
-			id: 'drive-2',
-			carId: 'car-1',
-			startedAt: '2026-08-06T10:00:00.000Z',
-			durationMinutes: 20,
-			conditions: 'Dusty',
-			notes: 'Archived run',
-			deletedAt: '2026-08-07T00:00:00.000Z',
-		};
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		await Promise.resolve();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Opening the run log',
-		);
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush('offline', { status: 503, statusText: 'Unavailable' });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const retry = harness.routeNativeElement?.querySelector(
-			'[role="alert"] button',
-		) as HTMLButtonElement;
-		retry.click();
-		let refresh: TestRequest | undefined;
-		await vi.waitFor(() => {
-			refresh = http.expectOne(
-				(request) => request.url === '/api/v1/cars/car-1/drives',
-			);
-		});
-		refresh?.flush({ sessions: [active, deleted] });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain('1 recorded');
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Conditions not recorded',
-		);
-		expect(harness.routeNativeElement?.textContent).toContain('Archived run');
-
-		const button = (label: string): HTMLButtonElement =>
-			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
-				(candidate) => candidate.textContent?.trim() === label,
-			) as HTMLButtonElement;
-		button('Edit').click();
-		harness.detectChanges();
-		let form = harness.routeNativeElement?.querySelector(
-			'form',
-		) as HTMLFormElement;
-		const duration = [...form.querySelectorAll('label')]
-			.find((label) => label.textContent?.includes('Duration'))
-			?.querySelector('input') as HTMLInputElement;
-		expect(duration.value).toBe('');
-		button('Cancel').click();
-		harness.detectChanges();
-
-		button('Edit').click();
-		harness.detectChanges();
-		form = harness.routeNativeElement?.querySelector('form') as HTMLFormElement;
-		form.dispatchEvent(new Event('submit'));
-		const edit = http.expectOne('/api/v1/cars/car-1/drives/drive-1');
-		expect(edit.request.method).toBe('PATCH');
-		expect(edit.request.body.durationMinutes).toBeNull();
-		edit.flush({ driveSession: active });
-		await vi.waitFor(() => {
-			refresh = http.expectOne(
-				(request) => request.url === '/api/v1/cars/car-1/drives',
-			);
-		});
-		refresh?.flush({ driveSessions: [active, deleted] });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'Drive session updated',
-		);
-
-		button('Archive').click();
-		http.expectOne('/api/v1/cars/car-1/drives/drive-1').flush({ status: true });
-		await vi.waitFor(() => {
-			refresh = http.expectOne(
-				(request) => request.url === '/api/v1/cars/car-1/drives',
-			);
-		});
-		refresh?.flush({
-			driveSessions: [{ ...active, deletedAt: 'now' }, deleted],
-		});
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain('0 recorded');
-	});
-
-	it('focuses invalid run fields and falls back to a generic summary', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		(
-			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
-				(button) => button.textContent?.includes('Record the first drive'),
-			) as HTMLButtonElement
-		).click();
-		harness.detectChanges();
-		const form = harness.routeNativeElement?.querySelector(
-			'form',
-		) as HTMLFormElement;
-		const started = form.querySelector(
-			'input[type="datetime-local"]',
-		) as HTMLInputElement;
-		const duration = [...form.querySelectorAll('label')]
-			.find((label) => label.textContent?.includes('Duration'))
-			?.querySelector('input') as HTMLInputElement;
-		started.value = '';
-		started.dispatchEvent(new Event('input'));
-		duration.value = '0';
-		duration.dispatchEvent(new Event('input'));
-		form.dispatchEvent(new Event('submit'));
-		harness.detectChanges();
-		expect(document.activeElement).toBe(started);
-
-		started.value = '2026-08-07T10:00';
-		started.dispatchEvent(new Event('input'));
-		form.dispatchEvent(new Event('submit'));
-		harness.detectChanges();
-		expect(document.activeElement).toBe(duration);
-		expect(form.textContent).toContain('between 1 and 1,440');
-
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			runForm(): { errorSummary(): Array<{ message?: string }> };
-		};
-		Object.defineProperty(component.runForm(), 'errorSummary', {
-			configurable: true,
-			value: () => [],
-		});
-		form.dispatchEvent(new Event('submit'));
-		harness.detectChanges();
-		expect(form.textContent).toContain('Review the drive session fields');
-	});
-
 	it('retries the car record from the Photos leaf before loading the gallery', async () => {
 		await harness.navigateByUrl('/garage/car-1/photos');
 		http
@@ -1765,7 +1351,7 @@ describe('Car section routes', () => {
 			TestBed.createComponent(CarOverview),
 			TestBed.createComponent(CarBuild),
 			TestBed.createComponent(CarPhotos),
-			TestBed.createComponent(CarRuns),
+			TestBed.createComponent(DriveSessions),
 			TestBed.createComponent(CarSetups),
 		];
 		for (const fixture of fixtures) fixture.detectChanges();
@@ -1779,7 +1365,7 @@ describe('Car section routes', () => {
 
 	it.each([
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			preRetryReads: [
 				['/api/v1/cars/car-1/drives', { driveSessions: [] }],
 				['/api/v1/preferences/timezone', { timezone: 'UTC' }],
@@ -1972,7 +1558,7 @@ describe('Car section routes', () => {
 			reads: [] as const,
 		},
 		{
-			path: 'runs',
+			path: 'drive-sessions',
 			reads: [
 				['/api/v1/cars/car-1/drives', { driveSessions: [] }],
 				['/api/v1/preferences/timezone', { timezone: 'UTC' }],
@@ -2115,236 +1701,6 @@ describe('Car section routes', () => {
 		http
 			.expectOne('/api/v1/cars/car-4/restore')
 			.flush('offline', { status: 503, statusText: 'Unavailable' });
-	});
-
-	it('covers run editor guards, conversions, and action listeners', async () => {
-		const active = {
-			id: 'drive-1',
-			carId: 'car-1',
-			startedAt: '2026-08-07T10:00:00.000Z',
-			durationMinutes: 20,
-		};
-		const deleted = {
-			...active,
-			id: 'drive-2',
-			deletedAt: '2026-08-08T00:00:00.000Z',
-		};
-		await harness.navigateByUrl('/garage/car-1/runs');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [active, deleted] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			action: TestSignal<string | null>;
-			openAdd(): void;
-			openEdit(value: typeof active): void;
-			cancel(): void;
-			archive(value: typeof active): void;
-		};
-		const button = (label: string): HTMLButtonElement =>
-			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
-				(candidate) => candidate.textContent?.trim() === label,
-			) as HTMLButtonElement;
-		button('Record a drive').click();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.querySelector('form')).toBeTruthy();
-		component.cancel();
-
-		const formatToParts = vi
-			.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts')
-			.mockReturnValue([
-				{ type: 'year', value: '2026' },
-				{ type: 'month', value: '08' },
-				{ type: 'day', value: '07' },
-				{ type: 'hour', value: '10' },
-			]);
-		component.openEdit(active);
-		component.cancel();
-		formatToParts.mockRestore();
-		component.openEdit(active);
-		harness.detectChanges();
-		expect(
-			(
-				harness.routeNativeElement?.querySelector(
-					'input[inputmode="numeric"]',
-				) as HTMLInputElement
-			).value,
-		).toBe('20');
-		component.cancel();
-		component.action.set('busy');
-		component.openEdit(active);
-		component.archive(active);
-		component.action.set(null);
-		component.openEdit(deleted);
-
-		Object.defineProperty(component, 'openAdd', {
-			configurable: true,
-			value: () => true,
-		});
-		harness.detectChanges();
-		expect(
-			button('Record a drive').dispatchEvent(
-				new MouseEvent('click', { cancelable: true }),
-			),
-		).toBe(true);
-
-		await harness.navigateByUrl('/garage/car-2/runs');
-		http
-			.expectOne('/api/v1/cars/car-2')
-			.flush({ car: { ...car, id: 'car-2' } });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-2/drives')
-			.flush({ driveSessions: [] });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		const firstDrive = [
-			...(harness.routeNativeElement?.querySelectorAll('button') ?? []),
-		].find((candidate) =>
-			candidate.textContent?.includes('Record the first drive'),
-		) as HTMLButtonElement;
-		expect(
-			firstDrive.dispatchEvent(new MouseEvent('click', { cancelable: true })),
-		).toBe(true);
-
-		await harness.navigateByUrl('/garage/car-3/runs');
-		http.expectOne('/api/v1/cars/car-3').flush({
-			car: {
-				...car,
-				id: 'car-3',
-				archivedAt: '2026-08-08T00:00:00.000Z',
-			},
-		});
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-3/drives')
-			.flush({ driveSessions: [] });
-		await harness.fixture.whenStable();
-		harness.detectChanges();
-		expect(harness.routeNativeElement?.textContent).toContain(
-			'No drive sessions recorded',
-		);
-		expect(
-			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].some(
-				(candidate) =>
-					candidate.textContent?.includes('Record the first drive'),
-			),
-		).toBe(false);
-	});
-
-	it('covers run save guards and current mutation errors', async () => {
-		await harness.navigateByUrl('/garage/car-1/runs');
-		const component = harness.routeDebugElement
-			?.componentInstance as unknown as {
-			openAdd(): void;
-			save(): void;
-			archive(value: { id: string }): void;
-			form: TestSignal<{
-				startedAt: string;
-				durationMinutes: string;
-				conditions: string;
-				notes: string;
-			}>;
-			formError: TestSignal<string>;
-		};
-		component.save();
-		expect(component.formError()).toContain('Restore this car');
-		http.expectOne('/api/v1/cars/car-1').flush({ car });
-		http
-			.expectOne((request) => request.url === '/api/v1/cars/car-1/drives')
-			.flush({ driveSessions: [] });
-		http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
-		await harness.fixture.whenStable();
-		component.openAdd();
-		component.form.set({
-			startedAt: 'invalid',
-			durationMinutes: '',
-			conditions: '',
-			notes: '',
-		});
-		await harness.fixture.whenStable();
-		component.save();
-		let mutation = http.expectOne('/api/v1/cars/car-1/drives');
-		expect(mutation.request.body.startedAt).toBe('');
-		mutation.flush('archived', { status: 409, statusText: 'Conflict' });
-		expect(component.formError()).toContain('Restore this car');
-		component.save();
-		mutation = http.expectOne('/api/v1/cars/car-1/drives');
-		mutation.flush('offline', { status: 503, statusText: 'Unavailable' });
-		expect(component.formError()).toContain('could not be saved');
-	});
-
-	it('ignores stale run save and archive responses', async () => {
-		const session = {
-			id: 'drive-1',
-			carId: 'car-1',
-			startedAt: '2026-08-07T10:00:00.000Z',
-		};
-		const componentFor = (): {
-			openAdd(): void;
-			save(): void;
-			archive(value: typeof session): void;
-			form: TestSignal<{
-				startedAt: string;
-				durationMinutes: string;
-				conditions: string;
-				notes: string;
-			}>;
-		} => harness.routeDebugElement?.componentInstance as never;
-		const open = async (carId: string): Promise<void> => {
-			await harness.navigateByUrl(`/garage/${carId}/runs`);
-			http.expectOne(`/api/v1/cars/${carId}`).flush({
-				car: { ...car, id: carId },
-			});
-			http
-				.expectOne((request) => request.url === `/api/v1/cars/${carId}/drives`)
-				.flush({ driveSessions: [session] });
-			for (const timezone of http.match('/api/v1/preferences/timezone'))
-				timezone.flush({ timezone: 'UTC' });
-			await harness.fixture.whenStable();
-			harness.detectChanges();
-		};
-		const startSave = (): TestRequest => {
-			const component = componentFor();
-			component.openAdd();
-			component.form.set({
-				startedAt: '2026-08-07T10:00',
-				durationMinutes: '',
-				conditions: '',
-				notes: '',
-			});
-			component.save();
-			return http.expectOne(
-				(request) =>
-					request.method === 'POST' && request.url.endsWith('/drives'),
-			);
-		};
-
-		await open('car-1');
-		const staleSaveSuccess = startSave();
-		await open('car-2');
-		staleSaveSuccess.flush({ driveSession: session });
-		const staleSaveError = startSave();
-		await open('car-3');
-		staleSaveError.flush('offline', { status: 503, statusText: 'Unavailable' });
-
-		componentFor().archive(session);
-		const staleArchiveSuccess = http.expectOne(
-			'/api/v1/cars/car-3/drives/drive-1',
-		);
-		await open('car-4');
-		staleArchiveSuccess.flush({ status: true });
-		componentFor().archive(session);
-		const staleArchiveError = http.expectOne(
-			'/api/v1/cars/car-4/drives/drive-1',
-		);
-		await open('car-5');
-		staleArchiveError.flush('offline', {
-			status: 503,
-			statusText: 'Unavailable',
-		});
 	});
 
 	it('serializes model-only setup cars and ignores stale creation responses', async () => {

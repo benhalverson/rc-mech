@@ -36,9 +36,9 @@ export type MaintenanceForm = {
 	name: string;
 	calendarValue: string;
 	calendarUnit: 'days' | 'weeks' | 'months';
-	runInterval: string;
+	sessionInterval: string;
 	baselineAt: string;
-	baselineRuns: string;
+	baselineSessions: string;
 };
 
 export type ServiceForm = {
@@ -59,9 +59,9 @@ const emptyForm = (): MaintenanceForm => ({
 	name: '',
 	calendarValue: '',
 	calendarUnit: 'weeks',
-	runInterval: '',
+	sessionInterval: '',
 	baselineAt: '',
-	baselineRuns: '0',
+	baselineSessions: '0',
 });
 const emptyServiceForm = (): ServiceForm => ({
 	carId: '',
@@ -93,10 +93,10 @@ export const calculatePlanState = (
 	const calendarDue = plan.intervalDays
 		? now.getTime() >= baseline + plan.intervalDays * 86400000
 		: false;
-	const runsDue = plan.intervalSessions
+	const sessionsDue = plan.intervalSessions
 		? sessionCount >= (plan.baselineSessionCount ?? 0) + plan.intervalSessions
 		: false;
-	if (calendarDue || runsDue) {
+	if (calendarDue || sessionsDue) {
 		const overdue = plan.nextDueAt
 			? now.getTime() > new Date(plan.nextDueAt).getTime()
 			: calendarDue &&
@@ -153,7 +153,7 @@ export class MaintenanceCockpit {
 		maxLength(path.name, 160, {
 			message: 'Use 160 characters or fewer for the plan name.',
 		});
-		for (const interval of [path.calendarValue, path.runInterval])
+		for (const interval of [path.calendarValue, path.sessionInterval])
 			validate(interval, ({ value }) => {
 				const intervalValue = value().trim();
 				if (!intervalValue) return undefined;
@@ -166,12 +166,12 @@ export class MaintenanceCockpit {
 					? undefined
 					: { kind: 'minimum', message: 'Intervals must be at least one.' };
 			});
-		validate(path.baselineRuns, ({ value }) =>
+		validate(path.baselineSessions, ({ value }) =>
 			!value().trim() || /^\d+$/.test(value().trim())
 				? undefined
 				: {
 						kind: 'wholeNumber',
-						message: 'Prior runs must be a whole number.',
+						message: 'Prior sessions must be a whole number.',
 					},
 		);
 	});
@@ -312,11 +312,13 @@ export class MaintenanceCockpit {
 				plan.intervalUnit === 'weeks' || plan.intervalUnit === 'months'
 					? plan.intervalUnit
 					: 'days',
-			runInterval: plan.intervalSessions ? String(plan.intervalSessions) : '',
+			sessionInterval: plan.intervalSessions
+				? String(plan.intervalSessions)
+				: '',
 			baselineAt: plan.baselineAt
 				? this.localDateTime(new Date(plan.baselineAt))
 				: '',
-			baselineRuns: String(plan.baselineSessionCount ?? 0),
+			baselineSessions: String(plan.baselineSessionCount ?? 0),
 		});
 		this.editingId.set(plan.id);
 		this.formError.set('');
@@ -494,7 +496,9 @@ export class MaintenanceCockpit {
 		const calendar = form.calendarValue.trim()
 			? Number(form.calendarValue)
 			: null;
-		const runs = form.runInterval.trim() ? Number(form.runInterval) : null;
+		const sessions = form.sessionInterval.trim()
+			? Number(form.sessionInterval)
+			: null;
 		if (this.planFields().invalid()) {
 			this.formError.set(
 				this.planFields().errorSummary()[0]?.message ??
@@ -506,20 +510,22 @@ export class MaintenanceCockpit {
 				this.planFields.name().focusBoundControl();
 			else if (this.planFields.calendarValue().invalid())
 				this.planFields.calendarValue().focusBoundControl();
-			else if (this.planFields.runInterval().invalid())
-				this.planFields.runInterval().focusBoundControl();
-			else this.planFields.baselineRuns().focusBoundControl();
+			else if (this.planFields.sessionInterval().invalid())
+				this.planFields.sessionInterval().focusBoundControl();
+			else this.planFields.baselineSessions().focusBoundControl();
 			return;
 		}
 		if (
 			(calendar !== null && (!Number.isInteger(calendar) || calendar < 1)) ||
-			(runs !== null && (!Number.isInteger(runs) || runs < 1))
+			(sessions !== null && (!Number.isInteger(sessions) || sessions < 1))
 		) {
 			this.formError.set('Intervals must be whole numbers greater than zero.');
 			return;
 		}
-		if (calendar === null && runs === null) {
-			this.formError.set('Add a calendar interval, a run threshold, or both.');
+		if (calendar === null && sessions === null) {
+			this.formError.set(
+				'Add a calendar interval, a drive-session threshold, or both.',
+			);
 			return;
 		}
 		if (this.action()) return;
@@ -533,9 +539,9 @@ export class MaintenanceCockpit {
 			...(calendar !== null && form.calendarUnit === 'days'
 				? { intervalDays: calendar }
 				: {}),
-			intervalSessions: runs === null ? undefined : runs,
+			intervalSessions: sessions === null ? undefined : sessions,
 			baselineAt: form.baselineAt ? this.toIso(form.baselineAt) : undefined,
-			baselineSessionCount: Number(form.baselineRuns) || 0,
+			baselineSessionCount: Number(form.baselineSessions) || 0,
 		};
 		const id = this.editingId();
 		this.action.set(id ? 'edit' : 'create');

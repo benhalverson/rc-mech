@@ -41,11 +41,11 @@ const resultUrl = (
 		case 'setup':
 			return `/garage/${encodeURIComponent(carId)}/setups`;
 		case 'drive-session':
-			return `/garage/${encodeURIComponent(carId)}/runs`;
+			return `/garage/${encodeURIComponent(carId)}/drive-sessions`;
 		case 'consumable':
 			return '/maintenance';
 		default:
-			return `/garage/${encodeURIComponent(carId)}/runs`;
+			return `/garage/${encodeURIComponent(carId)}/drive-sessions`;
 	}
 };
 

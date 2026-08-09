@@ -7,7 +7,6 @@ import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CarBuildStore } from './car-build-store';
 import { carReadFailure } from './car-read-failure';
-import { CarRunsStore, safeTimezone } from './car-runs-store';
 import { CarSetupsStore } from './car-setups-store';
 import { CarStore } from './car-store';
 
@@ -73,74 +72,6 @@ describe('car route stores', () => {
 			http
 				?.expectOne('/api/v1/cars/car-1/components?history=true')
 				.flush({ components: [] }),
-		);
-	});
-
-	it('normalizes run resources, timezones, and reload methods', async () => {
-		configure(CarRunsStore);
-		const store = TestBed.inject(CarRunsStore);
-		expect(store.sessions()).toEqual([]);
-		expect(store.timezone()).toBeTruthy();
-		expect(safeTimezone('UTC')).toBe('UTC');
-		expect(safeTimezone('')).toBe('UTC');
-		expect(safeTimezone(null)).toBe('UTC');
-		expect(safeTimezone('Not/A-Timezone')).toBe('UTC');
-
-		store.selectCar('car-1');
-		store.selectCar('car-1');
-		await vi.waitFor(() => {
-			http?.expectOne('/api/v1/cars/car-1/drives?history=true').flush({});
-			http?.expectOne('/api/v1/preferences/timezone').flush({});
-		});
-		expect(store.sessions()).toEqual([]);
-		expect(store.timezone()).toBe('UTC');
-
-		store.retry();
-		await vi.waitFor(() =>
-			http
-				?.expectOne('/api/v1/cars/car-1/drives?history=true')
-				.flush({ driveSessions: [] }),
-		);
-		store.refresh();
-		await vi.waitFor(() =>
-			http
-				?.expectOne('/api/v1/cars/car-1/drives?history=true')
-				.flush({ driveSessions: [] }),
-		);
-	});
-
-	it('falls back to UTC when browser timezone discovery throws', async () => {
-		configure(CarRunsStore);
-		const store = TestBed.inject(CarRunsStore);
-		vi.stubGlobal('Intl', {
-			DateTimeFormat: class {
-				constructor() {
-					throw new Error('Intl unavailable');
-				}
-			},
-		});
-		expect(store.timezone()).toBe('UTC');
-		vi.unstubAllGlobals();
-		await vi.waitFor(() =>
-			http?.expectOne('/api/v1/preferences/timezone').flush({}),
-		);
-	});
-
-	it('falls back to UTC when browser timezone discovery returns no timezone', async () => {
-		configure(CarRunsStore);
-		const store = TestBed.inject(CarRunsStore);
-		const realDateTimeFormat = Intl.DateTimeFormat;
-		vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((locales, options) => {
-			if (options === undefined)
-				return {
-					resolvedOptions: () => ({ timeZone: '' }),
-				} as Intl.DateTimeFormat;
-			return new realDateTimeFormat(locales, options);
-		});
-		expect(store.timezone()).toBe('UTC');
-		vi.restoreAllMocks();
-		await vi.waitFor(() =>
-			http?.expectOne('/api/v1/preferences/timezone').flush({}),
 		);
 	});
 
