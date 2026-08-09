@@ -34,11 +34,11 @@ export const timezoneGatewayFailure = (
 	if (error instanceof HttpErrorResponse) {
 		if (error.status === 0)
 			return { kind: 'unavailable', message: failureMessage };
-		const rejected = apiErrorSchema.safeParse(error.error);
-		if (rejected.success)
+		const parsedApiError = apiErrorSchema.safeParse(error.error);
+		if (parsedApiError.success)
 			return {
 				kind: 'rejected-response',
-				message: rejected.data.error,
+				message: parsedApiError.data.error,
 			};
 		return {
 			kind: 'http',
