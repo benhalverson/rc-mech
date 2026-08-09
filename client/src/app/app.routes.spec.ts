@@ -121,8 +121,20 @@ describe('protected workspace routes', () => {
 		}
 	});
 
-	it('keeps a public sign-in route available for rejected navigation', () => {
-		expect(routes.some((route) => route.path === 'sign-in')).toBe(true);
+	it('keeps the public authentication workflow behind its own lazy route boundary', async () => {
+		const signIn = routes.find((route) => route.path === 'sign-in');
+		expect(signIn?.loadChildren).toBeTypeOf('function');
+		expect(signIn?.loadComponent).toBeUndefined();
+		expect(signIn?.providers).toBeUndefined();
+
+		const authenticationRoutes = await signIn?.loadChildren?.();
+		expect(Array.isArray(authenticationRoutes)).toBe(true);
+		if (!Array.isArray(authenticationRoutes)) return;
+		expect(authenticationRoutes[0]?.providers).toHaveLength(3);
+		expect(authenticationRoutes[0]?.loadComponent).toBeTypeOf('function');
+		expect(await authenticationRoutes[0]?.loadComponent?.()).toBeTypeOf(
+			'function',
+		);
 	});
 
 	it('keeps every protected workspace behind the session gate', () => {

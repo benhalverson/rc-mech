@@ -1,0 +1,25 @@
+<main class="access-shell" tabindex="-1">
+	<section class="access-card" aria-labelledby="sign-in-title">
+		<div class="eyebrow">RC Mech / Owner access</div>
+		<h1 id="sign-in-title" data-route-focus tabindex="-1">Back to the<br />workbench.</h1>
+		<p class="intro">{{ registering() ? 'Use an invite code to start your own private garage.' : 'Use your email to receive a one-time link, or continue with a passkey.' }}</p>
+		<form (submit)="submit($event)" novalidate>
+			<label for="owner-email">Email address</label>
+			<input id="owner-email" type="email" autocomplete="email" [formField]="credentialsForm.email" [attr.aria-describedby]="credentialsForm.email().touched() && credentialsForm.email().invalid() ? 'email-validation' : null" />
+			@if (credentialsForm.email().touched() && credentialsForm.email().invalid()) { <p id="email-validation" class="hint" role="alert">{{ credentialsForm.email().errors()[0]?.message }}</p> }
+			@if (registering()) {
+				<label for="invite-code">Invite code</label>
+				<input id="invite-code" autocomplete="off" [formField]="credentialsForm.inviteCode" [attr.aria-describedby]="credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid() ? 'invite-code-validation' : null" />
+				@if (credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid()) { <p id="invite-code-validation" class="hint" role="alert">{{ credentialsForm.inviteCode().errors()[0]?.message }}</p> }
+			}
+			<button class="button" type="submit" [disabled]="store.sending()">{{ store.sending() ? 'Sending link…' : registering() ? 'Start registration' : 'Send magic link' }}</button>
+		</form>
+		@if (!registering()) {
+			<div class="divider"><span>or</span></div>
+			<button class="button passkey-button" type="button" (click)="authenticateWithPasskey()" [disabled]="!store.webAuthnAvailable() || store.working()">{{ store.working() ? 'Waiting for passkey…' : 'Sign in with a passkey' }}</button>
+		}
+		<button class="text-button" type="button" (click)="toggleRegistration()" [disabled]="store.sending()">{{ registering() ? 'Already have an account? Sign in' : 'Have an invite code? Register' }}</button>
+		@if (store.message()) { <p class="message" role="status">{{ store.message() }}</p> }
+		@if (store.sent()) { <p class="hint">Open the link from this device. The link expires soon and can only be used once.</p> }
+	</section>
+</main>

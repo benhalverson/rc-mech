@@ -34,10 +34,14 @@ const loadMaintenanceRoutes = () =>
 	import('./maintenance/maintenance.routes').then(
 		({ MAINTENANCE_ROUTES }) => MAINTENANCE_ROUTES,
 	);
+const loadSignInRoutes = () =>
+	import('./sign-in/sign-in.routes').then(
+		({ SIGN_IN_ROUTES }) => SIGN_IN_ROUTES,
+	);
 
 export const signInRoute = {
 	path: 'sign-in',
-	loadComponent: () => import('./sign-in').then(({ SignIn }) => SignIn),
+	loadChildren: loadSignInRoutes,
 };
 
 export const routes: Routes = [
