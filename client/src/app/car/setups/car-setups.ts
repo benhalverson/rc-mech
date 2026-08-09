@@ -1,28 +1,16 @@
 import { HttpClient } from '@angular/common/http';
 import { Component, effect, inject, input, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import type { GarageCar, GarageCarInput } from '../garage/garage-store';
-import { SetupSnapshots } from '../setup-snapshots';
-import { CarSectionShell } from './car-section-shell';
+import type { GarageCar, GarageCarInput } from '../../garage/garage-store';
+import { CarSectionShell } from '../car-section-shell';
+import { CarStore } from '../car-store';
 import { CarSetupsStore } from './car-setups-store';
-import { CarStore } from './car-store';
+import { SetupSnapshots } from './setup-snapshots';
 
 @Component({
 	selector: 'app-car-setups',
 	imports: [CarSectionShell, SetupSnapshots],
-	template: `
-		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
-		@else if (carStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
-		@else if (carStore.car(); as car) {
-			<app-car-section-shell [car]="car" section="setups">
-				@if (createError()) { <p role="alert">{{ createError() }}</p> }
-				@if (createAction()) { <p role="status">Creating the new car…</p> }
-				@if (setupsStore.loading()) { <div class="state-card" role="status">Preparing setup imports…</div> }
-				@else if (setupsStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="setupsStore.retry()">Try again</button> }</div> }
-				@else { <app-setup-snapshots [carId]="car.id" [archived]="!!car.archivedAt" [availableCars]="setupsStore.availableCars()" (createCarFromImport)="createCar($event)" /> }
-			</app-car-section-shell>
-		}
-	`,
+	templateUrl: './car-setups.html',
 })
 export class CarSetups {
 	readonly carId = input('');

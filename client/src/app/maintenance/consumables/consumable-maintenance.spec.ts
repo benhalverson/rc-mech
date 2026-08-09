@@ -13,8 +13,8 @@ import {
 	mergeTireReport,
 	spendLabel,
 } from './consumable-maintenance';
-import { MaintenanceLookups } from './maintenance/maintenance-lookups';
-import { MaintenanceStore } from './maintenance/maintenance-store';
+import { MaintenanceLookups } from '../maintenance-lookups';
+import { MaintenanceStore } from '../maintenance-store';
 
 type Harness = {
 	load: () => void;

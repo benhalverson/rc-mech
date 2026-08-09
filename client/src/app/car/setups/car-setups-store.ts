@@ -6,8 +6,8 @@ import {
 	withMethods,
 	withProps,
 } from '@ngrx/signals';
-import type { GarageCar } from '../garage/garage-store';
-import { carReadFailure } from './car-read-failure';
+import type { GarageCar } from '../../garage/garage-store';
+import { carReadFailure } from '../car-read-failure';
 
 export const CarSetupsStore = signalStore(
 	withProps(() => ({

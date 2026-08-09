@@ -13,11 +13,11 @@ const loadCarBuildRoutes = () =>
 		({ CAR_BUILD_ROUTES }) => CAR_BUILD_ROUTES,
 	);
 const loadCarSetupsRoutes = () =>
-	import('./car/car-setups.routes').then(
+	import('./car/setups/car-setups.routes').then(
 		({ CAR_SETUPS_ROUTES }) => CAR_SETUPS_ROUTES,
 	);
 const loadCarPhotosRoutes = () =>
-	import('./car/car-photos.routes').then(
+	import('./car/photos/car-photos.routes').then(
 		({ CAR_PHOTOS_ROUTES }) => CAR_PHOTOS_ROUTES,
 	);
 const loadDriveSessionRoutes = () =>

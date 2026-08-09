@@ -8,8 +8,8 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { carReadFailure } from './car/car-read-failure';
-import type { CarPhoto } from './car/car.models';
+import { carReadFailure } from '../car-read-failure';
+import type { CarPhoto } from '../car.models';
 
 export const CarPhotoStore = signalStore(
 	withState({ carId: '' }),

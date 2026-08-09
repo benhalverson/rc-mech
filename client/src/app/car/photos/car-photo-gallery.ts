@@ -21,7 +21,7 @@ import {
 	LucideUpload,
 } from '@lucide/angular';
 import { firstValueFrom } from 'rxjs';
-import type { CarPhoto } from './car/car.models';
+import type { CarPhoto } from '../car.models';
 import { CarPhotoStore } from './car-photo-store';
 
 type PhotosResponse = { photos: CarPhoto[] };

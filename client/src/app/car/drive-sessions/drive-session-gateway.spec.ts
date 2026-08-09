@@ -145,6 +145,19 @@ describe('DriveSessionGateway', () => {
 				.expectOne('/api/v1/cars/car%2Fone/drives?history=true')
 				.flush({ driveSessions: [] }),
 		);
+
+		gateway.refresh();
+		await vi.waitFor(() =>
+			http
+				.expectOne('/api/v1/cars/car%2Fone/drives?history=true')
+				.flush('offline', { status: 503, statusText: 'Unavailable' }),
+		);
+		await vi.waitFor(() =>
+			expect(gateway.collectionFailure()).toEqual({
+				kind: 'http',
+				status: 503,
+			}),
+		);
 	});
 
 	it('issues cold create, update, and archive mutations', async () => {

@@ -7,6 +7,8 @@ export const MAINTENANCE_ROUTES: Routes = [
 		path: '',
 		providers: [MaintenanceLookups, MaintenanceStore],
 		loadComponent: () =>
-			import('./maintenance').then(({ Maintenance }) => Maintenance),
+			import('./maintenance-cockpit').then(
+				({ MaintenanceCockpit }) => MaintenanceCockpit,
+			),
 	},
 ];

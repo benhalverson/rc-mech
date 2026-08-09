@@ -30,21 +30,21 @@ import {
 	LucideTriangleAlert,
 	LucideWrench,
 } from '@lucide/angular';
-import { ConsumableMaintenance } from './consumable-maintenance';
+import { ConsumableMaintenance } from './consumables/consumable-maintenance';
 import type {
 	MaintenanceActivity,
 	MaintenanceComponent,
 	MaintenancePlan,
 	PlanState,
 	ServiceRecord,
-} from './maintenance/maintenance.models';
-import { MaintenanceLookups } from './maintenance/maintenance-lookups';
-import { MaintenanceStore } from './maintenance/maintenance-store';
+} from './maintenance.models';
+import { MaintenanceLookups } from './maintenance-lookups';
+import { MaintenanceStore } from './maintenance-store';
 
 export type {
 	MaintenancePlan,
 	ServiceRecord,
-} from './maintenance/maintenance.models';
+} from './maintenance.models';
 
 export type MaintenanceForm = {
 	carId: string;

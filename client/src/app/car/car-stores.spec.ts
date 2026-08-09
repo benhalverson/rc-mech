@@ -7,7 +7,7 @@ import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CarBuildStore } from './car-build-store';
 import { carReadFailure } from './car-read-failure';
-import { CarSetupsStore } from './car-setups-store';
+import { CarSetupsStore } from './setups/car-setups-store';
 import { CarStore } from './car-store';
 
 describe('car route stores', () => {

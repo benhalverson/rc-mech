@@ -1,7 +1,7 @@
 import type { Routes } from '@angular/router';
-import { SetupSnapshotStore } from '../setup-snapshot-store';
+import { CarStore } from '../car-store';
 import { CarSetupsStore } from './car-setups-store';
-import { CarStore } from './car-store';
+import { SetupSnapshotStore } from './setup-snapshot-store';
 
 export const CAR_SETUPS_ROUTES: Routes = [
 	{

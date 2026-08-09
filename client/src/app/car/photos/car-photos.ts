@@ -1,8 +1,8 @@
 import { Component, effect, inject, input } from '@angular/core';
 import { LucideRefreshCw, LucideTriangleAlert } from '@lucide/angular';
-import { CarPhotoGallery } from '../car-photo-gallery';
-import { CarSectionShell } from './car-section-shell';
-import { CarStore } from './car-store';
+import { CarSectionShell } from '../car-section-shell';
+import { CarStore } from '../car-store';
+import { CarPhotoGallery } from './car-photo-gallery';
 
 @Component({
 	selector: 'app-car-photos',

@@ -108,7 +108,22 @@ describe('DriveSessions', () => {
 	};
 
 	it('selects route context and renders loading and failure states', () => {
+		carStore.loading.set(true);
 		let root = detect();
+		expect(root.textContent).toContain('Loading the selected car record');
+		carStore.loading.set(false);
+		carStore.failure.set({ message: 'Car failed.', retryable: true });
+		root = detect();
+		expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+			'Car failed',
+		);
+		button('Try again').click();
+		expect(carStore.retry).toHaveBeenCalledOnce();
+		carStore.failure.set({ message: 'Expired car.', retryable: false });
+		root = detect();
+		expect(root.querySelector('[role="alert"] button')).toBeNull();
+		carStore.failure.set(null);
+		root = detect();
 		expect(carStore.selectCar).toHaveBeenCalledWith('car-1');
 		expect(store.selectCar).toHaveBeenCalledWith('car-1');
 		expect(root.textContent).toContain('No drive sessions recorded');
@@ -128,6 +143,16 @@ describe('DriveSessions', () => {
 		store.failure.set({ message: 'Expired.', retryable: false });
 		root = detect();
 		expect(root.querySelector('[role="alert"] button')).toBeNull();
+	});
+
+	it('stays idle until route input binding supplies a car', () => {
+		carStore.selectCar.mockClear();
+		store.selectCar.mockClear();
+		const withoutInput = TestBed.createComponent(DriveSessions);
+		withoutInput.detectChanges();
+		expect(carStore.selectCar).not.toHaveBeenCalledWith('');
+		expect(store.selectCar).not.toHaveBeenCalledWith('');
+		withoutInput.destroy();
 	});
 
 	it('resets local editor state when the reused route selects another car', () => {

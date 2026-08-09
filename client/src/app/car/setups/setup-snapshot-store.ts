@@ -8,7 +8,7 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { carReadFailure } from './car/car-read-failure';
+import { carReadFailure } from '../car-read-failure';
 import type { SetupSnapshot } from './setup-snapshot';
 
 export const SetupSnapshotStore = signalStore(

@@ -1,6 +1,6 @@
 import type { Routes } from '@angular/router';
-import { CarPhotoStore } from '../car-photo-store';
-import { CarStore } from './car-store';
+import { CarStore } from '../car-store';
+import { CarPhotoStore } from './car-photo-store';
 
 export const CAR_PHOTOS_ROUTES: Routes = [
 	{

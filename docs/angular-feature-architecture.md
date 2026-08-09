@@ -89,20 +89,15 @@ Code is organized by route-level feature and then by cohesive workflow, never by
 
 ```text
 maintenance/
-  maintenance.ts
-  maintenance.html
+  maintenance-cockpit.ts
+  maintenance-cockpit.html
   maintenance.routes.ts
-  maintenance-context-store.ts
-  plans/
-    maintenance-plans.ts
-    maintenance-plans.html
-    maintenance-plans-store.ts
-    maintenance-plans-api.ts
-    maintenance-plans.models.ts
-    maintenance-plans.rules.ts
-    *.spec.ts
-  service-history/
+  maintenance-store.ts
+  maintenance-lookups.ts
+  maintenance.models.ts
   consumables/
+    consumable-maintenance.ts
+    consumable-maintenance.html
 ```
 
 Components, stores, gateways, models, pure rules, and tests remain near the workflow they implement. Root-level feature components and forwarding wrappers are deleted after consumers move to the owning feature.
@@ -173,6 +168,17 @@ The 2026-08-08 audit identified the following priority migration seams:
 | `car-routes.spec.ts` | 2,385 lines | Multiple routes, components, stores, and workflows share one catch-all spec |
 
 The root-level `maintenance-cockpit`, `consumable-maintenance`, `setup-snapshots`, and `car-photo-gallery` components and their forwarding wrappers are removed as their feature slices migrate.
+
+### Contraction record
+
+Issue #114 completed the consumer-backed file contraction on 2026-08-09:
+
+- Maintenance now loads its route component directly from `maintenance/`, with the consumable workflow colocated under `maintenance/consumables/`; the forwarding `Maintenance` component was removed.
+- Setup history, its form and transport models, and its read store are colocated under `car/setups/`; private photos and their read store are colocated under `car/photos/`.
+- Static imports, lazy route loaders, tests, architecture diagnostics, and documentation were checked before the old root paths were removed. No fixture, scoped stylesheet, package dependency, or production import still consumes those paths.
+- The catch-all `car-routes.spec.ts` was replaced by focused component tests next to Build, Overview, Setups, Photos, and Drive Sessions, plus existing store, gateway, and pure-rule tests. `app.routes.spec.ts` remains responsible for route composition.
+- Backend endpoints and persisted-data compatibility readers were not changed. The `/garage/:carId/runs` redirect remains explicitly covered because old bookmarks still require it.
+- Authenticated browser workflows remain the capability-level proof that Garage, selected-car, Setup, Voice, Build, Photos, Drive Sessions, Maintenance, and Settings behavior was not removed during contraction.
 
 ## Completion contract
 
