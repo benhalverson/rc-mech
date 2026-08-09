@@ -1,7 +1,3 @@
-@if (mutationError()) {
-	<p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ mutationError() }}</span></p>
-}
-
 <ng-content select="[service-totals]" />
 
 <div class="maintenance-totals grid grid-cols-2 divide-x divide-y divide-alloy-separator border-y border-alloy-separator sm:grid-cols-4 sm:divide-y-0" aria-label="Maintenance plan totals">
@@ -42,14 +38,14 @@
 					<p class="m-0 mt-1 text-sm text-alloy-text-secondary">{{ dueText(plan) }}@if (plan.intervalValue) { · every {{ plan.intervalValue }} {{ plan.intervalUnit || 'days' }} }@if (plan.intervalSessions) { · every {{ plan.intervalSessions }} sessions }</p>
 				</div>
 				<div class="plan-actions flex flex-wrap gap-2 md:justify-end" role="group" [attr.aria-label]="plan.name + ' actions'">
-					<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'plan:' + plan.id" (click)="editRequested.emit(plan)" [disabled]="isReadOnly(plan)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button>
+					<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'plan:' + plan.id" (click)="editRequested.emit(plan)" [disabled]="isReadOnly(plan) || action()"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button>
 					@if (plan.status === 'active') {
-						<button class="text-button muted alloy-control alloy-control-tertiary alloy-focus-ring" type="button" (click)="transition(plan, 'pause')" [disabled]="isReadOnly(plan)">Pause</button>
-						<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'complete:' + plan.id" (click)="completionRequested.emit(plan)" [disabled]="isReadOnly(plan)"><svg lucideCircleCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg>Complete</button>
+						<button class="text-button muted alloy-control alloy-control-tertiary alloy-focus-ring" type="button" (click)="transition(plan, 'pause')" [disabled]="isReadOnly(plan) || action()">Pause</button>
+						<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'complete:' + plan.id" (click)="completionRequested.emit(plan)" [disabled]="isReadOnly(plan) || action()"><svg lucideCircleCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg>Complete</button>
 					} @else if (plan.status === 'paused') {
-						<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="transition(plan, 'resume')" [disabled]="isReadOnly(plan)">Resume</button>
+						<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="transition(plan, 'resume')" [disabled]="isReadOnly(plan) || action()">Resume</button>
 					}
-					@if (plan.status !== 'archived') { <button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="transition(plan, 'archive')" [disabled]="isReadOnly(plan)"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> }
+					@if (plan.status !== 'archived') { <button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="transition(plan, 'archive')" [disabled]="isReadOnly(plan) || action()"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> }
 				</div>
 			</article>
 		}

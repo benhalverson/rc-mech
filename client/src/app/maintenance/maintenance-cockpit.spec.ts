@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConsumableStore } from './consumables/consumable-store';
 import type {
@@ -12,10 +13,12 @@ import {
 	type MaintenancePlanOutcome,
 	MaintenancePlanStore,
 } from './maintenance-plan-store';
+import { MaintenancePlans } from './maintenance-plans';
 import {
 	type ServiceRecordOutcome,
 	ServiceRecordStore,
 } from './service-record-store';
+import { ServiceRecords } from './service-records';
 
 const car: MaintenanceCar = { id: 'car-1', name: 'Buggy', archivedAt: null };
 const plan: MaintenancePlan = {
@@ -48,6 +51,7 @@ const planStore = {
 		operationId: null,
 	}),
 	retry: vi.fn(),
+	clearOutcome: vi.fn(),
 	loadComponents: vi.fn(),
 	mutate: vi.fn(),
 };
@@ -63,6 +67,7 @@ const serviceStore = {
 	action: signal<string | null>(null),
 	outcome: signal<ServiceRecordOutcome>({ status: 'idle', operationId: null }),
 	retry: vi.fn(),
+	clearOutcome: vi.fn(),
 	loadComponents: vi.fn(),
 	mutate: vi.fn(),
 };
@@ -84,8 +89,9 @@ const consumableStore = {
 
 type CockpitHarness = {
 	activeEditor: ReturnType<typeof signal<unknown | null>>;
+	planFilter: ReturnType<typeof signal<'all' | 'due' | 'overdue'>>;
 	serviceFilter: ReturnType<typeof signal<'active' | 'deleted'>>;
-	canCreatePlan(): boolean;
+	hasVisiblePlans(): boolean;
 	hasActiveCars(): boolean;
 	createPlan(): void;
 	createService(): void;
@@ -143,9 +149,11 @@ describe('MaintenanceCockpit', () => {
 		).click();
 		expect(planStore.retry).toHaveBeenCalledOnce();
 		expect(serviceStore.retry).toHaveBeenCalledOnce();
+		expect(planStore.clearOutcome).toHaveBeenCalledOnce();
+		expect(serviceStore.clearOutcome).toHaveBeenCalledOnce();
 		serviceStore.error.set('');
 		fixture.detectChanges();
-		expect(app.canCreatePlan()).toBe(true);
+		expect(app.hasVisiblePlans()).toBe(true);
 		expect(fixture.nativeElement.textContent).toContain('Inspect bearings');
 	});
 
@@ -178,6 +186,23 @@ describe('MaintenanceCockpit', () => {
 		button('Archived corrections').click();
 		fixture.detectChanges();
 		expect(app.serviceFilter()).toBe('deleted');
+	});
+
+	it('uses Angular model two-way binding for both filters', () => {
+		const plans = fixture.debugElement.query(By.directive(MaintenancePlans))
+			.componentInstance as MaintenancePlans;
+		const records = fixture.debugElement.query(By.directive(ServiceRecords))
+			.componentInstance as ServiceRecords;
+		const propertyFallback = fixture.componentInstance as unknown as {
+			planFilter: 'all' | 'due';
+			serviceFilter: 'active' | 'deleted';
+		};
+		propertyFallback.planFilter = 'all';
+		propertyFallback.serviceFilter = 'active';
+		plans.filter.set('due');
+		records.filter.set('deleted');
+		expect(propertyFallback.planFilter).toBe('due');
+		expect(propertyFallback.serviceFilter).toBe('deleted');
 	});
 
 	it('coordinates typed plan, service, edit, and completion requests', () => {
@@ -237,7 +262,7 @@ describe('MaintenanceCockpit', () => {
 	it('preserves filtered creation visibility and archived-car disabling', () => {
 		button('Overdue').click();
 		fixture.detectChanges();
-		expect(app.canCreatePlan()).toBe(false);
+		expect(app.hasVisiblePlans()).toBe(false);
 		expect(
 			fixture.nativeElement.querySelector(
 				'header [data-maintenance-launcher="new-plan"]',

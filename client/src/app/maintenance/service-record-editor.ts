@@ -2,11 +2,11 @@ import { DOCUMENT } from '@angular/common';
 import {
 	afterNextRender,
 	Component,
+	computed,
 	effect,
 	Injector,
 	inject,
 	input,
-	linkedSignal,
 	output,
 	signal,
 	untracked,
@@ -20,7 +20,11 @@ import {
 } from '@angular/forms/signals';
 import { LucideSave, LucideTriangleAlert } from '@lucide/angular';
 import type { MaintenancePlan, ServiceRecord } from './maintenance.models';
-import { localDateTime, localDateTimeToIso } from './maintenance-plan.rules';
+import {
+	maintenancePlanIsReadOnly,
+	serviceRecordIsReadOnly,
+} from './maintenance-read-only.rules';
+import { localDateTime, localDateTimeToIso } from './maintenance-time';
 import {
 	type ServiceRecordFailure,
 	ServiceRecordStore,
@@ -70,7 +74,16 @@ export class ServiceRecordEditor {
 	readonly cancelled = output<void>();
 	readonly saved = output<void>();
 
-	protected readonly garage = linkedSignal(() => this.store.cars());
+	protected readonly garage = computed(() => this.store.cars());
+	protected readonly editorLabel = computed(() => {
+		const request = this.request();
+		return request?.kind === 'complete' ||
+			(request?.kind === 'edit' && Boolean(request.record.planId))
+			? 'Scheduled service'
+			: request?.kind === 'edit'
+				? 'Correct service record'
+				: 'Ad hoc service';
+	});
 	protected readonly timezone = this.store.timezone;
 	protected readonly components = this.store.components;
 	protected readonly action = this.store.action;
@@ -218,7 +231,7 @@ export class ServiceRecordEditor {
 			this.store.loadComponents(firstCar.id);
 		} else if (request.kind === 'edit') {
 			const record = request.record;
-			if (this.isReadOnly(record)) {
+			if (serviceRecordIsReadOnly(record, this.garage())) {
 				this.cancelled.emit();
 				return;
 			}
@@ -240,6 +253,10 @@ export class ServiceRecordEditor {
 			this.store.loadComponents(record.carId);
 		} else {
 			const plan = request.plan;
+			if (maintenancePlanIsReadOnly(plan, this.garage())) {
+				this.cancelled.emit();
+				return;
+			}
 			this.returnFocusSelector.set(
 				`[data-maintenance-launcher="complete:${plan.id}"]`,
 			);
@@ -269,14 +286,6 @@ export class ServiceRecordEditor {
 			: failure === 'car-archived'
 				? 'This car is archived. Restore it before recording service.'
 				: 'The service record could not be saved.';
-	}
-
-	private isReadOnly(record: ServiceRecord): boolean {
-		return (
-			Boolean(
-				this.garage().find((car) => car.id === record.carId)?.archivedAt,
-			) || Boolean(record.deletedAt)
-		);
 	}
 
 	private focusAfterRender(selector: string): void {

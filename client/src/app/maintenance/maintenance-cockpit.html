@@ -5,10 +5,11 @@
 			<h2 id="maintenance-title" class="alloy-screen-title" data-route-focus tabindex="-1">Maintenance cockpit</h2>
 			<p class="alloy-supporting-text mb-0 max-w-3xl">A quiet view of what the garage needs next. Calendar and drive-session thresholds share one baseline, so either one can call a plan due.</p>
 		</div>
-		@if (state() === 'ready' && activeEditor() === null && canCreatePlan()) {
+		@if (state() === 'ready' && activeEditor() === null && hasVisiblePlans()) {
 			<button class="button alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-maintenance-launcher="new-plan" (click)="createPlan()" [disabled]="!hasActiveCars()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>New plan</button>
 		}
 	</header>
+	<app-maintenance-mutation-status />
 
 	@if (state() === 'loading') {
 		<div class="state-card alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening care ledger</strong></span><span>Reading the care ledger…</span></div>
@@ -19,11 +20,11 @@
 		<app-service-record-editor [request]="serviceRequest()" (cancelled)="closeEditor()" (saved)="closeEditor()" />
 
 		@if (activeEditor() === null) {
-			<app-maintenance-plans [filter]="planFilter()" (filterChange)="planFilter.set($event)" (createRequested)="createPlan()" (editRequested)="editPlan($event)" (completionRequested)="completePlan($event)">
+			<app-maintenance-plans [(filter)]="planFilter" (createRequested)="createPlan()" (editRequested)="editPlan($event)" (completionRequested)="completePlan($event)">
 				<app-service-record-totals service-totals [filter]="serviceFilter()" />
 				<button service-launcher class="button quiet alloy-control alloy-control-secondary alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" data-maintenance-launcher="service" (click)="createService()" [disabled]="!hasActiveCars()"><svg lucideWrench size="18" strokeWidth="1.8" aria-hidden="true"></svg>Log ad hoc service</button>
 			</app-maintenance-plans>
-			<app-service-records [filter]="serviceFilter()" (filterChange)="serviceFilter.set($event)" (editRequested)="editService($event)" />
+			<app-service-records [(filter)]="serviceFilter" (editRequested)="editService($event)" />
 		}
 	}
 </section>

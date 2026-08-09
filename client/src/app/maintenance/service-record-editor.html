@@ -1,7 +1,7 @@
 @if (request()) {
 	<form class="maintenance-form service-form alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="service-form-title" [attr.aria-describedby]="error() ? 'service-form-error' : 'service-form-intro'" novalidate>
 		<div>
-			<div class="alloy-section-heading">{{ request()?.kind === 'complete' ? 'Scheduled service' : request()?.kind === 'edit' ? 'Correct service record' : 'Ad hoc service' }}</div>
+			<div class="alloy-section-heading">{{ editorLabel() }}</div>
 			<h3 id="service-form-title" class="alloy-screen-title" tabindex="-1">Put the work in the ledger</h3>
 			<p id="service-form-intro" class="alloy-supporting-text mb-0 max-w-3xl">Record what happened, when it happened, and what it cost. A scheduled completion also advances its plan baseline.</p>
 		</div>

@@ -18,8 +18,8 @@
 					<div class="service-detail min-w-0"><strong class="block text-sm font-semibold text-alloy-text">{{ record.planId ? 'Scheduled completion' : 'Ad hoc service' }}</strong><span class="mt-1 block text-sm text-alloy-text-secondary">{{ componentName(record) }} · {{ recordCost(record) }}</span><p class="m-0 mt-2 break-words whitespace-pre-wrap text-alloy-text-secondary">{{ record.description }}</p></div>
 					<div class="plan-actions flex flex-wrap gap-2 md:justify-end" role="group" aria-label="Service record actions">
 						@if (!record.deletedAt) {
-							<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'record:' + record.id" (click)="editRequested.emit(record)" [disabled]="isReadOnly(record)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Correct</button>
-							<button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="archive(record)" [disabled]="isReadOnly(record)"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button>
+							<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-maintenance-launcher]="'record:' + record.id" (click)="editRequested.emit(record)" [disabled]="isReadOnly(record) || action()"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Correct</button>
+							<button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="archive(record)" [disabled]="isReadOnly(record) || action()"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button>
 						} @else {
 							<span class="deleted-label self-center text-sm text-alloy-text-secondary">Archived</span>
 							<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="restore(record)" [disabled]="action()"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>Undo</button>
@@ -31,13 +31,12 @@
 	}
 </section>
 
-@if (mutationError()) { <p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ mutationError() }}</span></p> }
 <section class="activity-feed grid gap-3 border-t border-alloy-separator pt-6" aria-labelledby="activity-title">
 	<div><div class="alloy-section-heading">Recent activity</div><h3 id="activity-title" class="alloy-screen-title">What changed lately</h3></div>
 	@if (!activity().length) { <p class="hint m-0 text-sm text-alloy-text-secondary">Completed plans and baseline changes will appear here.</p> } @else {
 		<ul class="m-0 list-none divide-y divide-alloy-separator border-y border-alloy-separator p-0">
 			@for (item of activity(); track item.id) {
-				<li class="grid min-h-12 gap-2 py-3 sm:grid-cols-[140px_minmax(0,1fr)_auto] sm:items-center"><time class="alloy-technical text-alloy-text" [dateTime]="item.occurredAt">{{ item.occurredAt | date:'mediumDate':timezone() }}</time><span class="min-w-0"><strong class="block text-alloy-text">{{ item.action }}</strong>@if (item.note) { <small class="mt-1 block text-sm text-alloy-text-secondary">{{ item.note }}</small> }</span><button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="undo(item)"><svg lucideRotateCcw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Undo completion</button></li>
+			<li class="grid min-h-12 gap-2 py-3 sm:grid-cols-[140px_minmax(0,1fr)_auto] sm:items-center"><time class="alloy-technical text-alloy-text" [dateTime]="item.occurredAt">{{ item.occurredAt | date:'mediumDate':timezone() }}</time><span class="min-w-0"><strong class="block text-alloy-text">{{ item.action }}</strong>@if (item.note) { <small class="mt-1 block text-sm text-alloy-text-secondary">{{ item.note }}</small> }</span><button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="undo(item)" [disabled]="action()"><svg lucideRotateCcw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Undo completion</button></li>
 			}
 		</ul>
 	}

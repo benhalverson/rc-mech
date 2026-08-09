@@ -2,11 +2,11 @@ import { DOCUMENT } from '@angular/common';
 import {
 	afterNextRender,
 	Component,
+	computed,
 	effect,
 	Injector,
 	inject,
 	input,
-	linkedSignal,
 	output,
 	signal,
 	untracked,
@@ -23,11 +23,12 @@ import type {
 	MaintenancePlan,
 	MaintenancePlanDraft,
 } from './maintenance.models';
-import { localDateTime, localDateTimeToIso } from './maintenance-plan.rules';
 import {
 	type MaintenancePlanFailure,
 	MaintenancePlanStore,
 } from './maintenance-plan-store';
+import { maintenancePlanIsReadOnly } from './maintenance-read-only.rules';
+import { localDateTime, localDateTimeToIso } from './maintenance-time';
 
 export type MaintenancePlanEditorRequest =
 	| { readonly kind: 'create' }
@@ -74,7 +75,7 @@ export class MaintenancePlanEditor {
 	readonly cancelled = output<void>();
 	readonly saved = output<void>();
 
-	protected readonly garage = linkedSignal(() => this.store.cars());
+	protected readonly garage = computed(() => this.store.cars());
 	protected readonly timezone = this.store.timezone;
 	protected readonly components = this.store.components;
 	protected readonly action = this.store.action;
@@ -249,7 +250,7 @@ export class MaintenancePlanEditor {
 			this.store.loadComponents(firstCar.id);
 		} else {
 			const plan = request.plan;
-			if (this.isReadOnly(plan)) {
+			if (maintenancePlanIsReadOnly(plan, this.garage())) {
 				this.cancelled.emit();
 				return;
 			}
@@ -300,13 +301,6 @@ export class MaintenancePlanEditor {
 			: failure === 'car-archived'
 				? 'This car is archived. Restore it before changing maintenance.'
 				: 'The maintenance plan could not be saved.';
-	}
-
-	private isReadOnly(plan: MaintenancePlan): boolean {
-		return (
-			Boolean(this.garage().find((car) => car.id === plan.carId)?.archivedAt) ||
-			plan.status === 'archived'
-		);
 	}
 
 	private focusAfterRender(selector: string): void {

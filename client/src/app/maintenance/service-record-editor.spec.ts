@@ -93,11 +93,23 @@ describe('ServiceRecordEditor', () => {
 		fixture.componentRef.setInput('request', value);
 		fixture.detectChanges();
 	};
+	const control = (label: string): HTMLElement => {
+		const match = [...fixture.nativeElement.querySelectorAll('label')].find(
+			(candidate: HTMLLabelElement) =>
+				candidate.querySelector('span')?.textContent?.trim() === label,
+		) as HTMLLabelElement | undefined;
+		expect(match).toBeTruthy();
+		return match?.querySelector('input, select, textarea') as HTMLElement;
+	};
 
-	it('opens create and dispatches one canonical service command', () => {
+	it('opens create, focuses it, and dispatches one canonical service command', async () => {
 		expect(fixture.nativeElement.querySelector('form')).toBeNull();
 		store.cars.set([car, { ...car, id: 'archived', archivedAt: '2026-08-01' }]);
 		request({ kind: 'create' });
+		await fixture.whenStable();
+		expect(document.activeElement).toBe(
+			fixture.nativeElement.querySelector('#service-form-title'),
+		);
 		expect(store.loadComponents).toHaveBeenCalledWith('car-1');
 		expect(
 			[...fixture.nativeElement.querySelectorAll('option')].some(
@@ -146,9 +158,11 @@ describe('ServiceRecordEditor', () => {
 		app.form.set({ ...app.form(), carId: '', description: 'Work' });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('Choose a car');
+		expect(document.activeElement).toBe(control('Car'));
 		app.form.set({ ...app.form(), carId: 'car-1', performedAt: '' });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('completion date');
+		expect(document.activeElement).toBe(control('Completion date'));
 		app.form.set({
 			...app.form(),
 			performedAt: '2026-08-09T12:30',
@@ -156,22 +170,28 @@ describe('ServiceRecordEditor', () => {
 		});
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('completed work');
+		expect(document.activeElement).toBe(control('Completed work'));
 		app.form.set({ ...app.form(), description: '   ' });
 		submit();
 		expect(app.error()).toContain('completed work');
+		expect(document.activeElement).toBe(control('Completed work'));
 		app.form.set({ ...app.form(), description: 'Work', cost: '-1' });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('Cost');
+		expect(document.activeElement).toBe(control('Cost'));
 		app.form.set({ ...app.form(), cost: '', currency: 'US' });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('three-letter');
+		expect(document.activeElement).toBe(control('Currency'));
 		app.form.set({ ...app.form(), currency: 'USD', notes: 'x'.repeat(4001) });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('4,000');
+		expect(document.activeElement).toBe(control('Technician notes'));
 		Object.defineProperty(app.fields(), 'errorSummary', { value: () => [] });
 		app.form.set({ ...app.form(), carId: '' });
 		submit();
 		expect(app.error()).toBe('Review the service record fields.');
+		expect(document.activeElement).toBe(control('Car'));
 		Object.defineProperty(app.fields(), 'invalid', { value: () => false });
 		app.form.set({ ...app.form(), carId: 'car-1', notes: '', cost: '-1' });
 		submit();
@@ -180,6 +200,9 @@ describe('ServiceRecordEditor', () => {
 
 	it('opens edit defaults and completion requests', () => {
 		request({ kind: 'edit', record });
+		expect(fixture.nativeElement.textContent).toContain(
+			'Correct service record',
+		);
 		expect(app.form()).toMatchObject({
 			componentId: 'component-1',
 			description: 'Inspected bearings',
@@ -205,6 +228,8 @@ describe('ServiceRecordEditor', () => {
 			cost: '',
 			currency: 'USD',
 		});
+		request({ kind: 'edit', record: { ...record, planId: 'plan-1' } });
+		expect(fixture.nativeElement.textContent).toContain('Scheduled service');
 		request({ kind: 'complete', plan: { ...plan, componentId: null } });
 		expect(app.form()).toMatchObject({
 			carId: 'car-1',
@@ -252,10 +277,17 @@ describe('ServiceRecordEditor', () => {
 		store.cars.set([{ ...car, archivedAt: 'x' }]);
 		request({ kind: 'edit', record });
 		request({ kind: 'edit', record: { ...record, deletedAt: 'x' } });
-		expect(cancelled).toBe(3);
+		request({ kind: 'complete', plan });
+		store.cars.set([car]);
+		request({ kind: 'complete', plan: { ...plan, status: 'archived' } });
+		expect(cancelled).toBe(5);
 	});
 
-	it('maps presentation-safe save outcomes and closes on success', () => {
+	it('maps presentation-safe save outcomes, closes, and restores focus', async () => {
+		const focusTarget = document.createElement('h2');
+		focusTarget.id = 'maintenance-title';
+		focusTarget.tabIndex = -1;
+		document.body.append(focusTarget);
 		request({ kind: 'create' });
 		const saveCommand = {
 			kind: 'save-service' as const,
@@ -303,10 +335,16 @@ describe('ServiceRecordEditor', () => {
 			command: saveCommand,
 		});
 		fixture.detectChanges();
+		await fixture.whenStable();
 		expect(saved).toBe(1);
+		expect(document.activeElement).toBe(focusTarget);
+		focusTarget.remove();
 	});
 
-	it('executes rendered form events, labels, and cancellation', () => {
+	it('executes rendered form events, labels, cancellation, and focus', async () => {
+		const focusTarget = document.createElement('button');
+		focusTarget.dataset['maintenanceLauncher'] = 'complete:plan-1';
+		document.body.append(focusTarget);
 		request({ kind: 'complete', plan });
 		for (const [action, label] of [
 			['complete', 'Completing…'],
@@ -330,6 +368,9 @@ describe('ServiceRecordEditor', () => {
 			(button) => button.textContent?.trim() === 'Cancel',
 		) as HTMLButtonElement;
 		cancel.click();
+		await fixture.whenStable();
 		expect(cancelled).toBe(1);
+		expect(document.activeElement).toBe(focusTarget);
+		focusTarget.remove();
 	});
 });

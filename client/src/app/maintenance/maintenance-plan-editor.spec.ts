@@ -87,11 +87,23 @@ describe('MaintenancePlanEditor', () => {
 		fixture.componentRef.setInput('request', value);
 		fixture.detectChanges();
 	};
+	const control = (label: string): HTMLElement => {
+		const match = [...fixture.nativeElement.querySelectorAll('label')].find(
+			(candidate: HTMLLabelElement) =>
+				candidate.querySelector('span')?.textContent?.trim() === label,
+		) as HTMLLabelElement | undefined;
+		expect(match).toBeTruthy();
+		return match?.querySelector('input, select, textarea') as HTMLElement;
+	};
 
-	it('opens create, owns the form, and dispatches a canonical command', () => {
+	it('opens create, owns the form, focuses it, and dispatches a canonical command', async () => {
 		expect(fixture.nativeElement.querySelector('form')).toBeNull();
 		store.cars.set([car, { ...car, id: 'archived', archivedAt: '2026-08-01' }]);
 		request({ kind: 'create' });
+		await fixture.whenStable();
+		expect(document.activeElement).toBe(
+			fixture.nativeElement.querySelector('#maintenance-form-title'),
+		);
 		expect(store.loadComponents).toHaveBeenCalledWith('car-1');
 		expect(
 			[...fixture.nativeElement.querySelectorAll('option')].some(
@@ -147,18 +159,23 @@ describe('MaintenancePlanEditor', () => {
 		});
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('Choose a car');
+		expect(document.activeElement).toBe(control('Car'));
 		app.form.set({ ...app.form(), carId: 'car-1', name: '' });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('Name the care rule');
+		expect(document.activeElement).toBe(control('Plan name'));
 		app.form.set({ ...app.form(), name: '   ' });
 		submit();
 		expect(app.formError()).toContain('Name the care rule');
+		expect(document.activeElement).toBe(control('Plan name'));
 		app.form.set({ ...app.form(), name: 'Plan', calendarValue: 'half' });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('whole numbers');
+		expect(document.activeElement).toBe(control('Calendar interval'));
 		app.form.set({ ...app.form(), calendarValue: '', sessionInterval: '0' });
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('at least one');
+		expect(document.activeElement).toBe(control('Drive-session threshold'));
 		app.form.set({
 			...app.form(),
 			sessionInterval: '1',
@@ -166,10 +183,12 @@ describe('MaintenancePlanEditor', () => {
 		});
 		submit();
 		expect(fixture.nativeElement.textContent).toContain('Prior sessions');
+		expect(document.activeElement).toBe(control('Prior drive sessions'));
 		Object.defineProperty(app.fields(), 'errorSummary', { value: () => [] });
 		app.form.set({ ...app.form(), carId: '' });
 		submit();
 		expect(app.formError()).toBe('Review the maintenance plan fields.');
+		expect(document.activeElement).toBe(control('Car'));
 		Object.defineProperty(app.fields(), 'invalid', { value: () => false });
 		app.form.set({
 			...app.form(),
@@ -287,7 +306,11 @@ describe('MaintenancePlanEditor', () => {
 		app.save(new Event('submit'));
 	});
 
-	it('maps presentation-safe outcomes and closes successful saves', () => {
+	it('maps presentation-safe outcomes, closes successful saves, and restores focus', async () => {
+		const focusTarget = document.createElement('h2');
+		focusTarget.id = 'maintenance-title';
+		focusTarget.tabIndex = -1;
+		document.body.append(focusTarget);
 		request({ kind: 'create' });
 		const saveCommand = {
 			kind: 'save-plan' as const,
@@ -340,10 +363,16 @@ describe('MaintenancePlanEditor', () => {
 			command: saveCommand,
 		});
 		fixture.detectChanges();
+		await fixture.whenStable();
 		expect(saved).toBe(1);
+		expect(document.activeElement).toBe(focusTarget);
+		focusTarget.remove();
 	});
 
-	it('executes rendered form events and pending labels', () => {
+	it('executes rendered form events, pending labels, and cancel focus', async () => {
+		const focusTarget = document.createElement('button');
+		focusTarget.dataset['maintenanceLauncher'] = 'plan:plan-1';
+		document.body.append(focusTarget);
 		request({ kind: 'edit', plan });
 		for (const [action, label] of [
 			['edit', 'Saving…'],
@@ -366,6 +395,9 @@ describe('MaintenancePlanEditor', () => {
 			(button) => button.textContent?.trim() === 'Cancel',
 		) as HTMLButtonElement;
 		cancel.click();
+		await fixture.whenStable();
 		expect(cancelled).toBe(1);
+		expect(document.activeElement).toBe(focusTarget);
+		focusTarget.remove();
 	});
 });

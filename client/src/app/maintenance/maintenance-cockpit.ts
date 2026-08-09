@@ -11,7 +11,8 @@ import type {
 	PlanState,
 	ServiceRecord,
 } from './maintenance.models';
-import { calculatePlanState } from './maintenance-plan.rules';
+import { MaintenanceMutationStatus } from './maintenance-mutation-status';
+import { filterMaintenancePlans } from './maintenance-plan.rules';
 import {
 	MaintenancePlanEditor,
 	type MaintenancePlanEditorRequest,
@@ -45,6 +46,7 @@ type ActiveEditor =
 		LucideTriangleAlert,
 		LucideWrench,
 		MaintenancePlanEditor,
+		MaintenanceMutationStatus,
 		MaintenancePlans,
 		ServiceRecordEditor,
 		ServiceRecordTotals,
@@ -71,14 +73,10 @@ export class MaintenanceCockpit {
 	protected readonly hasActiveCars = computed(() =>
 		this.planStore.cars().some((car) => !car.archivedAt),
 	);
-	protected readonly canCreatePlan = computed(() =>
-		this.planStore
-			.plans()
-			.some(
-				(plan) =>
-					this.planFilter() === 'all' ||
-					calculatePlanState(plan) === this.planFilter(),
-			),
+	protected readonly hasVisiblePlans = computed(
+		() =>
+			filterMaintenancePlans(this.planStore.plans(), this.planFilter()).length >
+			0,
 	);
 	protected readonly state = computed(() =>
 		this.planStore.loading() || this.serviceStore.loading()
@@ -127,6 +125,8 @@ export class MaintenanceCockpit {
 	}
 
 	protected load(): void {
+		this.planStore.clearOutcome();
+		this.serviceStore.clearOutcome();
 		this.planStore.retry();
 		this.serviceStore.retry();
 	}

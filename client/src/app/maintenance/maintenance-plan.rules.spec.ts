@@ -1,10 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { MaintenancePlan } from './maintenance.models';
 import {
 	calculatePlanState,
 	calendarDays,
-	localDateTime,
-	localDateTimeToIso,
+	filterMaintenancePlans,
 } from './maintenance-plan.rules';
 
 const plan: MaintenancePlan = {
@@ -74,30 +73,8 @@ describe('maintenance plan rules', () => {
 		).toBe('due');
 	});
 
-	it('converts local date-time values with a named timezone', () => {
-		expect(
-			localDateTime(
-				new Date('2026-08-09T19:30:00.000Z'),
-				'America/Los_Angeles',
-			),
-		).toBe('2026-08-09T12:30');
-		expect(localDateTimeToIso('2026-08-09T12:30', 'America/Los_Angeles')).toBe(
-			'2026-08-09T19:30:00.000Z',
-		);
-		expect(localDateTimeToIso('invalid', 'UTC')).toBe('');
-		expect(localDateTimeToIso('2026-08-09T', 'UTC')).toBe('');
-
-		const browserIntl = Intl;
-		vi.stubGlobal('Intl', {
-			DateTimeFormat: class {
-				formatToParts(): Intl.DateTimeFormatPart[] {
-					return [];
-				}
-			},
-		});
-		expect(localDateTime(new Date('2026-08-09T19:30:00.000Z'), 'UTC')).toBe(
-			'--T:',
-		);
-		vi.stubGlobal('Intl', browserIntl);
+	it('filters plans through the shared view rule', () => {
+		expect(filterMaintenancePlans([plan], 'all')).toEqual([plan]);
+		expect(filterMaintenancePlans([plan], 'paused')).toEqual([]);
 	});
 });

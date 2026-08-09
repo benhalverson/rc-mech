@@ -46,7 +46,6 @@ const store = {
 
 type PlanHarness = {
 	filter: ReturnType<typeof signal<'all' | PlanState>>;
-	mutationError: ReturnType<typeof signal<string>>;
 	visiblePlans(): MaintenancePlan[];
 	transition(
 		plan: MaintenancePlan,
@@ -215,44 +214,21 @@ describe('MaintenancePlans', () => {
 		expect(button(fixture.nativeElement, 'Create a plan').disabled).toBe(true);
 	});
 
-	it('guards read-only commands and renders transition failures once', () => {
+	it('guards read-only commands', () => {
+		store.action.set('refresh');
+		fixture.detectChanges();
+		expect(
+			[...fixture.nativeElement.querySelectorAll('.plan-actions button')].every(
+				(button: HTMLButtonElement) => button.disabled,
+			),
+		).toBe(true);
+		app.transition(plan, 'pause');
+		expect(store.mutate).not.toHaveBeenCalled();
+		store.action.set(null);
 		store.cars.set([{ ...car, archivedAt: '2026-08-01' }]);
 		expect(app.isReadOnly(plan)).toBe(true);
 		app.transition(plan, 'pause');
 		expect(store.mutate).not.toHaveBeenCalled();
 		expect(app.isReadOnly({ ...plan, status: 'archived' })).toBe(true);
-
-		store.outcome.set({
-			status: 'failed',
-			operationId: 1,
-			command: { kind: 'transition-plan', planId: 'plan-1', action: 'pause' },
-			failure: 'transition-failed',
-		});
-		fixture.detectChanges();
-		expect(app.mutationError()).toContain('could not be saved');
-		store.outcome.set({
-			status: 'failed',
-			operationId: 1,
-			command: {
-				kind: 'save-plan',
-				mode: 'create',
-				id: null,
-				plan: {
-					carId: 'car-1',
-					name: 'Plan',
-					intervalUnit: 'days',
-					intervalValue: 1,
-					baselineSessionCount: 0,
-				},
-			},
-			failure: 'save-failed',
-		});
-		fixture.detectChanges();
-		store.outcome.set({
-			status: 'succeeded',
-			operationId: 2,
-			command: { kind: 'transition-plan', planId: 'plan-1', action: 'resume' },
-		});
-		fixture.detectChanges();
 	});
 });

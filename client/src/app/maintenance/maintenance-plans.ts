@@ -1,24 +1,18 @@
-import {
-	Component,
-	computed,
-	effect,
-	inject,
-	linkedSignal,
-	model,
-	output,
-	signal,
-} from '@angular/core';
+import { Component, computed, inject, model, output } from '@angular/core';
 import {
 	LucideArchive,
 	LucideCircleCheck,
 	LucideClock,
 	LucidePencil,
 	LucidePlus,
-	LucideTriangleAlert,
 } from '@lucide/angular';
 import type { MaintenancePlan, PlanState } from './maintenance.models';
-import { calculatePlanState } from './maintenance-plan.rules';
+import {
+	calculatePlanState,
+	filterMaintenancePlans,
+} from './maintenance-plan.rules';
 import { MaintenancePlanStore } from './maintenance-plan-store';
+import { maintenancePlanIsReadOnly } from './maintenance-read-only.rules';
 
 @Component({
 	selector: 'app-maintenance-plans',
@@ -28,26 +22,23 @@ import { MaintenancePlanStore } from './maintenance-plan-store';
 		LucideClock,
 		LucidePencil,
 		LucidePlus,
-		LucideTriangleAlert,
 	],
 	templateUrl: './maintenance-plans.html',
 	host: { class: 'contents' },
 })
 export class MaintenancePlans {
 	private readonly store = inject(MaintenancePlanStore);
-	private readonly handledOperationId = signal(0);
 
 	readonly filter = model<'all' | PlanState>('all');
 	readonly createRequested = output<void>();
 	readonly editRequested = output<MaintenancePlan>();
 	readonly completionRequested = output<MaintenancePlan>();
 
-	protected readonly garage = linkedSignal(() => this.store.cars());
-	protected readonly plans = linkedSignal(() => this.store.plans());
+	protected readonly garage = computed(() => this.store.cars());
+	protected readonly plans = computed(() => this.store.plans());
 	protected readonly timezone = this.store.timezone;
 	protected readonly components = this.store.components;
 	protected readonly action = this.store.action;
-	protected readonly mutationError = signal('');
 	protected readonly filterOptions: Array<'all' | PlanState> = [
 		'all',
 		'overdue',
@@ -57,10 +48,7 @@ export class MaintenancePlans {
 		'archived',
 	];
 	readonly visiblePlans = computed(() =>
-		this.plans().filter(
-			(plan) =>
-				this.filter() === 'all' || calculatePlanState(plan) === this.filter(),
-		),
+		filterMaintenancePlans(this.plans(), this.filter()),
 	);
 	protected readonly grouped = computed(() => ({
 		overdue: this.plans().filter(
@@ -78,30 +66,11 @@ export class MaintenancePlans {
 		this.garage().some((car) => !car.archivedAt),
 	);
 
-	constructor() {
-		effect(() => {
-			const outcome = this.store.outcome();
-			if (
-				outcome.status === 'idle' ||
-				outcome.status === 'pending' ||
-				outcome.operationId === this.handledOperationId()
-			)
-				return;
-			this.handledOperationId.set(outcome.operationId);
-			if (
-				outcome.status === 'failed' &&
-				outcome.command.kind === 'transition-plan'
-			)
-				this.mutationError.set('That maintenance update could not be saved.');
-		});
-	}
-
 	protected transition(
 		plan: MaintenancePlan,
 		action: 'pause' | 'resume' | 'archive',
 	): void {
-		if (this.isReadOnly(plan)) return;
-		this.mutationError.set('');
+		if (this.isReadOnly(plan) || this.action()) return;
 		this.store.mutate({ kind: 'transition-plan', planId: plan.id, action });
 	}
 
@@ -121,10 +90,7 @@ export class MaintenancePlans {
 	}
 
 	protected isReadOnly(plan: MaintenancePlan): boolean {
-		return (
-			Boolean(this.garage().find((car) => car.id === plan.carId)?.archivedAt) ||
-			plan.status === 'archived'
-		);
+		return maintenancePlanIsReadOnly(plan, this.garage());
 	}
 
 	protected stateLabel(value: PlanState): string {

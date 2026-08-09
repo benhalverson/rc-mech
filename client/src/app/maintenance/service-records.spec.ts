@@ -52,7 +52,6 @@ const store = {
 type ServiceHarness = {
 	filter: ReturnType<typeof signal<'active' | 'deleted'>>;
 	error: ReturnType<typeof signal<string>>;
-	mutationError: ReturnType<typeof signal<string>>;
 	visibleRecords(): ServiceRecord[];
 	archive(record: ServiceRecord): void;
 	restore(record: ServiceRecord): void;
@@ -176,6 +175,10 @@ describe('ServiceRecords', () => {
 		});
 
 		store.action.set('create');
+		fixture.detectChanges();
+		expect(button('Correct').disabled).toBe(true);
+		expect(button('Archive').disabled).toBe(true);
+		expect(button('Undo completion').disabled).toBe(true);
 		store.mutate.mockClear();
 		app.archive(record);
 		app.restore(record);
@@ -187,7 +190,7 @@ describe('ServiceRecords', () => {
 		expect(app.isReadOnly({ ...record, deletedAt: 'x' })).toBe(true);
 	});
 
-	it('maps presentation-safe action failures once and ignores other outcomes', () => {
+	it('maps archive and restore failures once and ignores other outcomes', () => {
 		for (const [operationId, failure, message, command] of [
 			[
 				1,
@@ -201,12 +204,6 @@ describe('ServiceRecords', () => {
 				'could not be restored',
 				{ kind: 'change-service', recordId: 'record-1', action: 'restore' },
 			],
-			[
-				3,
-				'undo-failed',
-				'could not be undone',
-				{ kind: 'undo-activity', recordId: 'record-1' },
-			],
 		] as const) {
 			store.outcome.set({
 				status: 'failed',
@@ -215,20 +212,18 @@ describe('ServiceRecords', () => {
 				failure,
 			});
 			fixture.detectChanges();
-			expect(
-				failure === 'undo-failed' ? app.mutationError() : app.error(),
-			).toContain(message);
+			expect(app.error()).toContain(message);
 		}
 		store.outcome.set({
 			status: 'failed',
-			operationId: 3,
+			operationId: 2,
 			command: { kind: 'undo-activity', recordId: 'record-1' },
 			failure: 'undo-failed',
 		});
 		fixture.detectChanges();
 		store.outcome.set({
 			status: 'failed',
-			operationId: 4,
+			operationId: 3,
 			command: {
 				kind: 'save-service',
 				mode: 'create',
@@ -241,9 +236,30 @@ describe('ServiceRecords', () => {
 		fixture.detectChanges();
 		store.outcome.set({
 			status: 'succeeded',
-			operationId: 5,
+			operationId: 4,
 			command: { kind: 'undo-activity', recordId: 'record-1' },
 		});
 		fixture.detectChanges();
+	});
+
+	it('does not replay a previously presented failure after remounting', () => {
+		store.outcome.set({
+			status: 'failed',
+			operationId: 7,
+			command: {
+				kind: 'change-service',
+				recordId: 'record-1',
+				action: 'archive',
+			},
+			failure: 'archive-failed',
+		});
+		fixture.detectChanges();
+		expect(app.error()).toContain('could not be archived');
+
+		fixture.destroy();
+		fixture = TestBed.createComponent(ServiceRecords);
+		fixture.detectChanges();
+		app = fixture.componentInstance as unknown as ServiceHarness;
+		expect(app.error()).toBe('');
 	});
 });

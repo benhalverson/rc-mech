@@ -151,13 +151,18 @@ export const ServiceRecordStore = signalStore(
 			),
 			action: computed(() => {
 				const outcome = store.outcome();
-				if (outcome.status !== 'pending') return null;
-				const command = outcome.command;
-				return command.kind === 'save-service'
-					? command.mode
-					: command.kind === 'change-service'
-						? `${command.action === 'archive' ? 'delete' : 'restore'}:${command.recordId}`
-						: null;
+				if (outcome.status === 'pending') {
+					const command = outcome.command;
+					return command.kind === 'save-service'
+						? command.mode
+						: command.kind === 'change-service'
+							? `${command.action === 'archive' ? 'delete' : 'restore'}:${command.recordId}`
+							: `undo:${command.recordId}`;
+				}
+				return store.gateway.services.isLoading() ||
+					store.gateway.plans.isLoading()
+					? 'refresh'
+					: null;
 			}),
 		};
 	}),

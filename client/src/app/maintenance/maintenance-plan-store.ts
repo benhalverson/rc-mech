@@ -133,11 +133,13 @@ export const MaintenancePlanStore = signalStore(
 			error: computed(() => resourceMessage(failures())),
 			action: computed(() => {
 				const outcome = store.outcome();
-				if (outcome.status !== 'pending') return null;
-				const command = outcome.command;
-				return command.kind === 'save-plan'
-					? command.mode
-					: `${command.action}:${command.planId}`;
+				if (outcome.status === 'pending') {
+					const command = outcome.command;
+					return command.kind === 'save-plan'
+						? command.mode
+						: `${command.action}:${command.planId}`;
+				}
+				return store.gateway.plans.isLoading() ? 'refresh' : null;
 			}),
 		};
 	}),

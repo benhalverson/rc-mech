@@ -4,7 +4,6 @@ import {
 	computed,
 	effect,
 	inject,
-	linkedSignal,
 	model,
 	output,
 	signal,
@@ -17,6 +16,7 @@ import {
 	LucideTriangleAlert,
 } from '@lucide/angular';
 import type { MaintenanceActivity, ServiceRecord } from './maintenance.models';
+import { serviceRecordIsReadOnly } from './maintenance-read-only.rules';
 import { ServiceRecordStore } from './service-record-store';
 
 @Component({
@@ -34,19 +34,20 @@ import { ServiceRecordStore } from './service-record-store';
 })
 export class ServiceRecords {
 	private readonly store = inject(ServiceRecordStore);
-	private readonly handledOperationId = signal(0);
+	private readonly handledOperationId = signal(
+		this.store.outcome().operationId ?? 0,
+	);
 
 	readonly filter = model<'active' | 'deleted'>('active');
 	readonly editRequested = output<ServiceRecord>();
 
-	protected readonly garage = linkedSignal(() => this.store.cars());
-	protected readonly records = linkedSignal(() => this.store.records());
+	protected readonly garage = computed(() => this.store.cars());
+	protected readonly records = computed(() => this.store.records());
 	protected readonly activity = this.store.activity;
 	protected readonly timezone = this.store.timezone;
 	protected readonly components = this.store.components;
 	protected readonly action = this.store.action;
 	protected readonly error = signal('');
-	protected readonly mutationError = signal('');
 	protected readonly visibleRecords = computed(() =>
 		this.records().filter((record) =>
 			this.filter() === 'deleted'
@@ -70,8 +71,6 @@ export class ServiceRecords {
 				this.error.set('That service record could not be archived.');
 			else if (outcome.failure === 'restore-failed')
 				this.error.set('That service record could not be restored.');
-			else if (outcome.failure === 'undo-failed')
-				this.mutationError.set('That completion could not be undone.');
 		});
 	}
 
@@ -94,16 +93,11 @@ export class ServiceRecords {
 	}
 
 	protected undo(item: MaintenanceActivity): void {
-		this.mutationError.set('');
 		this.store.mutate({ kind: 'undo-activity', recordId: item.id });
 	}
 
 	protected isReadOnly(record: ServiceRecord): boolean {
-		return (
-			Boolean(
-				this.garage().find((car) => car.id === record.carId)?.archivedAt,
-			) || Boolean(record.deletedAt)
-		);
+		return serviceRecordIsReadOnly(record, this.garage());
 	}
 
 	protected carName(carId: string): string {
