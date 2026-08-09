@@ -561,7 +561,7 @@ describe('MaintenanceCockpit', () => {
 			['New plan', 'Create a plan'].includes(button.textContent?.trim() ?? ''),
 		) as HTMLButtonElement[];
 
-		expect(creationButtons).toHaveLength(2);
+		expect(creationButtons).toHaveLength(1);
 		expect(creationButtons.every((button) => button.disabled)).toBe(true);
 		app.openCreate();
 		fixture.detectChanges();
@@ -692,14 +692,22 @@ describe('MaintenanceCockpit', () => {
 
 	it('covers plan validation focus paths and interval guards', () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		const expectFieldError = (selector: string, message: string): void => {
+			fixture.detectChanges();
+			expect(
+				fixture.nativeElement.querySelector(selector)?.textContent,
+			).toContain(message);
+		};
 		app.openCreate();
 		http.expectOne('/api/v1/cars/car-1/components').flush({ components: [] });
 		app.form.set({ ...app.form(), carId: '', name: '' });
 		app.save();
 		expect(app.formError()).toContain('Choose a car');
+		expectFieldError('#plan-car-error', 'Choose a car');
 		app.form.set({ ...app.form(), carId: 'car-1', name: '' });
 		app.save();
 		expect(app.formError()).toContain('Name the care rule');
+		expectFieldError('#plan-name-error', 'Name the care rule');
 		app.form.set({ ...app.form(), name: '   ' });
 		app.save();
 		expect(app.formError()).toContain('Name the care rule');
@@ -710,9 +718,11 @@ describe('MaintenanceCockpit', () => {
 		});
 		app.save();
 		expect(app.formError()).toContain('whole numbers');
+		expectFieldError('#plan-calendar-error', 'whole numbers');
 		app.form.set({ ...app.form(), calendarValue: '', sessionInterval: '0' });
 		app.save();
 		expect(app.formError()).toContain('at least one');
+		expectFieldError('#plan-session-error', 'at least one');
 		app.form.set({
 			...app.form(),
 			sessionInterval: '2',
@@ -720,6 +730,17 @@ describe('MaintenanceCockpit', () => {
 		});
 		app.save();
 		expect(app.formError()).toContain('Prior sessions');
+		expectFieldError('#plan-baseline-error', 'Prior sessions');
+		app.form.set({
+			...app.form(),
+			baselineSessions: '0',
+			calendarValue: '',
+			sessionInterval: '',
+		});
+		app.save();
+		expect(app.formError()).toContain('calendar interval');
+		expectFieldError('#plan-calendar-error', 'calendar interval');
+		expectFieldError('#plan-session-error', 'calendar interval');
 
 		Object.defineProperty(app.planFields(), 'invalid', { value: () => false });
 		app.form.set({
@@ -854,6 +875,12 @@ describe('MaintenanceCockpit', () => {
 
 	it('covers service validation, action guard, and selected-value fallbacks', () => {
 		const app = fixture.componentInstance as unknown as MaintenanceTestHarness;
+		const expectFieldError = (selector: string, message: string): void => {
+			fixture.detectChanges();
+			expect(
+				fixture.nativeElement.querySelector(selector)?.textContent,
+			).toContain(message);
+		};
 		app.garage.set([]);
 		app.openServiceCreate();
 		expect(app.serviceForm()['carId']).toBe('');
@@ -873,13 +900,16 @@ describe('MaintenanceCockpit', () => {
 		});
 		app.saveService();
 		expect(app.serviceError()).toContain('Choose a car');
+		expectFieldError('#service-car-error', 'Choose a car');
 		app.serviceForm.set({
 			...app.serviceForm(),
 			carId: 'car-1',
 			performedAt: '',
+			description: 'Work',
 		});
 		app.saveService();
 		expect(app.serviceError()).toContain('completion date');
+		expectFieldError('#service-date-error', 'completion date');
 		app.serviceForm.set({
 			...app.serviceForm(),
 			performedAt: '2026-08-02T10:00',
@@ -887,6 +917,7 @@ describe('MaintenanceCockpit', () => {
 		});
 		app.saveService();
 		expect(app.serviceError()).toContain('completed work');
+		expectFieldError('#service-description-error', 'completed work');
 		app.serviceForm.set({
 			...app.serviceForm(),
 			description: '   ',
@@ -900,9 +931,11 @@ describe('MaintenanceCockpit', () => {
 		});
 		app.saveService();
 		expect(app.serviceError()).toContain('Cost');
+		expectFieldError('#service-cost-error', 'Cost');
 		app.serviceForm.set({ ...app.serviceForm(), cost: '', currency: 'US' });
 		app.saveService();
 		expect(app.serviceError()).toContain('three-letter');
+		expectFieldError('#service-currency-error', 'three-letter');
 		app.serviceForm.set({
 			...app.serviceForm(),
 			currency: 'USD',
@@ -910,6 +943,7 @@ describe('MaintenanceCockpit', () => {
 		});
 		app.saveService();
 		expect(app.serviceError()).toContain('4,000');
+		expectFieldError('#service-notes-error', '4,000');
 		app.serviceAction.set('busy');
 		app.serviceForm.set({ ...app.serviceForm(), notes: '' });
 		app.saveService();

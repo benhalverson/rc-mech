@@ -1,9 +1,12 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import {
+	afterNextRender,
 	Component,
 	computed,
+	ElementRef,
 	inject,
+	Injector,
 	linkedSignal,
 	signal,
 } from '@angular/core';
@@ -14,6 +17,16 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
+import {
+	LucideArchive,
+	LucideArchiveRestore,
+	LucideHistory,
+	LucidePencil,
+	LucidePlus,
+	LucideRefreshCw,
+	LucideSave,
+	LucideTriangleAlert,
+} from '@lucide/angular';
 import type {
 	ConsumableEntry,
 	FluidArea,
@@ -183,14 +196,29 @@ export const spendLabel = (value: number | null): string =>
 
 @Component({
 	selector: 'app-consumable-maintenance',
-	imports: [CommonModule, DatePipe, FormField],
+	imports: [
+		CommonModule,
+		DatePipe,
+		FormField,
+		LucideArchive,
+		LucideArchiveRestore,
+		LucideHistory,
+		LucidePencil,
+		LucidePlus,
+		LucideRefreshCw,
+		LucideSave,
+		LucideTriangleAlert,
+	],
 	templateUrl: './consumable-maintenance.html',
-	styleUrl: './consumable-maintenance.css',
+	host: { class: 'block' },
 })
 export class ConsumableMaintenance {
 	private readonly http = inject(HttpClient);
 	private readonly lookups = inject(MaintenanceLookups);
 	private readonly store = inject(MaintenanceStore);
+	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+	private readonly injector = inject(Injector);
+	private returnFocusSelector = '[data-consumable-launcher="record"]';
 	protected readonly garage = linkedSignal(() => this.store.cars());
 	protected readonly entries = linkedSignal(() =>
 		this.store.consumableEntries(),
@@ -227,6 +255,28 @@ export class ConsumableMaintenance {
 					? undefined
 					: { kind: 'cost', message: 'Costs must be zero or greater.' },
 			);
+		validate(path.frontDetails, (context) =>
+			context.valueOf(path.kind) === 'tires' &&
+			context.valueOf(path.axle) !== 'rear' &&
+			!context.value().trim() &&
+			!context.valueOf(path.frontCost).trim()
+				? {
+						kind: 'tireDetailsRequired',
+						message: 'Add front tire details or cost.',
+					}
+				: undefined,
+		);
+		validate(path.rearDetails, (context) =>
+			context.valueOf(path.kind) === 'tires' &&
+			context.valueOf(path.axle) !== 'front' &&
+			!context.value().trim() &&
+			!context.valueOf(path.rearCost).trim()
+				? {
+						kind: 'tireDetailsRequired',
+						message: 'Add rear tire details or cost.',
+					}
+				: undefined,
+		);
 	});
 	protected readonly report = computed(() =>
 		mergeTireReport(buildTireReport(this.entries()), this.store.report()),
@@ -246,6 +296,7 @@ export class ConsumableMaintenance {
 	}
 	protected openCreate(): void {
 		if (!this.hasActiveCars()) return;
+		this.returnFocusSelector = '[data-consumable-launcher="record"]';
 		const car = this.garage().find((item) => !item.archivedAt);
 		this.entryFields().reset({
 			...emptyForm(),
@@ -255,9 +306,11 @@ export class ConsumableMaintenance {
 		this.editingId.set(null);
 		this.formError.set('');
 		this.editing.set(true);
+		this.focusAfterRender('#consumable-form-title');
 	}
 	protected openEdit(entry: ConsumableEntry): void {
 		if (this.isReadOnly(entry)) return;
+		this.returnFocusSelector = `[data-consumable-launcher="entry:${entry.id}"]`;
 		this.entryFields().reset({
 			...emptyForm(),
 			carId: entry.carId,
@@ -282,12 +335,14 @@ export class ConsumableMaintenance {
 		this.editingId.set(entry.id);
 		this.formError.set('');
 		this.editing.set(true);
+		this.focusAfterRender('#consumable-form-title');
 	}
 	protected cancelEdit(): void {
 		this.editing.set(false);
 		this.editingId.set(null);
 		this.formError.set('');
 		this.entryFields().reset();
+		this.focusAfterRender(this.returnFocusSelector);
 	}
 	protected update(field: keyof EntryForm, value: string): void {
 		this.form.update((current) => ({ ...current, [field]: value }));
@@ -321,6 +376,10 @@ export class ConsumableMaintenance {
 				this.entryFields.carId().focusBoundControl();
 			else if (this.entryFields.performedAt().invalid())
 				this.entryFields.performedAt().focusBoundControl();
+			else if (this.entryFields.frontDetails().invalid())
+				this.entryFields.frontDetails().focusBoundControl();
+			else if (this.entryFields.rearDetails().invalid())
+				this.entryFields.rearDetails().focusBoundControl();
 			else if (this.entryFields.frontCost().invalid())
 				this.entryFields.frontCost().focusBoundControl();
 			else if (this.entryFields.rearCost().invalid())
@@ -392,6 +451,7 @@ export class ConsumableMaintenance {
 			next: () => {
 				this.store.refreshConsumables();
 				this.action.set(null);
+				this.returnFocusSelector = '#consumable-title';
 				this.cancelEdit();
 			},
 			error: (error: { status?: number }) => {
@@ -561,5 +621,12 @@ export class ConsumableMaintenance {
 				get('minute'),
 			) - asUtc;
 		return new Date(asUtc - offset).toISOString();
+	}
+	private focusAfterRender(selector: string): void {
+		afterNextRender(
+			() =>
+				this.host.nativeElement.querySelector<HTMLElement>(selector)?.focus(),
+			{ injector: this.injector },
+		);
 	}
 }

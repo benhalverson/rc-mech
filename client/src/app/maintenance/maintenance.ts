@@ -4,6 +4,6 @@ import { MaintenanceCockpit } from '../maintenance-cockpit';
 @Component({
 	selector: 'app-maintenance',
 	imports: [MaintenanceCockpit],
-	template: '<app-maintenance-cockpit />',
+	templateUrl: './maintenance.html',
 })
 export class Maintenance {}
