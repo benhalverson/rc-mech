@@ -7,8 +7,7 @@
 		"client/src/app/car-photo-gallery.ts:51:33:http-client",
 		"client/src/app/car/car-build.ts:111:33:http-client",
 		"client/src/app/car/car-build.ts:256:3:manual-subscribe",
-		"client/src/app/car/car-overview.ts:177:7:await",
-		"client/src/app/car/car-overview.ts:65:2:inline-template",
+		"client/src/app/car/car-overview.ts:163:7:await",
 		"client/src/app/car/car-setups.ts:13:2:inline-template",
 		"client/src/app/car/car-setups.ts:31:33:http-client",
 		"client/src/app/car/car-setups.ts:69:3:manual-subscribe",
@@ -30,10 +29,10 @@
 		"client/src/app/settings/settings.ts:117:7:await",
 		"client/src/app/settings/settings.ts:128:7:await",
 		"client/src/app/settings/settings.ts:158:7:await",
-		"client/src/app/setup-snapshots.ts:279:3:manual-subscribe",
-		"client/src/app/setup-snapshots.ts:306:16:manual-subscribe",
-		"client/src/app/setup-snapshots.ts:407:3:manual-subscribe",
-		"client/src/app/setup-snapshots.ts:446:3:manual-subscribe",
-		"client/src/app/setup-snapshots.ts:476:3:manual-subscribe"
+		"client/src/app/setup-snapshots.ts:305:3:manual-subscribe",
+		"client/src/app/setup-snapshots.ts:332:16:manual-subscribe",
+		"client/src/app/setup-snapshots.ts:433:3:manual-subscribe",
+		"client/src/app/setup-snapshots.ts:472:3:manual-subscribe",
+		"client/src/app/setup-snapshots.ts:502:3:manual-subscribe"
 	]
 }

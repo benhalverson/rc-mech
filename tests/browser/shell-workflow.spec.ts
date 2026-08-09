@@ -179,6 +179,13 @@ test('car context switches at 1024px and the mobile picker handles long, numerou
 	expect((controlBox?.x ?? 0) + (controlBox?.width ?? 0)).toBeLessThanOrEqual(
 		320,
 	);
+	await page.setViewportSize({ width: 430, height: 932 });
+	await expect(page.locator('.context-rail')).toHaveCount(0);
+	await expect(page.locator('.mobile-command-bar')).toBeVisible();
+	const largePhoneControlBox = await currentCarControl.boundingBox();
+	expect(
+		(largePhoneControlBox?.x ?? 0) + (largePhoneControlBox?.width ?? 0),
+	).toBeLessThanOrEqual(430);
 	await page.setViewportSize({ width: 900, height: 700 });
 	await expect(page.locator('.context-rail')).toHaveCount(0);
 	await page.setViewportSize({ width: 1024, height: 768 });
