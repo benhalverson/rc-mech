@@ -16,19 +16,27 @@ import type {
 } from '../maintenance.models';
 import { MaintenanceGateway } from '../maintenance-gateway';
 
-export type ConsumableCommand =
-	| {
-			readonly kind: 'save';
-			readonly mode: 'create' | 'edit';
-			readonly carId: string;
-			readonly id: string | null;
-			readonly maintenance: ConsumableMaintenanceDraft;
-	  }
-	| {
-			readonly kind: 'change';
-			readonly action: 'archive' | 'restore';
-			readonly entry: ConsumableEntry;
-	  };
+export type ConsumableSaveCommand = {
+	readonly kind: 'save';
+	readonly mode: 'create' | 'edit';
+	readonly carId: string;
+	readonly id: string | null;
+	readonly maintenance: ConsumableMaintenanceDraft;
+};
+
+export type ConsumableChangeCommand = {
+	readonly kind: 'change';
+	readonly action: 'archive' | 'restore';
+	readonly entry: ConsumableEntry;
+};
+
+export type ConsumableCommand = ConsumableSaveCommand | ConsumableChangeCommand;
+
+export type ConsumableFailure =
+	| 'car-archived'
+	| 'save-failed'
+	| 'archive-failed'
+	| 'restore-failed';
 
 export type ConsumableOutcome =
 	| { readonly status: 'idle'; readonly operationId: null }
@@ -41,7 +49,7 @@ export type ConsumableOutcome =
 			readonly status: 'failed';
 			readonly operationId: number;
 			readonly command: ConsumableCommand;
-			readonly error: MaintenanceGatewayFailure;
+			readonly failure: ConsumableFailure;
 	  };
 
 export type TireLookupOutcome =
@@ -71,6 +79,16 @@ const resourceError = (
 	return failures.some(Boolean)
 		? 'Consumable history could not be loaded.'
 		: '';
+};
+
+const mutationFailure = (
+	command: ConsumableCommand,
+	failure: MaintenanceGatewayFailure,
+): ConsumableFailure => {
+	if (command.kind === 'change')
+		return command.action === 'archive' ? 'archive-failed' : 'restore-failed';
+	if (failure.kind === 'http' && failure.status === 409) return 'car-archived';
+	return 'save-failed';
 };
 
 export const ConsumableStore = signalStore(
@@ -107,12 +125,11 @@ export const ConsumableStore = signalStore(
 			report: computed(() =>
 				store.gateway.report.hasValue() ? store.gateway.report.value() : null,
 			),
-			loading: computed(() =>
-				[
-					store.gateway.cars,
-					store.gateway.timezone,
-					store.gateway.consumables,
-				].some((resource) => resource.isLoading()),
+			loading: computed(
+				() =>
+					store.gateway.cars.isLoading() ||
+					store.gateway.timezone.isLoading() ||
+					store.gateway.consumables.isLoading(),
 			),
 			error: computed(() => resourceError(failures())),
 			action: computed(() => {
@@ -151,7 +168,12 @@ export const ConsumableStore = signalStore(
 						}),
 						catchError((error: MaintenanceGatewayFailure) => {
 							patchState(store, {
-								outcome: { status: 'failed', operationId, command, error },
+								outcome: {
+									status: 'failed',
+									operationId,
+									command,
+									failure: mutationFailure(command, error),
+								},
 							});
 							return of(null);
 						}),

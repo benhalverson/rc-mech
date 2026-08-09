@@ -1,0 +1,61 @@
+<div class="history-toolbar flex flex-wrap items-center gap-2" role="group" aria-label="Filter consumable history">
+	<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="filter() === 'active'" [attr.aria-pressed]="filter() === 'active'" (click)="filter.set('active')">Current history</button>
+	<button type="button" class="filter-button alloy-control alloy-control-secondary alloy-focus-ring" [class.border-alloy-accent]="filter() === 'archived'" [attr.aria-pressed]="filter() === 'archived'" (click)="filter.set('archived')">Archived entries</button>
+	<span class="history-total alloy-technical ml-auto text-alloy-text-secondary">{{ visibleEntries().length }} entries</span>
+</div>
+
+@if (error()) {
+	<p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span><span>{{ error() }}</span></p>
+}
+
+<section class="tire-report grid gap-4 border-y border-alloy-separator py-5" aria-labelledby="tire-report-title">
+	<header><div class="alloy-section-heading">Historical report</div><h4 id="tire-report-title" class="alloy-screen-title">Tire changes, by axle</h4><p class="alloy-supporting-text mb-0">Recorded changes describe what has happened; they do not create due dates or reminders.</p></header>
+	<div class="report-grid divide-y divide-alloy-separator border-y border-alloy-separator md:grid md:grid-cols-2 md:divide-x md:divide-y-0">
+		@for (axle of reportAxles; track axle) {
+			@let summary = axle === 'front' ? report().front : report().rear;
+			<article class="report-card grid content-start gap-2 px-1 py-4 md:px-4">
+				<div class="plan-kicker flex flex-wrap justify-between gap-2 text-[12px] font-semibold tracking-[0.08em] text-alloy-text-secondary uppercase"><span>{{ axle }} axle</span><span>{{ summary.eventCount }} {{ summary.eventCount === 1 ? 'event' : 'events' }}</span></div>
+				<h5 class="m-0 text-base font-semibold text-alloy-text">@if (summary.latest) { Last change {{ summary.latest.performedAt | date:'mediumDate':timezone() }} } @else { No recorded change }</h5>
+				@if (summary.latest) {
+					<p class="m-0 text-alloy-text-secondary">{{ axleDetails(summary.latest, axle) }}</p>
+					@if (axleCost(summary.latest, axle) == null) { <p class="report-warning alloy-state alloy-attention-state mt-1"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span class="text-alloy-text">Cost not recorded for this axle event.</span></p> }
+				}
+				@if (summary.averageDays != null) { <p class="m-0 text-sm text-alloy-text-secondary">About {{ summary.averageDays }} days between recorded {{ axle }} changes.</p> } @else { <p class="hint m-0 text-sm text-alloy-text-secondary">Frequency needs at least two recorded {{ axle }} events.</p> }
+				@if (summary.missingDetails) { <p class="report-warning alloy-state alloy-attention-state mt-1"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span class="text-alloy-text">Some {{ axle }} events have incomplete tire details.</span></p> }
+			</article>
+		}
+	</div>
+	<div class="spend-strip grid grid-cols-1 divide-y divide-alloy-separator border-y border-alloy-separator sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+		<div class="grid gap-1 px-4 py-3"><span class="text-sm text-alloy-text-secondary">Front spend</span><strong class="alloy-technical font-normal text-alloy-text">{{ spendLabel(report().spend.front) }}</strong></div>
+		<div class="grid gap-1 px-4 py-3"><span class="text-sm text-alloy-text-secondary">Rear spend</span><strong class="alloy-technical font-normal text-alloy-text">{{ spendLabel(report().spend.rear) }}</strong></div>
+		<div class="grid gap-1 px-4 py-3"><span class="text-sm text-alloy-text-secondary">Combined spend</span><strong class="alloy-technical font-normal text-alloy-text">{{ spendLabel(report().spend.combined) }}</strong></div>
+	</div>
+	@if (report().spend.missingCostEntries) { <p class="report-warning alloy-state alloy-attention-state mt-0"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span class="text-alloy-text">{{ report().spend.missingCostEntries }} tire {{ report().spend.missingCostEntries === 1 ? 'event has' : 'events have' }} no recorded cost; totals include recorded costs only.</span></p> }
+</section>
+
+<section class="fluid-report grid gap-3 border-t border-alloy-separator pt-5" aria-labelledby="fluid-report-title">
+	<div><div class="alloy-section-heading">Fluid history</div><h4 id="fluid-report-title" class="alloy-screen-title">Service areas, kept alongside tire history</h4></div>
+	@if (!report().fluidEntries.length) { <p class="hint m-0 text-sm text-alloy-text-secondary">No shock-fluid or differential-fluid changes recorded.</p> } @else {
+		<div class="fluid-history divide-y divide-alloy-separator border-y border-alloy-separator">
+			@for (entry of report().fluidEntries; track entry.id) { <p class="m-0 grid min-h-12 gap-1 py-3 sm:grid-cols-[140px_minmax(0,1fr)_auto] sm:items-center"><time class="alloy-technical text-alloy-text" [dateTime]="entry.performedAt">{{ entry.performedAt | date:'mediumDate':timezone() }}</time><strong class="font-semibold text-alloy-text">{{ areaLabel(entry) }}</strong><span class="text-sm text-alloy-text-secondary">{{ entryCost(entry) }}</span></p> }
+		</div>
+	}
+</section>
+
+@if (!visibleEntries().length) {
+	<div class="state-card empty-state alloy-empty-state grid gap-3">
+		<svg lucideHistory size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+		<div><h4 class="m-0 text-base font-semibold text-alloy-text">No consumable changes yet</h4><p class="m-0 mt-1">Record the next shock-fluid service, differential service, or tire-set change.</p></div>
+		<button class="button alloy-control alloy-focus-ring inline-flex w-fit items-center gap-2" type="button" data-consumable-launcher="record" (click)="create()" [disabled]="!hasActiveCars() || action()"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Record change</button>
+	</div>
+} @else {
+	<div class="consumable-list border-y border-alloy-separator">
+		@for (entry of visibleEntries(); track entry.id) {
+			<article class="consumable-row grid gap-3 border-b border-alloy-separator py-4 last:border-b-0 md:grid-cols-[140px_minmax(0,1fr)_auto]">
+				<div class="consumable-date"><time class="alloy-technical block text-alloy-text" [dateTime]="entry.performedAt">{{ entry.performedAt | date:'mediumDate':timezone() }}</time><span class="mt-1 block text-sm text-alloy-text-secondary">{{ carName(entry.carId) }}</span></div>
+				<div class="consumable-copy grid min-w-0 gap-2"><div class="plan-kicker flex flex-wrap gap-3 text-[12px] font-semibold tracking-[0.08em] text-alloy-text-secondary uppercase"><span class="text-alloy-text">{{ kindLabel(entry.kind) }}</span><span>{{ areaLabel(entry) }}</span></div>@if (entry.frontDetails) { <p class="m-0 break-words whitespace-pre-wrap text-alloy-text-secondary"><strong class="text-alloy-text">Front</strong> {{ entry.frontDetails }}@if (entry.frontCost != null) { · ${{ entry.frontCost | number:'1.2-2' }}}</p> }@if (entry.rearDetails) { <p class="m-0 break-words whitespace-pre-wrap text-alloy-text-secondary"><strong class="text-alloy-text">Rear</strong> {{ entry.rearDetails }}@if (entry.rearCost != null) { · ${{ entry.rearCost | number:'1.2-2' }}}</p> }@if (entry.kind !== 'tires') { <p class="m-0 break-words whitespace-pre-wrap text-alloy-text-secondary">{{ entry.notes || 'Fluid service recorded.' }}</p> }</div>
+				<div class="consumable-actions flex flex-wrap items-center gap-2 md:justify-end" role="group" aria-label="Consumable entry actions"><strong class="alloy-technical mr-1 font-normal text-alloy-text">{{ entryCost(entry) }}</strong>@if (!entry.deletedAt) { <button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" [attr.data-consumable-launcher]="'entry:' + entry.id" (click)="edit(entry)" [disabled]="isReadOnly(entry) || action()"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button><button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="archive(entry)" [disabled]="isReadOnly(entry) || action()"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> } @else { <span class="deleted-label text-sm text-alloy-text-secondary">Archived</span><button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="restore(entry)" [disabled]="action()"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>Restore</button> }</div>
+			</article>
+		}
+	</div>
+}
