@@ -76,6 +76,32 @@ describe('Angular architecture checker', () => {
 		).toEqual([]);
 	});
 
+	it('enforces boundaries for namespace-imported Angular components', () => {
+		const diagnostics = inspectSource(
+			source(`
+			import * as ng from '@angular/core';
+			import { HttpClient } from '@angular/common/http';
+			@ng.Component({ template: '<p>inline</p>' })
+			export class Example {
+				constructor(private readonly http: HttpClient) {}
+				async save(stream: { subscribe(): void }) {
+					stream.subscribe();
+					await this.http.get('/x');
+					return navigator.clipboard;
+				}
+			}
+		`),
+		);
+		expect(diagnostics.map(({ kind }) => kind).sort()).toEqual([
+			'await',
+			'browser-capability',
+			'browser-capability',
+			'http-client',
+			'inline-template',
+			'manual-subscribe',
+		]);
+	});
+
 	it('fails for new and stale baseline entries and rejects malformed baselines', () => {
 		const diagnostic = inspectSource(
 			source(

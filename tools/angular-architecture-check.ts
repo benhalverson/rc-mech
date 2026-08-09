@@ -50,33 +50,54 @@ const add = (
 	});
 };
 
-const componentAliases = (source: ts.SourceFile): Set<string> => {
-	const aliases = new Set<string>();
+type ComponentImports = {
+	named: Set<string>;
+	namespaces: Set<string>;
+};
+
+const componentImports = (source: ts.SourceFile): ComponentImports => {
+	const named = new Set<string>();
+	const namespaces = new Set<string>();
 	for (const statement of source.statements) {
 		if (
 			!ts.isImportDeclaration(statement) ||
+			!ts.isStringLiteral(statement.moduleSpecifier) ||
+			statement.moduleSpecifier.text !== '@angular/core' ||
 			!statement.importClause?.namedBindings
 		)
 			continue;
 		const bindings = statement.importClause.namedBindings;
-		if (!ts.isNamedImports(bindings)) continue;
+		if (ts.isNamespaceImport(bindings)) {
+			namespaces.add(bindings.name.text);
+			continue;
+		}
 		for (const element of bindings.elements) {
 			if (
 				element.propertyName?.text === 'Component' ||
 				element.name.text === 'Component'
 			)
-				aliases.add(element.name.text);
+				named.add(element.name.text);
 		}
 	}
-	return aliases;
+	return { named, namespaces };
 };
+
+const isComponentDecorator = (
+	expression: ts.LeftHandSideExpression,
+	imports: ComponentImports,
+): boolean =>
+	(ts.isIdentifier(expression) && imports.named.has(expression.text)) ||
+	(ts.isPropertyAccessExpression(expression) &&
+		ts.isIdentifier(expression.expression) &&
+		imports.namespaces.has(expression.expression.text) &&
+		expression.name.text === 'Component');
 
 export const inspectSource = (
 	source: ts.SourceFile,
 ): ArchitectureDiagnostic[] => {
 	const diagnostics: ArchitectureDiagnostic[] = [];
-	const aliases = componentAliases(source);
-	if (!aliases.size) return diagnostics;
+	const imports = componentImports(source);
+	if (!imports.named.size && !imports.namespaces.size) return diagnostics;
 	const httpAliases = new Set(['HttpClient']);
 	for (const statement of source.statements) {
 		if (
@@ -95,8 +116,7 @@ export const inspectSource = (
 			for (const decorator of decorators) {
 				if (!ts.isCallExpression(decorator.expression)) continue;
 				const expression = decorator.expression.expression;
-				if (!ts.isIdentifier(expression) || !aliases.has(expression.text))
-					continue;
+				if (!isComponentDecorator(expression, imports)) continue;
 				const metadata = decorator.expression.arguments[0];
 				if (metadata && ts.isObjectLiteralExpression(metadata)) {
 					for (const name of ['template', 'styles']) {
