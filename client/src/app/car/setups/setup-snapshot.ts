@@ -6,6 +6,7 @@ import {
 import { Injectable, inject, signal } from '@angular/core';
 import { catchError, map, Observable, throwError } from 'rxjs';
 import { array, custom, literal, object, string } from 'zod/mini';
+import { isSupportedSoDialedUrl } from './setup-import-rules';
 
 export const setupSectionKeys = [
 	'vehicle',
@@ -165,25 +166,8 @@ const mapFailure = (error: unknown): Observable<never> =>
 export class SoDialedImportGateway {
 	private readonly http = inject(HttpClient);
 
-	static isSupportedUrl(value: string): boolean {
-		try {
-			const url = new URL(value.trim());
-			return (
-				url.protocol === 'https:' &&
-				(url.hostname === 'sodialed.com' ||
-					url.hostname === 'www.sodialed.com') &&
-				url.username === '' &&
-				url.password === '' &&
-				(url.port === '' || url.port === '443') &&
-				/^\/setup\/[A-Za-z0-9]+\/?$/.test(url.pathname)
-			);
-		} catch {
-			return false;
-		}
-	}
-
 	preview(url: string, carId: string): Observable<SoDialedImportPreview> {
-		if (!SoDialedImportGateway.isSupportedUrl(url)) {
+		if (!isSupportedSoDialedUrl(url)) {
 			return throwError(() => new Error('Enter a supported So Dialed URL.'));
 		}
 		return this.http

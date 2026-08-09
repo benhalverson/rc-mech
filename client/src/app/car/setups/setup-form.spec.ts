@@ -4,8 +4,10 @@ import {
 	importKnownValues,
 	parseSetupJsonObject,
 	setupDraftFromForm,
+	setupFieldLabel,
 	setupFormFromImport,
 	setupFormFromSnapshot,
+	setupSaveCommand,
 } from './setup-form';
 import {
 	type SetupSections,
@@ -40,6 +42,10 @@ const preview = (
 });
 
 describe('setup form mapping', () => {
+	it('formats setup field labels for editors and readouts', () => {
+		expect(setupFieldLabel('frontRideHeight')).toBe('Front Ride Height');
+	});
+
 	it('maps complete and empty snapshots into editable values', () => {
 		const complete = setupFormFromSnapshot(
 			snapshot({
@@ -244,6 +250,63 @@ describe('setup form mapping', () => {
 			sourceMetadata: { pdfUrl: null, pdfPage: null },
 			unmappedValues: null,
 			rawValues: null,
+		});
+	});
+
+	it('builds manual and imported save commands without component mapping', () => {
+		const form = { ...emptySetupForm(), name: '  Reviewed setup  ' };
+		const manual = setupSaveCommand(form, {
+			sourceCarId: 'car-1',
+			targetCarId: 'car-1',
+			mode: 'edit',
+			setupId: 'setup-1',
+			importPreview: null,
+		});
+		expect(manual).toMatchObject({
+			kind: 'save',
+			mode: 'edit',
+			setupId: 'setup-1',
+			importDraft: null,
+			snapshot: { name: 'Reviewed setup' },
+		});
+
+		form.unmappedValues = JSON.stringify({
+			uncertain: { corrected: true },
+			unmapped: { retained: true },
+		});
+		form.rawValues = '{"source":true}';
+		const imported = setupSaveCommand(form, {
+			sourceCarId: 'car-1',
+			targetCarId: 'car-2',
+			mode: 'add',
+			setupId: null,
+			importPreview: preview({
+				uncertainValues: { fallback: true },
+			}),
+		});
+		expect(imported.importDraft).toMatchObject({
+			draftId: 'draft-1',
+			name: 'Reviewed setup',
+			review: {
+				carId: 'car-2',
+				uncertainValues: { corrected: true },
+				unmappedValues: { retained: true },
+				rawValues: { source: true },
+			},
+		});
+
+		form.unmappedValues = '{}';
+		expect(
+			setupSaveCommand(form, {
+				sourceCarId: 'car-1',
+				targetCarId: 'car-1',
+				mode: 'add',
+				setupId: null,
+				importPreview: preview({ uncertainValues: { fallback: true } }),
+			}).importDraft?.review,
+		).toMatchObject({
+			uncertainValues: { fallback: true },
+			unmappedValues: {},
 		});
 	});
 });

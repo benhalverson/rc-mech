@@ -6,6 +6,7 @@ import {
 	type SoDialedImportPreview,
 	setupSectionKeys,
 } from './setup-snapshot';
+import type { SetupWorkflowCommand } from './setup-snapshot-store';
 
 type SetupFormSections = Record<SetupSectionKey, Record<string, string>>;
 
@@ -57,6 +58,22 @@ export const setupSectionFields = {
 	],
 	notes: ['setupNotes'],
 } as const;
+
+export const setupSectionLabels: Record<SetupSectionKey, string> = {
+	vehicle: 'Vehicle',
+	drivetrain: 'Drivetrain',
+	electronics: 'Electronics',
+	tires: 'Tires',
+	shocks: 'Shocks',
+	frontSuspension: 'Front suspension',
+	rearSuspension: 'Rear suspension',
+	notes: 'Notes',
+};
+
+export const setupFieldLabel = (field: string): string =>
+	field
+		.replace(/([A-Z])/g, ' $1')
+		.replace(/^./, (letter) => letter.toUpperCase());
 
 const emptySections = (): SetupFormSections =>
 	Object.fromEntries(
@@ -219,3 +236,48 @@ export const importKnownValues = (draft: SetupSnapshotDraft) => ({
 	...draft,
 	makeCurrent: undefined,
 });
+
+export type SetupEditorRequest = {
+	readonly sourceCarId: string;
+	readonly targetCarId: string;
+	readonly mode: 'add' | 'edit';
+	readonly setupId: string | null;
+	readonly importPreview: SoDialedImportPreview | null;
+};
+
+export const setupSaveCommand = (
+	form: SetupFormModel,
+	request: SetupEditorRequest,
+): Extract<SetupWorkflowCommand, { kind: 'save' }> => {
+	const snapshot = setupDraftFromForm(form);
+	const importPreview = request.importPreview;
+	const reviewValues = parseSetupJsonObject(form.unmappedValues);
+	return {
+		kind: 'save',
+		sourceCarId: request.sourceCarId,
+		targetCarId: request.targetCarId,
+		mode: request.mode,
+		setupId: request.setupId,
+		snapshot,
+		importDraft: importPreview
+			? {
+					draftId: importPreview.draftId,
+					name: form.name.trim(),
+					review: {
+						carId: request.targetCarId,
+						knownValues: importKnownValues(snapshot),
+						uncertainValues:
+							(reviewValues['uncertain'] as
+								| Record<string, unknown>
+								| undefined) ?? importPreview.uncertainValues,
+						rawValues: parseSetupJsonObject(form.rawValues),
+						unmappedValues:
+							(reviewValues['unmapped'] as
+								| Record<string, unknown>
+								| undefined) ?? {},
+						sourceMetadata: { ...snapshot.sourceMetadata },
+					},
+				}
+			: null,
+	};
+};
