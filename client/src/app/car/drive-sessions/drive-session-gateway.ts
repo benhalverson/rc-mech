@@ -5,7 +5,8 @@ import {
 } from '@angular/common/http';
 import { inject, Injectable, signal } from '@angular/core';
 import { catchError, map, throwError, type Observable } from 'rxjs';
-import { z } from 'zod';
+import { minLength, object, safeParse, string, trim } from 'zod/mini';
+import type * as z from 'zod/mini';
 import {
 	type ArchiveDriveSessionCommand,
 	type DriveSession,
@@ -17,12 +18,14 @@ import {
 	type SaveDriveSessionCommand,
 } from './drive-session.models';
 
-const apiErrorSchema = z.object({ error: z.string().trim().min(1) });
+const apiErrorSchema = object({
+	error: string().check(trim(), minLength(1)),
+});
 
 class InvalidDriveSessionResponse extends Error {}
 
-const parse = <T>(schema: z.ZodType<T>, value: unknown): T => {
-	const result = schema.safeParse(value);
+const parse = <T>(schema: z.core.$ZodType<T>, value: unknown): T => {
+	const result = safeParse(schema, value);
 	if (!result.success)
 		throw new InvalidDriveSessionResponse(
 			'The drive session response was invalid.',

@@ -1,0 +1,17 @@
+<a class="back-link" routerLink="/garage">
+	Garage collection
+</a>
+<header class="car-section-heading">
+	<div class="eyebrow">{{ car().archivedAt ? 'Archived record' : 'Active car' }}</div>
+	<h2 data-route-focus tabindex="-1">{{ car().name }}</h2>
+	<p>{{ car().make || car().manufacturer || 'Make not recorded' }} · {{ car().model || 'Model not recorded' }}</p>
+</header>
+@if (car().archivedAt) {
+	<p class="archive-note">This car is archived. Its history is available, but changes are disabled until it is restored.</p>
+}
+<nav class="car-section-navigation" aria-label="Car detail sections">
+	@for (item of sections; track item.path) {
+		<a [routerLink]="['/garage', car().id, item.path]" [attr.aria-current]="section() === item.path ? 'page' : null">{{ item.label }}</a>
+	}
+</nav>
+<ng-content />

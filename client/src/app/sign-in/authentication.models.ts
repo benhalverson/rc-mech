@@ -1,6 +1,20 @@
-import { z } from 'zod';
+import {
+	array,
+	email,
+	enum as enumSchema,
+	literal,
+	minLength,
+	number,
+	object,
+	optional,
+	positive,
+	record,
+	string,
+	unknown,
+} from 'zod/mini';
+import type * as z from 'zod/mini';
 
-const authenticatorTransportSchema = z.enum([
+const authenticatorTransportSchema = enumSchema([
 	'ble',
 	'cable',
 	'hybrid',
@@ -10,30 +24,32 @@ const authenticatorTransportSchema = z.enum([
 	'usb',
 ]);
 
-export const accessResponseSchema = z.object({ status: z.literal(true) });
+export const accessResponseSchema = object({ status: literal(true) });
 
-export const passkeyRequestOptionsSchema = z.object({
-	challenge: z.string().min(1),
-	timeout: z.number().positive().optional(),
-	rpId: z.string().min(1).optional(),
-	allowCredentials: z
-		.array(
-			z.object({
-				id: z.string().min(1),
-				type: z.literal('public-key'),
-				transports: z.array(authenticatorTransportSchema).optional(),
+export const passkeyRequestOptionsSchema = object({
+	challenge: string().check(minLength(1)),
+	timeout: optional(number().check(positive())),
+	rpId: optional(string().check(minLength(1))),
+	allowCredentials: optional(
+		array(
+			object({
+				id: string().check(minLength(1)),
+				type: literal('public-key'),
+				transports: optional(array(authenticatorTransportSchema)),
 			}),
-		)
-		.optional(),
-	userVerification: z.enum(['discouraged', 'preferred', 'required']).optional(),
-	extensions: z.record(z.string(), z.unknown()).optional(),
+		),
+	),
+	userVerification: optional(
+		enumSchema(['discouraged', 'preferred', 'required']),
+	),
+	extensions: optional(record(string(), unknown())),
 });
 
-export const verifiedAuthenticationSchema = z.object({
-	session: z.object({ id: z.string().min(1) }),
-	user: z.object({
-		id: z.string().min(1).optional(),
-		email: z.string().email().optional(),
+export const verifiedAuthenticationSchema = object({
+	session: object({ id: string().check(minLength(1)) }),
+	user: object({
+		id: optional(string().check(minLength(1))),
+		email: optional(email()),
 	}),
 });
 

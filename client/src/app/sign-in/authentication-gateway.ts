@@ -2,7 +2,8 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { DOCUMENT } from '@angular/common';
 import { inject, Injectable, InjectionToken } from '@angular/core';
 import { catchError, map, throwError, type Observable } from 'rxjs';
-import { type z } from 'zod';
+import { safeParse } from 'zod/mini';
+import type * as z from 'zod/mini';
 import {
 	accessResponseSchema,
 	type AuthenticationGatewayFailure,
@@ -16,8 +17,8 @@ import {
 
 class InvalidAuthenticationResponse extends Error {}
 
-const parse = <T>(schema: z.ZodType<T>, value: unknown): T => {
-	const result = schema.safeParse(value);
+const parse = <T>(schema: z.core.$ZodType<T>, value: unknown): T => {
+	const result = safeParse(schema, value);
 	if (!result.success)
 		throw new InvalidAuthenticationResponse(
 			'The authentication response was invalid.',

@@ -3,7 +3,7 @@ import { inject, Service } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { distinctUntilChanged, map } from 'rxjs';
 
-const mobileWorkspaceQuery = '(max-width: 700px)';
+const mobileWorkspaceQuery = '(max-width: 1023px)';
 
 @Service()
 export class ResponsiveViewport {

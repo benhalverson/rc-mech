@@ -1,10 +1,17 @@
 import { expect, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
+let ownerAuthentication = 0;
+
 const authenticateOwner = async (page: import('@playwright/test').Page) => {
+	ownerAuthentication += 1;
+	await page.setExtraHTTPHeaders({
+		'CF-Connecting-IP': `appearance-owner-${ownerAuthentication}`,
+	});
 	await page.goto('/sign-in');
 	await page.getByLabel('Email address').fill('owner@example.com');
 	await page.getByRole('button', { name: 'Send magic link' }).click();
+	await expect(page.getByRole('status')).toContainText('link is on its way');
 	await page.goto(
 		`/api/auth/magic-link/verify?token=local-test-token&callbackURL=${encodeURIComponent('/settings')}`,
 	);
@@ -68,7 +75,6 @@ test('keeps the pre-render bootstrap safe when storage fails', async ({
 test('appearance resolves before the workspace, persists, follows the system, and respects reduced motion', async ({
 	page,
 }) => {
-	test.setTimeout(60_000);
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await authenticateOwner(page);
 
@@ -108,7 +114,7 @@ test('appearance resolves before the workspace, persists, follows the system, an
 		await page.evaluate(() => {
 			const rootStyles = getComputedStyle(document.documentElement);
 			const navigationStyles = getComputedStyle(
-				document.querySelector('.workspace-nav') as HTMLElement,
+				document.querySelector('.command-bar') as HTMLElement,
 			);
 			return {
 				legacyMuted: rootStyles.getPropertyValue('--muted').trim(),
@@ -212,7 +218,7 @@ test('recomposes the selector and distinguishes pointer selection from keyboard 
 	).toBe('solid 2px');
 
 	const dark = page.getByRole('radio', { name: 'Dark' });
-	await dark.click();
+	await page.getByText('Dark', { exact: true }).click();
 	expect(
 		await dark
 			.locator('..')
@@ -225,7 +231,7 @@ test('keeps overdue and archived states accessible in the light appearance', asy
 	page,
 }) => {
 	await authenticateOwner(page);
-	await page.getByRole('radio', { name: 'Light' }).click();
+	await page.getByText('Light', { exact: true }).click();
 	const carResponse = await page.request.post('/api/v1/cars', {
 		data: {
 			make: 'Review fixture',
