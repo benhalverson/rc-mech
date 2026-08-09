@@ -1,0 +1,18 @@
+@if (carStore.loading()) {
+	<div class="alloy-state alloy-live-state mt-0" role="status">
+		<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Loading car</strong></span>
+		<span>Opening the car record…</span>
+	</div>
+} @else if (carStore.failure(); as failure) {
+	<div class="alloy-state alloy-error-state mt-0" role="alert">
+		<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+		<span>{{ failure.message }}</span>
+		@if (failure.retryable) {
+			<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="carStore.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+		}
+	</div>
+} @else if (carStore.car(); as car) {
+	<app-car-section-shell [car]="car" section="photos">
+		<app-car-photo-gallery [carId]="car.id" [archived]="!!car.archivedAt" />
+	</app-car-section-shell>
+}

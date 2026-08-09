@@ -1,0 +1,186 @@
+@if (carStore.loading()) {
+	<div class="alloy-state alloy-live-state mt-0" role="status">
+		<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Loading car</strong></span>
+		<span>Opening the car record…</span>
+	</div>
+} @else if (carStore.failure(); as failure) {
+	<div class="alloy-state alloy-error-state mt-0" role="alert">
+		<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+		<span>{{ failure.message }}</span>
+		@if (failure.retryable) {
+			<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="carStore.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+		}
+	</div>
+} @else if (carStore.car(); as car) {
+	<app-car-section-shell [car]="car" section="build">
+		<section class="build-sheet grid gap-5 border-t border-alloy-separator pt-6" aria-labelledby="build-title">
+			<header class="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+				<div>
+					<div class="alloy-section-heading">Installed components</div>
+					<h3 id="build-title" class="alloy-screen-title">Build sheet</h3>
+					<p class="alloy-supporting-text mb-0 max-w-2xl">Keep one current installation per slot. Replacements retain immutable installation history.</p>
+				</div>
+				@if (!car.archivedAt && !editing()) {
+					<button class="alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" (click)="openAdd()">
+						<svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+						Add component
+					</button>
+				}
+			</header>
+
+			@if (editing()) {
+				<form class="alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="component-form-title" [attr.aria-describedby]="formError() ? 'component-form-error' : 'component-form-intro'" novalidate>
+					<div>
+						<div class="alloy-section-heading">Build editor</div>
+						<h4 id="component-form-title" class="alloy-screen-title">{{ mode() === 'replace' ? 'Fit the replacement' : mode() === 'edit' ? 'Edit installation' : 'Add component' }}</h4>
+						<p id="component-form-intro" class="alloy-supporting-text mb-0">Record the installed part as it appears on this car.</p>
+					</div>
+					@if (formError()) {
+						<p id="component-form-error" class="alloy-state alloy-error-state mt-0" role="alert">
+							<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+							<span>{{ formError() }}</span>
+						</p>
+					}
+					<div class="grid gap-4 sm:grid-cols-2">
+						@if (mode() === 'edit') {
+							<div class="grid gap-1">
+								<span class="text-sm font-semibold text-alloy-text">Slot</span>
+								<span class="alloy-field flex items-center font-technical">{{ form().slot }}</span>
+							</div>
+						} @else {
+							<label class="grid gap-1">
+								<span class="text-sm font-semibold text-alloy-text">Slot type</span>
+								<select class="alloy-field w-full" [formField]="componentForm.slotType">
+									<option value="standard">Standard</option>
+									<option value="custom">Custom</option>
+								</select>
+							</label>
+							@if (form().slotType === 'standard') {
+								<label class="grid gap-1">
+									<span class="text-sm font-semibold text-alloy-text">Slot</span>
+									<select class="alloy-field w-full" [formField]="componentForm.slot">
+										@for (slot of standardSlots; track slot) {
+											<option [value]="slot">{{ slot }}</option>
+										}
+									</select>
+								</label>
+							} @else {
+								<label class="grid gap-1">
+									<span class="text-sm font-semibold text-alloy-text">Custom slot</span>
+									<input class="alloy-field w-full" [formField]="componentForm.slot" [attr.aria-describedby]="componentForm.slot().touched() && componentForm.slot().invalid() ? 'component-slot-error' : 'component-slot-help'" />
+									@if (componentForm.slot().touched() && componentForm.slot().invalid()) {
+										<span id="component-slot-error" class="text-sm text-alloy-text">{{ componentForm.slot().errors()[0]?.message }}</span>
+									} @else {
+										<span id="component-slot-help" class="text-sm text-alloy-text-secondary">Use a stable workshop label for this location.</span>
+									}
+								</label>
+							}
+						}
+						<label class="grid gap-1">
+							<span class="text-sm font-semibold text-alloy-text">Name</span>
+							<input class="alloy-field w-full" [formField]="componentForm.name" [attr.aria-describedby]="componentForm.name().touched() && componentForm.name().invalid() ? 'component-name-error' : 'component-name-help'" />
+							@if (componentForm.name().touched() && componentForm.name().invalid()) {
+								<span id="component-name-error" class="text-sm text-alloy-text">{{ componentForm.name().errors()[0]?.message }}</span>
+							} @else {
+								<span id="component-name-help" class="text-sm text-alloy-text-secondary">The part name you use on the bench.</span>
+							}
+						</label>
+						<label class="grid gap-1">
+							<span class="text-sm font-semibold text-alloy-text">Manufacturer</span>
+							<input class="alloy-field w-full" [formField]="componentForm.manufacturer" />
+						</label>
+						<label class="grid gap-1">
+							<span class="text-sm font-semibold text-alloy-text">Model</span>
+							<input class="alloy-field w-full" [formField]="componentForm.model" />
+						</label>
+						<label class="grid gap-1">
+							<span class="text-sm font-semibold text-alloy-text">Serial number</span>
+							<input class="alloy-field w-full font-technical" [formField]="componentForm.serialNumber" />
+						</label>
+						<label class="grid gap-1 sm:col-span-2">
+							<span class="text-sm font-semibold text-alloy-text">Notes</span>
+							<textarea class="alloy-field min-h-28 w-full py-3" rows="3" [formField]="componentForm.notes"></textarea>
+						</label>
+					</div>
+					<div class="form-actions mt-0 flex flex-col gap-2 sm:flex-row">
+						<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="action() !== null">
+							<svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+							{{ action() !== null ? 'Saving…' : 'Save component' }}
+						</button>
+						<button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button>
+					</div>
+				</form>
+			} @else if (buildStore.loading()) {
+				<div class="alloy-state alloy-live-state mt-0" role="status">
+					<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Loading build</strong></span>
+					<span>Reading the build sheet…</span>
+				</div>
+			} @else if (buildStore.failure(); as failure) {
+				<div class="alloy-state alloy-error-state mt-0" role="alert">
+					<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+					<span>{{ failure.message }}</span>
+					@if (failure.retryable) {
+						<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="buildStore.retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+					}
+				</div>
+			} @else if (!buildStore.groups().length) {
+				<div class="alloy-empty-state grid gap-3">
+					<svg lucideWrench size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+					<div>
+						<h4 class="m-0 text-base font-semibold text-alloy-text">No components recorded</h4>
+						<p class="m-0 mt-1">{{ car.archivedAt ? 'This archived build has no recorded installations.' : 'Add the first installed part from the primary action above.' }}</p>
+					</div>
+				</div>
+			} @else {
+				<div class="component-groups border-y border-alloy-separator">
+					@for (group of buildStore.groups(); track group.slot) {
+						<article class="component-slot grid gap-3 border-b border-alloy-separator px-1 py-4 last:border-b-0 sm:px-3">
+							<header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+								<div class="flex items-center gap-2">
+									<svg lucideWrench size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+									<h4 class="alloy-technical m-0 text-alloy-text">{{ group.slot }}</h4>
+								</div>
+								@if (!car.archivedAt && !group.current) {
+									<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openAdd(group.slot)"><svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>Install</button>
+								}
+							</header>
+							@if (group.current; as current) {
+								<div class="grid gap-3 border-l-4 border-alloy-accent pl-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+									<p class="m-0 min-w-0 break-words">
+										<strong class="block text-base font-semibold text-alloy-text">{{ current.name }}</strong>
+										<span class="mt-1 block text-sm text-alloy-text-secondary">{{ current.manufacturer || 'Manufacturer not recorded' }}@if (current.model) { · {{ current.model }} }</span>
+									</p>
+									@if (!car.archivedAt) {
+										<div class="form-actions mt-0 flex flex-col gap-2 sm:flex-row">
+											<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openEdit(current)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button>
+											<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openReplace(current)"><svg lucideRepeat2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>Replace</button>
+										</div>
+									}
+								</div>
+							}
+							@if (group.history.length) {
+								<details class="border-t border-alloy-separator pt-2">
+									<summary class="alloy-focus-ring flex min-h-12 cursor-pointer items-center gap-2 py-2 text-sm font-semibold text-alloy-text">
+										<svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+										Previous installations ({{ group.history.length }})
+									</summary>
+									<ul class="m-0 list-none divide-y divide-alloy-separator p-0">
+										@for (old of group.history; track old.id) {
+											<li class="grid min-h-12 gap-1 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+												<span class="break-words font-semibold text-alloy-text">{{ old.name }}</span>
+								<span class="alloy-technical text-alloy-text-secondary">Removed {{ old.removedAt | date: 'mediumDate' }}</span>
+											</li>
+										}
+									</ul>
+								</details>
+							}
+						</article>
+					}
+				</div>
+			}
+			@if (message()) {
+				<p class="alloy-state alloy-live-state mt-0" role="status"><span>{{ message() }}</span></p>
+			}
+		</section>
+	</app-car-section-shell>
+}

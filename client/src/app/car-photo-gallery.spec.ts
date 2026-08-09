@@ -507,7 +507,7 @@ describe('CarPhotoGallery', () => {
 		app.delete(original);
 		app.delete(original);
 		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain('Deleting…');
+		expect(fixture.nativeElement.textContent).toContain('Deleting photo…');
 		http.expectOne('/api/v1/cars/car-1/photos/photo-1').flush({
 			deleted: true,
 			primaryPhotoId: remaining.id,
@@ -663,7 +663,7 @@ describe('CarPhotoGallery', () => {
 		upload.dispatchEvent(new Event('change'));
 
 		const later = fixture.nativeElement.querySelector(
-			'button[aria-label="Move photo later"]',
+			'button[aria-label^="Move photo later:"]',
 		) as HTMLButtonElement;
 		later.click();
 		http
@@ -677,7 +677,7 @@ describe('CarPhotoGallery', () => {
 		fixture.detectChanges();
 
 		const earlier = fixture.nativeElement.querySelectorAll(
-			'button[aria-label="Move photo earlier"]',
+			'button[aria-label^="Move photo earlier:"]',
 		)[1] as HTMLButtonElement;
 		earlier.click();
 		http
@@ -692,7 +692,7 @@ describe('CarPhotoGallery', () => {
 
 		(
 			fixture.nativeElement.querySelector(
-				'button:nth-of-type(3)',
+				'button[aria-label^="Make primary:"]',
 			) as HTMLButtonElement | null
 		)?.click();
 		const primary = http.match(

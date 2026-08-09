@@ -283,6 +283,10 @@ body {
 		color: var(--alloy-command-secondary);
 	}
 
+	.alloy-error-state .alloy-state-heading {
+		color: var(--alloy-command-text);
+	}
+
 	.alloy-empty-state {
 		min-height: var(--alloy-control-height);
 		border: 1px dashed var(--alloy-separator);

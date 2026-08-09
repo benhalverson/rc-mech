@@ -8,6 +8,18 @@ import {
 	linkedSignal,
 	signal,
 } from '@angular/core';
+import {
+	LucideArchive,
+	LucideImage,
+	LucideMoveDown,
+	LucideMoveUp,
+	LucideRefreshCw,
+	LucideRotateCw,
+	LucideStar,
+	LucideTrash2,
+	LucideTriangleAlert,
+	LucideUpload,
+} from '@lucide/angular';
 import { firstValueFrom } from 'rxjs';
 import type { CarPhoto } from './car/car.models';
 import { CarPhotoStore } from './car-photo-store';
@@ -20,9 +32,20 @@ const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 @Component({
 	selector: 'app-car-photo-gallery',
-	imports: [],
+	host: { class: 'block' },
+	imports: [
+		LucideArchive,
+		LucideImage,
+		LucideMoveDown,
+		LucideMoveUp,
+		LucideRefreshCw,
+		LucideRotateCw,
+		LucideStar,
+		LucideTrash2,
+		LucideTriangleAlert,
+		LucideUpload,
+	],
 	templateUrl: './car-photo-gallery.html',
-	styleUrl: './car-photo-gallery.css',
 })
 export class CarPhotoGallery {
 	private readonly http = inject(HttpClient);

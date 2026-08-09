@@ -8,6 +8,16 @@ import {
 	form as signalForm,
 	validate,
 } from '@angular/forms/signals';
+import {
+	LucideArchive,
+	LucidePencil,
+	LucidePlus,
+	LucideRefreshCw,
+	LucideRepeat2,
+	LucideSave,
+	LucideTriangleAlert,
+	LucideWrench,
+} from '@lucide/angular';
 import type { InstalledComponent } from './car.models';
 import { CarBuildStore } from './car-build-store';
 import { CarSectionShell } from './car-section-shell';
@@ -78,37 +88,21 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 
 @Component({
 	selector: 'app-car-build',
-	imports: [CarSectionShell, DatePipe, FormField],
-	template: `
-		@if (carStore.loading()) { <div class="state-card" role="status">Opening the car record…</div> }
-		@else if (carStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="carStore.retry()">Try again</button> }</div> }
-		@else if (carStore.car(); as car) {
-			<app-car-section-shell [car]="car" section="build">
-				<section class="build-sheet" aria-labelledby="build-title">
-					<div class="section-heading"><div><div class="eyebrow">Installed components</div><h3 id="build-title">Build sheet</h3></div>@if (!car.archivedAt && !editing()) { <button class="button" type="button" (click)="openAdd()">Add component</button> }</div>
-					<p class="section-intro">One current installation per slot. Replacements retain the previous installation as immutable history.</p>
-					@if (editing()) {
-						<form (submit)="save($event)" aria-labelledby="component-form-title" [attr.aria-describedby]="formError() ? 'component-form-error' : null" novalidate><h4 id="component-form-title">{{ mode() === 'replace' ? 'Fit the replacement' : mode() === 'edit' ? 'Edit installation' : 'Add component' }}</h4>
-							@if (formError()) { <p id="component-form-error" role="alert">{{ formError() }}</p> }
-							<div class="form-grid">@if (mode() === 'edit') { <p><strong>Slot</strong><br />{{ form().slot }}</p> } @else { <label>Slot type <select [formField]="componentForm.slotType"><option value="standard">Standard</option><option value="custom">Custom</option></select></label>
-							@if (form().slotType === 'standard') { <label>Slot <select [formField]="componentForm.slot">@for (slot of standardSlots; track slot) { <option [value]="slot">{{ slot }}</option> }</select></label> }
-							@else { <label>Custom slot <input [formField]="componentForm.slot" [attr.aria-describedby]="componentForm.slot().invalid() && formError() ? 'component-form-error' : null" /></label> } }
-							<label>Name <input [formField]="componentForm.name" [attr.aria-describedby]="componentForm.name().invalid() && formError() ? 'component-form-error' : null" /></label><label>Manufacturer <input [formField]="componentForm.manufacturer" /></label><label>Model <input [formField]="componentForm.model" /></label><label>Serial number <input [formField]="componentForm.serialNumber" /></label><label class="wide">Notes <textarea rows="3" [formField]="componentForm.notes"></textarea></label></div>
-							<div class="form-actions"><button class="button" type="submit" [disabled]="action() !== null">Save component</button><button class="button quiet" type="button" (click)="cancel()" [disabled]="action() !== null">Cancel</button></div>
-						</form>
-					} @else if (buildStore.loading()) { <div class="state-card" role="status">Reading the build sheet…</div> }
-					@else if (buildStore.failure(); as failure) { <div class="state-card" role="alert"><p>{{ failure.message }}</p>@if (failure.retryable) { <button type="button" (click)="buildStore.retry()">Try again</button> }</div> }
-					@else if (!buildStore.groups().length) { <div class="state-card"><h4>No components recorded</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd()">Add the first component</button> }</div> }
-					@else { <div class="component-groups">@for (group of buildStore.groups(); track group.slot) { <article class="component-slot"><div class="section-heading"><h4>{{ group.slot }}</h4>@if (!car.archivedAt) { <button type="button" (click)="openAdd(group.slot)">{{ group.current ? 'Replace' : 'Install' }}</button> }</div>
-						@if (group.current; as current) { <p><strong>{{ current.name }}</strong> · {{ current.manufacturer || 'Manufacturer not recorded' }}@if (current.model) { · {{ current.model }} }</p>@if (!car.archivedAt) { <div class="form-actions"><button type="button" (click)="openEdit(current)">Edit</button><button type="button" (click)="openReplace(current)">Replace</button></div> } }
-						@if (group.history.length) { <details><summary>Previous installations ({{ group.history.length }})</summary><ul>@for (old of group.history; track old.id) { <li>{{ old.name }} · removed {{ old.removedAt | date:'mediumDate' }}</li> }</ul></details> }
-					</article> }</div> }
-					@if (message()) { <p role="status">{{ message() }}</p> }
-				</section>
-			</app-car-section-shell>
-		}
-	`,
-	styleUrl: '../garage-pages.css',
+	host: { class: 'block' },
+	imports: [
+		CarSectionShell,
+		DatePipe,
+		FormField,
+		LucideArchive,
+		LucidePencil,
+		LucidePlus,
+		LucideRefreshCw,
+		LucideRepeat2,
+		LucideSave,
+		LucideTriangleAlert,
+		LucideWrench,
+	],
+	templateUrl: './car-build.html',
 })
 export class CarBuild {
 	readonly carId = input('');
@@ -232,10 +226,7 @@ export class CarBuild {
 			return;
 		}
 		if (this.componentForm().invalid()) {
-			this.formError.set(
-				this.componentForm().errorSummary()[0]?.message ??
-					'Review the component fields.',
-			);
+			this.formError.set('Review the highlighted component fields.');
 			if (this.componentForm.slot().invalid())
 				this.componentForm.slot().focusBoundControl();
 			else this.componentForm.name().focusBoundControl();

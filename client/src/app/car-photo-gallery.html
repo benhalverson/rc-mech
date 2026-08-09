@@ -1,39 +1,109 @@
-<section class="photo-gallery" aria-labelledby="photo-gallery-title">
-  <div class="section-heading">
-    <div>
-      <div class="eyebrow">Private gallery</div>
-      <h3 id="photo-gallery-title">Car photos</h3>
-    </div>
-    @if (!archived() && state() === 'ready') {
-      <label class="button quiet upload-button">Add photo<input class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" (change)="onUpload($event)" [disabled]="action() !== null" /></label>
-    }
-  </div>
-  <p class="section-intro">Photos stay private to your garage. The primary image leads the gallery; the arrows set the rest of the order.</p>
-  @if (archived()) { <p class="archive-note">This car is archived. Its photos remain visible, but photo changes are disabled until the car is restored.</p> }
-  @if (validationError()) { <p class="message" role="alert">{{ validationError() }}</p> }
-  @if (error()) { <p class="message" role="alert">{{ error() }}</p> }
-  @if (state() === 'loading') {
-    <div class="state-card" aria-live="polite"><span class="state-mark">•••</span><p>Opening the private gallery…</p></div>
-  } @else if (state() === 'error') {
-    <div class="state-card error-state" role="alert"><span class="state-mark" aria-hidden="true">!</span><p>{{ readFailure()?.message }}</p>@if (readFailure()?.retryable) { <button class="text-button" type="button" (click)="retry()">Try again</button> }</div>
-  } @else if (!photos().length) {
-    <div class="state-card empty-state"><span class="state-mark">＋</span><h4>No photos yet</h4><p>Add a clear bench photo to identify this car at a glance.</p></div>
-  } @else {
-    <div class="photo-grid" aria-label="Car photo gallery">
-      @for (photo of photos(); track photo.id; let index = $index) {
-        <article class="photo-card" [class.primary-photo]="isPrimary(photo)">
-          <div class="photo-frame"><img [src]="photoUrl(photo)" [alt]="isPrimary(photo) ? 'Primary photo of this car' : 'Photo of this car'" loading="lazy" /></div>
-          <div class="photo-meta"><div><strong>{{ isPrimary(photo) ? 'Primary photo' : 'Gallery photo' }}</strong><span>Position {{ index + 1 }}</span></div><div class="photo-actions">
-            @if (!archived()) {
-              <button class="text-button" type="button" (click)="move(photo, -1)" [disabled]="index === 0 || action() !== null" aria-label="Move photo earlier">↑</button>
-              <button class="text-button" type="button" (click)="move(photo, 1)" [disabled]="index === photos().length - 1 || action() !== null" aria-label="Move photo later">↓</button>
-              @if (!isPrimary(photo)) { <button class="text-button" type="button" (click)="designatePrimary(photo)" [disabled]="action() !== null">Make primary</button> }
-              <label class="text-button replace-button">Replace<input class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" (change)="onReplace($event, photo)" [disabled]="action() !== null" /></label>
-              <button class="text-button danger" type="button" (click)="delete(photo)" [disabled]="action() !== null">{{ action() === 'delete:' + photo.id ? 'Deleting…' : 'Delete' }}</button>
-            }
-          </div></div>
-        </article>
-      }
-    </div>
-  }
+<section class="photo-gallery grid gap-5 border-t border-alloy-separator pt-6" aria-labelledby="photo-gallery-title">
+	<header class="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+		<div>
+			<div class="alloy-section-heading">Private gallery</div>
+			<h3 id="photo-gallery-title" class="alloy-screen-title">Car photos</h3>
+			<p class="alloy-supporting-text mb-0 max-w-2xl">Photos stay private to your garage. The primary image leads the gallery; move controls set the remaining order.</p>
+		</div>
+		@if (!archived() && state() === 'ready') {
+			<label class="upload-button alloy-control alloy-focus-ring has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-alloy-focus inline-flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 sm:w-auto" [class.cursor-wait]="action() !== null" [class.opacity-60]="action() !== null">
+				<svg lucideUpload size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+				Add photo
+				<input class="alloy-visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" (change)="onUpload($event)" [disabled]="action() !== null" />
+			</label>
+		}
+	</header>
+
+	@if (archived()) {
+		<p class="alloy-state alloy-attention-state mt-0">
+			<span class="alloy-state-heading"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span>
+			<span class="text-alloy-text">This car is archived. Its photos remain visible, but photo changes are disabled until the car is restored.</span>
+		</p>
+	}
+	@if (validationError()) {
+		<p class="alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+			<span>{{ validationError() }}</span>
+		</p>
+	}
+	@if (error()) {
+		<p class="alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+			<span>{{ error() }}</span>
+		</p>
+	}
+	@if (action()) {
+		<p class="alloy-state alloy-live-state mt-0" role="status">
+			<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Updating photos</strong></span>
+			<span>Saving the private gallery…</span>
+		</p>
+	}
+
+	@if (state() === 'loading') {
+		<div class="alloy-state alloy-live-state mt-0" role="status">
+			<span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Loading photos</strong></span>
+			<span>Opening the private gallery…</span>
+		</div>
+	} @else if (state() === 'error') {
+		<div class="error-state alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Error</strong></span>
+			<span>{{ readFailure()?.message }}</span>
+			@if (readFailure()?.retryable) {
+				<button class="text-button alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="retry()"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+			}
+		</div>
+	} @else if (!photos().length) {
+		<div class="alloy-empty-state grid gap-3">
+			<svg lucideImage size="24" strokeWidth="1.8" aria-hidden="true"></svg>
+			<div>
+				<h4 class="m-0 text-base font-semibold text-alloy-text">No photos yet</h4>
+				<p class="m-0 mt-1">{{ archived() ? 'This archived car has no private photos.' : 'Add a clear bench photo from the primary action above.' }}</p>
+			</div>
+		</div>
+	} @else {
+		<ul class="photo-grid m-0 list-none divide-y divide-alloy-separator border-y border-alloy-separator p-0" aria-label="Car photo gallery">
+			@for (photo of photos(); track photo.id; let index = $index) {
+				<li class="py-4">
+				<article class="photo-card grid gap-4 border-l-4 border-alloy-separator pl-3 md:grid-cols-[minmax(220px,360px)_minmax(0,1fr)]" [class.primary-photo]="isPrimary(photo)" [style.border-inline-start-color]="isPrimary(photo) ? 'var(--alloy-accent)' : 'transparent'">
+					<div class="photo-frame relative aspect-[4/3] overflow-hidden bg-graphite">
+						<img class="block size-full object-cover" [src]="photoUrl(photo)" [alt]="isPrimary(photo) ? 'Primary photo of this car' : 'Photo of this car'" loading="lazy" />
+					</div>
+					<div class="photo-meta grid min-w-0 content-start gap-4 px-1">
+						<div class="flex flex-wrap items-start justify-between gap-3">
+							<div>
+								<strong class="inline-flex items-center gap-2 text-base font-semibold text-alloy-text">
+									@if (isPrimary(photo)) { <svg lucideStar size="18" strokeWidth="1.8" aria-hidden="true"></svg> }
+									{{ isPrimary(photo) ? 'Primary photo' : 'Gallery photo' }}
+								</strong>
+								<span class="alloy-technical mt-1 block text-alloy-text-secondary">Position {{ index + 1 }}</span>
+							</div>
+						</div>
+						@if (!archived()) {
+							<div class="photo-actions flex flex-wrap gap-2" role="group" [attr.aria-label]="'Photo ' + (index + 1) + ' actions'">
+								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-w-12 items-center justify-center" type="button" (click)="move(photo, -1)" [disabled]="index === 0 || action() !== null" [attr.aria-label]="'Move photo earlier: photo ' + (index + 1)">
+									<svg lucideMoveUp size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+								</button>
+								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-w-12 items-center justify-center" type="button" (click)="move(photo, 1)" [disabled]="index === photos().length - 1 || action() !== null" [attr.aria-label]="'Move photo later: photo ' + (index + 1)">
+									<svg lucideMoveDown size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+								</button>
+								@if (!isPrimary(photo)) {
+									<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="designatePrimary(photo)" [disabled]="action() !== null" [attr.aria-label]="'Make primary: photo ' + (index + 1)"><svg lucideStar size="18" strokeWidth="1.8" aria-hidden="true"></svg>Make primary</button>
+								}
+								<label class="replace-button text-button alloy-control alloy-control-secondary alloy-focus-ring has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-alloy-focus inline-flex min-h-12 cursor-pointer items-center justify-center gap-2" [class.cursor-wait]="action() !== null" [class.opacity-60]="action() !== null">
+									<svg lucideRotateCw size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+									Replace photo
+									<input class="alloy-visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" (change)="onReplace($event, photo)" [disabled]="action() !== null" [attr.aria-label]="'Replace photo ' + (index + 1)" />
+								</label>
+								<button class="danger text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2 underline underline-offset-4" type="button" (click)="delete(photo)" [disabled]="action() !== null" [attr.aria-label]="'Delete photo ' + (index + 1)">
+									<svg lucideTrash2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>
+									{{ action() === 'delete:' + photo.id ? 'Deleting photo…' : 'Delete photo' }}
+								</button>
+							</div>
+						}
+					</div>
+				</article>
+				</li>
+			}
+		</ul>
+	}
 </section>

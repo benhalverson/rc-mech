@@ -418,26 +418,6 @@ textarea {
 	text-decoration: underline;
 	text-underline-offset: 3px;
 }
-.build-sheet {
-	border-top: 1px solid var(--line);
-	margin-top: 38px;
-	padding-top: 24px;
-}
-.component-slot {
-	padding: 16px 0;
-	border-bottom: 1px solid var(--line);
-}
-.component-slot-heading,
-.component-current {
-	display: flex;
-	justify-content: space-between;
-	gap: 18px;
-}
-.component-current {
-	margin-top: 12px;
-	padding: 14px;
-	border-left: 2px solid var(--accent);
-}
 .session-log {
 	border-top: 1px solid var(--line);
 	margin-top: 38px;
