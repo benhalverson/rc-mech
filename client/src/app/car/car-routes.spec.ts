@@ -912,7 +912,7 @@ describe('Car section routes', () => {
 		harness.detectChanges();
 		(
 			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
-				(button) => button.textContent?.includes('Add the first component'),
+				(button) => button.textContent?.includes('Add component'),
 			) as HTMLButtonElement
 		).click();
 		harness.detectChanges();
@@ -920,7 +920,7 @@ describe('Car section routes', () => {
 			harness.routeNativeElement
 				?.querySelector('form')
 				?.getAttribute('aria-describedby'),
-		).toBeNull();
+		).toBe('component-form-intro');
 		const component = harness.routeDebugElement
 			?.componentInstance as unknown as {
 			action: TestSignal<string | null>;
@@ -1080,7 +1080,7 @@ describe('Car section routes', () => {
 		harness.detectChanges();
 		(
 			[...(harness.routeNativeElement?.querySelectorAll('button') ?? [])].find(
-				(button) => button.textContent?.includes('Add the first component'),
+				(button) => button.textContent?.includes('Add component'),
 			) as HTMLButtonElement
 		).click();
 		harness.detectChanges();
@@ -1569,7 +1569,6 @@ describe('Car section routes', () => {
 				serialNumber: string;
 				notes: string;
 			}>;
-			componentForm(): { errorSummary(): Array<{ message?: string }> };
 			formError: TestSignal<string>;
 		};
 
@@ -1579,13 +1578,9 @@ describe('Car section routes', () => {
 		component.form.set({ ...component.form(), name: '   ' });
 		await harness.fixture.whenStable();
 		component.save();
-		expect(component.formError()).toContain('Name the component');
-		Object.defineProperty(component.componentForm(), 'errorSummary', {
-			configurable: true,
-			value: () => [],
-		});
-		component.save();
-		expect(component.formError()).toContain('Review the component fields');
+		expect(component.formError()).toContain(
+			'Review the highlighted component fields',
+		);
 
 		component.form.set({ ...component.form(), name: 'Valid component' });
 		await harness.fixture.whenStable();
@@ -1700,8 +1695,16 @@ describe('Car section routes', () => {
 			openEdit(value: typeof current): void;
 			cancel(): void;
 		};
+		build.openAdd('motor');
+		harness.detectChanges();
+		expect(
+			harness.routeNativeElement?.querySelector('#component-form-title')
+				?.textContent,
+		).toContain('Fit the replacement');
+		build.cancel();
 		build.openAdd('transponder-mount');
 		build.cancel();
+		harness.detectChanges();
 		Object.defineProperties(build, {
 			openAdd: { configurable: true, value: () => true },
 			openEdit: { configurable: true, value: () => true },

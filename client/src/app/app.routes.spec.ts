@@ -12,12 +12,23 @@ vi.mock('@lucide/angular', () => ({
 	LucideArchiveRestore: class {},
 	LucideCarFront: class {},
 	LucideChevronRight: class {},
+	LucideImage: class {},
 	LucideMonitor: class {},
+	LucideMoveDown: class {},
+	LucideMoveUp: class {},
 	LucideMoon: class {},
+	LucidePencil: class {},
 	LucidePlus: class {},
 	LucideRefreshCw: class {},
+	LucideRepeat2: class {},
+	LucideRotateCw: class {},
+	LucideSave: class {},
+	LucideStar: class {},
 	LucideSun: class {},
+	LucideTrash2: class {},
 	LucideTriangleAlert: class {},
+	LucideUpload: class {},
+	LucideWrench: class {},
 }));
 
 @Component({ template: '' })
