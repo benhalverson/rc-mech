@@ -59,11 +59,13 @@ export const timezoneGatewayFailure = (
 @Injectable()
 export class TimezoneGateway {
 	private readonly http = inject(HttpClient);
-	readonly preference = httpResource<TimezonePreference>(() => ({
-		url: '/api/v1/preferences/timezone',
-		withCredentials: true,
-		parse: parseTimezonePreference,
-	}));
+	readonly preference = httpResource<TimezonePreference>(
+		() => ({
+			url: '/api/v1/preferences/timezone',
+			withCredentials: true,
+		}),
+		{ parse: parseTimezonePreference },
+	);
 
 	saveTimezone(command: SaveTimezoneCommand): Observable<TimezonePreference> {
 		return this.http
