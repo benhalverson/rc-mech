@@ -106,6 +106,28 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 			'/api/v1/voice-updates/{voiceUpdateId}/corrections/{correctionId}/audio'
 		],
 	).toBeDefined();
+	const correction = document.paths[
+		'/api/v1/voice-updates/{voiceUpdateId}/corrections'
+	] as {
+		post: {
+			requestBody: {
+				content: {
+					'application/json': {
+						schema: {
+							properties: {
+								text: { maxLength: number; description: string };
+							};
+						};
+					};
+				};
+			};
+		};
+	};
+	const correctionText =
+		correction.post.requestBody.content['application/json'].schema.properties
+			.text;
+	expect(correctionText.maxLength).toBe(4000);
+	expect(correctionText.description).toContain('full correction');
 	const registration = document.paths['/api/auth/register'] as {
 		post: { responses: Record<string, unknown> };
 	};

@@ -7,6 +7,7 @@ import { setup, voiceUpdate } from '../../schema';
 import {
 	type AppContext,
 	type AppEnv,
+	VOICE_CORRECTION_MAX_LENGTH,
 	voiceCorrectionInput,
 	voiceDraftInput,
 } from '../../types';
@@ -34,7 +35,9 @@ const parseCorrection = async (
 		const parsed = voiceCorrectionInput.safeParse(await c.req.json());
 		return parsed.success
 			? { text: parsed.data.text }
-			: { error: 'A correction is required' };
+			: {
+					error: `Type a correction of ${VOICE_CORRECTION_MAX_LENGTH.toLocaleString('en-US')} characters or fewer`,
+				};
 	}
 	const body = await c.req.parseBody();
 	if (!(body.file instanceof File))
@@ -197,7 +200,14 @@ export const createVoiceProcessingRoutes = (dependencies: AppDependencies) => {
 			return c.json({ error: 'Archived voice provenance is read-only' }, 409);
 		const parsed = await parseCorrection(c);
 		if ('error' in parsed)
-			return c.json({ error: parsed.error, maxBytes: VOICE_MAX_BYTES }, 400);
+			return c.json(
+				{
+					error: parsed.error,
+					maxBytes: VOICE_MAX_BYTES,
+					maxCharacters: VOICE_CORRECTION_MAX_LENGTH,
+				},
+				400,
+			);
 		const correctionText = parsed.text?.trim();
 		const previousCorrections = correctionRecords(existing.correctionsJson);
 		if (

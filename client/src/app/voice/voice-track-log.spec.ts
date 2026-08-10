@@ -582,6 +582,10 @@ describe('VoiceNoteWorkspace', () => {
 		const correction = root.querySelector(
 			'#correction-review',
 		) as HTMLInputElement;
+		expect(root.textContent).toContain('Up to 4,000 characters');
+		expect(correction.getAttribute('aria-describedby')).toBe(
+			'correction-help-review',
+		);
 		button('Apply correction').click();
 		root = await detect();
 		expect(root.textContent).toContain('Say or type the correction');
@@ -594,6 +598,16 @@ describe('VoiceNoteWorkspace', () => {
 			id: 'review',
 			text: 'Rear diff, not front',
 		});
+		correction.value = 'R'.repeat(4001);
+		correction.dispatchEvent(new Event('input'));
+		button('Apply correction').click();
+		root = await detect();
+		expect(root.textContent).toContain('Use 4,000 characters or fewer');
+		expect(correction.getAttribute('aria-describedby')).toBe(
+			'correction-help-review correction-error-review',
+		);
+		expect(document.activeElement).toBe(correction);
+		expect(store.correctText).toHaveBeenCalledOnce();
 		store.supported.set(false);
 		root = await detect();
 		expect(root.textContent).not.toContain('Speak correction');

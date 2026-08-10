@@ -193,7 +193,8 @@
 								@if (update.status === 'needs-review') {
 									@if (correctingId() === update.id) {
 										<div class="grid gap-3 border-t border-alloy-separator pt-4">
-										<label class="grid gap-2 text-sm font-semibold" [for]="'correction-' + update.id">Short correction or clarification<input class="alloy-field w-full" [id]="'correction-' + update.id" [value]="correctionText()" (input)="updateCorrection($event)" [attr.aria-describedby]="correctionError() ? 'correction-error-' + update.id : null" placeholder="Rear diff, not front — use 7k" /></label>
+										<label class="grid gap-2 text-sm font-semibold" [for]="'correction-' + update.id">Short correction or clarification<input class="alloy-field w-full" [id]="'correction-' + update.id" [value]="correctionText()" (input)="updateCorrection($event)" [attr.aria-describedby]="'correction-help-' + update.id + (correctionError() ? ' correction-error-' + update.id : '')" placeholder="Rear diff, not front — use 7k" /></label>
+										<p class="m-0 text-[12px] text-alloy-text-secondary" [id]="'correction-help-' + update.id">Up to 4,000 characters. If automated correction fails, the full text is kept as a review note.</p>
 										@if (correctionError()) { <p class="alloy-state alloy-error-state m-0" [id]="'correction-error-' + update.id" role="alert">{{ correctionError() }}</p> }
 											<div class="flex flex-wrap gap-2"><button class="alloy-control alloy-control-primary" type="button" (click)="applyTextCorrection(update.id)" [disabled]="voiceStore.pending()">Apply correction</button>@if (voiceStore.supported()) { <button class="alloy-control alloy-control-secondary" type="button" (click)="startRecording({ kind: 'correction', id: update.id })">Speak correction</button> }<button class="alloy-control alloy-control-tertiary" type="button" (click)="cancelCorrection()">Cancel</button></div>
 										</div>

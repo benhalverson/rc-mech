@@ -15,6 +15,7 @@ import type {
 	VoiceRecordingMode,
 	VoiceUpdate,
 } from './voice.models';
+import { VOICE_CORRECTION_MAX_LENGTH } from './voice.models';
 import {
 	voiceConfidenceLabel,
 	voiceRecordingDuration,
@@ -196,6 +197,13 @@ export class VoiceNoteWorkspace {
 		const text = this.correctionText().trim();
 		if (!text) {
 			this.correctionError.set('Say or type the correction first.');
+			this.focusCorrection(id);
+			return;
+		}
+		if (text.length > VOICE_CORRECTION_MAX_LENGTH) {
+			this.correctionError.set(
+				`Use ${VOICE_CORRECTION_MAX_LENGTH.toLocaleString('en-US')} characters or fewer for the correction.`,
+			);
 			this.focusCorrection(id);
 			return;
 		}
