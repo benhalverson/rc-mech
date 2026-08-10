@@ -108,12 +108,28 @@ test('captures the real light and dark B7 track-to-bench history', async ({
 			voiceReview.getByRole('button', { name: 'Confirm and save' }),
 		).toBeVisible();
 		await page.evaluate(() => document.fonts.ready);
-		await voiceReview.screenshot({
+		await voiceReview.scrollIntoViewIfNeeded();
+		const voiceReviewBounds = await voiceReview.boundingBox();
+		if (voiceReviewBounds === null)
+			throw new Error('Voice-review evidence has no capture bounds');
+		expect(Math.round(voiceReviewBounds.width)).toBe(358);
+		expect(voiceReviewBounds.height).toBeGreaterThanOrEqual(611);
+		const voiceReviewImage = await page.screenshot({
 			path: `client/public/landing/voice-review-mobile-${appearance}.png`,
 			animations: 'disabled',
 			caret: 'hide',
+			clip: {
+				height: 612,
+				width: 358,
+				x: Math.round(voiceReviewBounds.x),
+				y: Math.round(voiceReviewBounds.y),
+			},
 			style: '.command-bar { visibility: hidden !important; }',
 		});
+		expect({
+			height: voiceReviewImage.readUInt32BE(20),
+			width: voiceReviewImage.readUInt32BE(16),
+		}).toEqual({ height: 612, width: 358 });
 
 		await page.setViewportSize({ width: 1366, height: 960 });
 		await page.goto(`/garage/${demo.carId}/drive-sessions`);
