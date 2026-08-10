@@ -4,6 +4,10 @@ Chassis Notes is the shared language for an owner's collection of radio-controll
 
 ## People and collection
 
+**Chassis Notes**:
+The public product name for the private field notebook. `rc-mech` names internal repositories, deployments, resources, storage, and compatibility-sensitive identifiers only.
+_Avoid_: RC Mech as a product name
+
 **Racer**:
 A person who prepares, tunes, drives, and maintains radio-controlled cars for competitive track use and wants repeatable records between drive sessions. Chassis Notes serves Racers first; casual driving use is secondary.
 _Avoid_: Customer, generic hobbyist
@@ -29,6 +33,10 @@ user to begin registration. Each code is single-use; each registered User may
 receive five codes to pass on. The User may choose each code's
 human-shareable text, provided it is unique.
 _Avoid_: Coupon, access token
+
+**Garage**:
+A User's isolated private collection of cars and their attached histories.
+_Avoid_: Workspace, inventory
 
 **Car**:
 A radio-controlled vehicle tracked as a distinct thing in a user's garage.
@@ -109,7 +117,7 @@ A reviewable set of proposed garage records extracted only from facts the user e
 _Avoid_: Setup guidance, automatic update
 
 **Trackside observation**:
-A recorded statement about car behavior or driving conditions that does not claim a setup change was made.
+A recorded statement about car behavior or driving conditions that does not claim a setup change was made or caused the observed behavior.
 _Avoid_: Setup recommendation, inferred change
 
 **Consumable maintenance entry**:

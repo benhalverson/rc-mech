@@ -61,11 +61,11 @@ cars_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' 
 
 create_car_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars" \
   -H 'Content-Type: application/json' \
-  --data '{"name":"Smoke buggy","make":"RC Mech","model":"B-01","scale":"1:10","vehicleType":"buggy","powerType":"electric","notes":"ownership smoke test"}')"
+  --data '{"name":"Smoke buggy","make":"Example Racing","model":"B-01","scale":"1:10","vehicleType":"buggy","powerType":"electric","notes":"ownership smoke test"}')"
 [[ "$create_car_status" == "201" ]]
 car_id="$(jq -r '.car.id' "$response_file")"
 [[ -n "$car_id" && "$car_id" != "null" ]]
-jq -e '.car.ownerId == null and .car.name == "Smoke buggy" and .car.make == "RC Mech" and .car.vehicleType == "buggy" and .car.powerType == "electric" and .car.archivedAt == null' "$response_file" >/dev/null
+jq -e '.car.ownerId == null and .car.name == "Smoke buggy" and .car.make == "Example Racing" and .car.vehicleType == "buggy" and .car.powerType == "electric" and .car.archivedAt == null' "$response_file" >/dev/null
 
 detail_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}")"
 [[ "$detail_status" == "200" ]]
@@ -138,11 +138,11 @@ drive_deleted_update_status="$(curl -sS -o /dev/null -b "$cookie_file" -w '%{htt
 
 component_create_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components" \
   -H 'Content-Type: application/json' \
-  --data '{"slot":"motor","name":"Competition motor","manufacturer":"RC Mech","model":"M-1","serialNumber":"MOTOR-001","notes":"first installation"}')"
+  --data '{"slot":"motor","name":"Competition motor","manufacturer":"Example Racing","model":"M-1","serialNumber":"MOTOR-001","notes":"first installation"}')"
 [[ "$component_create_status" == "201" ]]
 component_id="$(jq -r '.component.id' "$response_file")"
 [[ -n "$component_id" && "$component_id" != "null" ]]
-jq -e '.component.slotType == "standard" and .component.manufacturer == "RC Mech" and .component.removedAt == null' "$response_file" >/dev/null
+jq -e '.component.slotType == "standard" and .component.manufacturer == "Example Racing" and .component.removedAt == null' "$response_file" >/dev/null
 
 custom_component_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/v1/cars/${car_id}/components" \
   -H 'Content-Type: application/json' \
@@ -173,7 +173,7 @@ grep -q 'updated installation' "$response_file"
 
 component_replace_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' -X POST \
   "$base/api/v1/cars/${car_id}/components/${component_id}/replace" -H 'Content-Type: application/json' \
-  --data '{"slot":"motor","name":"Replacement motor","manufacturer":"RC Mech","model":"M-2","serialNumber":"MOTOR-002"}')"
+  --data '{"slot":"motor","name":"Replacement motor","manufacturer":"Example Racing","model":"M-2","serialNumber":"MOTOR-002"}')"
 [[ "$component_replace_status" == "201" ]]
 replacement_id="$(jq -r '.component.id' "$response_file")"
 [[ "$replacement_id" != "$component_id" ]]

@@ -2,7 +2,7 @@
 
 Status: Visual direction approved; ready for implementation planning
 
-Alloy Run Console is the single visual system for Chassis Notes' authenticated interface. It presents the garage as a precise trackside instrument: useful information is prominent, controls are direct, and decoration never imitates data.
+Alloy Run Console is the single visual system for Chassis Notes. It presents the authenticated Garage as a precise trackside instrument and gives public product pages a more editorial expression of the same language: useful information is prominent, controls are direct, and decoration never imitates data.
 
 ## Design-review scope
 
@@ -144,6 +144,7 @@ Keyboard focus uses a `2px` outer ring with a `2px` surface-colored offset. The 
 ## Application shell
 
 - Alloy applies to Garage, car, Maintenance, and Settings pages.
+- Public product pages use the same tokens, typography, focus treatment, and ruled structure with more editorial spacing; they do not copy the application shell.
 - The root `App` owns the primary navigation and responsive navigation state.
 - Desktop primary navigation occupies a graphite top command bar.
 - Desktop left rails are contextual to the current feature and never duplicate primary navigation.

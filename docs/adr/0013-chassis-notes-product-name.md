@@ -3,3 +3,5 @@
 **Status:** accepted
 
 The product is named **Chassis Notes** and is presented publicly at `chassisnotes.com`. The existing `rc-mech` repository name and deployed resource names are stable internal identifiers, not user-facing brands, and are not renamed with product copy. Chassis Notes was chosen because it describes the trackside record Racers already understand without limiting the product to one car class or presenting it as setup advice.
+
+The [domain glossary](../../CONTEXT.md) defines the canonical public language, including the distinction between a Racer, a registered User, and that User's private Garage.

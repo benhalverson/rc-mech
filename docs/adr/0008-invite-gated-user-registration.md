@@ -2,7 +2,7 @@
 
 **Status:** accepted
 
-The RC Mech Owner is exclusively the app creator and operator; invited people
+The Chassis Notes Owner is exclusively the app creator and operator; invited people
 are normal Users, each with one isolated garage and one normalized email
 identity. New registration requires a single-use invite code bound to the
 email address used for the 15-minute magic-link window. Each User may create

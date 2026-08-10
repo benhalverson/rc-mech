@@ -2,7 +2,7 @@
 
 **Status:** accepted
 
-The setup-focused maintenance workflow records consumable changes—shock fluid, differential fluid, and front or rear tire sets—as dated history rather than requiring the owner to maintain every installed battery, ESC, servo, or other component. Tire changes are recorded per axle set, with separate optional costs for front and rear, so RC Mech can report replacement frequency and spend without pretending to know a universal service interval. This deliberately favors low-effort, useful records over component inventory and automatic reminders; the existing component-lifecycle maintenance model remains outside this workflow.
+The setup-focused maintenance workflow records consumable changes—shock fluid, differential fluid, and front or rear tire sets—as dated history rather than requiring the owner to maintain every installed battery, ESC, servo, or other component. Tire changes are recorded per axle set, with separate optional costs for front and rear, so Chassis Notes can report replacement frequency and spend without pretending to know a universal service interval. This deliberately favors low-effort, useful records over component inventory and automatic reminders; the existing component-lifecycle maintenance model remains outside this workflow.
 
 **Consequences**
 
