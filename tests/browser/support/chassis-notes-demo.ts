@@ -7,6 +7,10 @@ export type ChassisNotesDemo = {
 	readonly setupId: string;
 };
 
+export type ChassisNotesSetupHistoryDemo = ChassisNotesDemo & {
+	readonly currentSetupId: string;
+};
+
 export const authenticateDemoOwner = async (page: Page): Promise<void> => {
 	authentication += 1;
 	const clientIp = `chassis-notes-demo-${authentication}`;
@@ -45,6 +49,7 @@ export const createChassisNotesDemo = async (
 		{
 			data: {
 				name: 'Club carpet baseline',
+				setupDate: '2026-08-09T19:00:00.000Z',
 				track: 'Club carpet',
 				condition: 'Clean, high grip',
 				vehicle: { rideHeight: '13 mm' },
@@ -60,6 +65,35 @@ export const createChassisNotesDemo = async (
 	const { setup } = (await setupResponse.json()) as { setup: { id: string } };
 
 	return { carId: car.id, setupId: setup.id };
+};
+
+export const createChassisNotesSetupHistoryDemo = async (
+	page: Page,
+): Promise<ChassisNotesSetupHistoryDemo> => {
+	const demo = await createChassisNotesDemo(page);
+	const setupResponse = await page.request.post(
+		`/api/v1/cars/${demo.carId}/setups/${demo.setupId}/copy`,
+		{
+			data: {
+				name: 'Rear shock oil · 35 wt',
+				setupDate: '2026-08-09T20:00:00.000Z',
+				track: 'Club carpet',
+				condition: 'Clean, high grip',
+				vehicle: { rideHeight: '13 mm' },
+				drivetrain: { driveType: '2WD', gearDiffOil: '30k' },
+				shocks: { frontOil: '35 wt', rearOil: '35 wt' },
+				frontSuspension: { camber: '-1°' },
+				rearSuspension: { camber: '-1°' },
+				makeCurrent: true,
+			},
+		},
+	);
+	expect(setupResponse.ok()).toBe(true);
+	const { setup } = (await setupResponse.json()) as {
+		setup: { id: string };
+	};
+
+	return { ...demo, currentSetupId: setup.id };
 };
 
 export const installAppearance = async (

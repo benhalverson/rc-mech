@@ -49,6 +49,19 @@ describe('Landing', () => {
 		expect(root.querySelector('img')?.getAttribute('alt')).toContain(
 			'Club carpet baseline, ride height, and front and rear camber',
 		);
+		expect(root.textContent).toContain('Start with what’s on the car.');
+		expect(root.textContent).toContain('Club carpet baseline');
+		expect(root.textContent).toContain('13 mm');
+		expect(root.textContent).toContain('-1° / -1°');
+		expect(root.textContent).toContain('35 wt / 30 wt');
+		expect(root.textContent).toContain('30k');
+		expect(root.textContent).toContain(
+			'Team Associated RC10B7 · 1/10-scale electric 2WD buggy · carpet.',
+		);
+		expect(root.textContent).toContain('Change the setup. Keep the baseline.');
+		expect(root.textContent).toContain('Changes from previous');
+		expect(root.textContent).toContain('not a recommended setup');
+		expect(root.textContent).toContain('No performance outcome is claimed.');
 		expect(title.getTitle()).toBe(LANDING_TITLE);
 		expect(meta.getTag('name="description"')?.content).toBe(
 			LANDING_DESCRIPTION,
@@ -57,14 +70,26 @@ describe('Landing', () => {
 
 	it('matches hero evidence to the resolved appearance', () => {
 		const root = fixture.nativeElement as HTMLElement;
-		expect(root.querySelector('img')?.getAttribute('src')).toContain(
+		const currentSetup = root.querySelector<HTMLImageElement>(
+			'img[alt^="Chassis Notes Current setup for the B7 carpet car"]',
+		);
+		const setupHistory = root.querySelector<HTMLImageElement>(
+			'img[alt^="Chassis Notes Setup history"]',
+		);
+		expect(currentSetup?.getAttribute('src')).toContain(
 			'current-setup-mobile-light.png',
+		);
+		expect(setupHistory?.getAttribute('src')).toContain(
+			'setup-history-desktop-light.png',
 		);
 
 		appearance.resolved.set('dark');
 		fixture.detectChanges();
-		expect(root.querySelector('img')?.getAttribute('src')).toContain(
+		expect(currentSetup?.getAttribute('src')).toContain(
 			'current-setup-mobile-dark.png',
+		);
+		expect(setupHistory?.getAttribute('src')).toContain(
+			'setup-history-desktop-dark.png',
 		);
 	});
 
