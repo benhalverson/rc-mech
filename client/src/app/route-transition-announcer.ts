@@ -39,7 +39,7 @@ export class RouteTransitionAnnouncer {
 	readonly announcement = signal('');
 	readonly error = signal('');
 	private lastUrl = '/garage';
-	private completedNavigation = false;
+	private workspaceOpened = false;
 
 	constructor() {
 		this.destroyRef.onDestroy(() => {
@@ -61,7 +61,7 @@ export class RouteTransitionAnnouncer {
 				if (event instanceof NavigationStart) {
 					this.lastUrl = event.url;
 					this.checkingWorkspace.set(
-						!this.completedNavigation &&
+						!this.workspaceOpened &&
 							/^\/(?:garage(?:[/?#]|$)|maintenance(?:[/?#]|$)|settings(?:[/?#]|$))/.test(
 								event.url,
 							),
@@ -83,7 +83,12 @@ export class RouteTransitionAnnouncer {
 				}
 				this.loading.set(false);
 				this.checkingWorkspace.set(false);
-				this.completedNavigation = true;
+				if (
+					/^\/(?:garage(?:[/?#]|$)|maintenance(?:[/?#]|$)|settings(?:[/?#]|$))/.test(
+						event.urlAfterRedirects,
+					)
+				)
+					this.workspaceOpened = true;
 				this.error.set('');
 				this.announcement.set(`Opened ${this.label(event.urlAfterRedirects)}.`);
 				queueMicrotask(() => this.focusRouteHeading());

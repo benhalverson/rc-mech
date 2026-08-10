@@ -155,20 +155,23 @@ describe('RouteTransitionAnnouncer', () => {
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened Sign in.');
 
-		events.next(new NavigationEnd(2, '/settings', '/settings'));
+		events.next(new NavigationStart(2, '/garage'));
+		expect(transition.checkingWorkspace()).toBe(true);
+		events.next(new NavigationEnd(2, '/garage', '/garage'));
+		events.next(new NavigationStart(3, '/maintenance'));
+		expect(transition.checkingWorkspace()).toBe(false);
+
+		events.next(new NavigationEnd(4, '/settings', '/settings'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened Settings.');
 
-		events.next(new NavigationEnd(3, '/sign-in', '/sign-in'));
+		events.next(new NavigationEnd(5, '/sign-in', '/sign-in'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened Sign in.');
 
-		events.next(new NavigationEnd(4, '/legal', '/legal'));
+		events.next(new NavigationEnd(6, '/legal', '/legal'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened page.');
-
-		events.next(new NavigationStart(5, '/garage'));
-		expect(transition.checkingWorkspace()).toBe(false);
 	});
 
 	it('clears loading after a cancelled navigation', () => {

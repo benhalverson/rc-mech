@@ -127,9 +127,10 @@ test('preserves a signed-out deep link through the guarded Garage entry', async 
 	).toBeVisible();
 });
 
-test('keeps the branded checking state while the Garage guard resolves', async ({
+test('keeps the branded checking state when entering Garage from the public page', async ({
 	page,
 }) => {
+	await page.goto('/');
 	let releaseSession = (): void => undefined;
 	const sessionReady = new Promise<void>((resolve) => {
 		releaseSession = resolve;
@@ -139,7 +140,9 @@ test('keeps the branded checking state while the Garage guard resolves', async (
 		await route.continue();
 	});
 
-	const navigation = page.goto('/garage');
+	const navigation = page
+		.getByRole('link', { name: 'Enter Chassis Notes' })
+		.click();
 	try {
 		await expect(
 			page.getByText('Chassis Notes / Field notebook'),
