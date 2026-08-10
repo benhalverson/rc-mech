@@ -43,6 +43,10 @@ describe('SignIn', () => {
 				button.textContent?.includes('Register') ||
 				button.textContent?.includes('Already have'),
 		) as HTMLButtonElement;
+	const passkeyButton = (): HTMLButtonElement =>
+		[...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.includes('passkey'),
+		) as HTMLButtonElement;
 
 	it('renders the accessible public owner-access form and status', () => {
 		store.message.set('Check your inbox.');
@@ -171,9 +175,7 @@ describe('SignIn', () => {
 	});
 
 	it('dispatches passkey intent and reflects capability and progress state', () => {
-		const passkey = fixture.nativeElement.querySelector(
-			'.passkey-button',
-		) as HTMLButtonElement;
+		const passkey = passkeyButton();
 		passkey.click();
 		expect(store.authenticateWithPasskey).toHaveBeenCalledWith({
 			operation: 'authenticate-passkey',

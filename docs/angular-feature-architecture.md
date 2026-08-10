@@ -3,7 +3,7 @@
 **Status:** Accepted  
 **Decision:** [ADR 0012](./adr/0012-thin-angular-components-and-feature-boundaries.md)
 
-This is the implementation standard for the entire Chassis Notes Angular application. It applies to authenticated features, the root shell, public product pages, and public authentication. Alloy is the product-wide visual language under ADR 0014; this architecture does not authorize a public sign-in redesign.
+This is the implementation standard for the entire Chassis Notes Angular application. It applies to authenticated features, the root shell, public product pages, and public authentication. Alloy is the product-wide visual language under ADR 0014. Public authentication uses Alloy while retaining its focused sign-in and registration flow and remaining separate from the authenticated shell.
 
 ## Dependency direction
 
@@ -135,7 +135,7 @@ The refactor follows the Alloy route migration:
 
 1. Add the architecture check, gateway pattern, and client Zod dependency.
 2. Remove unused Angular Material, Angular Animations, and `provideAnimations()`; retain CDK while `BreakpointObserver` is active.
-3. Refactor the root shell and public sign-in architecture without redesigning sign-in.
+3. Refactor the root shell and public sign-in architecture while retaining its focused Alloy surface and separate authentication workflow.
 4. Refactor each authenticated route while implementing its Alloy slice.
 5. Contract obsolete components, wrappers, compatibility code, dependencies, styles, tests, and documentation after their final consumers are gone.
 

@@ -1,25 +1,25 @@
-<main class="access-shell" tabindex="-1">
-	<section class="access-card" aria-labelledby="sign-in-title">
-		<div class="eyebrow">Chassis Notes / Owner access</div>
-		<h1 id="sign-in-title" data-route-focus tabindex="-1">Back to the<br />workbench.</h1>
-		<p class="intro">{{ registering() ? 'Use an invite code to start your own private garage.' : 'Use your email to receive a one-time link, or continue with a passkey.' }}</p>
-		<form (submit)="submit($event)" novalidate>
-			<label for="owner-email">Email address</label>
-			<input id="owner-email" type="email" autocomplete="email" [formField]="credentialsForm.email" [attr.aria-describedby]="credentialsForm.email().touched() && credentialsForm.email().invalid() ? 'email-validation' : null" />
-			@if (credentialsForm.email().touched() && credentialsForm.email().invalid()) { <p id="email-validation" class="hint" role="alert">{{ credentialsForm.email().errors()[0]?.message }}</p> }
+<main class="grid min-h-dvh place-items-center bg-alloy-canvas px-4 py-8 text-alloy-text md:px-8" tabindex="-1">
+	<section class="w-full max-w-[520px] rounded-alloy-panel border border-alloy-separator border-t-2 border-t-alloy-accent bg-alloy-surface p-4 md:p-8" aria-labelledby="sign-in-title">
+		<div class="alloy-section-heading mb-4 text-alloy-text-secondary">Chassis Notes / Owner access</div>
+		<h1 id="sign-in-title" class="alloy-screen-title mb-4" data-route-focus tabindex="-1">Back to the<br />workbench.</h1>
+		<p class="alloy-supporting-text mb-6 max-w-[430px]">{{ registering() ? 'Use an invite code to start your own private garage.' : 'Use your email to receive a one-time link, or continue with a passkey.' }}</p>
+		<form class="grid gap-2" (submit)="submit($event)" novalidate>
+			<label class="text-sm font-semibold text-alloy-text" for="owner-email">Email address</label>
+			<input class="alloy-field alloy-focus-ring w-full" id="owner-email" type="email" autocomplete="email" [formField]="credentialsForm.email" [attr.aria-describedby]="credentialsForm.email().touched() && credentialsForm.email().invalid() ? 'email-validation' : null" />
+			@if (credentialsForm.email().touched() && credentialsForm.email().invalid()) { <p id="email-validation" class="m-0 text-sm leading-5 text-alloy-text-secondary" role="alert">{{ credentialsForm.email().errors()[0]?.message }}</p> }
 			@if (registering()) {
-				<label for="invite-code">Invite code</label>
-				<input id="invite-code" autocomplete="off" [formField]="credentialsForm.inviteCode" [attr.aria-describedby]="credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid() ? 'invite-code-validation' : null" />
-				@if (credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid()) { <p id="invite-code-validation" class="hint" role="alert">{{ credentialsForm.inviteCode().errors()[0]?.message }}</p> }
+				<label class="mt-2 text-sm font-semibold text-alloy-text" for="invite-code">Invite code</label>
+				<input class="alloy-field alloy-focus-ring w-full" id="invite-code" autocomplete="off" [formField]="credentialsForm.inviteCode" [attr.aria-describedby]="credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid() ? 'invite-code-validation' : null" />
+				@if (credentialsForm.inviteCode().touched() && credentialsForm.inviteCode().invalid()) { <p id="invite-code-validation" class="m-0 text-sm leading-5 text-alloy-text-secondary" role="alert">{{ credentialsForm.inviteCode().errors()[0]?.message }}</p> }
 			}
-			<button class="button" type="submit" [disabled]="store.sending()">{{ store.sending() ? 'Sending link…' : registering() ? 'Start registration' : 'Send magic link' }}</button>
+			<button class="alloy-control alloy-focus-ring mt-2 inline-flex min-h-12 w-full items-center justify-center" type="submit" [disabled]="store.sending()">{{ store.sending() ? 'Sending link…' : registering() ? 'Start registration' : 'Send magic link' }}</button>
 		</form>
 		@if (!registering()) {
-			<div class="divider"><span>or</span></div>
-			<button class="button passkey-button" type="button" (click)="authenticateWithPasskey()" [disabled]="!store.webAuthnAvailable() || store.working()">{{ store.working() ? 'Waiting for passkey…' : 'Sign in with a passkey' }}</button>
+			<div class="my-4 flex items-center gap-3 text-sm text-alloy-text-secondary"><span class="h-px flex-1 bg-alloy-separator"></span><span>or</span><span class="h-px flex-1 bg-alloy-separator"></span></div>
+			<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-h-12 w-full items-center justify-center" type="button" (click)="authenticateWithPasskey()" [disabled]="!store.webAuthnAvailable() || store.working()">{{ store.working() ? 'Waiting for passkey…' : 'Sign in with a passkey' }}</button>
 		}
-		<button class="text-button" type="button" (click)="toggleRegistration()" [disabled]="store.sending()">{{ registering() ? 'Already have an account? Sign in' : 'Have an invite code? Register' }}</button>
-		@if (store.message()) { <p class="message" role="status">{{ store.message() }}</p> }
-		@if (store.sent()) { <p class="hint">Open the link from this device. The link expires soon and can only be used once.</p> }
+		<button class="alloy-control alloy-control-tertiary alloy-focus-ring mt-4 inline-flex min-h-12 w-full items-center justify-center" type="button" (click)="toggleRegistration()" [disabled]="store.sending()">{{ registering() ? 'Already have an account? Sign in' : 'Have an invite code? Register' }}</button>
+		@if (store.message()) { <p class="alloy-state m-0" [class.alloy-error-state]="!store.sent()" [class.alloy-live-state]="store.sent()" role="status">{{ store.message() }}</p> }
+		@if (store.sent()) { <p class="alloy-supporting-text mb-0 mt-2">Open the link from this device. The link expires soon and can only be used once.</p> }
 	</section>
 </main>

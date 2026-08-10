@@ -70,6 +70,66 @@ const routeFixedCarCollection = async (
 };
 
 for (const appearance of ['light', 'dark'] as const) {
+	test(`keeps the ${appearance} public authentication surface visually stable`, async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await setAppearance(page, appearance);
+		await page.goto('/sign-in');
+		await expect(
+			page.getByRole('heading', { name: /Back to the workbench/ }),
+		).toBeVisible();
+		await expectAxeClean(page);
+		const surface = page.locator('app-sign-in section');
+		await expect(surface).toBeVisible();
+		expect(
+			await surface.evaluate((node) => {
+				const style = getComputedStyle(node);
+				return {
+					background: style.backgroundColor,
+					borderRadius: style.borderTopLeftRadius,
+					font: style.fontFamily,
+					topRule: style.borderTopColor,
+				};
+			}),
+		).toEqual({
+			background:
+				appearance === 'light' ? 'rgb(217, 220, 221)' : 'rgb(25, 31, 33)',
+			borderRadius: '8px',
+			font: expect.stringContaining('Commissioner Variable'),
+			topRule:
+				appearance === 'light' ? 'rgb(41, 77, 88)' : 'rgb(120, 164, 173)',
+		});
+		await stabilizeVisuals(page);
+		await expect(page).toHaveScreenshot(`sign-in-desktop-${appearance}.png`, {
+			animations: 'disabled',
+			caret: 'hide',
+			fullPage: true,
+		});
+	});
+
+	test(`keeps ${appearance} registration usable at narrow mobile width`, async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 320, height: 700 });
+		await setAppearance(page, appearance);
+		await page.goto('/sign-in');
+		await page
+			.getByRole('button', { name: 'Have an invite code? Register' })
+			.click();
+		await page.getByRole('button', { name: 'Start registration' }).click();
+		await expect(page.getByRole('alert').first()).toContainText(
+			'Enter your email address.',
+		);
+		await expect(page.getByRole('alert').nth(1)).toContainText(
+			'Enter an invite code.',
+		);
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth),
+		).toBeLessThanOrEqual(320);
+		await expectAxeClean(page);
+	});
+
 	test(`keeps the ${appearance} mobile Garage visually stable`, async ({
 		page,
 	}) => {

@@ -143,8 +143,8 @@ Keyboard focus uses a `2px` outer ring with a `2px` surface-colored offset. The 
 
 ## Application shell
 
-- Alloy applies to Garage, car, Maintenance, and Settings pages.
-- Public product pages use the same tokens, typography, focus treatment, and ruled structure with more editorial spacing; they do not copy the application shell.
+- Alloy applies to Garage, car, Maintenance, Settings, and public authentication pages.
+- Public product pages use the same tokens, typography, focus treatment, and ruled structure with more editorial spacing; public authentication uses a focused centered form surface. Neither public surface copies the authenticated application shell.
 - The root `App` owns the primary navigation and responsive navigation state.
 - Desktop primary navigation occupies a graphite top command bar.
 - Desktop left rails are contextual to the current feature and never duplicate primary navigation.
