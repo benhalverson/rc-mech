@@ -3,6 +3,7 @@ import {
 	createHonoFixture,
 	type MockD1Controller,
 } from './testing/hono-fixture';
+import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 import type { VoiceProcessor } from './voice-processing';
 import {
 	createWorkersAiVoiceProcessor,
@@ -454,7 +455,10 @@ describe('voice processing routes', () => {
 				kind: 'first',
 				value: voice({
 					status: 'needs-review',
-					draftJson: JSON.stringify(emptyDraft),
+					draftJson: JSON.stringify({
+						...emptyDraft,
+						unmappedNotes: ['Rear, not front'],
+					}),
 				}),
 			},
 			{ kind: 'first', value: car() },
@@ -569,6 +573,7 @@ describe('voice processing routes', () => {
 
 	test('falls back to a manual note when text correction processing fails', async () => {
 		vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const correctionText = 'R'.repeat(VOICE_CORRECTION_MAX_LENGTH);
 		const { d1, request } = fixture(
 			processor(async () => {
 				throw new VoiceProcessingError('provider unavailable', 'extraction', 2);
@@ -579,10 +584,7 @@ describe('voice processing routes', () => {
 				kind: 'first',
 				value: voice({
 					status: 'needs-review',
-					draftJson: JSON.stringify({
-						...emptyDraft,
-						unmappedNotes: ['Rear, not front'],
-					}),
+					draftJson: JSON.stringify(emptyDraft),
 				}),
 			},
 			{ kind: 'first', value: car() },
@@ -593,13 +595,13 @@ describe('voice processing routes', () => {
 					status: 'needs-review',
 					draftJson: JSON.stringify({
 						...emptyDraft,
-						unmappedNotes: ['Rear, not front'],
+						unmappedNotes: [correctionText],
 					}),
 					correctionsJson: JSON.stringify([
 						{
 							id: 'manual-correction',
 							kind: 'manual',
-							transcript: 'Rear, not front',
+							transcript: correctionText,
 							createdAt: now,
 						},
 					]),
@@ -608,21 +610,29 @@ describe('voice processing routes', () => {
 		);
 		const response = await request(
 			`/api/v1/voice-updates/${id}/corrections`,
-			json({ text: 'Rear, not front' }),
+			json({ text: correctionText }),
 		);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
 			correction: { outcome: 'manual-note' },
 			voiceUpdate: {
-				draft: { unmappedNotes: ['Rear, not front'] },
+				draft: { unmappedNotes: [correctionText] },
 				corrections: [
 					expect.objectContaining({
 						kind: 'manual',
-						transcript: 'Rear, not front',
+						transcript: correctionText,
 					}),
 				],
 			},
 		});
+		expect(
+			d1.queries.some((query) =>
+				query.values.some(
+					(value) =>
+						typeof value === 'string' && value.includes(correctionText),
+				),
+			),
+		).toBe(true);
 	});
 
 	test('does not claim a manual fallback when its persistence fails', async () => {
@@ -790,6 +800,29 @@ describe('voice processing routes', () => {
 			).toBe(status);
 		},
 	);
+
+	test('reports the review-note limit for an overlong text correction', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{
+				kind: 'first',
+				value: voice({
+					status: 'needs-review',
+					draftJson: JSON.stringify(emptyDraft),
+				}),
+			},
+			{ kind: 'first', value: car() },
+		);
+		const response = await request(
+			`/api/v1/voice-updates/${id}/corrections`,
+			json({ text: 'R'.repeat(VOICE_CORRECTION_MAX_LENGTH + 1) }),
+		);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({
+			error: 'Type a correction of 4,000 characters or fewer',
+			maxCharacters: 4000,
+		});
+	});
 
 	test('rejects a correction form without supported audio', async () => {
 		const { d1, request } = fixture();

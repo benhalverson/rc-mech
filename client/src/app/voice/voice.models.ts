@@ -20,6 +20,8 @@ const voiceStatusSchema = union([
 	literal('discarded'),
 ]);
 
+export const VOICE_CORRECTION_MAX_LENGTH = 4000;
+
 const confidenceSchema = union([
 	literal('high'),
 	literal('medium'),

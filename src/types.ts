@@ -531,6 +531,7 @@ export const voiceDraftInput = z.object({
 });
 
 export const voiceCaptureId = z.string().uuid();
+export const VOICE_CORRECTION_MAX_LENGTH = 4000;
 export const voiceTextCaptureInput = z.object({
 	captureId: voiceCaptureId,
 	text: z.string().trim().min(1).max(20_000),
@@ -548,7 +549,7 @@ export const voiceContextUpdateInput = z
 		'At least one voice update field is required',
 	);
 export const voiceCorrectionInput = z.object({
-	text: z.string().trim().min(1).max(20_000),
+	text: z.string().trim().min(1).max(VOICE_CORRECTION_MAX_LENGTH),
 });
 export const voiceConfirmInput = z.object({
 	acceptUnresolvedAsNotes: z.boolean().optional(),

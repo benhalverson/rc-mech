@@ -1,3 +1,5 @@
+import { VOICE_CORRECTION_MAX_LENGTH } from './types';
+
 const carProperties = {
 	name: { type: 'string', maxLength: 120 },
 	make: { type: 'string', maxLength: 120 },
@@ -1573,8 +1575,38 @@ voicePaths['/api/v1/voice-updates/{voiceUpdateId}/corrections'] = {
 	parameters: [voiceUpdateIdParameter],
 	post: {
 		summary: 'Apply a short voice or text correction to a review draft',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['text'],
+						properties: {
+							text: {
+								type: 'string',
+								minLength: 1,
+								maxLength: VOICE_CORRECTION_MAX_LENGTH,
+								description:
+									'Text is limited to the review-note capacity so the full correction can be retained when AI processing fails.',
+							},
+						},
+					},
+				},
+				'multipart/form-data': {
+					schema: {
+						type: 'object',
+						required: ['file'],
+						properties: { file: { type: 'string', format: 'binary' } },
+					},
+				},
+			},
+		},
 		responses: {
 			200: { description: 'Corrected review draft' },
+			400: {
+				description: 'Correction exceeds the text or audio input limit',
+			},
 			409: { description: 'Draft is not reviewable' },
 		},
 	},
