@@ -1,6 +1,6 @@
-# RC Mech
+# Chassis Notes
 
-RC Mech is a local-first garage and maintenance notebook for radio-controlled cars. The Angular-ready dashboard assets and Hono API are served by one Cloudflare Worker.
+Chassis Notes is a local-first garage and maintenance notebook for radio-controlled cars. The Angular dashboard assets and Hono API are served by one Cloudflare Worker. The repository and stable infrastructure identifiers retain the historical `rc-mech` name.
 
 This is an example project made to be used as a quick start into building OpenAPI compliant Workers that generates the
 `openapi.json` schema automatically from code and validates the incoming request to the defined parameters or request body.

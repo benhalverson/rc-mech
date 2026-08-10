@@ -87,10 +87,12 @@ test('health is exposed through the Worker request interface', async () => {
 test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	const response = await request('/api/openapi.json');
 	const document = (await response.json()) as {
+		info: { title: string };
 		paths: Record<string, unknown>;
 	};
 
 	expect(response.status).toBe(200);
+	expect(document.info.title).toBe('Chassis Notes API');
 	expect(document.paths['/api/auth/register']).toBeDefined();
 	expect(document.paths['/api/v1/invite-codes']).toBeDefined();
 	expect(document.paths['/api/v1/invite-codes/{id}/revoke']).toBeDefined();

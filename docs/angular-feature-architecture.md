@@ -3,7 +3,7 @@
 **Status:** Accepted  
 **Decision:** [ADR 0012](./adr/0012-thin-angular-components-and-feature-boundaries.md)
 
-This is the implementation standard for the entire RC Mech Angular application. It applies to authenticated features, the root shell, and public authentication. Alloy remains the visual language for authenticated routes only; this architecture does not authorize a public sign-in redesign.
+This is the implementation standard for the entire Chassis Notes Angular application. It applies to authenticated features, the root shell, and public authentication. Alloy remains the visual language for authenticated routes only; this architecture does not authorize a public sign-in redesign.
 
 ## Dependency direction
 
@@ -62,7 +62,7 @@ A route with remote data or a meaningful workflow receives a route-provided NgRx
 “Event-driven” means a local reactive command-and-outcome flow. It does not mean a global event bus.
 
 - A component invokes an immutable, feature-specific command and receives `void`.
-- Commands use canonical RC Mech language and never contain DOM events, elements, Signal Form objects, component instances, or transport DTOs.
+- Commands use canonical Chassis Notes language and never contain DOM events, elements, Signal Form objects, component instances, or transport DTOs.
 - A workflow exposes discriminated idle, pending, succeeded, and failed outcomes with operation identity.
 - Components render outcome state and react only when presentation work such as closing an editor or moving focus is required.
 - Promise-returning booleans, global `EventEmitter`, shared `Subject`, string event names, and implicit cross-feature broadcasts are not workflow contracts.
@@ -107,7 +107,7 @@ Components, stores, gateways, models, pure rules, and tests remain near the work
 - Native semantic elements styled through Tailwind are the default building blocks.
 - Feature-specific components stay in their feature.
 - A component becomes shared only when it encapsulates repeated behavior, accessibility, or interaction—not appearance alone.
-- RC Mech does not create generic card, button, field, or layout wrappers.
+- Chassis Notes does not create generic card, button, field, or layout wrappers.
 - Speculative abstractions and global `components/` or `services/` directories are prohibited.
 
 ## Testing

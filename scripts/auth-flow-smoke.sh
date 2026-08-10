@@ -346,7 +346,7 @@ unauthenticated_list_status="$(curl -sS -o /dev/null -w '%{http_code}' "$base/ap
 
 register_options_status="$(curl -sS -o "$response_file" -b "$cookie_file" -w '%{http_code}' "$base/api/auth/passkey/generate-register-options?name=Smoke%20key")"
 [[ "$register_options_status" == "200" ]]
-grep -q '"rp":{"name":"RC Mech","id":"127.0.0.1"}' "$response_file"
+grep -q '"rp":{"name":"Chassis Notes","id":"127.0.0.1"}' "$response_file"
 grep -q '"residentKey":"required"' "$response_file"
 
 authentication_options_status="$(curl -sS -o "$response_file" -w '%{http_code}' "$base/api/auth/passkey/generate-authenticate-options")"

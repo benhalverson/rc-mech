@@ -126,6 +126,7 @@ describe('App workspace shell', () => {
 		expect(root.querySelector('.checking')?.textContent).toContain(
 			'Checking the garage latch',
 		);
+		expect(root.textContent).toContain('Chassis Notes / Field notebook');
 		expect(root.querySelector('main')).toBeTruthy();
 
 		session.setChecking(false);
@@ -144,6 +145,8 @@ describe('App workspace shell', () => {
 		expect(root.querySelectorAll('main')).toHaveLength(1);
 		expect(root.textContent).toContain('owner@example.test');
 		expect(root.querySelector('.context-rail')).toBeFalsy();
+		expect(root.textContent).toContain('Chassis Notes');
+		expect(root.textContent).not.toContain('RC Mech');
 
 		transition.loading.set(true);
 		transition.announcement.set('Loading page…');

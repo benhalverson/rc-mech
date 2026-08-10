@@ -166,6 +166,9 @@ describe('Settings workspace', () => {
 		expect(fixture.nativeElement.textContent).toContain('OWNER-01');
 		expect(fixture.nativeElement.textContent).toContain('4 of 5 remaining');
 		expect(fixture.nativeElement.textContent).toContain('Workshop laptop');
+		expect(fixture.nativeElement.textContent).toContain(
+			'open Chassis Notes on another device',
+		);
 		expect(
 			fixture.nativeElement.querySelector('[data-route-focus][tabindex="-1"]'),
 		).toBeTruthy();

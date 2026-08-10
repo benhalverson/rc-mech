@@ -71,7 +71,7 @@ const serviceCompletionSchema = {
 };
 export const openApi = {
 	openapi: '3.1.0',
-	info: { title: 'RC Mech API', version: '0.1.0' },
+	info: { title: 'Chassis Notes API', version: '0.1.0' },
 	paths: {
 		'/api/v1/cars': {
 			get: {

@@ -34,7 +34,7 @@ export const createApp = (
 	app.get('/api/openapi.json', (c) => c.json(openApi));
 	app.get(
 		'/api/docs',
-		Scalar({ url: '/api/openapi.json', pageTitle: 'RC Mech API' }),
+		Scalar({ url: '/api/openapi.json', pageTitle: 'Chassis Notes API' }),
 	);
 	app.get('/docs', (c) => c.redirect('/api/docs'));
 	app.route('/api/auth', createAuthRoutes(dependencies));

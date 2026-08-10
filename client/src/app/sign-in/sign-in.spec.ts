@@ -55,6 +55,9 @@ describe('SignIn', () => {
 		expect(
 			fixture.nativeElement.querySelector('[data-route-focus][tabindex="-1"]'),
 		).toBeTruthy();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Chassis Notes / Owner access',
+		);
 		expect(fixture.nativeElement.textContent).toContain('Check your inbox.');
 		expect(fixture.nativeElement.textContent).toContain(
 			'link expires soon and can only be used once',
