@@ -61,6 +61,11 @@ type MagicOptions = {
 	sendMagicLink(value: { email: string; url: string }): Promise<void>;
 	generateToken?: () => Promise<string>;
 };
+type PasskeyOptions = {
+	rpID: string;
+	rpName: string;
+	origin: string[];
+};
 
 beforeEach(() => {
 	state.configs.length = 0;
@@ -83,6 +88,10 @@ describe('createAuth', () => {
 			magic.sendMagicLink({ email: 'user@example.com', url: 'http://local' }),
 		).resolves.toBeUndefined();
 		expect(state.passkeyOptions).toHaveLength(1);
+		expect(state.passkeyOptions[0] as PasskeyOptions).toMatchObject({
+			rpID: 'localhost',
+			rpName: 'Chassis Notes',
+		});
 	});
 
 	test('supplies local URL and token defaults when optional overrides are absent', async () => {
@@ -124,7 +133,7 @@ describe('createAuth', () => {
 		Object.assign(env, {
 			ENVIRONMENT: 'production',
 			APP_URL: 'https://chassisnotes.com',
-			EMAIL_FROM: 'RC Mech <noreply@chassisnotes.com>',
+			EMAIL_FROM: 'Chassis Notes <noreply@chassisnotes.com>',
 			EMAIL: { send },
 		});
 		createAuth(env);
@@ -133,7 +142,16 @@ describe('createAuth', () => {
 			email: 'user@example.com',
 			url: 'https://chassisnotes.com/sign-in',
 		});
-		expect(send).toHaveBeenCalledOnce();
+		expect(send).toHaveBeenCalledWith({
+			from: 'Chassis Notes <noreply@chassisnotes.com>',
+			to: 'user@example.com',
+			subject: 'Your Chassis Notes sign-in link',
+			text: 'Sign in to Chassis Notes using this one-time link:\n\nhttps://chassisnotes.com/sign-in\n\nThis link expires in 15 minutes and can only be used once.',
+		});
+		expect(state.passkeyOptions[0] as PasskeyOptions).toMatchObject({
+			rpID: 'chassisnotes.com',
+			rpName: 'Chassis Notes',
+		});
 	});
 
 	test('allows the configured Owner through invite hooks', async () => {

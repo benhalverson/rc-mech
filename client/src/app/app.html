@@ -12,7 +12,7 @@
 }
 @if (checking()) {
 	<main class="access-shell" aria-live="polite">
-		<div class="alloy-section-heading">RC Mech / Field notebook</div>
+		<div class="alloy-section-heading">Chassis Notes / Field notebook</div>
 		<p class="checking">Checking the garage latch…</p>
 	</main>
 } @else if (!signedIn()) {
@@ -23,7 +23,7 @@
 		[attr.aria-hidden]="overlayOpen() ? 'true' : null"
 		[attr.inert]="overlayOpen() ? '' : null"
 	>
-		<h1 class="sr-only">RC Mech owner workspace</h1>
+		<h1 class="sr-only">Chassis Notes owner workspace</h1>
 		<header class="command-bar sticky top-0 z-30 bg-graphite text-alloy-command-text">
 			@if (mobileNav()) {
 				<div class="mobile-command-bar mx-auto flex h-14 w-full items-stretch">
@@ -56,14 +56,14 @@
 						</button>
 					} @else {
 						<a class="mobile-brand alloy-focus-ring flex min-w-0 flex-1 items-center px-4 text-alloy-command-text no-underline" routerLink="/garage">
-							<span><strong class="block text-sm font-semibold leading-5">RC Mech</strong><span class="block text-[11px] font-medium uppercase leading-4 tracking-[0.08em] text-alloy-command-secondary">Field notebook</span></span>
+							<span><strong class="block text-sm font-semibold leading-5">Chassis Notes</strong><span class="block text-[11px] font-medium uppercase leading-4 tracking-[0.08em] text-alloy-command-secondary">Field notebook</span></span>
 						</a>
 					}
 				</div>
 			} @else {
 				<div class="desktop-command-bar mx-auto flex h-16 w-full items-stretch px-8">
 					<a class="command-brand alloy-focus-ring flex shrink-0 items-center border-r border-alloy-command-separator pr-8 text-alloy-command-text no-underline" routerLink="/garage">
-						<span class="alloy-section-heading text-alloy-command-accent">RC Mech</span>
+						<span class="alloy-section-heading text-alloy-command-accent">Chassis Notes</span>
 					</a>
 					<nav class="desktop-primary-nav flex items-stretch" aria-label="Primary workspace">
 						<a class="command-link alloy-focus-ring flex min-h-12 items-center px-5 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/garage" routerLinkActive="active-nav" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page">Garage</a>
@@ -140,7 +140,7 @@
 			aria-label="Workspace navigation"
 		>
 			<div class="flex h-16 items-center justify-between border-b border-alloy-command-separator px-4">
-				<div><span class="alloy-section-heading text-alloy-command-accent">RC Mech</span><strong class="mt-1 block text-sm font-semibold">Field notebook</strong></div>
+				<div><span class="alloy-section-heading text-alloy-command-accent">Chassis Notes</span><strong class="mt-1 block text-sm font-semibold">Field notebook</strong></div>
 				<button #navClose class="nav-close alloy-focus-ring flex min-h-12 items-center border border-alloy-command-separator bg-transparent px-3 text-alloy-command-accent" type="button" (click)="closeNav()" aria-label="Close workspace navigation">
 					<span class="text-xs font-semibold">Close</span>
 				</button>

@@ -2,10 +2,10 @@
 
 ## Problem Statement
 
-RC Mech currently supports magic-link access for the app creator through a
-configured `OWNER_EMAIL`. Other people cannot create their own isolated RC
-Mech garage, and opening registration would invite bot-driven signups. The
-app needs controlled growth without turning the Owner into a cross-garage
+Chassis Notes currently supports magic-link access for the app creator through a
+configured `OWNER_EMAIL`. Other people cannot create their own isolated
+Chassis Notes garage, and opening registration would invite bot-driven signups.
+The app needs controlled growth without turning the Owner into a cross-garage
 administrator or introducing shared garage tenancy.
 
 ## Solution
@@ -20,7 +20,7 @@ magic link without an invite code.
 
 ## User Stories
 
-1. As the RC Mech Owner, I want to seed initial invite codes, so that I can control who can begin registration.
+1. As the Chassis Notes Owner, I want to seed initial invite codes, so that I can control who can begin registration.
 2. As the Owner, I want my configured email to remain the creator identity, so that no invited User becomes an application Owner.
 3. As a prospective User, I want to enter an invite code and email, so that I can request access without an open public signup.
 4. As a prospective User, I want to receive the existing magic link, so that registration uses the familiar verified-email flow.

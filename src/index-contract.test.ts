@@ -44,6 +44,10 @@ describe('Worker composition and auth routes', () => {
 		const docs = await request('/docs');
 		expect(docs.status).toBe(302);
 		expect(docs.headers.get('location')).toContain('/api/docs');
+		const reference = await request('/api/docs');
+		expect(await reference.text()).toContain(
+			'<title>Chassis Notes API</title>',
+		);
 		const health = await request('/api/v1/health', {
 			headers: { Origin: 'http://localhost:4200' },
 		});
@@ -322,7 +326,7 @@ describe('Worker composition and auth routes', () => {
 			ENVIRONMENT: 'production',
 			APP_URL: 'https://chassisnotes.com',
 			OWNER_EMAIL: 'owner@chassisnotes.com',
-			EMAIL_FROM: 'RC Mech <noreply@chassisnotes.com>',
+			EMAIL_FROM: 'Chassis Notes <noreply@chassisnotes.com>',
 			EMAIL: undefined,
 		});
 		d1.queue({ kind: 'first', value: null }, { kind: 'run' });

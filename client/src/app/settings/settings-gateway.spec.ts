@@ -154,7 +154,7 @@ describe('SettingsGateway', () => {
 				request.params.get('name') === 'Workshop key',
 		);
 		expect(optionRequest.request.withCredentials).toBe(true);
-		optionRequest.flush({ challenge: 'AQID', rp: { name: 'RC Mech' } });
+		optionRequest.flush({ challenge: 'AQID', rp: { name: 'Chassis Notes' } });
 		await expect(options).resolves.toMatchObject({ challenge: 'AQID' });
 
 		const verified = firstValueFrom(

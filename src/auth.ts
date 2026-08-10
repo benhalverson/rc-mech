@@ -46,8 +46,8 @@ export const createAuth = (env: AuthEnv) => {
 			await sender.send({
 				from,
 				to: email,
-				subject: 'Your RC Mech sign-in link',
-				text: `Sign in to RC Mech using this one-time link:\n\n${url}\n\nThis link expires in 15 minutes and can only be used once.`,
+				subject: 'Your Chassis Notes sign-in link',
+				text: `Sign in to Chassis Notes using this one-time link:\n\n${url}\n\nThis link expires in 15 minutes and can only be used once.`,
 			});
 		},
 	};
@@ -122,7 +122,7 @@ export const createAuth = (env: AuthEnv) => {
 		plugins: [
 			passkey({
 				rpID: new URL(appURL).hostname,
-				rpName: 'RC Mech',
+				rpName: 'Chassis Notes',
 				origin: configuredOrigins(appURL, isLocalDevelopment(env)),
 				// Discoverable credentials let the browser offer its standard
 				// cross-device passkey handoff, including QR where supported.

@@ -7,7 +7,7 @@ import { createOrReuseInvite } from './invite-cli-support';
 
 const program = new Command()
 	.name('rc-mech-invite')
-	.description('Seed an invite through the authenticated RC Mech API')
+	.description('Seed an invite through the authenticated Chassis Notes API')
 	.requiredOption('--url <url>', 'Worker origin')
 	.requiredOption('--owner-email <email>', 'Owner email address')
 	.requiredOption('--code <code>', 'Invite code')

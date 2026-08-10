@@ -2,7 +2,7 @@
 
 Status: Visual direction approved; ready for implementation planning
 
-Alloy Run Console is the single visual system for RC Mech's authenticated interface. It presents the garage as a precise trackside instrument: useful information is prominent, controls are direct, and decoration never imitates data.
+Alloy Run Console is the single visual system for Chassis Notes' authenticated interface. It presents the garage as a precise trackside instrument: useful information is prominent, controls are direct, and decoration never imitates data.
 
 ## Design-review scope
 
@@ -161,7 +161,7 @@ On car-related pages below `1024px`, the current-car control is integrated into 
 
 ## Content rule
 
-Every prominent surface must communicate real RC Mech state or provide a real action. The selected-car workspace uses a functional current-setup sheet; it does not contain the prototype's decorative chassis illustration. Production UI must not introduce fake track, weather, heat, car, setup, or drive-session data.
+Every prominent surface must communicate real Chassis Notes state or provide a real action. The selected-car workspace uses a functional current-setup sheet; it does not contain the prototype's decorative chassis illustration. Production UI must not introduce fake track, weather, heat, car, setup, or drive-session data.
 
 ## Selected-car information hierarchy
 
@@ -185,13 +185,13 @@ Camber displays front and rear values together. Rear toe is a structured physica
 
 The drivetrain readout follows the current setup sheet rather than forcing fixed differential slots. A 2WD car shows gear-differential oil and height. A 4WD car shows the oil for each applicable front, center, and rear gear differential. When the center drive is a decoupled center slipper, the summary identifies that configuration and does not show center oil as missing.
 
-The current setup sheet is the sole source for the drivetrain summary. RC Mech does not add a car-level 2WD/4WD classification or infer drivetrain from the car's make, model, or vehicle type. When drivetrain data is absent from the current setup, the summary says `Not recorded` and provides a direct path to edit that setup.
+The current setup sheet is the sole source for the drivetrain summary. Chassis Notes does not add a car-level 2WD/4WD classification or infer drivetrain from the car's make, model, or vehicle type. When drivetrain data is absent from the current setup, the summary says `Not recorded` and provides a direct path to edit that setup.
 
 Preserve measurement units exactly as recorded by the setup sheet and never convert between systems or conventions. The interface may normalize spacing and capitalization, but values such as `35 wt`, `450 cSt`, `7k`, and `12 mm` remain distinct recorded values.
 
 The first values must be readable without opening the full setup sheet. When a priority value is missing from an existing current setup, keep its fixed position in the readout, label it `Not recorded`, and provide a direct correction path. Omit only drivetrain positions that the setup sheet identifies as genuinely non-applicable; never infer a value.
 
-Immediately below the priority readout, show `Changes from previous` when the current setup was copied from another setup. List only fields whose recorded values changed, using an old-to-new form such as `Ride height · 12 mm → 14 mm`. Keep the current values visually primary and do not add change badges to every field. Do not call this a diff, because `diff` means differential in the RC Mech domain.
+Immediately below the priority readout, show `Changes from previous` when the current setup was copied from another setup. List only fields whose recorded values changed, using an old-to-new form such as `Ride height · 12 mm → 14 mm`. Keep the current values visually primary and do not add change badges to every field. Do not call this a diff, because `diff` means differential in the Chassis Notes domain.
 
 On mobile, the selected-car content order is current setup, `Changes from previous`, prominent voice-note capture, then one actionable maintenance item when maintenance is due or overdue. When nothing needs attention, the primary screen ends after voice capture rather than filling the space with secondary information. Do not reserve permanent dashboard space for an empty maintenance state.
 
@@ -205,7 +205,7 @@ When a car has no current setup, replace the setup readout with one focused `No 
 
 ## Setup interactions
 
-Tapping a recorded or missing value in the current-setup readout starts `Change setup`. RC Mech copies the current setup into a new snapshot and opens a focused editor at the selected field; it never silently mutates the historical snapshot.
+Tapping a recorded or missing value in the current-setup readout starts `Change setup`. Chassis Notes copies the current setup into a new snapshot and opens a focused editor at the selected field; it never silently mutates the historical snapshot.
 
 The focused field is only the editor's starting point. The user may change multiple setup values before saving, and one save creates one coherent setup snapshot containing the complete resulting configuration.
 
