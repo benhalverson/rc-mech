@@ -46,6 +46,9 @@ describe('Landing', () => {
 			root.querySelector<HTMLAnchorElement>('a[href="/garage"]')?.textContent,
 		).toContain('Enter Chassis Notes');
 		expect(root.querySelector('a[href="/sign-in"]')).toBeTruthy();
+		expect(root.querySelector('img')?.getAttribute('alt')).toContain(
+			'Club carpet baseline, ride height, and front and rear camber',
+		);
 		expect(title.getTitle()).toBe(LANDING_TITLE);
 		expect(meta.getTag('name="description"')?.content).toBe(
 			LANDING_DESCRIPTION,

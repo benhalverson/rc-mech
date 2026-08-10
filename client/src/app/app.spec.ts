@@ -7,6 +7,7 @@ import { RouteTransitionAnnouncer } from './route-transition-announcer';
 
 class FakeRouteTransitionAnnouncer {
 	readonly loading = signal(false);
+	readonly checkingWorkspace = signal(false);
 	readonly announcement = signal('');
 	readonly error = signal('');
 	readonly retry = vi.fn();
@@ -50,6 +51,18 @@ describe('App', () => {
 		expect(loadingState?.textContent).toContain('Loading page');
 		expect(loadingState?.getAttribute('aria-hidden')).toBe('true');
 		expect(loadingState?.hasAttribute('role')).toBe(false);
+	});
+
+	it('presents the branded checking state for initial workspace entry', () => {
+		transition.loading.set(true);
+		transition.checkingWorkspace.set(true);
+		fixture.detectChanges();
+
+		const root = fixture.nativeElement as HTMLElement;
+		expect(root.textContent).toContain('Chassis Notes / Field notebook');
+		expect(root.textContent).toContain('Checking the garage latch');
+		expect(root.querySelector('.route-state')).toBeFalsy();
+		expect(root.querySelector('router-outlet')).toBeFalsy();
 	});
 
 	it('presents route failures and retries them', () => {

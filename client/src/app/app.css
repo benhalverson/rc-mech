@@ -26,3 +26,17 @@
 .route-state p {
 	margin: 0 0 8px;
 }
+
+.access-shell {
+	display: grid;
+	min-height: 100dvh;
+	max-width: 720px;
+	margin: auto;
+	place-content: center;
+	padding: 32px 22px;
+}
+
+.checking {
+	margin: 8px 0 0;
+	color: var(--alloy-text-secondary);
+}

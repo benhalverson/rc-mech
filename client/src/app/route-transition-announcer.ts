@@ -35,9 +35,11 @@ export class RouteTransitionAnnouncer {
 	private readonly reloadRoute = inject(ROUTE_RELOADER);
 	private focusObserver?: MutationObserver;
 	readonly loading = signal(false);
+	readonly checkingWorkspace = signal(false);
 	readonly announcement = signal('');
 	readonly error = signal('');
 	private lastUrl = '/garage';
+	private completedNavigation = false;
 
 	constructor() {
 		this.destroyRef.onDestroy(() => {
@@ -58,20 +60,30 @@ export class RouteTransitionAnnouncer {
 			.subscribe((event) => {
 				if (event instanceof NavigationStart) {
 					this.lastUrl = event.url;
+					this.checkingWorkspace.set(
+						!this.completedNavigation &&
+							/^\/(?:garage(?:[/?#]|$)|maintenance(?:[/?#]|$)|settings(?:[/?#]|$))/.test(
+								event.url,
+							),
+					);
 					this.start();
 					return;
 				}
 				if (event instanceof NavigationError) {
 					this.loading.set(false);
+					this.checkingWorkspace.set(false);
 					this.error.set('This page could not be loaded. Try again.');
 					this.announcement.set('');
 					return;
 				}
 				if (event instanceof NavigationCancel) {
 					this.loading.set(false);
+					this.checkingWorkspace.set(false);
 					return;
 				}
 				this.loading.set(false);
+				this.checkingWorkspace.set(false);
+				this.completedNavigation = true;
 				this.error.set('');
 				this.announcement.set(`Opened ${this.label(event.urlAfterRedirects)}.`);
 				queueMicrotask(() => this.focusRouteHeading());

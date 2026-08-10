@@ -126,3 +126,28 @@ test('preserves a signed-out deep link through the guarded Garage entry', async 
 		page.getByRole('heading', { name: 'Back to the workbench.' }),
 	).toBeVisible();
 });
+
+test('keeps the branded checking state while the Garage guard resolves', async ({
+	page,
+}) => {
+	let releaseSession = (): void => undefined;
+	const sessionReady = new Promise<void>((resolve) => {
+		releaseSession = resolve;
+	});
+	await page.route('**/api/auth/get-session', async (route) => {
+		await sessionReady;
+		await route.continue();
+	});
+
+	const navigation = page.goto('/garage');
+	try {
+		await expect(
+			page.getByText('Chassis Notes / Field notebook'),
+		).toBeVisible();
+		await expect(page.getByText('Checking the garage latch…')).toBeVisible();
+	} finally {
+		releaseSession();
+	}
+	await navigation;
+	await expect(page).toHaveURL(/\/sign-in\?returnTo=%2Fgarage$/);
+});

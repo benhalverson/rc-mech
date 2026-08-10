@@ -52,12 +52,14 @@ describe('RouteTransitionAnnouncer', () => {
 
 		events.next(new NavigationStart(1, '/maintenance'));
 		expect(transition.loading()).toBe(true);
+		expect(transition.checkingWorkspace()).toBe(true);
 		expect(transition.announcement()).toBe('Loading page…');
 
 		events.next(new NavigationEnd(1, '/maintenance', '/maintenance'));
 		await Promise.resolve();
 
 		expect(transition.loading()).toBe(false);
+		expect(transition.checkingWorkspace()).toBe(false);
 		expect(transition.announcement()).toBe('Opened Maintenance.');
 		expect(document.activeElement).toBe(heading);
 	});
@@ -147,6 +149,12 @@ describe('RouteTransitionAnnouncer', () => {
 	});
 
 	it('announces public and unknown routes accurately', async () => {
+		events.next(new NavigationStart(1, '/sign-in'));
+		expect(transition.checkingWorkspace()).toBe(false);
+		events.next(new NavigationEnd(1, '/sign-in', '/sign-in'));
+		await Promise.resolve();
+		expect(transition.announcement()).toBe('Opened Sign in.');
+
 		events.next(new NavigationEnd(2, '/settings', '/settings'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened Settings.');
@@ -158,6 +166,9 @@ describe('RouteTransitionAnnouncer', () => {
 		events.next(new NavigationEnd(4, '/legal', '/legal'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened page.');
+
+		events.next(new NavigationStart(5, '/garage'));
+		expect(transition.checkingWorkspace()).toBe(false);
 	});
 
 	it('clears loading after a cancelled navigation', () => {
@@ -167,6 +178,7 @@ describe('RouteTransitionAnnouncer', () => {
 		events.next(new NavigationCancel(5, '/maintenance', 'superseded'));
 
 		expect(transition.loading()).toBe(false);
+		expect(transition.checkingWorkspace()).toBe(false);
 	});
 
 	it('does not observe when the document has no MutationObserver', async () => {
