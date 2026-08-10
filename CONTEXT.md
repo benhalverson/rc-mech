@@ -1,11 +1,15 @@
-# RC Mech
+# Chassis Notes
 
-RC Mech is the shared language for an owner's collection of radio-controlled cars and the work needed to keep them ready to drive.
+Chassis Notes is the shared language for an owner's collection of radio-controlled cars and the work needed to keep them ready to drive.
 
 ## People and collection
 
+**Racer**:
+A person who prepares, tunes, drives, and maintains radio-controlled cars for competitive track use and wants repeatable records between drive sessions. Chassis Notes serves Racers first; casual driving use is secondary.
+_Avoid_: Customer, generic hobbyist
+
 **Owner**:
-The creator and operator of RC Mech. The Owner is the only person with
+The creator and operator of Chassis Notes. The Owner is the only person with
 application-level ownership; this role is not granted to invited users.
 
 **User**:
@@ -14,13 +18,13 @@ own settings. Users do not share garage records by default and are not Owners.
 _Avoid_: Customer, account
 
 **Registration**:
-The act of establishing a user's access to RC Mech through a verified email
+The act of establishing a user's access to Chassis Notes through a verified email
 address and a valid invite code. Registration creates access to that user's
 isolated garage.
 _Avoid_: Account creation
 
 **Invite code**:
-A private value provided by the RC Mech operator that permits one prospective
+A private value provided by the Chassis Notes operator that permits one prospective
 user to begin registration. Each code is single-use; each registered User may
 receive five codes to pass on. The User may choose each code's
 human-shareable text, provided it is unique.
@@ -65,11 +69,11 @@ The recorded field differences between a setup and the setup it was copied from.
 _Avoid_: Diff, delta
 
 **Ride height**:
-The setup's single chassis-clearance value, such as 12 mm or 14 mm. RC Mech does not split ride height into front and rear values or model a raked ride height.
+The setup's single chassis-clearance value, such as 12 mm or 14 mm. Chassis Notes does not split ride height into front and rear values or model a raked ride height.
 _Avoid_: Front ride height, rear ride height, rake
 
 **Rear toe setting**:
-The pair of physical pill positions recorded by the current setup for a car's rear C and D suspension blocks. RC Mech preserves those positions and does not derive a numeric toe angle.
+The pair of physical pill positions recorded by the current setup for a car's rear C and D suspension blocks. Chassis Notes preserves those positions and does not derive a numeric toe angle.
 _Avoid_: Rear toe value, rear toe angle
 
 **Pill position**:
