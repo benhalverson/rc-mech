@@ -143,3 +143,29 @@ _Avoid_: Reset date, starting point
 **Archived**:
 A retained car or record that is no longer part of the user's active garage or workflow.
 _Avoid_: Deleted, removed
+
+## Offline use
+
+**Offline session**:
+A temporary period after a successful online sign-in and synchronization when a User continues using a previously synchronized garage while trackside connectivity is unavailable.
+_Avoid_: Guest mode, anonymous mode
+
+**Offline ready**:
+The device state reached after Chassis Notes has synchronized the structured garage records and media metadata required for an Offline session.
+_Avoid_: Downloaded, backed up
+
+**Pending sync**:
+Garage work retained on the User's device during an Offline session but not yet acknowledged by the Chassis Notes service. Pending sync is not presented as remotely completed work.
+_Avoid_: Saved, completed, failed
+
+**Needs attention**:
+Garage work retained on the User's device after it cannot synchronize automatically and requires review or correction. It is not discarded and does not prevent unrelated work from synchronizing.
+_Avoid_: Failed, lost, deleted
+
+**Sync conflict**:
+A Pending sync action whose remote target changed incompatibly after the device last synchronized. Chassis Notes retains both versions until the User chooses the correct result.
+_Avoid_: Last write wins, sync failure
+
+**Offline media**:
+A photo or original voice-note recording retained on the current device so it remains available during an Offline session. Existing media becomes Offline media when viewed or explicitly kept offline; new captures remain local until synchronized.
+_Avoid_: Backup, downloaded file
