@@ -62,10 +62,10 @@ for (const appearance of ['light', 'dark'] as const) {
 			'/sign-in',
 		);
 		await expect(
-			page.getByRole('link', { name: 'Enter Chassis Notes' }),
+			page.getByRole('link', { name: 'Enter Chassis Notes' }).first(),
 		).toHaveAttribute('href', '/garage');
 		for (const action of [
-			page.getByRole('link', { name: 'Enter Chassis Notes' }),
+			page.getByRole('link', { name: 'Enter Chassis Notes' }).first(),
 			page.getByRole('link', { name: 'See how it works' }),
 		]) {
 			expect((await action.boundingBox())?.height).toBeGreaterThanOrEqual(48);
@@ -95,6 +95,74 @@ for (const appearance of ['light', 'dark'] as const) {
 		).toBeAttached();
 		await expect(page.getByText('30 wt', { exact: true })).toBeAttached();
 		await expect(page.getByText('35 wt', { exact: true })).toBeAttached();
+		await expect(
+			page.getByRole('heading', {
+				name: 'Say what happened while it’s fresh.',
+			}),
+		).toBeAttached();
+		await expect(
+			page.getByRole('img', { name: /voice-note review for the example B7/ }),
+		).toHaveAttribute(
+			'src',
+			new RegExp(`voice-review-mobile-${appearance}\\.png`),
+		);
+		await expect(
+			page.getByText(
+				'The rear stepped out on corner entry. I changed rear shock oil from 30 wt to 35 wt.',
+			),
+		).toBeAttached();
+		await expect(
+			page.getByText(
+				'Nothing enters Garage history until you review and confirm it.',
+			),
+		).toBeAttached();
+		await expect(
+			page.getByRole('img', {
+				name: /Drive-session history for the example B7/,
+			}),
+		).toHaveAttribute(
+			'src',
+			new RegExp(`drive-session-desktop-${appearance}\\.png`),
+		);
+		await expect(
+			page.getByText('The record preserves sequence, not causation.', {
+				exact: false,
+			}),
+		).toBeAttached();
+		await expect(
+			page.getByRole('heading', {
+				name: 'Carry the record back to the bench.',
+			}),
+		).toBeAttached();
+		await expect(
+			page.getByRole('img', {
+				name: /tire-service history for the example B7/,
+			}),
+		).toHaveAttribute(
+			'src',
+			new RegExp(`tire-service-desktop-${appearance}\\.png`),
+		);
+		await expect(
+			page.getByRole('heading', { name: 'Your Garage stays yours.' }),
+		).toBeAttached();
+		await expect(
+			page.getByText('Each User has an isolated private Garage.', {
+				exact: false,
+			}),
+		).toBeAttached();
+		await expect(
+			page.getByText(
+				'Chassis Notes records observations and decisions. It does not provide setup advice.',
+			),
+		).toBeAttached();
+		const finalEntry = page
+			.getByRole('link', { name: 'Enter Chassis Notes' })
+			.last();
+		expect((await finalEntry.boundingBox())?.height).toBeGreaterThanOrEqual(48);
+		await expect(
+			page.getByText('An invite is required for first registration.'),
+		).toHaveCount(2);
+		await expect(page.locator('main form')).toHaveCount(0);
 		expect(
 			await page.evaluate(
 				() => document.documentElement.scrollWidth <= window.innerWidth,
@@ -104,6 +172,50 @@ for (const appearance of ['light', 'dark'] as const) {
 		await expectAxeClean(page);
 	});
 }
+
+test('keeps the complete public story ordered and usable on desktop', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1366, height: 960 });
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await installAppearance(page, 'light');
+	await page.goto('/');
+
+	expect(
+		(await page.locator('main h2').allTextContents()).map((heading) =>
+			heading.trim(),
+		),
+	).toEqual([
+		'Start with what’s on the car.',
+		'Change the setup. Keep the baseline.',
+		'Say what happened while it’s fresh.',
+		'Carry the record back to the bench.',
+		'Your Garage stays yours.',
+		'Keep the next change in the same history.',
+	]);
+	const benchHeading = page.getByRole('heading', {
+		name: 'Carry the record back to the bench.',
+	});
+	await benchHeading.scrollIntoViewIfNeeded();
+	await expect(benchHeading).toBeInViewport();
+	await expect(
+		page.getByRole('img', {
+			name: /tire-service history for the example B7/,
+		}),
+	).toBeVisible();
+	const finalEntry = page
+		.getByRole('link', { name: 'Enter Chassis Notes' })
+		.last();
+	await finalEntry.scrollIntoViewIfNeeded();
+	await finalEntry.focus();
+	await expect(finalEntry).toBeFocused();
+	expect(
+		await page.evaluate(
+			() => document.documentElement.scrollWidth <= window.innerWidth,
+		),
+	).toBe(true);
+	await expectAxeClean(page);
+});
 
 test('uses dark system appearance before requesting public evidence', async ({
 	page,
@@ -169,6 +281,7 @@ test('keeps the branded checking state when entering Garage from the public page
 
 	const navigation = page
 		.getByRole('link', { name: 'Enter Chassis Notes' })
+		.first()
 		.click();
 	try {
 		await expect(

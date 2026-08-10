@@ -3,7 +3,9 @@ import {
 	authenticateDemoOwner,
 	createChassisNotesDemo,
 	createChassisNotesSetupHistoryDemo,
+	createChassisNotesTrackToBenchHistory,
 	installAppearance,
+	installChassisNotesVoiceReview,
 } from './support/chassis-notes-demo';
 
 test.skip(
@@ -69,3 +71,75 @@ for (const appearance of ['light', 'dark'] as const) {
 		});
 	});
 }
+
+test('captures the real light and dark B7 track-to-bench history', async ({
+	page,
+}) => {
+	await authenticateDemoOwner(page);
+	const demo = await createChassisNotesSetupHistoryDemo(page);
+	await installChassisNotesVoiceReview(page, demo.carId);
+	await createChassisNotesTrackToBenchHistory(page, demo.carId);
+
+	for (const appearance of ['light', 'dark'] as const) {
+		await page.goto('/');
+		await page.evaluate((preference) => {
+			localStorage.setItem('rc-mech.appearance', preference);
+		}, appearance);
+
+		await page.setViewportSize({ width: 390, height: 844 });
+		await page.goto(`/garage/${demo.carId}/overview`);
+		await expect(page.locator('html')).toHaveAttribute(
+			'data-appearance',
+			appearance,
+		);
+		const voiceReview = page.locator(
+			'section[aria-labelledby="voice-review-title"]',
+		);
+		await expect(
+			voiceReview.getByRole('heading', { name: 'Review this voice note' }),
+		).toBeVisible();
+		await expect(voiceReview.getByLabel('Transcript')).toContainText(
+			'The rear stepped out on corner entry.',
+		);
+		await expect(
+			voiceReview.getByLabel('Proposed garage records'),
+		).toContainText('Proposed Trackside observation');
+		await expect(
+			voiceReview.getByRole('button', { name: 'Confirm and save' }),
+		).toBeVisible();
+		await page.evaluate(() => document.fonts.ready);
+		await voiceReview.screenshot({
+			path: `client/public/landing/voice-review-mobile-${appearance}.png`,
+			animations: 'disabled',
+			caret: 'hide',
+			style: '.command-bar { visibility: hidden !important; }',
+		});
+
+		await page.setViewportSize({ width: 1366, height: 960 });
+		await page.goto(`/garage/${demo.carId}/drive-sessions`);
+		const driveHistory = page.locator('.session-log');
+		await expect(
+			driveHistory.getByText(
+				'Entry felt more settled during this later Drive session.',
+			),
+		).toBeVisible();
+		await driveHistory.screenshot({
+			path: `client/public/landing/drive-session-desktop-${appearance}.png`,
+			animations: 'disabled',
+			caret: 'hide',
+			style: '.command-bar { visibility: hidden !important; }',
+		});
+
+		await page.goto('/maintenance');
+		const tireHistory = page.locator('.consumable-ledger');
+		await expect(
+			tireHistory.getByText('Fresh rear carpet tire set', { exact: true }),
+		).toBeVisible();
+		await tireHistory.screenshot({
+			path: `client/public/landing/tire-service-desktop-${appearance}.png`,
+			animations: 'disabled',
+			caret: 'hide',
+			style: '.command-bar { visibility: hidden !important; }',
+		});
+	}
+});
