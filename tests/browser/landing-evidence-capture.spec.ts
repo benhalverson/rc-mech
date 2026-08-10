@@ -10,6 +10,7 @@ test.skip(
 	process.env['UPDATE_LANDING_EVIDENCE'] !== '1',
 	'Run explicitly to refresh committed landing evidence.',
 );
+test.use({ timezoneId: 'UTC' });
 
 for (const appearance of ['light', 'dark'] as const) {
 	test(`captures the real ${appearance} B7 Current setup`, async ({ page }) => {
@@ -54,6 +55,9 @@ for (const appearance of ['light', 'dark'] as const) {
 				name: /Rear shock oil · 35 wt.*Current/,
 			}),
 		).toBeVisible();
+		await expect(page.getByText('13 mm', { exact: true })).toBeVisible();
+		await expect(page.getByText('30k', { exact: true })).toBeVisible();
+		await expect(page.getByText('-1°', { exact: true })).toHaveCount(2);
 		await expect(page.locator('.animate-spin')).toHaveCount(0);
 		await page.evaluate(() => document.fonts.ready);
 		await page.evaluate(() => window.scrollTo(0, 0));

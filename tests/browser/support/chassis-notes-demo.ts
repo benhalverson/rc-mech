@@ -77,13 +77,7 @@ export const createChassisNotesSetupHistoryDemo = async (
 			data: {
 				name: 'Rear shock oil · 35 wt',
 				setupDate: '2026-08-09T20:00:00.000Z',
-				track: 'Club carpet',
-				condition: 'Clean, high grip',
-				vehicle: { rideHeight: '13 mm' },
-				drivetrain: { driveType: '2WD', gearDiffOil: '30k' },
 				shocks: { frontOil: '35 wt', rearOil: '35 wt' },
-				frontSuspension: { camber: '-1°' },
-				rearSuspension: { camber: '-1°' },
 				makeCurrent: true,
 			},
 		},

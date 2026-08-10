@@ -60,6 +60,13 @@ describe('Landing', () => {
 		);
 		expect(root.textContent).toContain('Change the setup. Keep the baseline.');
 		expect(root.textContent).toContain('Changes from previous');
+		expect(
+			root
+				.querySelector(
+					'[role="group"][aria-label="Recorded rear shock-oil change"]',
+				)
+				?.querySelector('.sr-only')?.textContent,
+		).toBe('Rear shock oil changed from 30 wt to 35 wt.');
 		expect(root.textContent).toContain('not a recommended setup');
 		expect(root.textContent).toContain('No performance outcome is claimed.');
 		expect(title.getTitle()).toBe(LANDING_TITLE);
