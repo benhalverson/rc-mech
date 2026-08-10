@@ -1,6 +1,6 @@
 # Chassis Notes public landing page
 
-**Status:** draft
+**Status:** accepted
 
 ## Audience
 
@@ -57,7 +57,7 @@ The final page sequence is:
 3. **Change the setup. Keep the baseline.** — the `30 wt → 35 wt` change with both Setups preserved.
 4. **Say what happened while it’s fresh** — voice note, transcript, review, and confirmation.
 5. **Carry the record back to the bench** — tires, fluids, service, photos, and build details.
-6. **Your garage stays yours** — isolated records, explicit confirmation, and no setup advice.
+6. **Your Garage stays yours** — isolated records, explicit confirmation, and no setup advice.
 7. **Final entry** — repeat the product-entry action and invite requirement.
 
 ## Product evidence

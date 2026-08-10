@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 import {
 	authenticateDemoOwner,
@@ -8,6 +8,45 @@ import {
 const expectAxeClean = async (page: Page): Promise<void> => {
 	await injectAxe(page);
 	expect(await getViolations(page)).toEqual([]);
+};
+
+const expectVisibleFocus = async (target: Locator): Promise<void> => {
+	await expect(target).toBeFocused();
+	expect(
+		await target.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return { style: style.outlineStyle, width: style.outlineWidth };
+		}),
+	).toEqual({ style: 'solid', width: '2px' });
+};
+
+const stabilizeLandingVisuals = async (page: Page): Promise<void> => {
+	await page
+		.getByRole('link', { name: 'Enter Chassis Notes' })
+		.last()
+		.scrollIntoViewIfNeeded();
+	const evidence = page.locator('main img');
+	for (let index = 0; index < (await evidence.count()); index += 1) {
+		await expect
+			.poll(() =>
+				evidence
+					.nth(index)
+					.evaluate(
+						(element) =>
+							element instanceof HTMLImageElement &&
+							element.complete &&
+							element.naturalWidth > 0,
+					),
+			)
+			.toBe(true);
+	}
+	await page.evaluate(() => document.fonts.ready);
+	await page.evaluate(() => {
+		if (document.activeElement instanceof HTMLElement)
+			document.activeElement.blur();
+		window.scrollTo(0, 0);
+	});
+	await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 };
 
 for (const appearance of ['light', 'dark'] as const) {
@@ -65,17 +104,24 @@ for (const appearance of ['light', 'dark'] as const) {
 			page.getByRole('link', { name: 'Enter Chassis Notes' }).first(),
 		).toHaveAttribute('href', '/garage');
 		for (const action of [
+			page.getByRole('link', { name: 'Sign in' }),
 			page.getByRole('link', { name: 'Enter Chassis Notes' }).first(),
 			page.getByRole('link', { name: 'See how it works' }),
 		]) {
 			expect((await action.boundingBox())?.height).toBeGreaterThanOrEqual(48);
 		}
 
-		await page.getByRole('link', { name: 'See how it works' }).click();
+		await page.getByRole('link', { name: 'See how it works' }).focus();
+		await page.keyboard.press('Enter');
 		await expect(
 			page.getByRole('heading', { name: 'Start with what’s on the car.' }),
 		).toBeInViewport();
-		await expect(page.locator('#walkthrough')).toBeFocused();
+		await expectVisibleFocus(page.locator('#walkthrough'));
+		expect(
+			await page
+				.locator('#walkthrough')
+				.evaluate((element) => getComputedStyle(element).scrollBehavior),
+		).toBe('auto');
 		await expect(
 			page.getByRole('heading', {
 				name: 'Change the setup. Keep the baseline.',
@@ -170,52 +216,91 @@ for (const appearance of ['light', 'dark'] as const) {
 		).toBe(true);
 		await expect(page.locator('app-appearance-selector')).toHaveCount(0);
 		await expectAxeClean(page);
+		await stabilizeLandingVisuals(page);
+		await expect(page).toHaveScreenshot(
+			`public-landing-mobile-${appearance}.png`,
+			{ animations: 'disabled', caret: 'hide', fullPage: true },
+		);
+
+		await page.getByRole('link', { name: 'Sign in' }).click();
+		await expect(page).toHaveURL(/\/sign-in$/);
+		await expect(
+			page.getByRole('heading', { name: 'Back to the workbench.' }),
+		).toBeVisible();
+		await page.goBack();
+		await expect(
+			page.getByRole('heading', {
+				name: 'Know what’s on the car. What changed. What happened next.',
+			}),
+		).toBeVisible();
+		await page
+			.getByRole('link', { name: 'Enter Chassis Notes' })
+			.first()
+			.click();
+		await expect(page).toHaveURL(/\/sign-in\?returnTo=%2Fgarage$/);
+		await expect(
+			page.getByRole('heading', { name: 'Back to the workbench.' }),
+		).toBeVisible();
 	});
 }
 
-test('keeps the complete public story ordered and usable on desktop', async ({
-	page,
-}) => {
-	await page.setViewportSize({ width: 1366, height: 960 });
-	await page.emulateMedia({ reducedMotion: 'reduce' });
-	await installAppearance(page, 'light');
-	await page.goto('/');
+for (const appearance of ['light', 'dark'] as const) {
+	test(`keeps the complete ${appearance} public story ordered and usable on desktop`, async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1366, height: 960 });
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		await installAppearance(page, appearance);
+		await page.goto('/');
+		await expect(page.locator('html')).toHaveAttribute(
+			'data-appearance',
+			appearance,
+		);
+		await expect(page.locator('header')).toHaveCount(1);
+		await expect(page.locator('main')).toHaveCount(1);
+		await expect(page.locator('main h1')).toHaveCount(1);
 
-	expect(
-		(await page.locator('main h2').allTextContents()).map((heading) =>
-			heading.trim(),
-		),
-	).toEqual([
-		'Start with what’s on the car.',
-		'Change the setup. Keep the baseline.',
-		'Say what happened while it’s fresh.',
-		'Carry the record back to the bench.',
-		'Your Garage stays yours.',
-		'Keep the next change in the same history.',
-	]);
-	const benchHeading = page.getByRole('heading', {
-		name: 'Carry the record back to the bench.',
+		expect(
+			(await page.locator('main h2').allTextContents()).map((heading) =>
+				heading.trim(),
+			),
+		).toEqual([
+			'Start with what’s on the car.',
+			'Change the setup. Keep the baseline.',
+			'Say what happened while it’s fresh.',
+			'Carry the record back to the bench.',
+			'Your Garage stays yours.',
+			'Keep the next change in the same history.',
+		]);
+		const benchHeading = page.getByRole('heading', {
+			name: 'Carry the record back to the bench.',
+		});
+		await benchHeading.scrollIntoViewIfNeeded();
+		await expect(benchHeading).toBeInViewport();
+		await expect(
+			page.getByRole('img', {
+				name: /tire-service history for the example B7/,
+			}),
+		).toBeVisible();
+		const finalEntry = page
+			.getByRole('link', { name: 'Enter Chassis Notes' })
+			.last();
+		await finalEntry.scrollIntoViewIfNeeded();
+		await finalEntry.focus();
+		await expectVisibleFocus(finalEntry);
+		expect(
+			await page.evaluate(
+				() => document.documentElement.scrollWidth <= window.innerWidth,
+			),
+		).toBe(true);
+		await expectAxeClean(page);
+		await stabilizeLandingVisuals(page);
+		await expect(page).toHaveScreenshot(
+			`public-landing-desktop-${appearance}.png`,
+			{ animations: 'disabled', caret: 'hide', fullPage: true },
+		);
 	});
-	await benchHeading.scrollIntoViewIfNeeded();
-	await expect(benchHeading).toBeInViewport();
-	await expect(
-		page.getByRole('img', {
-			name: /tire-service history for the example B7/,
-		}),
-	).toBeVisible();
-	const finalEntry = page
-		.getByRole('link', { name: 'Enter Chassis Notes' })
-		.last();
-	await finalEntry.scrollIntoViewIfNeeded();
-	await finalEntry.focus();
-	await expect(finalEntry).toBeFocused();
-	expect(
-		await page.evaluate(
-			() => document.documentElement.scrollWidth <= window.innerWidth,
-		),
-	).toBe(true);
-	await expectAxeClean(page);
-});
+}
 
 test('uses dark system appearance before requesting public evidence', async ({
 	page,

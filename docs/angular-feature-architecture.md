@@ -3,7 +3,7 @@
 **Status:** Accepted  
 **Decision:** [ADR 0012](./adr/0012-thin-angular-components-and-feature-boundaries.md)
 
-This is the implementation standard for the entire Chassis Notes Angular application. It applies to authenticated features, the root shell, and public authentication. Alloy remains the visual language for authenticated routes only; this architecture does not authorize a public sign-in redesign.
+This is the implementation standard for the entire Chassis Notes Angular application. It applies to authenticated features, the root shell, public product pages, and public authentication. Alloy is the product-wide visual language under ADR 0014; this architecture does not authorize a public sign-in redesign.
 
 ## Dependency direction
 
