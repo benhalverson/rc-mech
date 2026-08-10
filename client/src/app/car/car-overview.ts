@@ -68,6 +68,10 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 	notes: form.notes.trim(),
 });
 
+export const carFormValidationMessage = ([error]: readonly {
+	readonly message?: string;
+}[]): string => error?.message ?? 'Review the car details.';
+
 @Component({
 	selector: 'app-car-overview',
 	host: { class: 'block' },
@@ -164,8 +168,7 @@ export class CarOverview {
 		this.carFields().markAsTouched();
 		if (this.carFields().invalid()) {
 			this.formValidationError.set(
-				this.carFields().errorSummary()[0]?.message ??
-					'Review the car details.',
+				carFormValidationMessage(this.carFields().errorSummary()),
 			);
 			this.carFields.name().focusBoundControl();
 			return;
