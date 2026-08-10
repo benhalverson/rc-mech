@@ -52,12 +52,14 @@ describe('RouteTransitionAnnouncer', () => {
 
 		events.next(new NavigationStart(1, '/maintenance'));
 		expect(transition.loading()).toBe(true);
+		expect(transition.checkingWorkspace()).toBe(true);
 		expect(transition.announcement()).toBe('Loading page…');
 
 		events.next(new NavigationEnd(1, '/maintenance', '/maintenance'));
 		await Promise.resolve();
 
 		expect(transition.loading()).toBe(false);
+		expect(transition.checkingWorkspace()).toBe(false);
 		expect(transition.announcement()).toBe('Opened Maintenance.');
 		expect(document.activeElement).toBe(heading);
 	});
@@ -147,15 +149,27 @@ describe('RouteTransitionAnnouncer', () => {
 	});
 
 	it('announces public and unknown routes accurately', async () => {
-		events.next(new NavigationEnd(2, '/settings', '/settings'));
-		await Promise.resolve();
-		expect(transition.announcement()).toBe('Opened Settings.');
-
-		events.next(new NavigationEnd(3, '/sign-in', '/sign-in'));
+		events.next(new NavigationStart(1, '/sign-in'));
+		expect(transition.checkingWorkspace()).toBe(false);
+		events.next(new NavigationEnd(1, '/sign-in', '/sign-in'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened Sign in.');
 
-		events.next(new NavigationEnd(4, '/legal', '/legal'));
+		events.next(new NavigationStart(2, '/garage'));
+		expect(transition.checkingWorkspace()).toBe(true);
+		events.next(new NavigationEnd(2, '/garage', '/garage'));
+		events.next(new NavigationStart(3, '/maintenance'));
+		expect(transition.checkingWorkspace()).toBe(false);
+
+		events.next(new NavigationEnd(4, '/settings', '/settings'));
+		await Promise.resolve();
+		expect(transition.announcement()).toBe('Opened Settings.');
+
+		events.next(new NavigationEnd(5, '/sign-in', '/sign-in'));
+		await Promise.resolve();
+		expect(transition.announcement()).toBe('Opened Sign in.');
+
+		events.next(new NavigationEnd(6, '/legal', '/legal'));
 		await Promise.resolve();
 		expect(transition.announcement()).toBe('Opened page.');
 	});
@@ -167,6 +181,7 @@ describe('RouteTransitionAnnouncer', () => {
 		events.next(new NavigationCancel(5, '/maintenance', 'superseded'));
 
 		expect(transition.loading()).toBe(false);
+		expect(transition.checkingWorkspace()).toBe(false);
 	});
 
 	it('does not observe when the document has no MutationObserver', async () => {
