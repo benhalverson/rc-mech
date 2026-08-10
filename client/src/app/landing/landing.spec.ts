@@ -69,13 +69,56 @@ describe('Landing', () => {
 		).toBe('Rear shock oil changed from 30 wt to 35 wt.');
 		expect(root.textContent).toContain('not a recommended setup');
 		expect(root.textContent).toContain('No performance outcome is claimed.');
+		expect(root.textContent).toContain('Say what happened while it’s fresh.');
+		expect(root.textContent).toContain(
+			'The rear stepped out on corner entry. I changed rear shock oil from 30 wt to 35 wt.',
+		);
+		expect(root.textContent).toContain(
+			'Nothing enters Garage history until you review and confirm it.',
+		);
+		expect(root.textContent).toContain(
+			'Entry felt more settled during this later Drive session.',
+		);
+		expect(root.textContent).toContain(
+			'The record preserves sequence, not causation.',
+		);
+		expect(root.textContent).toContain('Carry the record back to the bench.');
+		expect(root.textContent).toContain(
+			'tire sets, fluids, service, photos, and build details',
+		);
+		expect(root.textContent).toContain('Fresh rear carpet tire set');
+		expect(root.textContent).toContain('Your Garage stays yours.');
+		expect(root.textContent).toContain(
+			'Each User has an isolated private Garage.',
+		);
+		expect(root.textContent).toContain(
+			'A voice note changes nothing before review and confirmation.',
+		);
+		expect(root.textContent).toContain(
+			'Chassis Notes records observations and decisions. It does not provide setup advice.',
+		);
+		expect(root.querySelectorAll('a[href="/garage"]')).toHaveLength(2);
+		expect(
+			[...root.querySelectorAll('main h2')].map((heading) =>
+				heading.textContent?.trim(),
+			),
+		).toEqual([
+			'Start with what’s on the car.',
+			'Change the setup. Keep the baseline.',
+			'Say what happened while it’s fresh.',
+			'Carry the record back to the bench.',
+			'Your Garage stays yours.',
+			'Keep the next change in the same history.',
+		]);
+		expect(root.textContent).not.toContain('AI-powered');
+		expect(root.textContent).not.toContain('trusted by Racers');
 		expect(title.getTitle()).toBe(LANDING_TITLE);
 		expect(meta.getTag('name="description"')?.content).toBe(
 			LANDING_DESCRIPTION,
 		);
 	});
 
-	it('matches hero evidence to the resolved appearance', () => {
+	it('matches product evidence to the resolved appearance', () => {
 		const root = fixture.nativeElement as HTMLElement;
 		const currentSetup = root.querySelector<HTMLImageElement>(
 			'img[alt^="Chassis Notes Current setup for the B7 carpet car"]',
@@ -83,11 +126,29 @@ describe('Landing', () => {
 		const setupHistory = root.querySelector<HTMLImageElement>(
 			'img[alt^="Chassis Notes Setup history"]',
 		);
+		const voiceReview = root.querySelector<HTMLImageElement>(
+			'img[alt^="Chassis Notes voice-note review"]',
+		);
+		const driveSession = root.querySelector<HTMLImageElement>(
+			'img[alt^="Chassis Notes Drive-session history"]',
+		);
+		const tireService = root.querySelector<HTMLImageElement>(
+			'img[alt^="Chassis Notes tire-service history"]',
+		);
 		expect(currentSetup?.getAttribute('src')).toContain(
 			'current-setup-mobile-light.png',
 		);
 		expect(setupHistory?.getAttribute('src')).toContain(
 			'setup-history-desktop-light.png',
+		);
+		expect(voiceReview?.getAttribute('src')).toContain(
+			'voice-review-mobile-light.png',
+		);
+		expect(driveSession?.getAttribute('src')).toContain(
+			'drive-session-desktop-light.png',
+		);
+		expect(tireService?.getAttribute('src')).toContain(
+			'tire-service-desktop-light.png',
 		);
 
 		appearance.resolved.set('dark');
@@ -97,6 +158,15 @@ describe('Landing', () => {
 		);
 		expect(setupHistory?.getAttribute('src')).toContain(
 			'setup-history-desktop-dark.png',
+		);
+		expect(voiceReview?.getAttribute('src')).toContain(
+			'voice-review-mobile-dark.png',
+		);
+		expect(driveSession?.getAttribute('src')).toContain(
+			'drive-session-desktop-dark.png',
+		);
+		expect(tireService?.getAttribute('src')).toContain(
+			'tire-service-desktop-dark.png',
 		);
 	});
 

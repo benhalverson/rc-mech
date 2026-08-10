@@ -28,6 +28,21 @@ export class Landing {
 			? '/landing/setup-history-desktop-dark.png'
 			: '/landing/setup-history-desktop-light.png',
 	);
+	protected readonly voiceReviewEvidence = computed(() =>
+		this.appearance.resolved() === 'dark'
+			? '/landing/voice-review-mobile-dark.png'
+			: '/landing/voice-review-mobile-light.png',
+	);
+	protected readonly driveSessionEvidence = computed(() =>
+		this.appearance.resolved() === 'dark'
+			? '/landing/drive-session-desktop-dark.png'
+			: '/landing/drive-session-desktop-light.png',
+	);
+	protected readonly tireServiceEvidence = computed(() =>
+		this.appearance.resolved() === 'dark'
+			? '/landing/tire-service-desktop-dark.png'
+			: '/landing/tire-service-desktop-light.png',
+	);
 
 	constructor() {
 		this.title.setTitle(LANDING_TITLE);

@@ -143,4 +143,125 @@
 			</div>
 		</div>
 	</section>
+
+	<section class="bg-alloy-canvas px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24" aria-labelledby="voice-story-title">
+		<div class="mx-auto grid max-w-[1180px] gap-8 border-t border-alloy-separator pt-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-16">
+			<div>
+				<p class="m-0 font-technical text-xs uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">03 / Trackside review</p>
+			</div>
+			<div>
+				<h2 id="voice-story-title" class="m-0 text-3xl font-semibold leading-9 tracking-[-0.025em] sm:text-5xl sm:leading-[1.05]">Say what happened while it’s fresh.</h2>
+				<p class="mt-5 max-w-[740px] text-lg leading-7 text-alloy-text-on-canvas-secondary">Speak the observation and the intentional change while the car is still on the stand. Transcription prepares a review; it does not write to Garage history.</p>
+
+				<div class="mt-9 grid items-start gap-8 xl:grid-cols-[minmax(0,390px)_minmax(0,1fr)] xl:gap-12">
+					<figure class="m-0 w-full max-w-[390px] justify-self-center xl:justify-self-start">
+						<div class="border border-alloy-separator bg-graphite p-2 shadow-alloy-floating">
+							<img
+								class="block h-auto w-full"
+								[ngSrc]="voiceReviewEvidence()"
+								width="358"
+								height="612"
+								alt="Chassis Notes voice-note review for the example B7 showing the transcript, proposed Trackside observation, proposed rear shock-oil Setup change, and Confirm and save action"
+							/>
+						</div>
+						<figcaption class="mt-3 border-t border-alloy-separator pt-3 text-sm leading-6 text-alloy-text-on-canvas-secondary">Real voice-note review interface · proposed records are not yet applied</figcaption>
+					</figure>
+
+					<div class="border-t-2 border-alloy-accent">
+						<ol class="m-0 list-none divide-y divide-alloy-separator p-0">
+							<li class="grid gap-2 py-5 sm:grid-cols-[48px_minmax(0,1fr)]"><span class="font-technical text-alloy-accent" aria-hidden="true">01</span><div><h3 class="m-0 text-lg font-semibold">Speak</h3><p class="m-0 mt-2 leading-6 text-alloy-text-on-canvas-secondary">“The rear stepped out on corner entry. I changed rear shock oil from 30 wt to 35 wt.”</p></div></li>
+							<li class="grid gap-2 py-5 sm:grid-cols-[48px_minmax(0,1fr)]"><span class="font-technical text-alloy-accent" aria-hidden="true">02</span><div><h3 class="m-0 text-lg font-semibold">Review</h3><p class="m-0 mt-2 leading-6 text-alloy-text-on-canvas-secondary">The Trackside observation stays separate from the proposed Setup change. You can correct either before saving.</p></div></li>
+							<li class="grid gap-2 py-5 sm:grid-cols-[48px_minmax(0,1fr)]"><span class="font-technical text-alloy-accent" aria-hidden="true">03</span><div><h3 class="m-0 text-lg font-semibold">Confirm</h3><p class="m-0 mt-2 leading-6 text-alloy-text-on-canvas-secondary">Nothing enters Garage history until you review and confirm it.</p></div></li>
+						</ol>
+					</div>
+				</div>
+
+				<div class="mt-12 border-t border-alloy-separator pt-6">
+					<div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+						<div>
+							<p class="alloy-section-heading m-0 text-alloy-text-on-canvas-secondary">Recorded later</p>
+							<h3 class="m-0 mt-2 text-2xl font-semibold">Drive-session observation</h3>
+						</div>
+						<p class="m-0 max-w-[420px] text-sm leading-6 text-alloy-text-on-canvas-secondary">The record preserves sequence, not causation. It does not claim the shock-oil change produced the later observation.</p>
+					</div>
+					<blockquote class="m-0 mt-6 border-l-2 border-alloy-accent pl-5 text-xl font-medium leading-8">“Entry felt more settled during this later Drive session.”</blockquote>
+					<figure class="m-0 mt-7">
+						<div class="overflow-hidden border border-alloy-separator bg-graphite p-2 shadow-alloy-floating">
+							<img
+								class="block h-auto w-full"
+								[ngSrc]="driveSessionEvidence()"
+								width="1054"
+								height="241"
+								alt="Chassis Notes Drive-session history for the example B7 showing the later observation that entry felt more settled"
+							/>
+						</div>
+						<figcaption class="mt-3 border-t border-alloy-separator pt-3 text-sm leading-6 text-alloy-text-on-canvas-secondary">Recorded after the Setup change · no performance cause assigned</figcaption>
+					</figure>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<section class="border-y border-alloy-separator bg-alloy-surface px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24" aria-labelledby="bench-story-title">
+		<div class="mx-auto grid max-w-[1180px] gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-16">
+			<div>
+				<p class="m-0 font-technical text-xs uppercase tracking-[0.12em] text-alloy-text-secondary">04 / Back at the bench</p>
+			</div>
+			<div>
+				<h2 id="bench-story-title" class="m-0 text-3xl font-semibold leading-9 tracking-[-0.025em] sm:text-5xl sm:leading-[1.05]">Carry the record back to the bench.</h2>
+				<p class="mt-5 max-w-[740px] text-lg leading-7 text-alloy-text-secondary">The same example car keeps tire sets, fluids, service, photos, and build details beside its Setup and Drive-session history—one practical record, not a separate inventory system.</p>
+
+				<div class="mt-9 grid gap-4 border-y border-alloy-separator py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+					<div>
+						<p class="alloy-section-heading m-0 text-alloy-text-secondary">Tire service · Aug 9, 2026</p>
+						<h3 class="m-0 mt-2 text-xl font-semibold">Fresh rear carpet tire set</h3>
+					</div>
+					<span class="font-technical text-sm text-alloy-text-secondary">Example B7 · rear axle</span>
+				</div>
+
+				<figure class="m-0 mt-9">
+					<div class="overflow-hidden border border-alloy-separator bg-graphite p-2 shadow-alloy-floating">
+						<img
+							class="block h-auto w-full"
+							[ngSrc]="tireServiceEvidence()"
+							width="1100"
+							height="800"
+							alt="Chassis Notes tire-service history for the example B7 showing a fresh rear carpet tire set"
+						/>
+					</div>
+					<figcaption class="mt-3 border-t border-alloy-separator pt-3 text-sm leading-6 text-alloy-text-secondary">Real tire-service history · fluids and other bench work remain in the same private Garage</figcaption>
+				</figure>
+			</div>
+		</div>
+	</section>
+
+	<section class="bg-alloy-canvas px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24" aria-labelledby="privacy-story-title">
+		<div class="mx-auto grid max-w-[1180px] gap-8 border-t border-alloy-separator pt-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-16">
+			<div>
+				<p class="m-0 font-technical text-xs uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">05 / Control</p>
+			</div>
+			<div>
+				<h2 id="privacy-story-title" class="m-0 text-3xl font-semibold leading-9 tracking-[-0.025em] sm:text-5xl sm:leading-[1.05]">Your Garage stays yours.</h2>
+				<div class="mt-9 divide-y divide-alloy-separator border-y border-alloy-separator">
+					<div class="grid gap-2 py-5 sm:grid-cols-[220px_minmax(0,1fr)] sm:gap-8"><h3 class="m-0 text-lg font-semibold">Private by ownership</h3><p class="m-0 leading-6 text-alloy-text-on-canvas-secondary">Each User has an isolated private Garage. Public product evidence comes only from this dedicated local demo record.</p></div>
+					<div class="grid gap-2 py-5 sm:grid-cols-[220px_minmax(0,1fr)] sm:gap-8"><h3 class="m-0 text-lg font-semibold">Review before history</h3><p class="m-0 leading-6 text-alloy-text-on-canvas-secondary">A voice note changes nothing before review and confirmation.</p></div>
+					<div class="grid gap-2 py-5 sm:grid-cols-[220px_minmax(0,1fr)] sm:gap-8"><h3 class="m-0 text-lg font-semibold">Your decisions</h3><p class="m-0 leading-6 text-alloy-text-on-canvas-secondary">Chassis Notes records observations and decisions. It does not provide setup advice.</p></div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<section class="border-t border-alloy-command-separator bg-graphite px-5 py-16 text-alloy-command-text sm:px-8 sm:py-20 lg:px-12 lg:py-24" aria-labelledby="final-entry-title">
+		<div class="mx-auto grid max-w-[1180px] gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-16">
+			<p class="m-0 font-technical text-xs uppercase tracking-[0.12em] text-alloy-command-secondary">06 / Garage entry</p>
+			<div>
+				<h2 id="final-entry-title" class="m-0 max-w-[780px] text-3xl font-semibold leading-9 tracking-[-0.025em] sm:text-5xl sm:leading-[1.05]">Keep the next change in the same history.</h2>
+				<p class="mt-5 max-w-[650px] text-lg leading-7 text-alloy-command-secondary">Open your private Garage when you are ready to record the car as it sits.</p>
+				<div class="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+					<a class="alloy-control alloy-focus-ring flex min-h-12 items-center justify-center border-alloy-command-accent bg-alloy-command-accent px-5 text-graphite no-underline" routerLink="/garage">Enter Chassis Notes</a>
+					<p class="m-0 font-technical text-xs leading-5 text-alloy-command-secondary">An invite is required for first registration.</p>
+				</div>
+			</div>
+		</div>
+	</section>
 </main>
