@@ -49,7 +49,11 @@ for (const appearance of ['light', 'dark'] as const) {
 			'data-appearance',
 			appearance,
 		);
-		await expect(page.getByRole('img')).toHaveAttribute(
+		await expect(
+			page.getByRole('img', {
+				name: /Current setup for the B7 carpet car/,
+			}),
+		).toHaveAttribute(
 			'src',
 			new RegExp(`current-setup-mobile-${appearance}\\.png`),
 		);
@@ -72,6 +76,30 @@ for (const appearance of ['light', 'dark'] as const) {
 			page.getByRole('heading', { name: 'Start with what’s on the car.' }),
 		).toBeInViewport();
 		await expect(page.locator('#walkthrough')).toBeFocused();
+		await expect(
+			page.getByRole('heading', {
+				name: 'Change the setup. Keep the baseline.',
+			}),
+		).toBeAttached();
+		await expect(
+			page.getByRole('img', {
+				name: /Setup history for the example B7/,
+			}),
+		).toHaveAttribute(
+			'src',
+			new RegExp(`setup-history-desktop-${appearance}\\.png`),
+		);
+		await expect(page.getByText('35 wt / 30 wt')).toBeAttached();
+		await expect(
+			page.getByText(/Team Associated RC10B7 · 1\/10-scale electric 2WD buggy/),
+		).toBeAttached();
+		await expect(page.getByText('30 wt', { exact: true })).toBeAttached();
+		await expect(page.getByText('35 wt', { exact: true })).toBeAttached();
+		expect(
+			await page.evaluate(
+				() => document.documentElement.scrollWidth <= window.innerWidth,
+			),
+		).toBe(true);
 		await expect(page.locator('app-appearance-selector')).toHaveCount(0);
 		await expectAxeClean(page);
 	});
@@ -89,10 +117,9 @@ test('uses dark system appearance before requesting public evidence', async ({
 
 	await page.goto('/');
 	await expect(page.locator('html')).toHaveAttribute('data-appearance', 'dark');
-	await expect(page.getByRole('img')).toHaveAttribute(
-		'src',
-		/current-setup-mobile-dark\.png/,
-	);
+	await expect(
+		page.getByRole('img', { name: /Current setup for the B7 carpet car/ }),
+	).toHaveAttribute('src', /current-setup-mobile-dark\.png/);
 	expect(evidenceRequests).toEqual(['/landing/current-setup-mobile-dark.png']);
 });
 

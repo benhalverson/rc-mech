@@ -23,6 +23,11 @@ export class Landing {
 			? '/landing/current-setup-mobile-dark.png'
 			: '/landing/current-setup-mobile-light.png',
 	);
+	protected readonly setupHistoryEvidence = computed(() =>
+		this.appearance.resolved() === 'dark'
+			? '/landing/setup-history-desktop-dark.png'
+			: '/landing/setup-history-desktop-light.png',
+	);
 
 	constructor() {
 		this.title.setTitle(LANDING_TITLE);

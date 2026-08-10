@@ -65,9 +65,81 @@
 			<div>
 				<p class="m-0 font-technical text-xs uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">01 / Current setup</p>
 			</div>
-			<div class="max-w-[760px]">
+			<div>
 				<h2 id="walkthrough-title" class="m-0 text-3xl font-semibold leading-9 tracking-[-0.025em] sm:text-5xl sm:leading-[1.05]">Start with what’s on the car.</h2>
-				<p class="mt-5 max-w-[680px] text-lg leading-7 text-alloy-text-on-canvas-secondary">Open the B7 at the track and the current setup is the first record in view. Measurements stay readable; the history stays attached to the car.</p>
+				<p class="mt-5 max-w-[720px] text-lg leading-7 text-alloy-text-on-canvas-secondary">Open the example B7 at the track and the Current setup is the first record in view. Measurements stay readable; the history stays attached to the car.</p>
+
+				<div class="mt-9 grid items-start gap-8 xl:grid-cols-[minmax(280px,0.72fr)_minmax(0,1fr)]">
+					<div class="border-t-2 border-alloy-accent">
+						<div class="border-b border-alloy-separator py-4">
+							<p class="alloy-section-heading m-0 text-alloy-text-on-canvas-secondary">Recorded baseline</p>
+							<h3 class="m-0 mt-2 text-xl font-semibold">Club carpet baseline</h3>
+						</div>
+						<dl class="m-0 font-technical text-sm">
+							<div class="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-alloy-separator"><dt class="text-alloy-text-on-canvas-secondary">Ride height</dt><dd class="m-0">13 mm</dd></div>
+							<div class="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-alloy-separator"><dt class="text-alloy-text-on-canvas-secondary">Camber · Front / Rear</dt><dd class="m-0">-1° / -1°</dd></div>
+							<div class="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-alloy-separator"><dt class="text-alloy-text-on-canvas-secondary">Shock oil · Front / Rear</dt><dd class="m-0">35 wt / 30 wt</dd></div>
+							<div class="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-alloy-separator"><dt class="text-alloy-text-on-canvas-secondary">Gear differential</dt><dd class="m-0">30k</dd></div>
+						</dl>
+						<p class="mt-4 text-sm leading-6 text-alloy-text-on-canvas-secondary">Team Associated RC10B7 · 1/10-scale electric 2WD buggy · carpet. This is one demo record, not a recommended setup or manufacturer endorsement.</p>
+					</div>
+
+					<figure class="m-0 max-w-[390px] justify-self-center xl:justify-self-end">
+						<div class="border border-alloy-separator bg-graphite p-2 shadow-alloy-floating">
+							<img
+								class="block h-auto w-full"
+								[ngSrc]="heroEvidence()"
+								width="390"
+								height="844"
+								alt="Chassis Notes Current setup for the example B7 showing the Club carpet baseline, ride height, and front and rear camber"
+							/>
+						</div>
+						<figcaption class="mt-3 border-t border-alloy-separator pt-3 text-sm leading-6 text-alloy-text-on-canvas-secondary">Real Current-setup interface · dedicated local demo Garage</figcaption>
+					</figure>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<section class="border-y border-alloy-separator bg-alloy-surface px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24" aria-labelledby="setup-history-story-title">
+		<div class="mx-auto grid max-w-[1180px] gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-16">
+			<div>
+				<p class="m-0 font-technical text-xs uppercase tracking-[0.12em] text-alloy-text-secondary">02 / Setup change</p>
+			</div>
+			<div>
+				<h2 id="setup-history-story-title" class="m-0 text-3xl font-semibold leading-9 tracking-[-0.025em] sm:text-5xl sm:leading-[1.05]">Change the setup. Keep the baseline.</h2>
+				<p class="mt-5 max-w-[720px] text-lg leading-7 text-alloy-text-secondary">Copy the Setup before changing it. The Club carpet baseline stays in history while the copied Setup becomes current.</p>
+
+				<div class="mt-9 grid gap-5 border-y border-alloy-separator py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end" role="group" aria-label="Recorded rear shock-oil change">
+					<div>
+						<p class="alloy-section-heading m-0 text-alloy-text-secondary">Changes from previous</p>
+						<h3 class="m-0 mt-2 text-xl font-semibold">Rear shock oil</h3>
+					</div>
+					<p class="m-0 font-technical text-2xl">
+						<span aria-hidden="true" class="flex items-center gap-4">
+							<span class="text-alloy-text-secondary">30 wt</span>
+							<span class="text-alloy-accent">→</span>
+							<strong class="font-medium">35 wt</strong>
+						</span>
+						<span class="sr-only">Rear shock oil changed from 30 wt to 35 wt.</span>
+					</p>
+				</div>
+
+				<figure class="m-0 mt-9">
+					<div class="overflow-hidden border border-alloy-separator bg-graphite p-2 shadow-alloy-floating">
+						<img
+							class="block h-auto w-full"
+							[ngSrc]="setupHistoryEvidence()"
+							width="1054"
+							height="1201"
+							alt="Chassis Notes Setup history for the example B7 with Club carpet baseline preserved and Rear shock oil 35 wt marked Current"
+						/>
+					</div>
+					<figcaption class="mt-3 flex flex-col gap-1 border-t border-alloy-separator pt-3 text-sm leading-6 text-alloy-text-secondary sm:flex-row sm:justify-between sm:gap-6">
+						<span>Both Setup snapshots remain attached to the example car.</span>
+						<span>No performance outcome is claimed.</span>
+					</figcaption>
+				</figure>
 			</div>
 		</div>
 	</section>
