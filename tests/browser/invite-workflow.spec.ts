@@ -9,15 +9,30 @@ const builtRouteChunk = (routeExport: string): string => {
 	const index = readFileSync('public/index.html', 'utf8');
 	const mainName = index.match(/<script src="(main-[^"]+\.js)"/)?.[1];
 	if (!mainName) throw new Error('The browser build has no main bundle.');
-	const main = readFileSync(`public/${mainName}`, 'utf8');
 	const marker = `({${routeExport}:`;
-	const markerIndex = main.indexOf(marker);
-	const importPrefix = 'import(`./';
-	const chunkStart = main.lastIndexOf(importPrefix, markerIndex);
-	const chunkEnd = main.indexOf('`)', chunkStart + importPrefix.length);
-	if (markerIndex < 0 || chunkStart < 0 || chunkEnd < 0)
-		throw new Error(`The browser build has no ${routeExport} lazy chunk.`);
-	return main.slice(chunkStart + importPrefix.length, chunkEnd);
+	const pending = [mainName];
+	const visited = new Set<string>();
+	while (pending.length) {
+		const bundle = pending.shift();
+		if (!bundle || visited.has(bundle)) continue;
+		visited.add(bundle);
+		const source = readFileSync(`public/${bundle}`, 'utf8');
+		const markerIndex = source.indexOf(marker);
+		if (markerIndex >= 0) {
+			const priorImports = [
+				...source
+					.slice(0, markerIndex)
+					.matchAll(/import\((["'`])\.\/([^"'`]+\.js)\1\)/g),
+			];
+			const routeImport = priorImports.at(-1)?.[2];
+			if (routeImport) return routeImport;
+		}
+		for (const match of source.matchAll(/\.\/([^"'`]+\.js)/g)) {
+			const referenced = match[1];
+			if (referenced && !visited.has(referenced)) pending.push(referenced);
+		}
+	}
+	throw new Error(`The browser build has no ${routeExport} lazy chunk.`);
 };
 
 const scan = async (page: Page) => {

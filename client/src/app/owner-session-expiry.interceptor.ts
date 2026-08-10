@@ -1,8 +1,7 @@
 import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
-import { inject } from '@angular/core';
+import { EnvironmentInjector, inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { catchError, throwError } from 'rxjs';
-import { OwnerSessionStore } from './owner-session-store';
+import { catchError, from, switchMap, throwError } from 'rxjs';
 
 const protectedApiPrefix = '/api/v1/';
 
@@ -11,7 +10,7 @@ export const ownerSessionExpiryInterceptor: HttpInterceptorFn = (
 	next,
 ) => {
 	const router = inject(Router);
-	const sessionStore = inject(OwnerSessionStore);
+	const injector = inject(EnvironmentInjector);
 
 	return next(request).pipe(
 		catchError((error: unknown) => {
@@ -20,11 +19,18 @@ export const ownerSessionExpiryInterceptor: HttpInterceptorFn = (
 				error.status === 401 &&
 				request.url.startsWith(protectedApiPrefix)
 			) {
-				const returnTo = router.url.startsWith('/') ? router.url : '/garage';
-				sessionStore.expire();
-				void router.navigate(['/sign-in'], {
-					queryParams: { returnTo, reason: 'session-expired' },
-				});
+				return from(import('./owner-session-store')).pipe(
+					switchMap(({ OwnerSessionStore }) => {
+						const returnTo = router.url.startsWith('/')
+							? router.url
+							: '/garage';
+						injector.get(OwnerSessionStore).expire();
+						void router.navigate(['/sign-in'], {
+							queryParams: { returnTo, reason: 'session-expired' },
+						});
+						return throwError(() => error);
+					}),
+				);
 			}
 			return throwError(() => error);
 		}),

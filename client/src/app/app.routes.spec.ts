@@ -3,7 +3,11 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { routes } from './app.routes';
+import { routes, workspaceBoundaryRoute } from './app.routes';
+import {
+	protectedWorkspaceRoute,
+	workspaceRoutes,
+} from './shell/workspace.routes';
 
 // Route tests verify lazy wiring; component specs and the production build
 // exercise Lucide without evaluating its 12 MB barrel in this architecture test.
@@ -49,29 +53,51 @@ class RedirectTarget {}
 
 afterEach(() => TestBed.resetTestingModule());
 
-describe('protected workspace routes', () => {
-	it('lazy-loads Garage behind an owner canMatch gate', () => {
-		const garage = routes.find((route) => route.path === 'garage');
+describe('application routes', () => {
+	it('lazy-loads the public root independently of session-aware code', async () => {
+		const landing = routes[0];
+		expect(landing?.path).toBe('');
+		expect(landing?.pathMatch).toBe('full');
+		expect(landing?.canMatch).toBeUndefined();
+		expect(landing?.loadChildren).toBeTypeOf('function');
 
-		expect(garage?.canMatch).toHaveLength(1);
-		expect(garage?.loadChildren).toBeTypeOf('function');
-		expect(garage?.component).toBeUndefined();
-		expect(garage?.providers).toBeUndefined();
+		const landingRoutes = await landing?.loadChildren?.();
+		expect(Array.isArray(landingRoutes)).toBe(true);
+		if (!Array.isArray(landingRoutes)) return;
+		expect(landingRoutes[0]?.providers).toBeUndefined();
+		expect(await landingRoutes[0]?.loadComponent?.()).toBeTypeOf('function');
 	});
 
-	it('keeps collection and overview independently route scoped', () => {
-		const collection = routes.find((route) => route.path === 'garage');
-		const overview = routes.find(
+	it('guards one lazy authenticated shell before resolving workspace children', async () => {
+		expect(workspaceBoundaryRoute.canMatch).toBeUndefined();
+		expect(workspaceBoundaryRoute.loadComponent).toBeUndefined();
+		expect(workspaceBoundaryRoute.loadChildren).toBeTypeOf('function');
+		expect(await workspaceBoundaryRoute.loadChildren?.()).toEqual([
+			protectedWorkspaceRoute,
+		]);
+		expect(protectedWorkspaceRoute.canMatch).toHaveLength(1);
+		expect(protectedWorkspaceRoute.loadComponent).toBeTypeOf('function');
+		expect(protectedWorkspaceRoute.children).toBe(workspaceRoutes);
+		expect(await protectedWorkspaceRoute.loadComponent?.()).toBeTypeOf(
+			'function',
+		);
+		for (const route of workspaceRoutes) expect(route.canMatch).toBeUndefined();
+	});
+
+	it('keeps Garage collection and overview independently route scoped', () => {
+		const collection = workspaceRoutes.find((route) => route.path === 'garage');
+		const overview = workspaceRoutes.find(
 			(route) => route.path === 'garage/:carId/overview',
 		);
 
+		expect(collection?.pathMatch).toBe('full');
+		expect(collection?.loadChildren).toBeTypeOf('function');
 		expect(overview?.loadChildren).not.toBe(collection?.loadChildren);
 		expect(overview?.providers).toBeUndefined();
-		expect(overview?.canMatch).toHaveLength(1);
 	});
 
-	it('gives every car leaf its own protected lazy route boundary', () => {
-		const carRoutes = routes.filter(
+	it('gives every car leaf its own lazy route boundary', () => {
+		const carRoutes = workspaceRoutes.filter(
 			(route) => route.path?.startsWith('garage/:carId/') && route.loadChildren,
 		);
 
@@ -85,21 +111,15 @@ describe('protected workspace routes', () => {
 		]);
 		expect(new Set(carRoutes.map((route) => route.loadChildren)).size).toBe(6);
 		for (const route of carRoutes) {
-			expect(route.canMatch).toHaveLength(1);
 			expect(route.loadChildren).toBeTypeOf('function');
 			expect(route.providers).toBeUndefined();
 		}
 	});
 
-	it('keeps the legacy Drive-session URL as a preserving redirect to the protected canonical route', async () => {
-		const legacyRoute = routes.find(
+	it('keeps the legacy Drive-session URL as a preserving redirect inside the guarded shell', async () => {
+		const legacyRoute = workspaceRoutes.find(
 			(route) => route.path === 'garage/:carId/runs',
 		);
-		expect(legacyRoute?.canMatch).toBeUndefined();
-		expect(
-			routes.find((route) => route.path === 'garage/:carId/drive-sessions')
-				?.canMatch,
-		).toHaveLength(1);
 		expect(legacyRoute?.pathMatch).toBe('full');
 		expect(legacyRoute?.redirectTo).toBeTypeOf('function');
 
@@ -128,11 +148,8 @@ describe('protected workspace routes', () => {
 	});
 
 	it('keeps feature stores beside lazy leaf components', async () => {
-		for (const route of routes.filter(
-			(candidate) =>
-				(candidate.path === 'garage' ||
-					candidate.path?.startsWith('garage/:carId/')) &&
-				Boolean(candidate.loadChildren),
+		for (const route of workspaceRoutes.filter((candidate) =>
+			Boolean(candidate.loadChildren),
 		)) {
 			const lazyRoutes = await route.loadChildren?.();
 			expect(Array.isArray(lazyRoutes)).toBe(true);
@@ -143,24 +160,7 @@ describe('protected workspace routes', () => {
 		}
 	});
 
-	it('resolves every top-level lazy route boundary', async () => {
-		for (const route of routes) {
-			if (route.loadComponent)
-				expect(await route.loadComponent()).toBeTypeOf('function');
-			if (route.loadChildren) {
-				const lazyRoutes = await route.loadChildren();
-				expect(Array.isArray(lazyRoutes)).toBe(true);
-				if (Array.isArray(lazyRoutes)) {
-					for (const lazyRoute of lazyRoutes) {
-						if (lazyRoute.loadComponent)
-							expect(await lazyRoute.loadComponent()).toBeTypeOf('function');
-					}
-				}
-			}
-		}
-	});
-
-	it('keeps the public authentication workflow behind its own lazy route boundary', async () => {
+	it('keeps public authentication behind its own lazy route boundary', async () => {
 		const signIn = routes.find((route) => route.path === 'sign-in');
 		expect(signIn?.loadChildren).toBeTypeOf('function');
 		expect(signIn?.loadComponent).toBeUndefined();
@@ -176,31 +176,14 @@ describe('protected workspace routes', () => {
 		);
 	});
 
-	it('keeps every protected workspace behind the session gate', () => {
-		for (const route of routes.filter(
-			(candidate) =>
-				(candidate.path?.startsWith('garage') && !candidate.redirectTo) ||
-				['maintenance', 'settings'].includes(candidate.path ?? ''),
-		)) {
-			expect(route.canMatch).toHaveLength(1);
-			expect(
-				route.loadComponent ?? route.loadChildren ?? route.redirectTo,
-			).toBeTypeOf('function');
-		}
-	});
+	it('loads Settings and Maintenance through separate lazy route files', () => {
+		const settings = workspaceRoutes.find((route) => route.path === 'settings');
+		const maintenance = workspaceRoutes.find(
+			(route) => route.path === 'maintenance',
+		);
 
-	it('loads Settings through its own lazy route file', () => {
-		const settings = routes.find((route) => route.path === 'settings');
-
-		expect(settings?.canMatch).toHaveLength(1);
 		expect(settings?.loadChildren).toBeTypeOf('function');
 		expect(settings?.loadComponent).toBeUndefined();
-	});
-
-	it('loads Maintenance through its own lazy route file', () => {
-		const maintenance = routes.find((route) => route.path === 'maintenance');
-
-		expect(maintenance?.canMatch).toHaveLength(1);
 		expect(maintenance?.loadChildren).toBeTypeOf('function');
 		expect(maintenance?.loadComponent).toBeUndefined();
 	});

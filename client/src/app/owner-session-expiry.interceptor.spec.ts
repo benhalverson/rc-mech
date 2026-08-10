@@ -1,6 +1,5 @@
 import {
 	HttpClient,
-	HttpErrorResponse,
 	provideHttpClient,
 	withInterceptors,
 } from '@angular/common/http';
@@ -10,6 +9,7 @@ import {
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
+import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ownerSessionExpiryInterceptor } from './owner-session-expiry.interceptor';
 import { OwnerSessionStore } from './owner-session-store';
@@ -44,18 +44,13 @@ describe('ownerSessionExpiryInterceptor', () => {
 		TestBed.resetTestingModule();
 	});
 
-	it('expires the shared session and returns protected API failures to sign-in', () => {
-		let receivedError: HttpErrorResponse | undefined;
-		http.get('/api/v1/cars').subscribe({
-			error: (error: HttpErrorResponse) => {
-				receivedError = error;
-			},
-		});
+	it('expires the shared session and returns protected API failures to sign-in', async () => {
+		const response = firstValueFrom(http.get('/api/v1/cars'));
 		controller
 			.expectOne('/api/v1/cars')
 			.flush({}, { status: 401, statusText: 'Unauthorized' });
 
-		expect(receivedError?.status).toBe(401);
+		await expect(response).rejects.toMatchObject({ status: 401 });
 		expect(sessionStore.expire).toHaveBeenCalledTimes(1);
 		expect(router.navigate).toHaveBeenCalledWith(['/sign-in'], {
 			queryParams: {
@@ -65,25 +60,27 @@ describe('ownerSessionExpiryInterceptor', () => {
 		});
 	});
 
-	it('does not treat an authentication ceremony failure as session expiry', () => {
-		http
-			.get('/api/auth/passkey/generate-register-options')
-			.subscribe({ error: () => undefined });
+	it('does not treat an authentication ceremony failure as session expiry', async () => {
+		const response = firstValueFrom(
+			http.get('/api/auth/passkey/generate-register-options'),
+		);
 		controller
 			.expectOne('/api/auth/passkey/generate-register-options')
 			.flush({}, { status: 401, statusText: 'Unauthorized' });
 
+		await expect(response).rejects.toMatchObject({ status: 401 });
 		expect(sessionStore.expire).not.toHaveBeenCalled();
 		expect(router.navigate).not.toHaveBeenCalled();
 	});
 
-	it('falls back to Garage when the current router URL is not absolute', () => {
+	it('falls back to Garage when the current router URL is not absolute', async () => {
 		router.url = 'not-yet-navigated';
-		http.get('/api/v1/cars').subscribe({ error: () => undefined });
+		const response = firstValueFrom(http.get('/api/v1/cars'));
 		controller
 			.expectOne('/api/v1/cars')
 			.flush({}, { status: 401, statusText: 'Unauthorized' });
 
+		await expect(response).rejects.toMatchObject({ status: 401 });
 		expect(router.navigate).toHaveBeenCalledWith(['/sign-in'], {
 			queryParams: {
 				returnTo: '/garage',

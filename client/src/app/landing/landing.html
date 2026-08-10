@@ -1,0 +1,74 @@
+<header class="border-b border-alloy-separator bg-graphite text-alloy-command-text">
+	<div class="mx-auto flex min-h-16 max-w-[1280px] items-center justify-between gap-6 px-5 sm:px-8 lg:px-12">
+		<a class="alloy-focus-ring py-3 text-alloy-command-text no-underline" routerLink="/" aria-label="Chassis Notes home">
+			<span class="block text-sm font-semibold leading-5">Chassis Notes</span>
+			<span class="block text-[10px] font-semibold uppercase leading-4 tracking-[0.12em] text-alloy-command-secondary">Setup history</span>
+		</a>
+		<a class="alloy-focus-ring flex min-h-12 items-center border-b border-alloy-command-accent px-1 text-sm font-semibold text-alloy-command-accent no-underline" routerLink="/sign-in">Sign in</a>
+	</div>
+</header>
+
+<main>
+	<section class="border-b border-alloy-separator bg-alloy-surface" aria-labelledby="landing-title">
+		<div class="mx-auto grid max-w-[1280px] lg:min-h-[calc(100dvh-4rem)] lg:grid-cols-[minmax(0,0.9fr)_minmax(390px,0.72fr)]">
+			<div class="flex items-center border-b border-alloy-separator px-5 py-14 sm:px-8 sm:py-20 lg:border-b-0 lg:border-r lg:px-12 lg:py-24">
+				<div class="max-w-[720px]">
+					<p class="alloy-section-heading m-0 text-alloy-text-secondary">A field notebook for RC racers</p>
+					<h1 id="landing-title" data-route-focus tabindex="-1" class="m-0 mt-5 text-[clamp(2.65rem,6.4vw,5.8rem)] font-semibold leading-[0.96] tracking-[-0.045em] text-alloy-text">
+						Know what’s on the car. <span class="text-alloy-text-secondary">What changed. What happened next.</span>
+					</h1>
+					<p class="mt-7 max-w-[640px] text-lg font-[450] leading-7 text-alloy-text-secondary sm:text-xl sm:leading-8">
+						Keep the current setup, every intentional change, and what the car did next in one private history.
+					</p>
+					<div class="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+						<a class="alloy-control alloy-focus-ring flex min-h-12 items-center justify-center px-5 no-underline" routerLink="/garage">Enter Chassis Notes</a>
+						<a class="alloy-control alloy-control-secondary alloy-focus-ring flex min-h-12 items-center justify-center px-5 no-underline" href="#walkthrough" (click)="revealWalkthrough($event, walkthrough)">See how it works</a>
+					</div>
+					<p class="mt-4 font-technical text-xs leading-5 text-alloy-text-secondary">An invite is required for first registration.</p>
+				</div>
+			</div>
+
+			<div class="relative flex items-center justify-center overflow-hidden bg-alloy-canvas px-5 py-12 sm:px-8 lg:px-12 lg:py-16">
+				<div class="absolute inset-x-0 top-0 flex h-9 items-center justify-between border-b border-alloy-separator px-5 font-technical text-[10px] uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary sm:px-8 lg:px-12">
+					<span>Current setup</span>
+					<span>Club carpet</span>
+				</div>
+				<figure class="m-0 mt-5 w-full max-w-[390px]">
+					<div class="border border-alloy-separator bg-graphite p-2 shadow-alloy-floating">
+						<img
+							class="block h-auto w-full"
+							[ngSrc]="heroEvidence()"
+							width="390"
+							height="844"
+							priority
+							alt="Chassis Notes Current setup for the B7 carpet car showing ride height, camber, shock oil, and gear differential values"
+						/>
+					</div>
+					<figcaption class="mt-3 flex justify-between gap-4 border-t border-alloy-separator pt-3 font-technical text-[10px] uppercase leading-4 tracking-[0.08em] text-alloy-text-on-canvas-secondary">
+						<span>Team Associated B7</span>
+						<span>Dedicated demo garage</span>
+					</figcaption>
+				</figure>
+			</div>
+		</div>
+	</section>
+
+	<section
+		#walkthrough
+		id="walkthrough"
+		data-route-focus
+		tabindex="-1"
+		class="alloy-focus-ring scroll-mt-6 bg-alloy-canvas px-5 py-16 sm:px-8 sm:py-20 lg:px-12 lg:py-24"
+		aria-labelledby="walkthrough-title"
+	>
+		<div class="mx-auto grid max-w-[1180px] gap-8 border-t border-alloy-separator pt-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-16">
+			<div>
+				<p class="m-0 font-technical text-xs uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">01 / Current setup</p>
+			</div>
+			<div class="max-w-[760px]">
+				<h2 id="walkthrough-title" class="m-0 text-3xl font-semibold leading-9 tracking-[-0.025em] sm:text-5xl sm:leading-[1.05]">Start with what’s on the car.</h2>
+				<p class="mt-5 max-w-[680px] text-lg leading-7 text-alloy-text-on-canvas-secondary">Open the B7 at the track and the current setup is the first record in view. Measurements stay readable; the history stays attached to the car.</p>
+			</div>
+		</div>
+	</section>
+</main>
