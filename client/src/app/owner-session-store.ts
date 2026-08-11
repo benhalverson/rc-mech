@@ -8,6 +8,16 @@ export type OwnerSessionResponse = {
 	user?: { email?: string };
 } | null;
 
+export const ownerSessionKey = (
+	response: OwnerSessionResponse,
+): string | null => {
+	const session = response?.session;
+	if (typeof session !== 'object' || session === null || !('id' in session))
+		return null;
+	const id = session.id;
+	return typeof id === 'string' && id.trim() ? id.trim() : null;
+};
+
 @Service()
 export class OwnerSessionStore {
 	private resolvedOnce = false;
@@ -16,11 +26,19 @@ export class OwnerSessionStore {
 		withCredentials: true,
 	}));
 	private readonly sessionStatuses = toObservable(this.session.status);
-	readonly authenticated = computed(() =>
-		Boolean(this.session.value()?.session),
+	readonly authenticated = computed(
+		() => this.session.hasValue() && Boolean(this.session.value()?.session),
 	);
+	readonly resolutionFailed = computed(() => this.session.status() === 'error');
 	readonly ownerEmail = computed(
-		() => this.session.value()?.user?.email ?? 'Owner',
+		() =>
+			(this.session.hasValue() ? this.session.value()?.user?.email : null) ??
+			'Owner',
+	);
+	readonly sessionKey = computed(() =>
+		ownerSessionKey(
+			this.session.hasValue() ? (this.session.value() ?? null) : null,
+		),
 	);
 
 	async resolved(): Promise<OwnerSessionResponse> {
@@ -33,7 +51,7 @@ export class OwnerSessionStore {
 			),
 		);
 		this.resolvedOnce = true;
-		return this.session.value() ?? null;
+		return this.session.hasValue() ? (this.session.value() ?? null) : null;
 	}
 
 	get hasResolvedSession(): boolean {

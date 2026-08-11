@@ -9,6 +9,7 @@ import {
 	viewChild,
 } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { OfflineStatus } from '../offline/offline-status';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
 import { ResponsiveViewport } from './responsive-viewport';
@@ -21,7 +22,7 @@ import { SignOutStore } from './sign-out-store';
 
 @Component({
 	selector: 'app-workspace-shell',
-	imports: [RouterLink, RouterLinkActive, RouterOutlet],
+	imports: [OfflineStatus, RouterLink, RouterLinkActive, RouterOutlet],
 	templateUrl: './workspace-shell.html',
 	styleUrl: './workspace-shell.css',
 })

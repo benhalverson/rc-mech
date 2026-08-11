@@ -4,18 +4,47 @@ import {
 	provideHttpClientTesting,
 	type TestRequest,
 } from '@angular/common/http/testing';
+import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineConnectivity } from '../offline/offline-connectivity';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { Garage } from './garage';
+import type { GarageCar } from './garage.models';
 import { GarageGateway } from './garage-gateway';
 import { GarageStore } from './garage-store';
+
+class FakeOfflineWorkspaceStore {
+	readonly cars = signal<readonly GarageCar[]>([]);
+	readonly hasSnapshot = signal(false);
+	readonly status = signal('idle');
+	readonly networkUnavailable = signal(false);
+	readonly markOffline = vi.fn(() => {
+		this.networkUnavailable.set(true);
+		if (this.status() === 'ready') this.status.set('offline');
+		else if (this.status() === 'online-only')
+			this.status.set('offline-unavailable');
+	});
+	readonly markOnline = vi.fn(() => {
+		this.networkUnavailable.set(false);
+		if (this.status() === 'offline') this.status.set('ready');
+	});
+}
+
+class FakeOfflineConnectivity {
+	readonly online = signal(true);
+}
 
 describe('Garage', () => {
 	let fixture: ComponentFixture<Garage>;
 	let http: HttpTestingController;
+	let offline: FakeOfflineWorkspaceStore;
+	let connectivity: FakeOfflineConnectivity;
 
 	beforeEach(async () => {
+		offline = new FakeOfflineWorkspaceStore();
+		connectivity = new FakeOfflineConnectivity();
 		await TestBed.configureTestingModule({
 			imports: [Garage],
 			providers: [
@@ -24,6 +53,8 @@ describe('Garage', () => {
 				provideRouter([]),
 				GarageGateway,
 				GarageStore,
+				{ provide: OfflineConnectivity, useValue: connectivity },
+				{ provide: OfflineWorkspaceStore, useValue: offline },
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -202,6 +233,88 @@ describe('Garage', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Check the connection and try again',
 		);
+	});
+
+	it('blocks mutations after a confirmed outage without an offline snapshot', async () => {
+		offline.status.set('online-only');
+		http.expectOne('/api/v1/cars').error(new ProgressEvent('offline'));
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(offline.status()).toBe('offline-unavailable');
+		expect(offline.networkUnavailable()).toBe(true);
+		expect(connectivity.online()).toBe(true);
+		expect(TestBed.inject(GarageStore).carMutationsAvailable()).toBe(false);
+		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.trim() === 'Add a car',
+		) as HTMLButtonElement;
+		expect(add.disabled).toBe(true);
+	});
+
+	it('reads the User-scoped Garage snapshot after the live collection fails', async () => {
+		offline.cars.set([
+			{ id: 'car-1', name: 'Offline buggy' },
+			{
+				id: 'car-2',
+				name: 'Archived offline truck',
+				archivedAt: '2026-08-01T00:00:00.000Z',
+			},
+		]);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		http.expectOne('/api/v1/cars').error(new ProgressEvent('offline'));
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(offline.markOffline).toHaveBeenCalled();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Car changes need a connection',
+		);
+		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.trim() === 'Add a car',
+		) as HTMLButtonElement;
+		expect(add.disabled).toBe(true);
+		const internal = fixture.componentInstance as unknown as {
+			openCreate(): void;
+			save(event: Event): void;
+		};
+		internal.openCreate();
+		internal.save(new Event('submit'));
+		TestBed.inject(GarageStore).createCar({ input: { name: 'Blocked' } });
+		expect(fixture.nativeElement.querySelector('.car-form')).toBeNull();
+		expect(fixture.nativeElement.textContent).toContain('Offline buggy');
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Archived offline truck',
+		);
+		expect(fixture.nativeElement.querySelector('[role="alert"]')).toBeNull();
+
+		const toggle = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) =>
+				button.textContent?.includes('Inspect archived cars'),
+		) as HTMLButtonElement;
+		toggle.click();
+		await vi.waitFor(() =>
+			http
+				.expectOne((request) => request.params.get('archived') === 'all')
+				.error(new ProgressEvent('offline')),
+		);
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Archived offline truck',
+		);
+
+		connectivity.online.set(false);
+		fixture.detectChanges();
+		connectivity.online.set(true);
+		let recovery: TestRequest | undefined;
+		await vi.waitFor(() => {
+			recovery = http.expectOne(
+				(request) => request.params.get('archived') === 'all',
+			);
+		});
+		recovery?.flush({ cars: [{ id: 'car-1', name: 'Recovered buggy' }] });
+		await vi.waitFor(() => expect(offline.markOnline).toHaveBeenCalled());
 	});
 
 	it('opens and cancels the toolbar create form', async () => {

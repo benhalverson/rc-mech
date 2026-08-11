@@ -10,10 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidSignOutResponse } from './sign-out-contract';
 import {
 	SIGN_OUT_RESPONSE_LOADER,
+	SIGN_OUT_TIMEOUT_MS,
 	SignOutGateway,
 	type SignOutResponseLoader,
 	type SignOutResponseModule,
 	signOutGatewayFailure,
+	signOutTimeoutMs,
 } from './sign-out-gateway';
 import type { SignOutResponse } from './sign-out-response';
 
@@ -111,6 +113,8 @@ describe('SignOutGateway', () => {
 		expect(signOutGatewayFailure(new Error('unexpected'))).toEqual({
 			kind: 'unavailable',
 		});
+		expect(signOutTimeoutMs()).toBe(15_000);
+		expect(TestBed.inject(SIGN_OUT_TIMEOUT_MS)).toBe(15_000);
 	});
 });
 

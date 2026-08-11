@@ -61,7 +61,7 @@ describe('Chassis Notes product contract', () => {
 		expect(
 			read('docs/adr/0014-extend-alloy-to-public-product-pages.md'),
 		).toContain(
-			'Public Chassis Notes product pages use the same Alloy visual language',
+			'Public Chassis Notes product pages and public authentication use the same Alloy visual language',
 		);
 		const brief = read('docs/chassis-notes-landing-page.md');
 		expect(brief).toContain('**Status:** accepted');

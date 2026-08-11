@@ -1,0 +1,19 @@
+@if (store.message()) {
+	<p
+		class="alloy-state m-0 border-x-0 border-t-0 bg-alloy-control px-4 py-2"
+		[class.alloy-live-state]="
+			store.status() !== 'online-only' &&
+			store.status() !== 'offline-unavailable'
+		"
+		[class.alloy-attention-state]="
+			store.status() === 'online-only' ||
+			store.status() === 'offline-unavailable'
+		"
+		[attr.data-offline-status]="store.status()"
+		role="status"
+		aria-live="polite"
+		aria-atomic="true"
+	>
+		<span>{{ store.message() }}</span>
+	</p>
+}

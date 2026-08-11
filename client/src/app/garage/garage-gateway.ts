@@ -72,6 +72,12 @@ export class GarageGateway {
 		return error ? garageGatewayFailure(error) : null;
 	}
 
+	collectionUnavailable(): boolean {
+		return (
+			this.collection.status() === 'error' && this.collection.statusCode() === 0
+		);
+	}
+
 	refresh(): void {
 		this.collection.reload();
 	}
