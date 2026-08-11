@@ -24,6 +24,21 @@
 	@if (actionMessage()) {
 		<p class="message alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideCheck size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Setup updated</strong></span><span>{{ actionMessage() }}</span></p>
 	}
+	@let setupSyncMark = syncMark();
+	@switch (setupSyncMark.kind) {
+		@case ('pending') {
+			<p class="message alloy-state alloy-attention-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Pending sync</strong></span><span>Setup history is saved on this device and will sync when the connection returns.</span></p>
+		}
+		@case ('syncing') {
+			<p class="message alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Syncing setup history</strong></span><span>Sending saved trackside changes…</span></p>
+		}
+		@case ('needs-attention') {
+			<p class="message alloy-state alloy-error-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Needs attention</strong></span><span>{{ setupSyncMark.feedback.message }}</span></p>
+		}
+		@case ('conflict') {
+			<p class="message alloy-state alloy-attention-state mt-0" role="alert"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Setup conflict</strong></span><span>The server also changed this setup. Both versions remain available for review.</span></p>
+		}
+	}
 
 	@if (state() === 'loading') {
 		<div class="state-card alloy-state alloy-live-state mt-0" aria-live="polite"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Reading setup history</strong></span><span>Opening recorded baselines…</span></div>

@@ -18,6 +18,39 @@ const carBaseProperties = {
 	powerType: { ...carProperties.powerType, type: ['string', 'null'] },
 	notes: { ...carProperties.notes, type: ['string', 'null'] },
 };
+const setupProperties = {
+	name: { type: 'string' },
+	status: { type: 'string', enum: ['draft', 'reviewed', 'active'] },
+	setupDate: { type: 'string', format: 'date-time' },
+	track: { type: 'string' },
+	event: { type: 'string' },
+	surface: { type: 'string' },
+	traction: { type: 'string' },
+	moisture: { type: 'string' },
+	condition: { type: 'string' },
+	temperature: { type: 'string' },
+	vehicle: { type: 'object', additionalProperties: true },
+	drivetrain: { type: 'object', additionalProperties: true },
+	electronics: { type: 'object', additionalProperties: true },
+	tires: { type: 'object', additionalProperties: true },
+	shocks: { type: 'object', additionalProperties: true },
+	frontSuspension: { type: 'object', additionalProperties: true },
+	rearSuspension: { type: 'object', additionalProperties: true },
+	notes: { type: 'string' },
+	sourceUrl: { type: 'string', format: 'uri' },
+	sourcePdfReference: { type: 'string' },
+	sourceMetadata: { type: 'object', additionalProperties: true },
+	rawValues: { type: 'object', additionalProperties: true },
+	unmappedValues: { type: 'object', additionalProperties: true },
+};
+const setupCurrentSelectionSchema = {
+	type: 'object',
+	required: ['setupId', 'version'],
+	properties: {
+		setupId: { type: 'string', format: 'uuid', nullable: true },
+		version: { type: 'integer', minimum: 0 },
+	},
+};
 const componentProperties = {
 	slot: {
 		type: 'string',
@@ -184,7 +217,7 @@ export const openApi = {
 			],
 			put: {
 				summary:
-					'Idempotently apply one owner-scoped, version-aware Car operation',
+					'Idempotently apply one owner-scoped, version-aware Car or Setup operation',
 				requestBody: {
 					required: true,
 					content: {
@@ -254,6 +287,75 @@ export const openApi = {
 													},
 												},
 											})),
+											{
+												type: 'object',
+												required: [
+													'type',
+													'carId',
+													'setupId',
+													'copiedFromSetupId',
+													'setup',
+													'makeCurrent',
+													'baseCurrent',
+												],
+												properties: {
+													type: { const: 'setup.create' },
+													carId: { type: 'string', format: 'uuid' },
+													setupId: { type: 'string', format: 'uuid' },
+													copiedFromSetupId: {
+														type: 'string',
+														format: 'uuid',
+														nullable: true,
+													},
+													setup: {
+														type: 'object',
+														required: ['name'],
+														properties: setupProperties,
+													},
+													makeCurrent: { type: 'boolean' },
+													baseCurrent: {
+														...setupCurrentSelectionSchema,
+														nullable: true,
+													},
+												},
+											},
+											{
+												type: 'object',
+												required: [
+													'type',
+													'carId',
+													'setupId',
+													'baseVersion',
+													'base',
+													'changes',
+												],
+												properties: {
+													type: { const: 'setup.correct' },
+													carId: { type: 'string', format: 'uuid' },
+													setupId: { type: 'string', format: 'uuid' },
+													baseVersion: { type: 'integer', minimum: 0 },
+													base: {
+														type: 'object',
+														minProperties: 1,
+														properties: setupProperties,
+													},
+													changes: {
+														type: 'object',
+														minProperties: 1,
+														properties: setupProperties,
+													},
+												},
+											},
+											{
+												type: 'object',
+												required: ['type', 'carId', 'setupId', 'baseCurrent'],
+												properties: {
+													type: { const: 'setup.select-current' },
+													carId: { type: 'string', format: 'uuid' },
+													setupId: { type: 'string', format: 'uuid' },
+													baseCurrent: setupCurrentSelectionSchema,
+												},
+											},
 										],
 									},
 								},
@@ -266,7 +368,7 @@ export const openApi = {
 					200: { description: 'Applied or exact terminal replay' },
 					400: { description: 'Malformed operation envelope or identifier' },
 					401: { description: 'Authentication required' },
-					404: { description: 'Owned Car is unavailable' },
+					404: { description: 'Owned Car or Setup is unavailable' },
 					409: {
 						description:
 							'Operation ID reuse, unsupported contract, or Sync conflict',
@@ -935,29 +1037,7 @@ const setupSchema = {
 	type: 'object',
 	required: ['name'],
 	properties: {
-		name: { type: 'string' },
-		status: { type: 'string', enum: ['draft', 'reviewed', 'active'] },
-		setupDate: { type: 'string', format: 'date-time' },
-		track: { type: 'string' },
-		event: { type: 'string' },
-		surface: { type: 'string' },
-		traction: { type: 'string' },
-		moisture: { type: 'string' },
-		condition: { type: 'string' },
-		temperature: { type: 'string' },
-		vehicle: { type: 'object', additionalProperties: true },
-		drivetrain: { type: 'object', additionalProperties: true },
-		electronics: { type: 'object', additionalProperties: true },
-		tires: { type: 'object', additionalProperties: true },
-		shocks: { type: 'object', additionalProperties: true },
-		frontSuspension: { type: 'object', additionalProperties: true },
-		rearSuspension: { type: 'object', additionalProperties: true },
-		notes: { type: 'string' },
-		sourceUrl: { type: 'string', format: 'uri' },
-		sourcePdfReference: { type: 'string' },
-		sourceMetadata: { type: 'object', additionalProperties: true },
-		rawValues: { type: 'object', additionalProperties: true },
-		unmappedValues: { type: 'object', additionalProperties: true },
+		...setupProperties,
 		makeCurrent: { type: 'boolean' },
 	},
 };
@@ -987,6 +1067,7 @@ const setupResponseSchema = {
 		'unmappedValues',
 		'createdAt',
 		'updatedAt',
+		'version',
 	],
 	properties: {
 		id: { type: 'string' },
@@ -1007,6 +1088,7 @@ const setupResponseSchema = {
 		},
 		createdAt: { type: 'string', format: 'date-time' },
 		updatedAt: { type: 'string', format: 'date-time' },
+		version: { type: 'integer', minimum: 1 },
 	},
 };
 const setupResponse = {
@@ -1023,9 +1105,10 @@ const nullableSetupResponse = {
 };
 const setupListResponse = {
 	type: 'object',
-	required: ['currentSetupId', 'setups'],
+	required: ['currentSetupId', 'currentSetupVersion', 'setups'],
 	properties: {
 		currentSetupId: { type: 'string', nullable: true },
+		currentSetupVersion: { type: 'integer', minimum: 0 },
 		setups: { type: 'array', items: setupResponseSchema },
 	},
 };
@@ -1042,6 +1125,54 @@ const carIdParameter = {
 	schema: { type: 'string' },
 };
 Object.assign(setupPaths, {
+	'/api/v1/setups': {
+		get: {
+			summary:
+				'List the complete owner-scoped setup snapshot for offline preparation',
+			responses: {
+				200: {
+					description: 'Owner setup snapshot grouped by Car',
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								required: ['setupCollections'],
+								properties: {
+									setupCollections: {
+										type: 'array',
+										items: {
+											type: 'object',
+											required: [
+												'carId',
+												'currentSetupId',
+												'currentSetupVersion',
+												'setups',
+											],
+											properties: {
+												carId: { type: 'string' },
+												currentSetupId: {
+													type: 'string',
+													nullable: true,
+												},
+												currentSetupVersion: {
+													type: 'integer',
+													minimum: 0,
+												},
+												setups: {
+													type: 'array',
+													items: setupResponseSchema,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	},
 	'/api/v1/cars/{carId}/setups': {
 		parameters: [carIdParameter],
 		get: {

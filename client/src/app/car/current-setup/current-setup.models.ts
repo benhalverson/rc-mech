@@ -66,10 +66,12 @@ const setupSchema = object({
 	rawValues: optional(nullable(sectionSchema)),
 	createdAt: optional(string()),
 	updatedAt: optional(string()),
+	version: optional(number()),
 });
 
 const collectionSchema = object({
 	currentSetupId: optional(nullable(string())),
+	currentSetupVersion: optional(number()),
 	setups: array(setupSchema),
 });
 
@@ -83,6 +85,7 @@ export type CurrentSetupSnapshot = z.infer<typeof setupSchema> & {
 
 export type CurrentSetupCollection = {
 	readonly currentSetupId: string | null;
+	readonly currentSetupVersion?: number;
 	readonly setups: readonly CurrentSetupSnapshot[];
 };
 
@@ -140,7 +143,10 @@ export type CurrentSetupGatewayFailure =
 export type CurrentSetupSaveFailure =
 	| CurrentSetupGatewayFailure
 	| { readonly kind: 'invalid-command' }
-	| { readonly kind: 'stale-current' };
+	| { readonly kind: 'stale-current' }
+	| { readonly kind: 'local'; readonly message: string }
+	| { readonly kind: 'needs-attention'; readonly message: string }
+	| { readonly kind: 'conflict'; readonly message: string };
 
 export type CurrentSetupSaveOutcome =
 	| {
@@ -158,6 +164,7 @@ export type CurrentSetupSaveOutcome =
 			readonly operation: 'save-current-setup';
 			readonly operationId: number;
 			readonly setup: CurrentSetupSnapshot;
+			readonly retainedLocally: boolean;
 	  }
 	| {
 			readonly status: 'failed';
@@ -181,6 +188,7 @@ export const parseCurrentSetupCollection = (
 		throw new Error('The current setup response was invalid.');
 	return {
 		currentSetupId: parsed.data.currentSetupId ?? null,
+		currentSetupVersion: parsed.data.currentSetupVersion ?? 0,
 		setups: parsed.data.setups.map(normalizeSetup),
 	};
 };

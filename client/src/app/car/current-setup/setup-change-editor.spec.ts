@@ -190,6 +190,7 @@ describe('SetupChangeEditor', () => {
 			operation: 'save-current-setup',
 			operationId: 1,
 			setup: { ...setup, id: 'setup-2' },
+			retainedLocally: false,
 		});
 		detect();
 		expect(completed).toHaveBeenCalledOnce();

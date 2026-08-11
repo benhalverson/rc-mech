@@ -63,6 +63,7 @@ const emptyCurrentSetupStore = {
 	priorityRows: () => [],
 	remainingRows: () => [],
 	changes: () => [],
+	syncMark: () => ({ kind: 'synced' as const }),
 	timezone: () => 'UTC',
 	timezoneReady: () => true,
 	outcome: () => ({

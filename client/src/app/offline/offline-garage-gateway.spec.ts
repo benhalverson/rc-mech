@@ -31,19 +31,66 @@ describe('OfflineGarageGateway', () => {
 
 	it('loads and parses the complete authenticated Car snapshot', async () => {
 		const result = firstValueFrom(gateway.load());
-		const request = http.expectOne(
+		const cars = http.expectOne(
 			(candidate) =>
 				candidate.url === '/api/v1/cars' &&
 				candidate.params.get('archived') === 'all',
 		);
-		expect(request.request.withCredentials).toBe(true);
-		request.flush({ cars: [{ id: 'car-1', name: 'Track buggy' }] });
+		expect(cars.request.withCredentials).toBe(true);
+		const setups = http.expectOne('/api/v1/setups');
+		expect(setups.request.withCredentials).toBe(true);
+		cars.flush({ cars: [{ id: 'car-1', name: 'Track buggy' }] });
+		setups.flush({
+			setupCollections: [
+				{
+					carId: 'car-1',
+					currentSetupId: 'setup-1',
+					currentSetupVersion: 2,
+					setups: [
+						{
+							id: 'setup-1',
+							carId: 'car-1',
+							name: 'Baseline',
+							sections: {},
+						},
+					],
+				},
+			],
+		});
 		await expect(result).resolves.toEqual({
 			cars: [{ id: 'car-1', name: 'Track buggy' }],
+			setupCollections: [
+				{
+					carId: 'car-1',
+					currentSetupId: 'setup-1',
+					currentSetupVersion: 2,
+					setups: [
+						{
+							id: 'setup-1',
+							carId: 'car-1',
+							name: 'Baseline',
+							sections: {},
+						},
+					],
+				},
+			],
 		});
 
 		const malformed = firstValueFrom(gateway.load());
 		http.expectOne('/api/v1/cars?archived=all').flush({ cars: [{ id: 4 }] });
+		http.expectOne('/api/v1/setups').flush({ setupCollections: [] });
 		await expect(malformed).rejects.toThrow();
+
+		const empty = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/cars?archived=all').flush({ cars: [] });
+		http.expectOne('/api/v1/setups').flush({ setupCollections: [] });
+		await expect(empty).resolves.toEqual({ cars: [], setupCollections: [] });
+
+		const malformedSetup = firstValueFrom(gateway.load());
+		http
+			.expectOne('/api/v1/cars?archived=all')
+			.flush({ cars: [{ id: 'car-1', name: 'Track buggy' }] });
+		http.expectOne('/api/v1/setups').flush({ setupCollections: null });
+		await expect(malformedSetup).rejects.toThrow();
 	});
 });

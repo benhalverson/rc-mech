@@ -234,6 +234,8 @@ describe('backend defensive and alternate paths', () => {
 			unmappedValues: null,
 			createdAt: now,
 			updatedAt: now,
+			version: 1,
+			lastOperationId: null,
 		} satisfies typeof schema.setup.$inferSelect;
 		const richSetup = {
 			...emptySetup,

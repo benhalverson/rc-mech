@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, exists, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono } from 'hono';
 import { canWrite } from '../../car-policy';
@@ -23,7 +23,15 @@ import {
 import { ownedCar } from '../cars/car-records';
 import { jsonValue } from '../json-values';
 import { consumableInsertValues } from '../maintenance/consumable-records';
-import { setupCopyValue, setupInsertValues } from '../setups/setup-records';
+import {
+	nextSetupSelectionVersion,
+	setupSelectionWitness,
+} from '../setups/setup-concurrency';
+import {
+	setupCopyValue,
+	setupInsertSelection,
+	setupInsertValues,
+} from '../setups/setup-records';
 import {
 	ownedDriveSession,
 	ownedVoiceUpdate,
@@ -175,6 +183,7 @@ export const createVoiceConfirmationRoutes = () => {
 		const results: ResultValue[] = [];
 		let resultSequence = 0;
 		let resultingSetupId = parentCar.currentSetupId;
+		let voiceSetupSelection: { setupId: string; version: number } | undefined;
 
 		const confirmedSetupChanges = draft.setupChanges.filter(
 			(item) => !item.needsReview,
@@ -217,22 +226,34 @@ export const createVoiceConfirmationRoutes = () => {
 			};
 			const setupId = `${existing.id}:setup`;
 			resultingSetupId = setupId;
+			voiceSetupSelection = {
+				setupId,
+				version: parentCar.currentSetupVersion + 1,
+			};
 			statements.push(
-				database
-					.insert(setup)
-					.values(
-						setupInsertValues(
-							setupId,
-							parentCar.id,
-							next,
-							now,
-							source?.id ?? null,
+				database.insert(setup).select(
+					database
+						.select(
+							setupInsertSelection(
+								setupInsertValues(
+									setupId,
+									parentCar.id,
+									next,
+									now,
+									source?.id ?? null,
+								),
+							),
+						)
+						.from(car)
+						.where(
+							setupSelectionWitness({
+								carId: parentCar.id,
+								ownerId: c.get('userId'),
+								setupId: parentCar.currentSetupId,
+								version: parentCar.currentSetupVersion,
+							}),
 						),
-					),
-				database
-					.update(car)
-					.set({ currentSetupId: setupId })
-					.where(eq(car.id, parentCar.id)),
+				),
 			);
 			results.push(
 				resultValue(
@@ -385,10 +406,50 @@ export const createVoiceConfirmationRoutes = () => {
 
 		for (const result of results)
 			statements.push(database.insert(voiceUpdateResult).values(result));
+		if (voiceSetupSelection)
+			statements.push(
+				database
+					.update(car)
+					.set({
+						currentSetupId: voiceSetupSelection.setupId,
+						currentSetupVersion: nextSetupSelectionVersion(),
+						currentSetupOperationId: null,
+					})
+					.where(
+						and(
+							setupSelectionWitness({
+								carId: parentCar.id,
+								ownerId: c.get('userId'),
+								setupId: parentCar.currentSetupId,
+								version: parentCar.currentSetupVersion,
+							}),
+							exists(
+								database
+									.select({ id: setup.id })
+									.from(setup)
+									.where(
+										and(
+											eq(setup.id, voiceSetupSelection.setupId),
+											eq(setup.carId, parentCar.id),
+										),
+									),
+							),
+						),
+					),
+			);
 		const confirmation = database
 			.update(voiceUpdate)
 			.set({
-				status: 'saved',
+				status: voiceSetupSelection
+					? sql`CASE WHEN EXISTS (SELECT 1 FROM ${car} WHERE ${setupSelectionWitness(
+							{
+								carId: parentCar.id,
+								ownerId: c.get('userId'),
+								setupId: voiceSetupSelection.setupId,
+								version: voiceSetupSelection.version,
+							},
+						)}) THEN 'saved' ELSE NULL END`
+					: 'saved',
 				driveSessionId,
 				confirmedAt: now,
 				error: null,

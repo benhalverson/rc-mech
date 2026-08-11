@@ -2,9 +2,18 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SetupSnapshot } from '../../car/setups/setup-snapshot';
+import type {
+	SetupSyncCollection,
+	SetupSyncOperation,
+	SetupSyncRemoteOutcome,
+	SetupSyncView,
+} from '../../car/setups/setup-sync.models';
+import { SetupSyncGateway } from '../../car/setups/setup-sync-gateway';
 import { OfflineCapabilities } from '../../offline/offline-capabilities';
 import { OfflineConnectivity } from '../../offline/offline-connectivity';
 import {
+	type CommittedSetupSyncOperation,
 	OFFLINE_CURRENT_TIME,
 	OFFLINE_OPERATION_ID,
 	OfflineGarageStorage,
@@ -24,7 +33,9 @@ import {
 	carWorkspaceLocalFailure,
 	carWorkspaceTerminalFailure,
 	mergeWorkspaceCars,
+	mergeWorkspaceSetupCollection,
 	replaceWorkspaceCar,
+	setupWorkspaceGatewayFailure,
 } from './car-workspace-store';
 
 const localCar = {
@@ -62,6 +73,54 @@ const syncedView: CarSyncView = {
 	operations: [],
 };
 
+const localSetup: SetupSnapshot = {
+	id: 'setup-1',
+	carId: 'car-1',
+	name: 'Local setup',
+	current: true,
+	sections: {
+		vehicle: {},
+		drivetrain: {},
+		electronics: {},
+		tires: {},
+		shocks: {},
+		frontSuspension: {},
+		rearSuspension: {},
+		notes: {},
+	},
+	version: 1,
+};
+
+const setupOperation: SetupSyncOperation = {
+	operationId: 'setup-operation-1',
+	ownerKey: 'owner-1',
+	carId: 'car-1',
+	setupId: 'setup-1',
+	command: {
+		type: 'setup.select-current',
+		carId: 'car-1',
+		setupId: 'setup-1',
+		baseCurrent: { setupId: null, version: 0 },
+	},
+	dependencies: [],
+	status: 'pending',
+	createdAt: '2026-08-11T12:00:00.000Z',
+	sequence: 1,
+};
+
+const syncedSetupCollection: SetupSyncCollection = {
+	carId: 'car-1',
+	currentSetupId: 'setup-1',
+	currentSetupVersion: 1,
+	setups: [localSetup],
+};
+
+const syncedSetupView: SetupSyncView = {
+	canonicalCollections: [syncedSetupCollection],
+	collections: [syncedSetupCollection],
+	operations: [],
+};
+
 const deferred = <T>() => {
 	let resolve!: (value: T) => void;
 	let reject!: (reason?: unknown) => void;
@@ -74,6 +133,13 @@ const deferred = <T>() => {
 
 class FakeStorage {
 	readonly carSyncView = vi.fn(async (): Promise<CarSyncView | null> => null);
+	readonly setupSyncView = vi.fn(
+		async (): Promise<SetupSyncView | null> => ({
+			canonicalCollections: [],
+			collections: [],
+			operations: [],
+		}),
+	);
 	readonly commitCar = vi.fn(
 		async (_command?: unknown, _fence?: OfflineWorkspaceFence) => ({
 			operation,
@@ -92,6 +158,23 @@ class FakeStorage {
 			_cars?: readonly GarageCar[],
 			_fence?: OfflineWorkspaceFence,
 		): Promise<CarSyncView> => syncedView,
+	);
+	readonly commitSetup = vi.fn(
+		async (): Promise<CommittedSetupSyncOperation> => ({
+			operation: setupOperation,
+			setup: localSetup,
+			collection: syncedSetupCollection,
+			view: { ...syncedSetupView, operations: [setupOperation] },
+		}),
+	);
+	readonly readySetupOperations = vi.fn(
+		async (): Promise<readonly SetupSyncOperation[]> => [],
+	);
+	readonly recordSetupOutcome = vi.fn(
+		async (): Promise<SetupSyncView> => syncedSetupView,
+	);
+	readonly mergeSetupCollection = vi.fn(
+		async (): Promise<SetupSyncView> => syncedSetupView,
 	);
 }
 
@@ -113,6 +196,27 @@ class FakeGateway {
 
 	reset(): void {
 		this.response = new Subject<CarSyncRemoteOutcome>();
+	}
+}
+
+class FakeSetupGateway {
+	private response = new Subject<SetupSyncRemoteOutcome>();
+	readonly apply = vi.fn(
+		(_operation: SetupSyncOperation): Observable<SetupSyncRemoteOutcome> =>
+			this.response.asObservable(),
+	);
+
+	succeed(outcome: SetupSyncRemoteOutcome): void {
+		this.response.next(outcome);
+		this.response.complete();
+	}
+
+	fail(failure: unknown): void {
+		this.response.error(failure);
+	}
+
+	reset(): void {
+		this.response = new Subject<SetupSyncRemoteOutcome>();
 	}
 }
 
@@ -146,6 +250,7 @@ class FakeConnectivity {
 describe('CarWorkspaceStore', () => {
 	let storage: FakeStorage;
 	let gateway: FakeGateway;
+	let setupGateway: FakeSetupGateway;
 	let offline: FakeOfflineWorkspace;
 	let connectivity: FakeConnectivity;
 	let operationNumber: number;
@@ -154,6 +259,7 @@ describe('CarWorkspaceStore', () => {
 	beforeEach(() => {
 		storage = new FakeStorage();
 		gateway = new FakeGateway();
+		setupGateway = new FakeSetupGateway();
 		offline = new FakeOfflineWorkspace();
 		connectivity = new FakeConnectivity();
 		operationNumber = 10;
@@ -162,6 +268,7 @@ describe('CarWorkspaceStore', () => {
 				CarWorkspaceStore,
 				{ provide: OfflineGarageStorage, useValue: storage },
 				{ provide: CarSyncGateway, useValue: gateway },
+				{ provide: SetupSyncGateway, useValue: setupGateway },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 				{ provide: OfflineConnectivity, useValue: connectivity },
 				{ provide: OfflineCapabilities, useValue: { supported: true } },
@@ -208,6 +315,12 @@ describe('CarWorkspaceStore', () => {
 				remote: { car: { id: 'car-1', name: 'Remote', version: 3 } },
 			}),
 		).toMatchObject({ kind: 'conflict', remote: { name: 'Remote' } });
+		expect(setupWorkspaceGatewayFailure({ kind: 'http', status: 422 })).toEqual(
+			{ kind: 'http', status: 422 },
+		);
+		expect(setupWorkspaceGatewayFailure('offline')).toEqual({
+			kind: 'unavailable',
+		});
 		expect(replaceWorkspaceCar([], { id: 'car-1', name: 'One' })).toEqual([
 			{ id: 'car-1', name: 'One' },
 		]);
@@ -236,6 +349,57 @@ describe('CarWorkspaceStore', () => {
 			{ id: 'car-1', name: 'Old', version: 3 },
 			{ id: 'car-2', name: 'Two' },
 		]);
+		expect(mergeWorkspaceSetupCollection([], syncedSetupCollection)).toEqual(
+			syncedSetupView.collections,
+		);
+		expect(
+			mergeWorkspaceSetupCollection(syncedSetupView.collections, {
+				carId: 'car-1',
+				currentSetupId: null,
+				currentSetupVersion: 0,
+				setups: [
+					{ ...localSetup, name: 'Stale', version: 0 },
+					{ ...localSetup, id: 'setup-2', name: 'New', version: 1 },
+				],
+			}),
+		).toMatchObject([
+			{
+				currentSetupId: 'setup-1',
+				setups: [
+					{ id: 'setup-1', name: 'Local setup' },
+					{ id: 'setup-2', name: 'New' },
+				],
+			},
+		]);
+		expect(
+			mergeWorkspaceSetupCollection(
+				[
+					{
+						...syncedSetupCollection,
+						setups: [{ ...localSetup, version: undefined }],
+					},
+					{
+						carId: 'car-2',
+						currentSetupId: null,
+						currentSetupVersion: 0,
+						setups: [],
+					},
+				],
+				{
+					...syncedSetupCollection,
+					currentSetupId: null,
+					currentSetupVersion: 2,
+					setups: [{ ...localSetup, name: 'Server setup', version: 2 }],
+				},
+			),
+		).toMatchObject([
+			{
+				currentSetupId: null,
+				currentSetupVersion: 2,
+				setups: [{ id: 'setup-1', name: 'Server setup', version: 2 }],
+			},
+			{ carId: 'car-2' },
+		]);
 		expect(
 			mergeWorkspaceCars(
 				[{ id: 'car-1', name: 'Old' }],
@@ -258,6 +422,8 @@ describe('CarWorkspaceStore', () => {
 		});
 		expect(store.carMark('car-1').kind).toBe('pending');
 		expect(store.carMark('car-2').kind).toBe('synced');
+		expect(store.durableSetupMutationsAvailable()).toBe(true);
+		expect(store.externalRequestsAvailable()).toBe(true);
 		expect(offline.setCars).toHaveBeenCalledWith([localCar]);
 	});
 
@@ -447,6 +613,11 @@ describe('CarWorkspaceStore', () => {
 		expect(store.cars()).toEqual([]);
 		expect(store.operations()).toEqual([]);
 		expect(store.syncFailure()).toBeNull();
+		expect(store.setupCollections()).toEqual([]);
+		expect(store.setupOperations()).toEqual([]);
+		expect(store.setupMutationOutcome().status).toBe('idle');
+		expect(store.setupSyncFailure()).toBeNull();
+		expect(store.setupSyncMark().kind).toBe('synced');
 
 		offline.hasSnapshot.set(true);
 		offline.status.set('ready');
@@ -497,6 +668,40 @@ describe('CarWorkspaceStore', () => {
 		expect(store.cars()).toEqual([]);
 	});
 
+	it('drops delayed Setup merges and merge failures after the owner changes', async () => {
+		storage.carSyncView.mockResolvedValueOnce(syncedView);
+		storage.setupSyncView.mockResolvedValueOnce(syncedSetupView);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.opened()).toBe(true));
+		const merging = deferred<SetupSyncView>();
+		const failingMerge = deferred<SetupSyncView>();
+		storage.mergeSetupCollection
+			.mockReturnValueOnce(merging.promise)
+			.mockReturnValueOnce(failingMerge.promise);
+		store.observeServerSetupCollection({
+			...syncedSetupCollection,
+			currentSetupVersion: 2,
+		});
+		store.observeServerSetupCollection({
+			...syncedSetupCollection,
+			currentSetupVersion: 3,
+		});
+		offline.hasSnapshot.set(false);
+		offline.status.set('preparing');
+		offline.ownerKey.set('owner-2');
+		offline.sessionKey.set('session-2');
+		merging.resolve({
+			canonicalCollections: [],
+			collections: [],
+			operations: [],
+		});
+		failingMerge.reject(new Error('Stale Setup merge failure'));
+		await Promise.resolve();
+		expect(store.setupCollections()).toEqual([]);
+		expect(store.setupSyncFailure()).toBeNull();
+	});
+
 	it('abandons a sync whose durable queue read crosses an owner change', async () => {
 		const ready = deferred<readonly CarSyncOperation[]>();
 		storage.carSyncView.mockResolvedValueOnce(pendingView);
@@ -514,6 +719,29 @@ describe('CarWorkspaceStore', () => {
 		await Promise.resolve();
 		expect(gateway.apply).not.toHaveBeenCalled();
 		expect(store.cars()).toEqual([]);
+	});
+
+	it('abandons Setup sync when its queue read crosses an owner change', async () => {
+		const ready = deferred<readonly SetupSyncOperation[]>();
+		storage.carSyncView.mockResolvedValueOnce(syncedView);
+		storage.setupSyncView.mockResolvedValueOnce({
+			...syncedSetupView,
+			operations: [setupOperation],
+		});
+		storage.readySetupOperations.mockReturnValueOnce(ready.promise);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() =>
+			expect(storage.readySetupOperations).toHaveBeenCalledOnce(),
+		);
+		offline.hasSnapshot.set(false);
+		offline.status.set('preparing');
+		offline.ownerKey.set('owner-2');
+		offline.sessionKey.set('session-2');
+		ready.resolve([setupOperation]);
+		await Promise.resolve();
+		expect(setupGateway.apply).not.toHaveBeenCalled();
+		expect(store.setupCollections()).toEqual([]);
 	});
 
 	it.each(['success', 'failure'] as const)(
@@ -538,6 +766,37 @@ describe('CarWorkspaceStore', () => {
 			await Promise.resolve();
 			expect(storage.recordCarOutcome).not.toHaveBeenCalled();
 			expect(store.syncFailure()).toBeNull();
+		},
+	);
+
+	it.each(['success', 'failure'] as const)(
+		'ignores stale Setup sync gateway %s after an owner change',
+		async (result) => {
+			storage.carSyncView.mockResolvedValueOnce(syncedView);
+			storage.setupSyncView.mockResolvedValueOnce({
+				...syncedSetupView,
+				operations: [setupOperation],
+			});
+			storage.readySetupOperations.mockResolvedValueOnce([setupOperation]);
+			offline.hasSnapshot.set(true);
+			offline.status.set('ready');
+			await vi.waitFor(() => expect(setupGateway.apply).toHaveBeenCalledOnce());
+			offline.hasSnapshot.set(false);
+			offline.status.set('preparing');
+			offline.ownerKey.set('owner-2');
+			offline.sessionKey.set('session-2');
+			if (result === 'success')
+				setupGateway.succeed({
+					operationId: setupOperation.operationId,
+					outcome: 'applied',
+					setup: localSetup,
+					currentSetupId: 'setup-1',
+					currentSetupVersion: 1,
+				});
+			else setupGateway.fail({ kind: 'unavailable' });
+			await Promise.resolve();
+			expect(storage.recordSetupOutcome).not.toHaveBeenCalled();
+			expect(store.setupSyncFailure()).toBeNull();
 		},
 	);
 
@@ -724,6 +983,175 @@ describe('CarWorkspaceStore', () => {
 		expect(offline.markOnline).toHaveBeenCalled();
 	});
 
+	it('opens durable Setup history and reports local success before remote acknowledgement', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.setupSyncView.mockResolvedValue({
+			...syncedSetupView,
+			operations: [setupOperation],
+		});
+		storage.readySetupOperations
+			.mockResolvedValueOnce([setupOperation])
+			.mockResolvedValue([]);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.opened()).toBe(true));
+		expect(store.setupCollections()).toEqual(syncedSetupView.collections);
+		expect(store.setupSyncMark()).toMatchObject({ kind: 'syncing' });
+		expect(store.setupMark('car-1')).toMatchObject({ kind: 'syncing' });
+		expect(store.setupMark('car-2')).toEqual({ kind: 'synced' });
+		await vi.waitFor(() => expect(setupGateway.apply).toHaveBeenCalledOnce());
+		setupGateway.succeed({
+			operationId: setupOperation.operationId,
+			outcome: 'applied',
+			setup: localSetup,
+			currentSetupId: 'setup-1',
+			currentSetupVersion: 1,
+		});
+		await vi.waitFor(() =>
+			expect(storage.recordSetupOutcome).toHaveBeenCalledOnce(),
+		);
+		expect(offline.markOnline).toHaveBeenCalled();
+
+		store.commitSetup({
+			type: 'copy',
+			carId: 'car-1',
+			setupId: 'setup-1',
+		});
+		await vi.waitFor(() => expect(storage.commitSetup).toHaveBeenCalledOnce());
+		expect(storage.commitSetup).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'copy' }),
+			{ ownerKey: 'owner-1', sessionKey: 'session-1' },
+		);
+		expect(store.setupMutationOutcome()).toMatchObject({
+			status: 'succeeded',
+			retainedLocally: true,
+			setup: { id: 'setup-1' },
+		});
+		store.clearSetupMutationState();
+		expect(store.setupMutationOutcome().status).toBe('idle');
+	});
+
+	it('guards Setup commands and surfaces durable and merge failures', async () => {
+		store.observeServerSetupCollection(syncedSetupCollection);
+		expect(store.setupCollections()).toEqual([]);
+		store.commitSetup({
+			type: 'create',
+			carId: 'car-1',
+			draft: { name: 'Unavailable' },
+		});
+		expect(storage.commitSetup).not.toHaveBeenCalled();
+
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.setupSyncView.mockResolvedValue(syncedSetupView);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.opened()).toBe(true));
+		storage.commitSetup.mockRejectedValueOnce(new Error('Setup quota reached'));
+		store.commitSetup({
+			type: 'copy',
+			carId: 'car-1',
+			setupId: 'setup-1',
+		});
+		store.commitSetup({
+			type: 'copy',
+			carId: 'car-1',
+			setupId: 'setup-1',
+		});
+		store.clearSetupMutationState();
+		await vi.waitFor(() =>
+			expect(store.setupMutationOutcome()).toMatchObject({
+				error: { kind: 'local', message: 'Setup quota reached' },
+			}),
+		);
+		storage.commitSetup.mockRejectedValueOnce('blocked');
+		store.commitSetup({
+			type: 'copy',
+			carId: 'car-1',
+			setupId: 'setup-1',
+		});
+		await vi.waitFor(() =>
+			expect(store.setupMutationOutcome()).toMatchObject({
+				error: {
+					kind: 'local',
+					message: 'The Setup change could not be saved locally.',
+				},
+			}),
+		);
+
+		storage.mergeSetupCollection.mockRejectedValueOnce(
+			new Error('Setup merge failed'),
+		);
+		store.observeServerSetupCollection(syncedSetupCollection);
+		await vi.waitFor(() =>
+			expect(store.setupSyncFailure()).toEqual({
+				kind: 'local',
+				message: 'Setup merge failed',
+			}),
+		);
+	});
+
+	it('retains Setup request failures and retries queued work on the shared hint', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.setupSyncView.mockResolvedValue({
+			...syncedSetupView,
+			operations: [setupOperation],
+		});
+		storage.readySetupOperations.mockResolvedValue([setupOperation]);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(setupGateway.apply).toHaveBeenCalledOnce());
+		setupGateway.fail({ kind: 'unavailable' });
+		await vi.waitFor(() =>
+			expect(store.setupSyncFailure()).toEqual({ kind: 'unavailable' }),
+		);
+		expect(offline.markOffline).toHaveBeenCalled();
+		expect(connectivity.scheduleRetry).toHaveBeenCalled();
+
+		setupGateway.reset();
+		connectivity.retryHint.update((value) => value + 1);
+		await vi.waitFor(() => expect(setupGateway.apply).toHaveBeenCalledTimes(2));
+		setupGateway.fail({ kind: 'invalid-response' });
+		await vi.waitFor(() =>
+			expect(store.setupSyncFailure()).toEqual({ kind: 'invalid-response' }),
+		);
+		expect(offline.markOnline).toHaveBeenCalled();
+	});
+
+	it.each(['success', 'failure'] as const)(
+		'drops stale Setup commit %s after an owner changes',
+		async (result) => {
+			storage.carSyncView.mockResolvedValue(syncedView);
+			storage.setupSyncView.mockResolvedValue(syncedSetupView);
+			offline.hasSnapshot.set(true);
+			offline.status.set('ready');
+			await vi.waitFor(() => expect(store.opened()).toBe(true));
+			const pendingCommit = deferred<CommittedSetupSyncOperation>();
+			storage.commitSetup.mockReturnValueOnce(pendingCommit.promise);
+			store.commitSetup({
+				type: 'copy',
+				carId: 'car-1',
+				setupId: 'setup-1',
+			});
+			await vi.waitFor(() =>
+				expect(storage.commitSetup).toHaveBeenCalledOnce(),
+			);
+			offline.ownerKey.set('owner-2');
+			offline.sessionKey.set('session-2');
+			offline.hasSnapshot.set(false);
+			if (result === 'success')
+				pendingCommit.resolve({
+					operation: setupOperation,
+					setup: localSetup,
+					collection: syncedSetupCollection,
+					view: syncedSetupView,
+				});
+			else pendingCommit.reject(new Error('Stale Setup storage failure'));
+			await Promise.resolve();
+			expect(store.setupCollections()).toEqual([]);
+			expect(store.setupMutationOutcome().status).toBe('idle');
+		},
+	);
+
 	it('publishes server success in unsupported online-only browsers', async () => {
 		TestBed.resetTestingModule();
 		TestBed.configureTestingModule({
@@ -731,6 +1159,7 @@ describe('CarWorkspaceStore', () => {
 				CarWorkspaceStore,
 				{ provide: OfflineGarageStorage, useValue: storage },
 				{ provide: CarSyncGateway, useValue: gateway },
+				{ provide: SetupSyncGateway, useValue: setupGateway },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 				{ provide: OfflineConnectivity, useValue: connectivity },
 				{ provide: OfflineCapabilities, useValue: { supported: false } },
@@ -743,7 +1172,18 @@ describe('CarWorkspaceStore', () => {
 		});
 		store = TestBed.inject(CarWorkspaceStore);
 		offline.status.set('online-only');
+		expect(store.durableSetupMutationsAvailable()).toBe(false);
+		expect(store.externalRequestsAvailable()).toBe(true);
 		store.observeServerCars([{ id: 'car-1', name: 'Buggy', version: 1 }]);
+		store.observeServerSetupCollection(syncedSetupCollection);
+		expect(store.setupCollections()).toEqual([syncedSetupCollection]);
+		expect(store.setupMark('car-1')).toEqual({ kind: 'synced' });
+		store.commitSetup({
+			type: 'copy',
+			carId: 'car-1',
+			setupId: 'setup-1',
+		});
+		expect(storage.commitSetup).not.toHaveBeenCalled();
 		store.commit({
 			type: 'edit',
 			carId: 'car-1',
@@ -762,5 +1202,9 @@ describe('CarWorkspaceStore', () => {
 			{ id: 'car-1', name: 'Server saved', version: 2 },
 		]);
 		expect(store.mutationOutcome()).toMatchObject({ retainedLocally: false });
+		store.clearMutationState();
+		expect(store.mutationOutcome().status).toBe('idle');
+		offline.networkUnavailable.set(true);
+		expect(store.externalRequestsAvailable()).toBe(false);
 	});
 });

@@ -82,6 +82,7 @@ export class SetupSnapshots {
 	protected readonly actionMessage = signal('');
 	protected readonly readFailure = this.store.failure;
 	protected readonly action = this.store.action;
+	protected readonly syncMark = this.store.syncMark;
 	protected readonly sectionKeys = setupSectionKeys;
 	protected readonly sectionLabels = setupSectionLabels;
 	protected readonly fieldLabel = setupFieldLabel;
@@ -241,15 +242,27 @@ export class SetupSnapshots {
 	private handleSuccess(result: SetupWorkflowResult): void {
 		if (result.kind === 'save') {
 			this.editor.set(null);
-			if (result.targetCarId === this.carId())
+			if (result.targetCarId === this.carId()) {
 				this.selectedId.set(result.setup.id);
-			else this.actionMessage.set('Imported setup saved to the selected car.');
+				if (result.retainedLocally)
+					this.actionMessage.set('Setup saved on this device. Pending sync.');
+			} else
+				this.actionMessage.set('Imported setup saved to the selected car.');
 			return;
 		}
 		if (result.kind === 'copy') {
 			this.selectedId.set(result.setup.id);
 			this.openEditorForSetup(result.setup);
+			if (result.retainedLocally)
+				this.actionMessage.set(
+					'Setup copy saved on this device. Pending sync.',
+				);
+			return;
 		}
+		if (result.kind === 'select-current' && result.retainedLocally)
+			this.actionMessage.set(
+				'Current setup saved on this device. Pending sync.',
+			);
 	}
 
 	private openEditorForSetup(setup: SetupSnapshot): void {

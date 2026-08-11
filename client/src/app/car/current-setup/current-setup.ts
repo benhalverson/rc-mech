@@ -34,6 +34,7 @@ export class CurrentSetup {
 	readonly carId = input.required<string>();
 	readonly archived = input(false);
 	protected readonly store = inject(CurrentSetupStore);
+	protected readonly syncMark = this.store.syncMark;
 	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 	private readonly injector = inject(Injector);
 	protected readonly changeSession = signal<SetupChangeSession | null>(null);
@@ -86,12 +87,22 @@ export class CurrentSetup {
 	}
 
 	protected completeChange(): void {
-		this.closeChange(true);
+		const outcome = this.store.outcome();
+		this.closeChange(
+			true,
+			outcome.status === 'succeeded' && outcome.retainedLocally,
+		);
 	}
 
-	private closeChange(saved: boolean): void {
+	private closeChange(saved: boolean, retainedLocally = false): void {
 		this.changeSession.set(null);
-		this.saveMessage.set(saved ? 'New Current setup saved.' : '');
+		this.saveMessage.set(
+			saved
+				? retainedLocally
+					? 'New Current setup saved on this device. Pending sync.'
+					: 'New Current setup saved.'
+				: '',
+		);
 		afterNextRender(
 			() => {
 				const controls = this.host.nativeElement.querySelectorAll<HTMLElement>(

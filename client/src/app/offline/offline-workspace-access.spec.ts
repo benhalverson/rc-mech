@@ -29,7 +29,17 @@ class FakeCapabilities {
 
 class FakeGateway {
 	readonly load = vi.fn(() =>
-		of({ cars: [{ id: 'car-1', name: 'Track buggy' }] }),
+		of({
+			cars: [{ id: 'car-1', name: 'Track buggy' }],
+			setupCollections: [
+				{
+					carId: 'car-1',
+					currentSetupId: null,
+					currentSetupVersion: 0,
+					setups: [],
+				},
+			],
+		}),
 	);
 }
 
@@ -81,6 +91,14 @@ describe('OfflineWorkspaceAccess', () => {
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 				preparedAt: '2026-08-11T12:00:00.000Z',
 				cars: [{ id: 'car-1', name: 'Track buggy' }],
+				setupCollections: [
+					{
+						carId: 'car-1',
+						currentSetupId: null,
+						currentSetupVersion: 0,
+						setups: [],
+					},
+				],
 			},
 		});
 		expect(capabilities.prepareShell).toHaveBeenCalledOnce();

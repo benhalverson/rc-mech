@@ -2,6 +2,11 @@ import { TestBed } from '@angular/core/testing';
 import Dexie from 'dexie';
 import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { SetupSnapshot } from '../car/setups/setup-snapshot';
+import type {
+	SetupSyncCollection,
+	SetupSyncOperation,
+} from '../car/setups/setup-sync.models';
 import type { CarSyncRemoteOutcome } from '../garage/car-sync/car-sync.models';
 import type { GarageCar } from '../garage/garage.models';
 import {
@@ -23,6 +28,35 @@ import {
 
 const car = (id: string, name: string): GarageCar => ({ id, name });
 const userAFence = { ownerKey: 'user-a', sessionKey: 'session-a' } as const;
+const setup = (overrides: Partial<SetupSnapshot> = {}): SetupSnapshot => ({
+	id: 'setup-1',
+	carId: 'car-a',
+	name: 'Baseline',
+	current: true,
+	sections: {
+		vehicle: {},
+		drivetrain: {},
+		electronics: {},
+		tires: {},
+		shocks: {},
+		frontSuspension: {},
+		rearSuspension: {},
+		notes: {},
+	},
+	createdAt: '2026-08-10T12:00:00.000Z',
+	updatedAt: '2026-08-10T12:00:00.000Z',
+	version: 1,
+	...overrides,
+});
+const setupCollection = (
+	overrides: Partial<SetupSyncCollection> = {},
+): SetupSyncCollection => ({
+	carId: 'car-a',
+	currentSetupId: 'setup-1',
+	currentSetupVersion: 1,
+	setups: [setup()],
+	...overrides,
+});
 
 describe('OfflineGarageStorage', () => {
 	let storage: OfflineGarageStorage;
@@ -908,5 +942,351 @@ describe('OfflineGarageStorage', () => {
 			{ id: 'car-existing', name: 'Existing', version: 1 },
 			{ id: created.car.id, name: 'Created', version: 1 },
 		]);
+	});
+
+	it('persists and restores materialized Setup history with stable dependencies', async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [{ id: 'car-a', name: 'Buggy', version: 1 }],
+				setupCollections: [setupCollection()],
+			},
+			'session-a',
+		);
+		const carEdit = await storage.commitCar(
+			{ type: 'edit', carId: 'car-a', input: { notes: 'Local' } },
+			userAFence,
+		);
+		const copied = await storage.commitSetup(
+			{ type: 'copy', carId: 'car-a', setupId: 'setup-1' },
+			userAFence,
+		);
+		const selected = await storage.commitSetup(
+			{
+				type: 'select-current',
+				carId: 'car-a',
+				setupId: copied.setup.id,
+			},
+			userAFence,
+		);
+
+		expect(copied.operation.dependencies).toEqual([
+			carEdit.operation.operationId,
+		]);
+		expect(selected.operation.dependencies).toEqual([
+			carEdit.operation.operationId,
+			copied.operation.operationId,
+		]);
+		await expect(storage.readySetupOperations()).resolves.toEqual([]);
+		expect(
+			(await storage.restoreCurrent(new Date('2026-08-11T12:00:01.000Z')))
+				?.setupCollections?.[0],
+		).toMatchObject({
+			currentSetupId: copied.setup.id,
+			setups: [{ id: copied.setup.id }, { id: 'setup-1' }],
+		});
+
+		await storage.recordCarOutcome({
+			operationId: carEdit.operation.operationId,
+			outcome: 'applied',
+			car: { id: 'car-a', name: 'Buggy', notes: 'Local', version: 2 },
+		});
+		await expect(storage.readySetupOperations()).resolves.toMatchObject([
+			{ operationId: copied.operation.operationId, dependencies: [] },
+		]);
+		const acknowledgedCopy = setup({
+			id: copied.setup.id,
+			name: copied.setup.name,
+			current: false,
+			copiedFromSetupId: 'setup-1',
+			version: 1,
+		});
+		const afterCopy = await storage.recordSetupOutcome({
+			operationId: copied.operation.operationId,
+			outcome: 'applied',
+			setup: acknowledgedCopy,
+			currentSetupId: 'setup-1',
+			currentSetupVersion: 1,
+		});
+		expect(afterCopy.operations).toMatchObject([
+			{
+				operationId: selected.operation.operationId,
+				dependencies: [],
+				command: {
+					baseCurrent: { setupId: 'setup-1', version: 1 },
+				},
+			},
+		]);
+		await expect(storage.readySetupOperations()).resolves.toHaveLength(1);
+	});
+
+	it('initializes absent Setup history and merges new car collections', async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [{ id: 'car-a', name: 'A' }],
+			},
+			'session-a',
+		);
+		await expect(storage.setupSyncView()).resolves.toMatchObject({
+			canonicalCollections: [],
+			collections: [],
+		});
+		const created = await storage.commitSetup(
+			{
+				type: 'create',
+				carId: 'car-a',
+				draft: { name: 'First local setup' },
+			},
+			userAFence,
+		);
+		expect(created.view.collections[0]?.setups).toMatchObject([
+			{ name: 'First local setup' },
+		]);
+
+		const carB = setupCollection({
+			carId: 'car-b',
+			currentSetupId: 'setup-b',
+			setups: [setup({ id: 'setup-b', carId: 'car-b' })],
+		});
+		await storage.mergeSetupCollection(carB, userAFence);
+		const carC = setupCollection({
+			carId: 'car-c',
+			currentSetupId: 'setup-c',
+			setups: [setup({ id: 'setup-c', carId: 'car-c' })],
+		});
+		await storage.mergeSetupCollection(carC, userAFence);
+		const merged = await storage.mergeSetupCollection(
+			{
+				...carB,
+				currentSetupVersion: 2,
+				setups: [setup({ id: 'setup-b', carId: 'car-b', version: 2 })],
+			},
+			userAFence,
+		);
+		expect(merged.canonicalCollections.map((entry) => entry.carId)).toEqual([
+			'car-b',
+			'car-c',
+		]);
+	});
+
+	it('ignores a Setup outcome owned by another local User', async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [{ id: 'car-a', name: 'A' }],
+			},
+			'session-a',
+		);
+		const foreign: SetupSyncOperation = {
+			operationId: 'foreign-operation',
+			ownerKey: 'user-b',
+			carId: 'car-b',
+			setupId: 'setup-b',
+			command: {
+				type: 'setup.create',
+				carId: 'car-b',
+				setupId: 'setup-b',
+				copiedFromSetupId: null,
+				setup: { name: 'Foreign' },
+				makeCurrent: false,
+				baseCurrent: null,
+			},
+			dependencies: [],
+			status: 'pending',
+			createdAt: '2026-08-11T12:00:00.000Z',
+			sequence: 1,
+		};
+		const direct = new Dexie(databaseName);
+		await direct.open();
+		await direct.table<SetupSyncOperation>('setupOperations').add(foreign);
+		direct.close();
+
+		const view = await storage.recordSetupOutcome({
+			operationId: foreign.operationId,
+			outcome: 'applied',
+			setup: setup({ id: 'setup-b', carId: 'car-b' }),
+			currentSetupId: null,
+			currentSetupVersion: 0,
+		});
+		expect(view.collections).toEqual([]);
+	});
+
+	it('retains Setup rejection and conflict work without blocking another car', async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [
+					{ id: 'car-a', name: 'A', version: 1 },
+					{ id: 'car-b', name: 'B', version: 1 },
+				],
+				setupCollections: [
+					setupCollection(),
+					setupCollection({
+						carId: 'car-b',
+						currentSetupId: 'setup-b',
+						setups: [setup({ id: 'setup-b', carId: 'car-b' })],
+					}),
+				],
+			},
+			'session-a',
+		);
+		const rejected = await storage.commitSetup(
+			{
+				type: 'change',
+				carId: 'car-a',
+				setupId: 'setup-1',
+				draft: { name: '' },
+			},
+			userAFence,
+		);
+		await storage.commitSetup(
+			{ type: 'copy', carId: 'car-a', setupId: 'setup-1' },
+			userAFence,
+		);
+		const conflicted = await storage.commitSetup(
+			{
+				type: 'correct',
+				carId: 'car-b',
+				setupId: 'setup-b',
+				draft: { name: 'Local B' },
+			},
+			userAFence,
+		);
+		await storage.recordSetupOutcome({
+			operationId: rejected.operation.operationId,
+			outcome: 'rejected',
+			error: { code: 'INVALID', message: 'Name is required.' },
+		});
+		const view = await storage.recordSetupOutcome({
+			operationId: conflicted.operation.operationId,
+			outcome: 'conflict',
+			error: { code: 'CONFLICT', message: 'Review both versions.' },
+			remote: {
+				currentSetupId: 'setup-b',
+				currentSetupVersion: 2,
+				setup: setup({ id: 'setup-b', carId: 'car-b', name: 'Remote B' }),
+			},
+		});
+		expect(view.operations).toMatchObject([
+			{ status: 'needs-attention', feedback: { message: 'Name is required.' } },
+			{ status: 'pending', dependencies: [rejected.operation.operationId] },
+			{
+				status: 'conflict',
+				remote: { setup: { name: 'Remote B' } },
+			},
+		]);
+		await expect(storage.readySetupOperations()).resolves.toEqual([]);
+	});
+
+	it('merges only newer Setup and Current-selection versions', async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [{ id: 'car-a', name: 'A' }],
+				setupCollections: [
+					setupCollection({
+						currentSetupVersion: 3,
+						setups: [setup({ name: 'Canonical', version: 3 })],
+					}),
+				],
+			},
+			'session-a',
+		);
+		const merged = await storage.mergeSetupCollection(
+			setupCollection({
+				currentSetupId: null,
+				currentSetupVersion: 2,
+				setups: [
+					setup({ name: 'Stale', version: 2 }),
+					setup({ id: 'setup-new', name: 'New', version: 1 }),
+				],
+			}),
+			userAFence,
+		);
+		expect(merged.canonicalCollections[0]).toMatchObject({
+			currentSetupId: 'setup-1',
+			currentSetupVersion: 3,
+			setups: [
+				{ id: 'setup-1', name: 'Canonical', version: 3 },
+				{ id: 'setup-new', name: 'New', version: 1 },
+			],
+		});
+	});
+
+	it('fails closed for unfenced or missing Setup storage and ignores unrelated outcomes', async () => {
+		await expect(storage.setupSyncView()).resolves.toBeNull();
+		await expect(storage.readySetupOperations()).resolves.toEqual([]);
+		await expect(
+			storage.commitSetup(
+				{ type: 'create', carId: 'car-a', draft: { name: 'Unavailable' } },
+				userAFence,
+			),
+		).rejects.toThrow('offline Garage is unavailable');
+		await expect(
+			storage.recordSetupOutcome({
+				operationId: 'missing',
+				outcome: 'applied',
+				setup: setup(),
+				currentSetupId: null,
+				currentSetupVersion: 0,
+			}),
+		).rejects.toThrow('offline Garage is unavailable');
+		await expect(
+			storage.mergeSetupCollection(setupCollection(), userAFence),
+		).rejects.toThrow('offline Garage is unavailable');
+
+		await storage.activate('user-b', 'session-b');
+		await storage.save(
+			{
+				ownerKey: 'user-b',
+				ownerEmail: 'b@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [{ id: 'car-b', name: 'B' }],
+				setupCollections: [],
+			},
+			'session-b',
+		);
+		await expect(
+			storage.commitSetup(
+				{ type: 'create', carId: 'car-a', draft: { name: 'Wrong owner' } },
+				userAFence,
+			),
+		).rejects.toThrow('offline Garage is unavailable');
+		await expect(
+			storage.mergeSetupCollection(setupCollection(), {
+				ownerKey: 'user-b',
+				sessionKey: 'wrong-session',
+			}),
+		).rejects.toThrow('offline Garage is unavailable');
+		const view = await storage.recordSetupOutcome({
+			operationId: 'another-owner-operation',
+			outcome: 'applied',
+			setup: setup({ carId: 'car-b' }),
+			currentSetupId: null,
+			currentSetupVersion: 0,
+		});
+		expect(view.collections).toEqual([]);
 	});
 });

@@ -99,6 +99,43 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	expect(document.paths['/api/v1/service-records']).toBeDefined();
 	expect(document.paths['/api/v1/consumable-maintenance']).toBeDefined();
 	expect(document.paths['/api/v1/consumables/report']).toBeDefined();
+	expect(document.paths['/api/v1/setups']).toBeDefined();
+	const syncOperation = document.paths[
+		'/api/v1/sync/operations/{operationId}'
+	] as {
+		put: {
+			requestBody: {
+				content: {
+					'application/json': {
+						schema: {
+							properties: {
+								command: {
+									oneOf: readonly {
+										properties: { type: { const: string } };
+									}[];
+								};
+							};
+						};
+					};
+				};
+			};
+		};
+	};
+	expect(
+		syncOperation.put.requestBody.content[
+			'application/json'
+		].schema.properties.command.oneOf.map(
+			(command) => command.properties.type.const,
+		),
+	).toEqual([
+		'car.create',
+		'car.edit',
+		'car.archive',
+		'car.restore',
+		'setup.create',
+		'setup.correct',
+		'setup.select-current',
+	]);
 	expect(document.paths['/api/v1/cars/{carId}/voice-updates']).toBeDefined();
 	expect(
 		document.paths['/api/v1/voice-updates/{voiceUpdateId}/confirm'],

@@ -18,6 +18,10 @@ import {
 	switchMap,
 	tap,
 } from 'rxjs';
+import {
+	CarWorkspaceStore,
+	type SetupWorkspaceMutationFailure,
+} from '../../garage/car-sync/car-workspace-store';
 import { carReadFailure } from '../car-read-failure';
 import {
 	type SetupGatewayFailure,
@@ -28,6 +32,7 @@ import {
 	SoDialedImportGateway,
 	type SoDialedImportPreview,
 } from './setup-snapshot';
+import type { SetupSyncCommand } from './setup-sync.models';
 
 export type SetupWorkflowCommand =
 	| { readonly kind: 'preview'; readonly carId: string; readonly url: string }
@@ -59,9 +64,18 @@ export type SetupWorkflowResult =
 			readonly kind: 'save';
 			readonly setup: SetupSnapshot;
 			readonly targetCarId: string;
+			readonly retainedLocally?: boolean;
 	  }
-	| { readonly kind: 'copy'; readonly setup: SetupSnapshot }
-	| { readonly kind: 'select-current'; readonly setup: SetupSnapshot };
+	| {
+			readonly kind: 'copy';
+			readonly setup: SetupSnapshot;
+			readonly retainedLocally?: boolean;
+	  }
+	| {
+			readonly kind: 'select-current';
+			readonly setup: SetupSnapshot;
+			readonly retainedLocally?: boolean;
+	  };
 
 export type SetupWorkflowOutcome =
 	| { readonly status: 'idle'; readonly operationId: null }
@@ -87,6 +101,43 @@ const idleOutcome = (): SetupWorkflowOutcome => ({
 	status: 'idle',
 	operationId: null,
 });
+
+const setupSyncCommand = (
+	command: SetupWorkflowCommand,
+): SetupSyncCommand | null => {
+	if (command.kind === 'copy')
+		return { type: 'copy', carId: command.carId, setupId: command.setupId };
+	if (command.kind === 'select-current')
+		return {
+			type: 'select-current',
+			carId: command.carId,
+			setupId: command.setupId,
+		};
+	if (command.kind !== 'save' || command.importDraft) return null;
+	return command.mode === 'edit' && command.setupId
+		? {
+				type: 'correct',
+				carId: command.sourceCarId,
+				setupId: command.setupId,
+				draft: command.snapshot,
+			}
+		: {
+				type: 'create',
+				carId: command.targetCarId,
+				draft: command.snapshot,
+			};
+};
+
+const setupWorkflowFailure = (
+	failure: SetupWorkspaceMutationFailure,
+): SetupGatewayFailure => {
+	if (failure.kind === 'local') return failure;
+	if (failure.kind === 'needs-attention')
+		return { kind: 'needs-attention', message: failure.feedback.message };
+	if (failure.kind === 'conflict')
+		return { kind: 'conflict', message: failure.feedback.message };
+	return failure;
+};
 
 const replaceSetup = (
 	setups: readonly SetupSnapshot[],
@@ -183,33 +234,54 @@ export const SetupSnapshotStore = signalStore(
 	withProps(() => ({
 		gateway: inject(SetupSnapshotGateway),
 		importer: inject(SoDialedImportGateway),
+		workspace: inject(CarWorkspaceStore),
 		nextOperationId: { value: 0 },
+		activeWorkspace: {
+			requestId: null as number | null,
+			operationId: 0,
+			workflowCommand: null as SetupWorkflowCommand | null,
+			workspaceCommand: null as SetupSyncCommand | null,
+		},
 	})),
-	withComputed((store) => ({
-		setups: computed(
-			() =>
-				store.localSetups() ??
-				(store.gateway.collection.hasValue()
-					? store.gateway.collection.value()
-					: []),
-		),
-		loading: computed(() => store.gateway.collection.isLoading()),
-		failure: computed(() =>
-			carReadFailure(
-				store.gateway.failure(),
-				'Setup history could not be loaded. Check the connection and try again.',
+	withComputed((store) => {
+		const workspaceCollection = computed(() =>
+			store.workspace
+				.setupCollections()
+				.find((collection) => collection.carId === store.carId()),
+		);
+		return {
+			workspaceCollection,
+			setups: computed(
+				() =>
+					workspaceCollection()?.setups ??
+					store.localSetups() ??
+					(store.gateway.collection.hasValue()
+						? store.gateway.collection.value()
+						: []),
 			),
-		),
-		action: computed(() => {
-			const outcome = store.outcome();
-			if (outcome.status !== 'pending') return null;
-			return outcome.command.kind === 'select-current'
-				? ('current' as const)
-				: outcome.command.kind === 'cancel-import'
+			loading: computed(
+				() => store.gateway.collection.isLoading() && !workspaceCollection(),
+			),
+			failure: computed(() =>
+				workspaceCollection()
 					? null
-					: outcome.command.kind;
-		}),
-	})),
+					: carReadFailure(
+							store.gateway.failure(),
+							'Setup history could not be loaded. Check the connection and try again.',
+						),
+			),
+			action: computed(() => {
+				const outcome = store.outcome();
+				if (outcome.status !== 'pending') return null;
+				return outcome.command.kind === 'select-current'
+					? ('current' as const)
+					: outcome.command.kind === 'cancel-import'
+						? null
+						: outcome.command.kind;
+			}),
+			syncMark: computed(() => store.workspace.setupMark(store.carId())),
+		};
+	}),
 	withHooks({
 		onInit(store) {
 			effect(() => {
@@ -218,8 +290,67 @@ export const SetupSnapshotStore = signalStore(
 					!store.gateway.collection.isLoading()
 				) {
 					store.gateway.collection.value();
+					const synchronized = store.gateway.synchronizedCollection();
+					if (synchronized)
+						store.workspace.observeServerSetupCollection(synchronized);
 					patchState(store, { localSetups: null });
 				}
+			});
+			effect(() => {
+				const outcome = store.workspace.setupMutationOutcome();
+				const active = store.activeWorkspace;
+				if (
+					active.requestId === null ||
+					outcome.status === 'idle' ||
+					outcome.status === 'pending' ||
+					outcome.requestId !== active.requestId ||
+					outcome.command !== active.workspaceCommand ||
+					!active.workflowCommand
+				)
+					return;
+				const command = active.workflowCommand;
+				const operationId = active.operationId;
+				active.requestId = null;
+				active.workflowCommand = null;
+				active.workspaceCommand = null;
+				if (outcome.status === 'failed') {
+					patchState(store, {
+						outcome: {
+							status: 'failed',
+							operationId,
+							command,
+							error: setupWorkflowFailure(outcome.error),
+						},
+					});
+					return;
+				}
+				const result: SetupWorkflowResult =
+					command.kind === 'save'
+						? {
+								kind: 'save',
+								setup: outcome.setup,
+								targetCarId: command.targetCarId,
+								retainedLocally: outcome.retainedLocally,
+							}
+						: command.kind === 'copy'
+							? {
+									kind: 'copy',
+									setup: outcome.setup,
+									retainedLocally: outcome.retainedLocally,
+								}
+							: {
+									kind: 'select-current',
+									setup: outcome.setup,
+									retainedLocally: outcome.retainedLocally,
+								};
+				patchState(store, {
+					outcome: {
+						status: 'succeeded',
+						operationId,
+						command,
+						result,
+					},
+				});
 			});
 		},
 	}),
@@ -262,6 +393,9 @@ export const SetupSnapshotStore = signalStore(
 		return {
 			selectCar(carId: string): void {
 				if (store.carId() === carId) return;
+				store.activeWorkspace.requestId = null;
+				store.activeWorkspace.workflowCommand = null;
+				store.activeWorkspace.workspaceCommand = null;
 				patchState(store, {
 					carId,
 					localSetups: null,
@@ -277,10 +411,58 @@ export const SetupSnapshotStore = signalStore(
 			},
 			clearOutcome(): void {
 				patchState(store, { outcome: idleOutcome() });
+				store.workspace.clearSetupMutationState();
 			},
 			mutate(command: SetupWorkflowCommand): void {
-				if (store.carId() && store.outcome().status !== 'pending')
-					mutate(command);
+				if (!store.carId() || store.outcome().status === 'pending') return;
+				const workspaceCommand = setupSyncCommand(command);
+				if (
+					workspaceCommand &&
+					store.workspace.durableSetupMutationsAvailable()
+				) {
+					const operationId = ++store.nextOperationId.value;
+					patchState(store, {
+						outcome: { status: 'pending', operationId, command },
+					});
+					store.workspace.clearSetupMutationState();
+					store.workspace.commitSetup(workspaceCommand);
+					const workspaceOutcome = store.workspace.setupMutationOutcome();
+					if (
+						workspaceOutcome.status === 'pending' &&
+						workspaceOutcome.command === workspaceCommand
+					) {
+						store.activeWorkspace.requestId = workspaceOutcome.requestId;
+						store.activeWorkspace.operationId = operationId;
+						store.activeWorkspace.workflowCommand = command;
+						store.activeWorkspace.workspaceCommand = workspaceCommand;
+					} else {
+						patchState(store, {
+							outcome: {
+								status: 'failed',
+								operationId,
+								command,
+								error: {
+									kind: 'local',
+									message:
+										'The setup change could not be saved on this device.',
+								},
+							},
+						});
+					}
+					return;
+				}
+				if (!store.workspace.externalRequestsAvailable()) {
+					patchState(store, {
+						outcome: {
+							status: 'failed',
+							operationId: ++store.nextOperationId.value,
+							command,
+							error: { kind: 'unavailable' },
+						},
+					});
+					return;
+				}
+				mutate(command);
 			},
 		};
 	}),

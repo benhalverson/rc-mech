@@ -56,8 +56,8 @@ const expectSingleShell = async (page: Page) => {
 
 const seedOwnerInvites = (workerIdentity: string) => {
 	for (const code of ['OWNER-SHELL', 'OWNER-INVITES']) {
-		execFileSync('pnpm', [
-			'exec',
+		execFileSync(process.execPath, [
+			'--import',
 			'tsx',
 			'scripts/invite-cli.ts',
 			'--url',

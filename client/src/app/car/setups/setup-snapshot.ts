@@ -5,8 +5,18 @@ import {
 } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { catchError, map, Observable, throwError } from 'rxjs';
-import { array, custom, literal, object, string } from 'zod/mini';
+import {
+	array,
+	custom,
+	literal,
+	nullable,
+	number,
+	object,
+	optional,
+	string,
+} from 'zod/mini';
 import { isSupportedSoDialedUrl } from './setup-import-rules';
+import type { SetupSyncCollection } from './setup-sync.models';
 
 export const setupSectionKeys = [
 	'vehicle',
@@ -45,6 +55,7 @@ export type SetupSnapshot = {
 	id: string;
 	carId: string;
 	name: string;
+	status?: 'draft' | 'reviewed' | 'active';
 	current?: boolean;
 	context?: SetupContext | null;
 	sections: SetupSections;
@@ -54,6 +65,7 @@ export type SetupSnapshot = {
 	rawValues?: Record<string, unknown> | null;
 	createdAt?: string;
 	updatedAt?: string;
+	version?: number;
 };
 
 export type SetupSnapshotDraft = {
@@ -114,6 +126,9 @@ export type SoDialedImportPreview = {
 export type SetupGatewayFailure =
 	| { readonly kind: 'http'; readonly status: number }
 	| { readonly kind: 'rejected'; readonly message: string }
+	| { readonly kind: 'local'; readonly message: string }
+	| { readonly kind: 'needs-attention'; readonly message: string }
+	| { readonly kind: 'conflict'; readonly message: string }
 	| { readonly kind: 'invalid-response' }
 	| { readonly kind: 'unavailable' };
 
@@ -122,7 +137,7 @@ class InvalidSetupResponse extends Error {}
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const setupSnapshotSchema = custom<SetupSnapshot>(
+export const setupSnapshotSchema = custom<SetupSnapshot>(
 	(value) =>
 		isRecord(value) &&
 		typeof value['id'] === 'string' &&
@@ -130,7 +145,21 @@ const setupSnapshotSchema = custom<SetupSnapshot>(
 		typeof value['name'] === 'string' &&
 		isRecord(value['sections']),
 );
-const setupCollectionSchema = object({ setups: array(setupSnapshotSchema) });
+const setupCollectionSchema = object({
+	currentSetupId: optional(nullable(string())),
+	currentSetupVersion: optional(number()),
+	setups: array(setupSnapshotSchema),
+});
+const setupCollectionsSchema = object({
+	setupCollections: array(
+		object({
+			carId: string(),
+			currentSetupId: optional(nullable(string())),
+			currentSetupVersion: optional(number()),
+			setups: array(setupSnapshotSchema),
+		}),
+	),
+});
 const setupMutationSchema = object({ setup: setupSnapshotSchema });
 const acknowledgementSchema = object({ ok: literal(true) });
 
@@ -143,6 +172,39 @@ const parse = <T>(
 
 export const parseSetupCollection = (value: unknown): SetupSnapshot[] =>
 	parse(setupCollectionSchema.safeParse(value)).setups;
+
+export const parseSetupSyncCollection = (
+	carId: string,
+	value: unknown,
+): SetupSyncCollection => {
+	const parsed = parse(setupCollectionSchema.safeParse(value));
+	return {
+		carId,
+		currentSetupId: parsed.currentSetupId ?? null,
+		currentSetupVersion: parsed.currentSetupVersion ?? 0,
+		setups: parsed.setups,
+	};
+};
+
+export const parseSetupSyncCollections = (
+	value: unknown,
+): readonly SetupSyncCollection[] => {
+	const collections = parse(
+		setupCollectionsSchema.safeParse(value),
+	).setupCollections;
+	if (
+		collections.some((collection) =>
+			collection.setups.some((setup) => setup.carId !== collection.carId),
+		)
+	)
+		throw new InvalidSetupResponse();
+	return collections.map((collection) => ({
+		carId: collection.carId,
+		currentSetupId: collection.currentSetupId ?? null,
+		currentSetupVersion: collection.currentSetupVersion ?? 0,
+		setups: collection.setups,
+	}));
+};
 
 export const parseSetupMutation = (value: unknown): SetupSnapshot =>
 	parse(setupMutationSchema.safeParse(value)).setup;
@@ -318,6 +380,8 @@ const emptyImportSections = (): SetupSections =>
 export class SetupSnapshotGateway {
 	private readonly http = inject(HttpClient);
 	private readonly carId = signal('');
+	private readonly parsedCollection = signal<SetupSyncCollection | null>(null);
+	readonly synchronizedCollection = this.parsedCollection.asReadonly();
 
 	readonly collection = httpResource<SetupSnapshot[]>(
 		() => {
@@ -329,11 +393,20 @@ export class SetupSnapshotGateway {
 					}
 				: undefined;
 		},
-		{ parse: parseSetupCollection },
+		{
+			parse: (value) => {
+				const parsed = parseSetupSyncCollection(this.carId(), value);
+				this.parsedCollection.set(parsed);
+				return [...parsed.setups];
+			},
+		},
 	);
 
 	selectCar(carId: string): void {
-		if (this.carId() !== carId) this.carId.set(carId);
+		if (this.carId() !== carId) {
+			this.parsedCollection.set(null);
+			this.carId.set(carId);
+		}
 	}
 
 	create(carId: string, draft: SetupSnapshotDraft): Observable<SetupSnapshot> {
