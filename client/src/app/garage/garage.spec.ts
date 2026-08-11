@@ -10,6 +10,15 @@ import { provideRouter, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OfflineConnectivity } from '../offline/offline-connectivity';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
+import type {
+	CarSyncCommand,
+	CarSyncMark,
+	CarSyncOperation,
+} from './car-sync/car-sync.models';
+import {
+	type CarWorkspaceMutationOutcome,
+	CarWorkspaceStore,
+} from './car-sync/car-workspace-store';
 import { Garage } from './garage';
 import type { GarageCar } from './garage.models';
 import { GarageGateway } from './garage-gateway';
@@ -20,6 +29,10 @@ class FakeOfflineWorkspaceStore {
 	readonly hasSnapshot = signal(false);
 	readonly status = signal('idle');
 	readonly networkUnavailable = signal(false);
+	readonly onlineOnlyReason = signal<
+		'unsupported' | 'preparation-failed' | null
+	>('unsupported');
+	readonly setCars = vi.fn((cars: readonly GarageCar[]) => this.cars.set(cars));
 	readonly markOffline = vi.fn(() => {
 		this.networkUnavailable.set(true);
 		if (this.status() === 'ready') this.status.set('offline');
@@ -33,7 +46,65 @@ class FakeOfflineWorkspaceStore {
 }
 
 class FakeOfflineConnectivity {
-	readonly online = signal(true);
+	readonly retryHint = signal(0);
+	readonly scheduleRetry = vi.fn();
+	readonly markRequestSucceeded = vi.fn();
+}
+
+class FakeCarWorkspaceStore {
+	readonly opened = signal(false);
+	readonly cars = signal<readonly GarageCar[]>([]);
+	readonly operations = signal<readonly CarSyncOperation[]>([]);
+	readonly mutationsAvailable = signal(true);
+	readonly syncMark = signal<CarSyncMark>({ kind: 'synced' });
+	readonly mutationOutcome = signal<CarWorkspaceMutationOutcome>({
+		status: 'idle',
+		requestId: null,
+	});
+	readonly rowMark = signal<CarSyncMark>({ kind: 'synced' });
+	private requestId = 0;
+	readonly observeServerCars = vi.fn((cars: readonly GarageCar[]) => {
+		this.cars.set(cars);
+		this.opened.set(true);
+	});
+	readonly retrySync = vi.fn();
+	readonly commit = vi.fn((command: CarSyncCommand) => {
+		if (this.mutationOutcome().status === 'pending') return;
+		this.mutationOutcome.set({
+			status: 'pending',
+			requestId: ++this.requestId,
+			command,
+		});
+	});
+	readonly clearMutationState = vi.fn(() => {
+		if (this.mutationOutcome().status !== 'pending')
+			this.mutationOutcome.set({ status: 'idle', requestId: null });
+	});
+
+	succeed(car: GarageCar, retainedLocally = false): void {
+		const pending = this.mutationOutcome();
+		if (pending.status !== 'pending') return;
+		this.cars.set([...this.cars().filter((value) => value.id !== car.id), car]);
+		this.mutationOutcome.set({
+			...pending,
+			status: 'succeeded',
+			operationId: `operation-${pending.requestId}`,
+			car,
+			retainedLocally,
+		});
+	}
+
+	fail(
+		error: Extract<CarWorkspaceMutationOutcome, { status: 'failed' }>['error'],
+	): void {
+		const pending = this.mutationOutcome();
+		if (pending.status !== 'pending') return;
+		this.mutationOutcome.set({ ...pending, status: 'failed', error });
+	}
+
+	carMark(): CarSyncMark {
+		return this.rowMark();
+	}
 }
 
 describe('Garage', () => {
@@ -41,10 +112,12 @@ describe('Garage', () => {
 	let http: HttpTestingController;
 	let offline: FakeOfflineWorkspaceStore;
 	let connectivity: FakeOfflineConnectivity;
+	let workspace: FakeCarWorkspaceStore;
 
 	beforeEach(async () => {
 		offline = new FakeOfflineWorkspaceStore();
 		connectivity = new FakeOfflineConnectivity();
+		workspace = new FakeCarWorkspaceStore();
 		await TestBed.configureTestingModule({
 			imports: [Garage],
 			providers: [
@@ -55,6 +128,7 @@ describe('Garage', () => {
 				GarageStore,
 				{ provide: OfflineConnectivity, useValue: connectivity },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
+				{ provide: CarWorkspaceStore, useValue: workspace },
 			],
 		}).compileComponents();
 		http = TestBed.inject(HttpTestingController);
@@ -65,6 +139,7 @@ describe('Garage', () => {
 	afterEach(() => http.verify());
 
 	it('renders a loading state and then the empty collection guidance', async () => {
+		expect(TestBed.inject(GarageStore).collectionError()).toBe('');
 		expect(fixture.nativeElement.textContent).toContain(
 			'Opening the garage ledger',
 		);
@@ -149,15 +224,11 @@ describe('Garage', () => {
 		name.value = 'Red Runner';
 		name.dispatchEvent(new Event('input'));
 		form.dispatchEvent(new Event('submit'));
-		const mutation = http.expectOne('/api/v1/cars');
-		expect(mutation.request.method).toBe('POST');
-		expect(mutation.request.body).toEqual({ name: 'Red Runner' });
-		mutation.flush({ car: { id: 'car-1', name: 'Red Runner' } });
-		let refresh: TestRequest | undefined;
-		await vi.waitFor(() => {
-			refresh = http.expectOne('/api/v1/cars');
+		expect(workspace.commit).toHaveBeenCalledWith({
+			type: 'create',
+			input: { name: 'Red Runner' },
 		});
-		refresh?.flush({ cars: [{ id: 'car-1', name: 'Red Runner' }] });
+		workspace.succeed({ id: 'car-1', name: 'Red Runner' });
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain(
@@ -175,6 +246,8 @@ describe('Garage', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Your garage session has expired',
 		);
+		expect(offline.markOnline).toHaveBeenCalled();
+		expect(connectivity.markRequestSucceeded).toHaveBeenCalled();
 		expect(fixture.nativeElement.textContent).toContain('Try again');
 		const retry = fixture.nativeElement.querySelector(
 			'[role="alert"] button',
@@ -192,6 +265,9 @@ describe('Garage', () => {
 			.expectOne('/api/v1/cars')
 			.flush({ cars: [{ id: 'car-1', name: 'Red Runner' }] });
 		await fixture.whenStable();
+		workspace.opened.set(false);
+		expect(TestBed.inject(GarageStore).cars()[0]?.name).toBe('Red Runner');
+		workspace.opened.set(true);
 		fixture.detectChanges();
 		const link = fixture.nativeElement.querySelector(
 			'a.car-row',
@@ -243,7 +319,10 @@ describe('Garage', () => {
 
 		expect(offline.status()).toBe('offline-unavailable');
 		expect(offline.networkUnavailable()).toBe(true);
-		expect(connectivity.online()).toBe(true);
+		expect(connectivity.retryHint()).toBe(0);
+		expect(connectivity.scheduleRetry).toHaveBeenCalled();
+		workspace.mutationsAvailable.set(false);
+		fixture.detectChanges();
 		expect(TestBed.inject(GarageStore).carMutationsAvailable()).toBe(false);
 		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
 			(button: HTMLButtonElement) => button.textContent?.trim() === 'Add a car',
@@ -262,26 +341,20 @@ describe('Garage', () => {
 		]);
 		offline.hasSnapshot.set(true);
 		offline.status.set('ready');
+		expect(TestBed.inject(GarageStore).cars()).toEqual([
+			{ id: 'car-1', name: 'Offline buggy' },
+		]);
+		workspace.cars.set(offline.cars());
+		workspace.opened.set(true);
 		http.expectOne('/api/v1/cars').error(new ProgressEvent('offline'));
 		await fixture.whenStable();
 		fixture.detectChanges();
 
 		expect(offline.markOffline).toHaveBeenCalled();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Car changes need a connection',
-		);
 		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
 			(button: HTMLButtonElement) => button.textContent?.trim() === 'Add a car',
 		) as HTMLButtonElement;
-		expect(add.disabled).toBe(true);
-		const internal = fixture.componentInstance as unknown as {
-			openCreate(): void;
-			save(event: Event): void;
-		};
-		internal.openCreate();
-		internal.save(new Event('submit'));
-		TestBed.inject(GarageStore).createCar({ input: { name: 'Blocked' } });
-		expect(fixture.nativeElement.querySelector('.car-form')).toBeNull();
+		expect(add.disabled).toBe(false);
 		expect(fixture.nativeElement.textContent).toContain('Offline buggy');
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Archived offline truck',
@@ -304,9 +377,7 @@ describe('Garage', () => {
 			'Archived offline truck',
 		);
 
-		connectivity.online.set(false);
-		fixture.detectChanges();
-		connectivity.online.set(true);
+		connectivity.retryHint.update((value) => value + 1);
 		let recovery: TestRequest | undefined;
 		await vi.waitFor(() => {
 			recovery = http.expectOne(
@@ -315,6 +386,7 @@ describe('Garage', () => {
 		});
 		recovery?.flush({ cars: [{ id: 'car-1', name: 'Recovered buggy' }] });
 		await vi.waitFor(() => expect(offline.markOnline).toHaveBeenCalled());
+		expect(connectivity.markRequestSucceeded).toHaveBeenCalled();
 	});
 
 	it('opens and cancels the toolbar create form', async () => {
@@ -380,27 +452,25 @@ describe('Garage', () => {
 		internal.openCreate();
 		internal.cancelEdit();
 		form.dispatchEvent(new Event('submit'));
-		const mutation = http.expectOne('/api/v1/cars');
-		expect(mutation.request.body).toEqual({
-			name: 'Red Runner',
-			make: 'Associated',
-			model: 'B7',
-			scale: '1/10',
-			vehicleType: 'Buggy',
-			powerType: 'Electric',
-			notes: 'Track car',
+		expect(workspace.commit).toHaveBeenCalledWith({
+			type: 'create',
+			input: {
+				name: 'Red Runner',
+				make: 'Associated',
+				model: 'B7',
+				scale: '1/10',
+				vehicleType: 'Buggy',
+				powerType: 'Electric',
+				notes: 'Track car',
+			},
 		});
-		mutation.flush('offline', { status: 503, statusText: 'Unavailable' });
-		await fixture.whenStable();
+		workspace.fail({ kind: 'http', status: 503 });
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('could not be saved');
 		expect(fixture.nativeElement.querySelector('.car-form')).toBeTruthy();
 
 		form.dispatchEvent(new Event('submit'));
-		http
-			.expectOne('/api/v1/cars')
-			.flush('expired', { status: 401, statusText: 'Unauthorized' });
-		await fixture.whenStable();
+		workspace.fail({ kind: 'http', status: 401 });
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('session has expired');
 	});
@@ -416,7 +486,7 @@ describe('Garage', () => {
 					scale: '1/10',
 					vehicleType: 'Buggy',
 					powerType: 'Electric',
-					archivedAt: '2026-08-09T00:00:00.000Z',
+					archivedAt: null,
 				},
 				{
 					id: 'car-2',
@@ -436,7 +506,6 @@ describe('Garage', () => {
 		expect(text).toContain('1/10');
 		expect(text).toContain('Buggy');
 		expect(text).toContain('Electric');
-		expect(text).toContain('Archived');
 		expect(text).toContain('Active');
 	});
 
@@ -468,5 +537,109 @@ describe('Garage', () => {
 			active = http.expectOne((request) => !request.params.has('archived'));
 		});
 		active?.flush({ cars: [] });
+	});
+
+	it('renders durable sync marks and exact local mutation feedback', async () => {
+		vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+		expect(TestBed.inject(GarageStore).syncFeedback()).toBe('');
+		http
+			.expectOne('/api/v1/cars')
+			.flush({ cars: [{ id: 'car-1', name: 'Local buggy', version: 1 }] });
+		await fixture.whenStable();
+		workspace.syncMark.set({
+			kind: 'pending',
+			operationIds: ['operation-1'],
+		});
+		workspace.rowMark.set({
+			kind: 'pending',
+			operationIds: ['operation-1'],
+		});
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Pending sync');
+
+		workspace.syncMark.set({
+			kind: 'syncing',
+			operationIds: ['operation-1'],
+		});
+		workspace.rowMark.set({
+			kind: 'syncing',
+			operationIds: ['operation-1'],
+		});
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Syncing');
+
+		workspace.syncMark.set({
+			kind: 'needs-attention',
+			operationId: 'operation-1',
+			feedback: { code: 'INVALID', message: 'Correct the Car name.' },
+		});
+		workspace.rowMark.set(workspace.syncMark());
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Needs attention');
+		expect(fixture.nativeElement.textContent).toContain(
+			'Correct the Car name.',
+		);
+
+		workspace.syncMark.set({
+			kind: 'conflict',
+			operationId: 'operation-1',
+			remote: { id: 'car-1', name: 'Remote buggy', version: 2 },
+		});
+		workspace.rowMark.set(workspace.syncMark());
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Sync conflict');
+		workspace.operations.set([
+			{
+				operationId: 'operation-1',
+				ownerKey: 'owner-1',
+				carId: 'car-1',
+				command: {
+					type: 'car.create',
+					carId: 'car-1',
+					car: { name: 'Local buggy' },
+				},
+				dependencies: [],
+				status: 'pending',
+				createdAt: '2026-08-11T12:00:00.000Z',
+			},
+		]);
+		workspace.mutationOutcome.set({
+			status: 'succeeded',
+			requestId: 1,
+			operationId: 'operation-1',
+			command: { type: 'create', input: { name: 'Local buggy' } },
+			car: { id: 'car-1', name: 'Local buggy', version: 0 },
+			retainedLocally: true,
+		});
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('saved locally');
+
+		workspace.mutationOutcome.set({
+			status: 'failed',
+			requestId: 2,
+			command: { type: 'create', input: { name: 'Rejected' } },
+			error: { kind: 'local', message: 'IndexedDB is full.' },
+		});
+		expect(TestBed.inject(GarageStore).carMutationError()).toBe(
+			'IndexedDB is full.',
+		);
+		workspace.mutationOutcome.set({
+			status: 'failed',
+			requestId: 3,
+			command: { type: 'create', input: { name: 'Rejected' } },
+			error: {
+				kind: 'needs-attention',
+				feedback: { code: 'INVALID', message: 'Use another name.' },
+			},
+		});
+		expect(TestBed.inject(GarageStore).carMutationError()).toBe(
+			'Use another name.',
+		);
+
+		workspace.mutationsAvailable.set(false);
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Car changes are unavailable',
+		);
 	});
 });

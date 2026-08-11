@@ -16,6 +16,18 @@ const carFields = {
 };
 
 export const carInput = z.object(carFields);
+export const carSyncOperationId = z.string().uuid();
+export const carSyncEnvelopeInput = z
+	.object({
+		contractVersion: z.number().int(),
+		command: z
+			.object({
+				type: z.enum(['car.create', 'car.edit', 'car.archive', 'car.restore']),
+				carId: z.string().uuid(),
+			})
+			.passthrough(),
+	})
+	.strict();
 export const carUpdateInput = z
 	.object({
 		name: carFields.name.optional(),
@@ -30,6 +42,47 @@ export const carUpdateInput = z
 		(value) => Object.keys(value).length > 0,
 		'At least one car field is required',
 	);
+
+export const carEditSyncCommandInput = z
+	.object({
+		type: z.literal('car.edit'),
+		carId: z.string().uuid(),
+		baseVersion: z.number().int().nonnegative(),
+		base: z
+			.object({
+				name: carFields.name.optional(),
+				make: carFields.make.nullable(),
+				model: carFields.model.nullable(),
+				scale: carFields.scale.nullable(),
+				vehicleType: carFields.vehicleType.nullable(),
+				powerType: carFields.powerType.nullable(),
+				notes: carFields.notes.nullable(),
+			})
+			.strict(),
+		changes: carUpdateInput,
+	})
+	.strict();
+
+const carLifecycleSyncCommandFields = {
+	carId: z.string().uuid(),
+	baseVersion: z.number().int().nonnegative(),
+};
+export const carLifecycleSyncCommandInput = z.discriminatedUnion('type', [
+	z
+		.object({
+			...carLifecycleSyncCommandFields,
+			type: z.literal('car.archive'),
+			base: z.object({ archivedAt: z.null() }).strict(),
+		})
+		.strict(),
+	z
+		.object({
+			...carLifecycleSyncCommandFields,
+			type: z.literal('car.restore'),
+			base: z.object({ archivedAt: z.string().datetime() }).strict(),
+		})
+		.strict(),
+]);
 
 export const componentInput = z.object({
 	slot: z.string().trim().min(1).max(80),

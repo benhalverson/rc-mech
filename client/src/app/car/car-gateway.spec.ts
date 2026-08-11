@@ -38,6 +38,9 @@ describe('CarGateway', () => {
 		expect(carGatewayFailure(new HttpErrorResponse({ status: 0 }))).toEqual({
 			kind: 'unavailable',
 		});
+		expect(carGatewayFailure(new HttpErrorResponse({ status: 503 }))).toEqual({
+			kind: 'unavailable',
+		});
 		expect(carGatewayFailure(new HttpErrorResponse({ status: 404 }))).toEqual({
 			kind: 'http',
 			status: 404,

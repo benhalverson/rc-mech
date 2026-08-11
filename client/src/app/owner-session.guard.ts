@@ -13,7 +13,8 @@ export const ownerSessionCanMatch: CanMatchFn = async (_route, segments) => {
 	const session = await sessionStore.resolved();
 	if (session?.session) {
 		const owner = offlineOwnerFromSession(session);
-		if (owner) offlineWorkspace.prepare({ owner });
+		if (owner && !offlineWorkspace.hasSnapshotFor(owner))
+			offlineWorkspace.prepare({ owner });
 		return true;
 	}
 	if (sessionStore.resolutionFailed()) {

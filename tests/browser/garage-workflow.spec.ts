@@ -1,6 +1,8 @@
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
+test.use({ serviceWorkers: 'allow' });
+
 let authentication = 0;
 
 const authenticateOwner = async (page: Page): Promise<void> => {
@@ -56,6 +58,9 @@ test('keeps the light Garage collection and creation flow usable on a narrow pho
 	await expect(page.locator('html')).toHaveAttribute(
 		'data-appearance',
 		'light',
+	);
+	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
+		'Offline ready',
 	);
 	await expect(page.getByRole('heading', { name: 'The garage' })).toBeVisible();
 	const carRow = page.getByRole('link', { name: new RegExp(longName) });

@@ -65,42 +65,52 @@ test('reopens the prepared User-scoped Garage after the page closes offline', as
 		),
 	).toBe(true);
 
-	const verificationResponse = page.waitForResponse((response) =>
-		response.url().includes('/api/auth/magic-link/verify'),
-	);
-	await page.goto(
-		'/api/auth/magic-link/verify?token=local-test-token&callbackURL=%2Fgarage',
-	);
-	expect((await verificationResponse).status()).toBe(302);
-	await page.goto('http://127.0.0.1:4201/garage');
-	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
-		'Offline ready',
-	);
-
 	await context.setOffline(true);
+	await page.getByRole('button', { name: 'Add a car' }).click();
+	await page.getByLabel('Name').fill('Offline-created short course truck');
+	await page.getByLabel('Notes').fill('Saved between heats without reception');
+	await page.getByRole('button', { name: 'Save car' }).click();
+	await expect(page).toHaveURL(/\/garage\/[^/]+\/overview$/);
 	await expect(page.locator('[data-offline-status="offline"]')).toContainText(
-		'Offline—prepared Garage is read-only',
+		'Offline—changes will be saved here and sync when connection returns.',
 	);
-	await expect(page.getByRole('button', { name: 'Add a car' })).toBeDisabled();
-	await expect(page.getByText('Car changes need a connection')).toBeVisible();
-	await context.setOffline(false);
-	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
-		'Offline ready',
-	);
-	await expect(page.getByRole('button', { name: 'Add a car' })).toBeEnabled();
+	await expect(page.getByText('Pending sync', { exact: false })).toBeVisible();
+	await page.getByRole('button', { name: 'Edit details' }).click();
+	const editForm = page.locator('.car-form');
+	await editForm.getByLabel('Name').fill('Offline-created SCT');
+	await editForm.getByLabel('Notes').fill('Edited offline between heats');
+	await editForm.getByRole('button', { name: 'Save car' }).click();
+	await page.getByRole('button', { name: 'Archive car' }).click();
+	await expect(page.getByRole('button', { name: 'Restore car' })).toBeVisible();
+	await page.getByRole('button', { name: 'Restore car' }).click();
+	await expect(page.getByRole('button', { name: 'Archive car' })).toBeVisible();
 
 	const reopened = await reopenOffline(context, page);
 	await expect(
 		reopened.locator('[data-offline-status="offline"]'),
-	).toContainText('Offline—prepared Garage is read-only');
+	).toContainText('Offline—changes will be saved here');
 	await expect(
 		reopened.getByRole('link', { name: /Offline B7 buggy/ }),
+	).toBeVisible();
+	await expect(
+		reopened.getByRole('link', { name: /Offline-created SCT/ }),
+	).toBeVisible();
+	await expect(
+		reopened.getByText('Pending sync', { exact: false }).first(),
 	).toBeVisible();
 	await expect(
 		reopened.getByRole('heading', { name: 'The garage', exact: true }),
 	).toBeFocused();
 	await expect(reopened.getByRole('alert')).toHaveCount(0);
 	await expectAxeClean(reopened);
+
+	await context.setOffline(false);
+	await expect(reopened.locator('[data-offline-status="ready"]')).toContainText(
+		'Offline ready',
+	);
+	await expect(
+		reopened.getByText('Pending sync', { exact: false }),
+	).toHaveCount(0);
 });
 
 test('keeps a browser without required capabilities honestly online-only', async ({
@@ -139,11 +149,12 @@ test('keeps a browser without required capabilities honestly online-only', async
 		'Offline access is unavailable in this browser',
 	);
 	await page.context().setOffline(true);
+	await page.getByRole('button', { name: 'Inspect archived cars' }).click();
 	await expect(
 		page.locator('[data-offline-status="offline-unavailable"]'),
 	).toContainText('Offline—this browser has no prepared Garage.');
-	await expect(page.getByRole('button', { name: 'Add a car' })).toBeDisabled();
-	await expect(page.getByText('Car changes need a connection')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Add a car' })).toHaveCount(0);
+	await expect(page.getByText('Car changes are unavailable')).toBeVisible();
 });
 
 test('does not restore the prior Garage after explicit sign-out', async ({

@@ -18,6 +18,8 @@ const carRow = (
 		currentSetupId: string | null;
 		createdAt: string;
 		archivedAt: string | null;
+		version: number;
+		lastOperationId: string | null;
 	}> = {},
 ) => ({
 	id: 'car-1',
@@ -32,6 +34,8 @@ const carRow = (
 	currentSetupId: null,
 	createdAt: '2026-01-01T00:00:00.000Z',
 	archivedAt: null,
+	version: 1,
+	lastOperationId: null,
 	...overrides,
 });
 
@@ -109,6 +113,7 @@ describe('car routes', () => {
 					currentSetupId: null,
 					createdAt: '2026-01-01T00:00:00.000Z',
 					archivedAt: null,
+					version: 1,
 				},
 			],
 			archived,
@@ -173,8 +178,13 @@ describe('car routes', () => {
 
 		expect(response.status).toBe(201);
 		expect(await response.json()).toMatchObject({
-			car: { name: 'Race buggy', make: 'Associated' },
+			car: { name: 'Race buggy', make: 'Associated', version: 1 },
 		});
+		const insert = d1.queries.find((query) =>
+			query.query.startsWith('insert into "car"'),
+		);
+		expect(insert?.query).toContain('"version"');
+		expect(insert?.query).toContain('"last_operation_id"');
 	});
 
 	test('creates a car with only the required name', async () => {
@@ -205,8 +215,14 @@ describe('car routes', () => {
 		const { d1, request } = fixture();
 		d1.queue(
 			{ kind: 'first', value: carRow() },
-			{ kind: 'run' },
-			{ kind: 'first', value: carRow({ name: 'Updated buggy' }) },
+			{
+				kind: 'first',
+				value: carRow({
+					name: 'Updated buggy',
+					version: 2,
+					lastOperationId: 'private-operation',
+				}),
+			},
 		);
 
 		const response = await request(
@@ -215,8 +231,33 @@ describe('car routes', () => {
 		);
 
 		expect(response.status).toBe(200);
-		expect(await response.json()).toMatchObject({
-			car: { id: 'car-1', name: 'Updated buggy' },
+		const body = await response.json();
+		expect(body).toMatchObject({
+			car: { id: 'car-1', name: 'Updated buggy', version: 2 },
+		});
+		expect(body).not.toHaveProperty('car.lastOperationId');
+		const update = d1.queries.find((query) =>
+			query.query.startsWith('update "car"'),
+		);
+		expect(update?.query).toContain('"version" = ?');
+		expect(update?.query).toContain('"last_operation_id" = ?');
+	});
+
+	test('rejects a concurrent legacy car update instead of overwriting it', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: carRow() },
+			{ kind: 'first', value: null },
+		);
+
+		const response = await request(
+			'/api/v1/cars/car-1',
+			jsonRequest('PATCH', { name: 'Stale update' }),
+		);
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toEqual({
+			error: 'Car changed; reload and try again',
 		});
 	});
 
@@ -241,8 +282,15 @@ describe('car routes', () => {
 			const { d1, request } = fixture();
 			d1.queue(
 				{ kind: 'first', value: carRow({ archivedAt: before }) },
-				{ kind: 'batch' },
-				{ kind: 'first', value: carRow({ archivedAt: after }) },
+				{ kind: 'batch', rows: [[{ id: 'car-1' }], []] },
+				{
+					kind: 'first',
+					value: carRow({
+						archivedAt: after,
+						version: 2,
+						lastOperationId: 'private-operation',
+					}),
+				},
 			);
 
 			const response = await request(`/api/v1/cars/car-1/${action}`, {
@@ -251,8 +299,32 @@ describe('car routes', () => {
 
 			expect(response.status).toBe(200);
 			expect(await response.json()).toMatchObject({
-				car: { id: 'car-1', archivedAt: after },
+				car: { id: 'car-1', archivedAt: after, version: 2 },
 			});
+			expect(d1.batches[0]?.[0]).toContain('"version" = ?');
+			expect(d1.batches[0]?.[0]).toContain('"last_operation_id" = ?');
+		},
+	);
+
+	test.each(['archive', 'restore'] as const)(
+		'rejects a concurrent legacy %s transition without changing plans',
+		async (action) => {
+			const before = action === 'archive' ? null : '2026-01-01T00:00:00.000Z';
+			const { d1, request } = fixture();
+			d1.queue(
+				{ kind: 'first', value: carRow({ archivedAt: before }) },
+				{ kind: 'batch', rows: [[], []] },
+			);
+
+			const response = await request(`/api/v1/cars/car-1/${action}`, {
+				method: 'POST',
+			});
+
+			expect(response.status).toBe(409);
+			expect(await response.json()).toEqual({
+				error: 'Car changed; reload and try again',
+			});
+			expect(d1.batches[0]?.[1]).toContain('exists (select');
 		},
 	);
 

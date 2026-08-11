@@ -1,7 +1,5 @@
-import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OfflineConnectivity } from './offline-connectivity';
 import type { OfflinePreparationResult } from './offline-workspace-access';
 import { OfflineWorkspaceAccess } from './offline-workspace-access';
 import { OfflineWorkspaceStore } from './offline-workspace-store';
@@ -23,23 +21,16 @@ class FakeAccess {
 	);
 }
 
-class FakeConnectivity {
-	readonly online = signal(true);
-}
-
 describe('OfflineWorkspaceStore', () => {
 	let access: FakeAccess;
-	let connectivity: FakeConnectivity;
 	let store: InstanceType<typeof OfflineWorkspaceStore>;
 
 	beforeEach(() => {
 		access = new FakeAccess();
-		connectivity = new FakeConnectivity();
 		TestBed.configureTestingModule({
 			providers: [
 				OfflineWorkspaceStore,
 				{ provide: OfflineWorkspaceAccess, useValue: access },
-				{ provide: OfflineConnectivity, useValue: connectivity },
 			],
 		});
 		store = TestBed.inject(OfflineWorkspaceStore);
@@ -56,7 +47,7 @@ describe('OfflineWorkspaceStore', () => {
 		store.openOffline({ snapshot });
 		expect(store.status()).toBe('offline');
 		expect(store.networkUnavailable()).toBe(true);
-		expect(store.message()).toBe('Offline—prepared Garage is read-only');
+		expect(store.message()).toContain('changes will be saved here');
 		expect(store.cars()).toEqual(snapshot.cars);
 		expect(store.hasSnapshot()).toBe(true);
 		expect(store.ownerEmail()).toBe('racer@example.test');
@@ -103,20 +94,43 @@ describe('OfflineWorkspaceStore', () => {
 			},
 		});
 		await vi.waitFor(() => expect(store.status()).toBe('ready'));
+		expect(
+			store.hasSnapshotFor({
+				key: 'user-1',
+				email: 'racer@example.test',
+				sessionKey: 'session-1',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			}),
+		).toBe(true);
+		expect(
+			store.hasSnapshotFor({
+				key: 'user-1',
+				email: 'racer@example.test',
+				sessionKey: 'session-2',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			}),
+		).toBe(false);
+		expect(
+			store.hasSnapshotFor({
+				key: 'user-2',
+				email: 'second@example.test',
+				sessionKey: 'session-1',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			}),
+		).toBe(false);
 
-		connectivity.online.set(false);
-		await vi.waitFor(() => expect(store.status()).toBe('offline'));
+		store.markOffline();
 		expect(store.status()).toBe('offline');
-		expect(store.message()).toBe('Offline—prepared Garage is read-only');
+		expect(store.message()).toContain('sync when connection returns');
 
 		store.markOffline();
 		expect(store.status()).toBe('offline');
 
-		connectivity.online.set(true);
-		await vi.waitFor(() => expect(store.status()).toBe('ready'));
-		expect(store.message()).toBe('Offline ready');
 		store.markOnline();
 		expect(store.status()).toBe('ready');
+		expect(store.message()).toBe('Offline ready');
+		store.setCars([{ id: 'car-2', name: 'Locally changed' }]);
+		expect(store.cars()).toEqual([{ id: 'car-2', name: 'Locally changed' }]);
 	});
 
 	it('keeps only the newest overlapping User preparation', async () => {
@@ -183,8 +197,8 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.message()).toContain(
 			'Offline access is unavailable in this browser',
 		);
-		connectivity.online.set(false);
-		await vi.waitFor(() => expect(store.status()).toBe('offline-unavailable'));
+		store.markOffline();
+		expect(store.status()).toBe('offline-unavailable');
 		expect(store.networkUnavailable()).toBe(true);
 		expect(store.hasSnapshot()).toBe(false);
 		expect(store.message()).toBe(
@@ -202,8 +216,8 @@ describe('OfflineWorkspaceStore', () => {
 		});
 		await vi.waitFor(() => expect(store.status()).toBe('offline-unavailable'));
 
-		connectivity.online.set(true);
-		await vi.waitFor(() => expect(store.status()).toBe('online-only'));
+		store.markOnline();
+		expect(store.status()).toBe('online-only');
 		expect(store.networkUnavailable()).toBe(false);
 
 		access.prepare.mockRejectedValueOnce(new Error('IndexedDB failed'));

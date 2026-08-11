@@ -68,6 +68,19 @@ const carPayload = (form: CarForm): GarageCarInput => ({
 	notes: form.notes.trim(),
 });
 
+const changedCarPayload = (
+	form: CarForm,
+	baseline: CarForm,
+): Partial<GarageCarInput> => {
+	const current = carPayload(form);
+	const original = carPayload(baseline);
+	return Object.fromEntries(
+		(Object.keys(current) as (keyof GarageCarInput)[])
+			.filter((field) => current[field] !== original[field])
+			.map((field) => [field, current[field]]),
+	) as Partial<GarageCarInput>;
+};
+
 export const carFormValidationMessage = ([error]: readonly {
 	readonly message?: string;
 }[]): string => error?.message ?? 'Review the car details.';
@@ -95,6 +108,7 @@ export class CarOverview {
 	protected readonly store = inject(CarStore);
 	protected readonly editing = signal(false);
 	protected readonly form = signal(emptyCarForm());
+	private readonly editBaseline = signal(emptyCarForm());
 	protected readonly carFields = signalForm(this.form, (path) => {
 		required(path.name, { message: 'Give this car a name before saving.' });
 		validate(path.name, ({ value }) =>
@@ -128,6 +142,7 @@ export class CarOverview {
 			if (carId !== previousCarId) {
 				previousCarId = carId;
 				this.editing.set(false);
+				this.editBaseline.set(emptyCarForm());
 				this.formValidationError.set('');
 				this.store.clearCarMutationState();
 				this.carFields().reset(emptyCarForm());
@@ -143,20 +158,29 @@ export class CarOverview {
 				return;
 			handledOperationId = outcome.operationId;
 			this.editing.set(false);
+			this.editBaseline.set(emptyCarForm());
 		});
 	}
 
 	protected openEdit(car: GarageCar): void {
-		if (this.store.carAction() || this.store.lifecycleAction()) return;
+		if (
+			this.store.carAction() ||
+			this.store.lifecycleAction() ||
+			!this.store.mutationsAvailable()
+		)
+			return;
 		this.store.clearCarMutationState();
 		this.formValidationError.set('');
-		this.carFields().reset(carFormFrom(car));
+		const form = carFormFrom(car);
+		this.editBaseline.set(form);
+		this.carFields().reset(form);
 		this.editing.set(true);
 	}
 
 	protected cancelEdit(): void {
-		if (this.store.carAction()) return;
+		if (this.store.carAction() || !this.store.mutationsAvailable()) return;
 		this.editing.set(false);
+		this.editBaseline.set(emptyCarForm());
 		this.formValidationError.set('');
 		this.store.clearCarMutationState();
 		this.carFields().reset();
@@ -174,6 +198,13 @@ export class CarOverview {
 			return;
 		}
 		this.formValidationError.set('');
-		this.store.updateCar(carPayload(this.form()));
+		const baseline = this.editBaseline();
+		const changes = changedCarPayload(this.form(), baseline);
+		if (!Object.keys(changes).length) {
+			this.editing.set(false);
+			this.editBaseline.set(emptyCarForm());
+			return;
+		}
+		this.store.updateCar(changes);
 	}
 }

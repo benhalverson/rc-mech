@@ -1,5 +1,13 @@
 import type * as z from 'zod/mini';
-import { array, minLength, nullable, object, optional, string } from 'zod/mini';
+import {
+	array,
+	minLength,
+	nullable,
+	number,
+	object,
+	optional,
+	string,
+} from 'zod/mini';
 
 const optionalText = optional(nullable(string()));
 
@@ -15,6 +23,7 @@ export const garageCarSchema = object({
 	notes: optionalText,
 	archivedAt: optionalText,
 	createdAt: optional(string()),
+	version: optional(number()),
 });
 
 export const garageCarCollectionSchema = object({

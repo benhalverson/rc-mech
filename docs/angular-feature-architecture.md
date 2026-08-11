@@ -83,6 +83,16 @@ Feature gateways are the only client layer that understands transport and legacy
 
 Root-provided services are reserved for genuinely application-wide capabilities such as session state, appearance preference, route announcements, and offline infrastructure. New singletons use the repository's `@Service()` convention. A capability service may retain private handles such as `MediaRecorder`, timers, or browser listeners when those values cannot belong in serializable state.
 
+Local-first workflows use one application-wide coordinator store to publish the
+materialized working copy and typed synchronization outcomes. Feature route
+stores project that state and send immutable commands; they do not reach into
+IndexedDB or sequence synchronization themselves. The storage capability owns
+owner fencing and atomic local transactions, while the synchronization gateway
+owns the versioned HTTP contract and response parsing. A root coordinator that
+holds owner-scoped data must gate its public computed state and asynchronous
+completions by the exact current owner and session identity; resetting the
+underlying persistence layer alone is not a sufficient presentation boundary.
+
 ## Feature organization
 
 Code is organized by route-level feature and then by cohesive workflow, never by global technical-type buckets.

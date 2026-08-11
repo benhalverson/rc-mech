@@ -25,7 +25,7 @@ export const parseCarResponse = (value: unknown): GarageCar => {
 
 export const carGatewayFailure = (error: unknown): CarGatewayFailure => {
 	if (error instanceof HttpErrorResponse)
-		return error.status === 0
+		return error.status === 0 || error.status >= 500
 			? { kind: 'unavailable' }
 			: { kind: 'http', status: error.status };
 	return error instanceof InvalidCarResponse

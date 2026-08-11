@@ -36,7 +36,11 @@ describe('ownerSessionCanMatch', () => {
 	let loadPrivateFeature: ReturnType<typeof privateFeatureLoader>;
 	const sessionStore = { resolved: vi.fn(), resolutionFailed: vi.fn() };
 	const offlineAccess = { restore: vi.fn() };
-	const offlineWorkspace = { prepare: vi.fn(), openOffline: vi.fn() };
+	const offlineWorkspace = {
+		hasSnapshotFor: vi.fn(() => false),
+		prepare: vi.fn(),
+		openOffline: vi.fn(),
+	};
 
 	beforeEach(() => {
 		loadPrivateFeature = privateFeatureLoader();
@@ -45,6 +49,7 @@ describe('ownerSessionCanMatch', () => {
 		offlineAccess.restore.mockReset();
 		offlineWorkspace.prepare.mockReset();
 		offlineWorkspace.openOffline.mockReset();
+		offlineWorkspace.hasSnapshotFor.mockReset().mockReturnValue(false);
 		TestBed.configureTestingModule({
 			providers: [
 				provideRouter([
@@ -104,6 +109,28 @@ describe('ownerSessionCanMatch', () => {
 			},
 		});
 		expect(router.url).toBe('/garage/car-1/photos');
+	});
+
+	it('reuses an already prepared workspace during authenticated navigation', async () => {
+		sessionStore.resolved.mockResolvedValue({
+			session: {
+				id: 'session-1',
+				expiresAt: '2026-08-12T12:00:00.000Z',
+			},
+			user: { id: 'user-1', email: 'owner@example.test' },
+		});
+		offlineWorkspace.hasSnapshotFor.mockReturnValue(true);
+
+		await router.navigateByUrl('/garage/car-1/photos');
+
+		expect(loadPrivateFeature).toHaveBeenCalledOnce();
+		expect(offlineWorkspace.prepare).not.toHaveBeenCalled();
+		expect(offlineWorkspace.hasSnapshotFor).toHaveBeenCalledWith({
+			key: 'user-1',
+			email: 'owner@example.test',
+			sessionKey: 'session-1',
+			offlineUntil: '2026-08-12T12:00:00.000Z',
+		});
 	});
 
 	it('opens a still-valid local Garage only after the live session request fails', async () => {
