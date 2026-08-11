@@ -39,6 +39,7 @@ describe('OfflineGarageStorage', () => {
 		expect(
 			await storage.restoreCurrent(new Date('2026-08-11T12:00:00.000Z')),
 		).toBeNull();
+		await storage.deactivate();
 
 		await storage.activate('user-a');
 		await expect(
@@ -71,16 +72,13 @@ describe('OfflineGarageStorage', () => {
 			ownerKey: 'user-b',
 			cars: [{ id: 'car-b', name: 'Buggy B' }],
 		});
-
-		await storage.activate('user-without-a-snapshot');
-		expect(
-			await storage.restoreCurrent(new Date('2026-08-11T12:02:00.000Z')),
-		).toBeNull();
+		await storage.deactivate();
+		expect(await storage.read('user-b')).toBeNull();
 		expect(await storage.read('user-a')).toMatchObject({
 			cars: [{ id: 'car-a' }],
 		});
 
-		await storage.deactivate();
+		await storage.activate('user-without-a-snapshot');
 		expect(
 			await storage.restoreCurrent(new Date('2026-08-11T12:02:00.000Z')),
 		).toBeNull();

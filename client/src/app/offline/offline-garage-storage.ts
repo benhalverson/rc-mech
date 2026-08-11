@@ -41,7 +41,16 @@ export class OfflineGarageStorage {
 	}
 
 	async deactivate(): Promise<void> {
-		await this.metadata.delete('active-owner');
+		await this.database.transaction(
+			'rw',
+			this.snapshots,
+			this.metadata,
+			async () => {
+				const active = await this.metadata.get('active-owner');
+				if (active) await this.snapshots.delete(active.ownerKey);
+				await this.metadata.delete('active-owner');
+			},
+		);
 	}
 
 	async save(snapshot: OfflineGarageSnapshot): Promise<boolean> {

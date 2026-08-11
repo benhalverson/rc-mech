@@ -76,7 +76,7 @@ describe('SignOutStore', () => {
 		expect(store.signingOut()).toBe(true);
 
 		store.signOut(command);
-		expect(gateway.signOut).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(gateway.signOut).toHaveBeenCalledOnce());
 		gateway.succeed();
 		await vi.waitFor(() =>
 			expect(store.outcome()).toEqual({
@@ -92,6 +92,7 @@ describe('SignOutStore', () => {
 
 		gateway.reset();
 		store.signOut(command);
+		await vi.waitFor(() => expect(gateway.signOut).toHaveBeenCalledTimes(2));
 		gateway.fail({ kind: 'http', status: 503 });
 		expect(store.outcome()).toEqual({
 			status: 'failed',
@@ -105,8 +106,21 @@ describe('SignOutStore', () => {
 	it('preserves successful sign-out when navigation cannot complete', async () => {
 		navigate.mockRejectedValueOnce(new Error('navigation failed'));
 		store.signOut({ operation: 'sign-out' });
+		await vi.waitFor(() => expect(gateway.signOut).toHaveBeenCalledOnce());
 		gateway.succeed();
 		await vi.waitFor(() => expect(store.outcome().status).toBe('succeeded'));
 		expect(expire).toHaveBeenCalledOnce();
+	});
+
+	it('does not end the server session when offline cleanup fails', async () => {
+		deactivate.mockRejectedValueOnce(new Error('IndexedDB unavailable'));
+		store.signOut({ operation: 'sign-out' });
+		await vi.waitFor(() => expect(store.outcome().status).toBe('failed'));
+		expect(store.outcome()).toMatchObject({
+			error: { kind: 'unavailable' },
+		});
+		expect(gateway.signOut).not.toHaveBeenCalled();
+		expect(expire).not.toHaveBeenCalled();
+		expect(navigate).not.toHaveBeenCalled();
 	});
 });

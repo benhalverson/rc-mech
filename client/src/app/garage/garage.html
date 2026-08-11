@@ -13,7 +13,7 @@
 		}
 	</header>
 	@if (!store.carMutationsAvailable()) {
-		<p id="offline-garage-limit" class="alloy-supporting-text m-0">Car changes need a connection until offline sync is available. You can still read the prepared Garage.</p>
+		<p id="offline-garage-limit" class="alloy-supporting-text m-0">Car changes need a connection. You can keep reading the Garage already on this screen.</p>
 	}
 	@if (store.carMessage()) {
 		<p class="alloy-state alloy-live-state mt-0" role="status"><span>{{ store.carMessage() }}</span></p>

@@ -119,6 +119,10 @@ test('keeps a browser without required capabilities honestly online-only', async
 	);
 	await expect(page.getByRole('heading', { name: 'The garage' })).toBeFocused();
 	await expectAxeClean(page);
+
+	await page.context().setOffline(true);
+	await expect(page.getByRole('button', { name: 'Add a car' })).toBeDisabled();
+	await expect(page.getByText('Car changes need a connection')).toBeVisible();
 });
 
 test('does not restore the prior Garage after explicit sign-out', async ({
