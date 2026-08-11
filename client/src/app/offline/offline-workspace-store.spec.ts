@@ -106,6 +106,60 @@ describe('OfflineWorkspaceStore', () => {
 
 		store.markOffline();
 		expect(store.status()).toBe('offline');
+
+		connectivity.online.set(true);
+		await vi.waitFor(() => expect(store.status()).toBe('ready'));
+		expect(store.message()).toBe('Offline ready');
+		store.markOnline();
+		expect(store.status()).toBe('ready');
+	});
+
+	it('keeps only the newest overlapping User preparation', async () => {
+		let finishFirst!: (result: OfflinePreparationResult) => void;
+		let finishSecond!: (result: OfflinePreparationResult) => void;
+		access.prepare
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finishFirst = resolve;
+					}),
+			)
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finishSecond = resolve;
+					}),
+			);
+		store.prepare({
+			owner: {
+				key: 'user-1',
+				email: 'first@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			},
+		});
+		store.prepare({
+			owner: {
+				key: 'user-2',
+				email: 'second@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			},
+		});
+
+		finishFirst({ kind: 'ready', snapshot });
+		await Promise.resolve();
+		expect(store.status()).toBe('preparing');
+		expect(store.ownerEmail()).toBe('second@example.test');
+
+		finishSecond({
+			kind: 'ready',
+			snapshot: {
+				...snapshot,
+				ownerKey: 'user-2',
+				ownerEmail: 'second@example.test',
+			},
+		});
+		await vi.waitFor(() => expect(store.status()).toBe('ready'));
+		expect(store.ownerEmail()).toBe('second@example.test');
 	});
 
 	it('explains unsupported capability and preparation failures honestly', async () => {

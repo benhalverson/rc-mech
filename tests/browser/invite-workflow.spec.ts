@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
+test.use({ serviceWorkers: 'block' });
+
 const baseURL = 'http://127.0.0.1:4201';
 
 const builtRouteChunk = (routeExport: string): string => {

@@ -10,6 +10,7 @@ import {
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, exhaustMap, from, of, switchMap, tap } from 'rxjs';
+import { OfflineGarageStorage } from '../offline/offline-garage-storage';
 import { OwnerSessionStore } from '../owner-session-store';
 import type { SignOutGatewayFailure } from './sign-out-contract';
 import { SignOutGateway } from './sign-out-gateway';
@@ -38,6 +39,7 @@ export const SignOutStore = signalStore(
 	withState(initialState),
 	withProps(() => ({
 		gateway: inject(SignOutGateway),
+		offlineStorage: inject(OfflineGarageStorage),
 		router: inject(Router),
 		session: inject(OwnerSessionStore),
 		nextOperationId: { value: 0 },
@@ -63,6 +65,7 @@ export const SignOutStore = signalStore(
 						},
 					});
 					return store.gateway.signOut().pipe(
+						switchMap(() => from(store.offlineStorage.deactivate())),
 						tap(() => store.session.expire()),
 						switchMap(() =>
 							from(store.router.navigate(['/sign-in'])).pipe(

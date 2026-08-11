@@ -80,6 +80,10 @@ test('reopens the prepared User-scoped Garage after the page closes offline', as
 	await expect(page.getByRole('button', { name: 'Add a car' })).toBeDisabled();
 	await expect(page.getByText('Car changes need a connection')).toBeVisible();
 	await context.setOffline(false);
+	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
+		'Offline ready',
+	);
+	await expect(page.getByRole('button', { name: 'Add a car' })).toBeEnabled();
 
 	const reopened = await reopenOffline(context, page);
 	await expect(
@@ -113,4 +117,31 @@ test('keeps a browser without required capabilities honestly online-only', async
 	);
 	await expect(page.getByRole('heading', { name: 'The garage' })).toBeFocused();
 	await expectAxeClean(page);
+});
+
+test('does not restore the prior Garage after explicit sign-out', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Signed-out private buggy' },
+	});
+	expect(created.ok()).toBe(true);
+	await page.goto('/garage');
+	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
+		'Offline ready',
+	);
+
+	await page.getByRole('button', { name: 'Sign out' }).click();
+	await expect(
+		page.getByRole('heading', { name: 'Back to the workbench.' }),
+	).toBeVisible();
+
+	const reopened = await reopenOffline(context, page);
+	await expect(
+		reopened.getByRole('heading', { name: 'Back to the workbench.' }),
+	).toBeVisible();
+	await expect(reopened.getByText('Signed-out private buggy')).toHaveCount(0);
+	await expectAxeClean(reopened);
 });

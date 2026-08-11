@@ -10,6 +10,7 @@ import {
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, exhaustMap, of, tap } from 'rxjs';
+import { OfflineConnectivity } from '../offline/offline-connectivity';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import type {
 	CreateCarCommand,
@@ -47,6 +48,7 @@ export const GarageStore = signalStore(
 	}),
 	withProps(() => ({
 		gateway: inject(GarageGateway),
+		connectivity: inject(OfflineConnectivity),
 		offline: inject(OfflineWorkspaceStore),
 		nextOperationId: { value: 0 },
 	})),
@@ -88,7 +90,22 @@ export const GarageStore = signalStore(
 	withHooks({
 		onInit(store) {
 			effect(() => {
-				if (store.gateway.collectionUnavailable()) store.offline.markOffline();
+				if (store.gateway.collectionUnavailable()) {
+					store.offline.markOffline();
+					return;
+				}
+				if (
+					store.connectivity.online() &&
+					store.gateway.collection.status() === 'resolved' &&
+					store.gateway.collection.hasValue()
+				)
+					store.offline.markOnline();
+			});
+			let wasOnline = store.connectivity.online();
+			effect(() => {
+				const online = store.connectivity.online();
+				if (online && !wasOnline) store.gateway.refresh();
+				wasOnline = online;
 			});
 		},
 	}),

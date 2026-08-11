@@ -40,20 +40,26 @@ describe('OfflineGarageStorage', () => {
 			await storage.restoreCurrent(new Date('2026-08-11T12:00:00.000Z')),
 		).toBeNull();
 
-		await storage.save({
-			ownerKey: 'user-a',
-			ownerEmail: 'a@example.test',
-			offlineUntil: '2026-08-12T12:00:00.000Z',
-			preparedAt: '2026-08-11T12:00:00.000Z',
-			cars: [car('car-a', 'Buggy A')],
-		});
-		await storage.save({
-			ownerKey: 'user-b',
-			ownerEmail: 'b@example.test',
-			offlineUntil: '2026-08-12T12:00:00.000Z',
-			preparedAt: '2026-08-11T12:01:00.000Z',
-			cars: [car('car-b', 'Buggy B')],
-		});
+		await storage.activate('user-a');
+		await expect(
+			storage.save({
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [car('car-a', 'Buggy A')],
+			}),
+		).resolves.toBe(true);
+		await storage.activate('user-b');
+		await expect(
+			storage.save({
+				ownerKey: 'user-b',
+				ownerEmail: 'b@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:01:00.000Z',
+				cars: [car('car-b', 'Buggy B')],
+			}),
+		).resolves.toBe(true);
 
 		expect(await storage.read('user-a')).toMatchObject({
 			ownerEmail: 'a@example.test',
@@ -73,9 +79,30 @@ describe('OfflineGarageStorage', () => {
 		expect(await storage.read('user-a')).toMatchObject({
 			cars: [{ id: 'car-a' }],
 		});
+
+		await storage.deactivate();
+		expect(
+			await storage.restoreCurrent(new Date('2026-08-11T12:02:00.000Z')),
+		).toBeNull();
+	});
+
+	it('refuses a stale preparation after another User becomes active', async () => {
+		await storage.activate('user-a');
+		await storage.activate('user-b');
+		await expect(
+			storage.save({
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+				preparedAt: '2026-08-11T12:00:00.000Z',
+				cars: [car('car-a', 'Buggy A')],
+			}),
+		).resolves.toBe(false);
+		expect(await storage.read('user-a')).toBeNull();
 	});
 
 	it('refuses to restore a Garage after the server session expiry', async () => {
+		await storage.activate('user-a');
 		await storage.save({
 			ownerKey: 'user-a',
 			ownerEmail: 'a@example.test',

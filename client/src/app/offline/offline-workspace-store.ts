@@ -1,4 +1,4 @@
-import { computed, effect, inject } from '@angular/core';
+import { computed, effect, inject, untracked } from '@angular/core';
 import {
 	patchState,
 	signalStore,
@@ -9,7 +9,7 @@ import {
 	withState,
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { catchError, EMPTY, exhaustMap, from, tap } from 'rxjs';
+import { catchError, EMPTY, from, switchMap, tap } from 'rxjs';
 import type { GarageCar } from '../garage/garage.models';
 import { OfflineConnectivity } from './offline-connectivity';
 import type { OfflineGarageSnapshot } from './offline-garage-storage';
@@ -67,7 +67,7 @@ export const OfflineWorkspaceStore = signalStore(
 	withMethods((store) => {
 		const prepare = rxMethod<PrepareOfflineWorkspaceCommand>((commands$) =>
 			commands$.pipe(
-				exhaustMap(({ owner }) => {
+				switchMap(({ owner }) => {
 					patchState(store, {
 						status: 'preparing',
 						onlineOnlyReason: null,
@@ -105,8 +105,12 @@ export const OfflineWorkspaceStore = signalStore(
 
 		return {
 			markOffline(): void {
-				if (store.status() === 'ready')
+				if (untracked(store.status) === 'ready')
 					patchState(store, { status: 'offline' });
+			},
+			markOnline(): void {
+				if (untracked(store.status) === 'offline')
+					patchState(store, { status: 'ready' });
 			},
 			prepare(command: PrepareOfflineWorkspaceCommand): void {
 				prepare(command);
@@ -123,9 +127,14 @@ export const OfflineWorkspaceStore = signalStore(
 	}),
 	withHooks({
 		onInit(store) {
+			let wasOnline = store.connectivity.online();
 			effect(() => {
-				if (!store.connectivity.online() && store.status() === 'ready')
-					store.markOffline();
+				const online = store.connectivity.online();
+				const status = store.status();
+				const reconnected = online && !wasOnline;
+				wasOnline = online;
+				if (!online && status === 'ready') store.markOffline();
+				else if (reconnected && status === 'offline') store.markOnline();
 			});
 		},
 	}),

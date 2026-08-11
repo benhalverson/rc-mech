@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineGarageStorage } from '../offline/offline-garage-storage';
 import { OwnerSessionStore } from '../owner-session-store';
 import { type SignOutGatewayFailure } from './sign-out-contract';
 import { SignOutGateway } from './sign-out-gateway';
@@ -32,16 +33,19 @@ describe('SignOutStore', () => {
 	let gateway: FakeSignOutGateway;
 	let navigate: ReturnType<typeof vi.fn>;
 	let expire: ReturnType<typeof vi.fn>;
+	let deactivate: ReturnType<typeof vi.fn>;
 	let store: InstanceType<typeof SignOutStore>;
 
 	beforeEach(() => {
 		gateway = new FakeSignOutGateway();
 		navigate = vi.fn(() => Promise.resolve(true));
 		expire = vi.fn();
+		deactivate = vi.fn(() => Promise.resolve());
 		TestBed.configureTestingModule({
 			providers: [
 				SignOutStore,
 				{ provide: SignOutGateway, useValue: gateway },
+				{ provide: OfflineGarageStorage, useValue: { deactivate } },
 				{ provide: Router, useValue: { navigate } },
 				{ provide: OwnerSessionStore, useValue: { expire } },
 			],
@@ -74,7 +78,6 @@ describe('SignOutStore', () => {
 		store.signOut(command);
 		expect(gateway.signOut).toHaveBeenCalledOnce();
 		gateway.succeed();
-		expect(expire).toHaveBeenCalledOnce();
 		await vi.waitFor(() =>
 			expect(store.outcome()).toEqual({
 				status: 'succeeded',
@@ -82,7 +85,9 @@ describe('SignOutStore', () => {
 				operationId: 1,
 			}),
 		);
+		expect(expire).toHaveBeenCalledOnce();
 		expect(navigate).toHaveBeenCalledWith(['/sign-in']);
+		expect(deactivate).toHaveBeenCalledOnce();
 		expect(store.error()).toBe('');
 
 		gateway.reset();

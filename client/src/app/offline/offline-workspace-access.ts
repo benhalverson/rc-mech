@@ -38,7 +38,8 @@ export class OfflineWorkspaceAccess {
 			preparedAt: this.now().toISOString(),
 			cars: collection.cars,
 		};
-		await this.storage.save(snapshot);
+		if (!(await this.storage.save(snapshot)))
+			throw new Error('Offline preparation was superseded by another User.');
 		return { kind: 'ready', snapshot };
 	}
 

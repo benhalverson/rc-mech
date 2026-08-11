@@ -52,21 +52,26 @@ const fixedCar = {
 	archivedAt: null,
 };
 
-const routeFixedCarCollection = async (
-	page: Page,
-	car: typeof fixedCar = fixedCar,
-): Promise<void> => {
-	await page.route('**/api/v1/cars*', async (route) => {
-		const request = route.request();
-		if (
-			request.method() === 'GET' &&
-			new URL(request.url()).pathname === '/api/v1/cars'
-		) {
-			await route.fulfill({ json: { cars: [car] } });
-			return;
-		}
-		await route.continue();
+const ensureFixedCar = async (page: Page): Promise<typeof fixedCar> => {
+	const collection = await page.request.get('/api/v1/cars?archived=all');
+	expect(collection.ok()).toBe(true);
+	const existing = (
+		(await collection.json()) as { cars: (typeof fixedCar)[] }
+	).cars.find((car) => car.name === fixedCar.name);
+	if (existing) return existing;
+	const response = await page.request.post('/api/v1/cars', {
+		data: {
+			name: fixedCar.name,
+			make: fixedCar.make,
+			model: fixedCar.model,
+			scale: fixedCar.scale,
+			vehicleType: fixedCar.vehicleType,
+			powerType: fixedCar.powerType,
+			notes: fixedCar.notes,
+		},
 	});
+	expect(response.ok()).toBe(true);
+	return ((await response.json()) as { car: typeof fixedCar }).car;
 };
 
 for (const appearance of ['light', 'dark'] as const) {
@@ -136,10 +141,13 @@ for (const appearance of ['light', 'dark'] as const) {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await setAppearance(page, appearance);
 		await authenticateOwner(page);
-		await routeFixedCarCollection(page);
+		await ensureFixedCar(page);
 
 		await page.goto('/garage');
-		const routeHeading = page.getByRole('heading', { name: 'The garage' });
+		const routeHeading = page.getByRole('heading', {
+			name: 'The garage',
+			exact: true,
+		});
 		await expect(routeHeading).toBeVisible();
 		await expect(routeHeading).toBeFocused();
 		const routeFocus = await routeHeading.evaluate((heading) => {
@@ -172,23 +180,9 @@ for (const appearance of ['light', 'dark'] as const) {
 		await page.setViewportSize({ width: 1280, height: 900 });
 		await setAppearance(page, appearance);
 		await authenticateOwner(page);
-		const carResponse = await page.request.post('/api/v1/cars', {
-			data: {
-				name: fixedCar.name,
-				make: fixedCar.make,
-				model: fixedCar.model,
-				scale: fixedCar.scale,
-				vehicleType: fixedCar.vehicleType,
-				powerType: fixedCar.powerType,
-				notes: fixedCar.notes,
-			},
-		});
-		expect(carResponse.ok()).toBe(true);
-		const created = (await carResponse.json()) as {
-			car: typeof fixedCar;
-		};
+		const car = await ensureFixedCar(page);
 		const setupResponse = await page.request.post(
-			`/api/v1/cars/${created.car.id}/setups`,
+			`/api/v1/cars/${car.id}/setups`,
 			{
 				data: {
 					name: 'Indoor clay baseline',
@@ -217,9 +211,8 @@ for (const appearance of ['light', 'dark'] as const) {
 			},
 		);
 		expect(setupResponse.ok()).toBe(true);
-		await routeFixedCarCollection(page, created.car);
 
-		await page.goto(`/garage/${created.car.id}/overview`);
+		await page.goto(`/garage/${car.id}/overview`);
 		await expect(
 			page.getByRole('heading', { name: 'Current setup' }),
 		).toBeVisible();
@@ -242,9 +235,20 @@ for (const appearance of ['light', 'dark'] as const) {
 }
 
 test('keeps the authenticated Garage loading composition explicit and accessible', async ({
-	page,
+	browser,
 }) => {
-	await page.setViewportSize({ width: 390, height: 844 });
+	const context = await browser.newContext({
+		baseURL: 'http://127.0.0.1:4201',
+		serviceWorkers: 'block',
+		viewport: { width: 390, height: 844 },
+	});
+	const page = await context.newPage();
+	await page.addInitScript(() => {
+		Object.defineProperty(globalThis, 'indexedDB', {
+			configurable: true,
+			value: undefined,
+		});
+	});
 	await setAppearance(page, 'light');
 	await authenticateOwner(page);
 
@@ -273,13 +277,14 @@ test('keeps the authenticated Garage loading composition explicit and accessible
 		await expect(loading).toBeVisible();
 		await expect(loading).toContainText('Opening the garage ledger');
 		await expectAxeClean(page);
+		releaseCars();
+		await expect(
+			page.getByRole('link', { name: /Alloy B7 track car/ }),
+		).toBeVisible();
 	} finally {
 		releaseCars();
+		await context.close();
 	}
-
-	await expect(
-		page.getByRole('link', { name: /Alloy B7 track car/ }),
-	).toBeVisible();
 });
 
 test('keeps setup context typography and review controls within the Alloy contract', async ({
@@ -314,7 +319,6 @@ test('keeps setup context typography and review controls within the Alloy contra
 		},
 	);
 	expect(setupResponse.ok()).toBe(true);
-	await routeFixedCarCollection(page, created.car);
 
 	await page.goto(`/garage/${created.car.id}/setups`);
 	await expect(

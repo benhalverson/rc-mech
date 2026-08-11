@@ -34,7 +34,7 @@ class FakeGateway {
 
 class FakeStorage {
 	readonly activate = vi.fn(async (_ownerKey: string) => undefined);
-	readonly save = vi.fn(async (_snapshot: OfflineGarageSnapshot) => undefined);
+	readonly save = vi.fn(async (_snapshot: OfflineGarageSnapshot) => true);
 	readonly restoreCurrent = vi.fn(
 		async () => null as OfflineGarageSnapshot | null,
 	);
@@ -98,5 +98,10 @@ describe('OfflineWorkspaceAccess', () => {
 		expect(capabilities.prepareShell).not.toHaveBeenCalled();
 		expect(storage.activate).not.toHaveBeenCalled();
 		expect(gateway.load).not.toHaveBeenCalled();
+	});
+
+	it('rejects a preparation superseded by another User', async () => {
+		storage.save.mockResolvedValueOnce(false);
+		await expect(access.prepare(owner)).rejects.toThrow('superseded');
 	});
 });

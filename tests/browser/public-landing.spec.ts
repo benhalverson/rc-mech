@@ -5,6 +5,8 @@ import {
 	installAppearance,
 } from './support/chassis-notes-demo';
 
+test.use({ serviceWorkers: 'block' });
+
 const expectAxeClean = async (page: Page): Promise<void> => {
 	await injectAxe(page);
 	expect(await getViolations(page)).toEqual([]);

@@ -8,6 +8,7 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineConnectivity } from '../offline/offline-connectivity';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { Garage } from './garage';
 import type { GarageCar } from './garage.models';
@@ -18,16 +19,27 @@ class FakeOfflineWorkspaceStore {
 	readonly cars = signal<readonly GarageCar[]>([]);
 	readonly hasSnapshot = signal(false);
 	readonly status = signal('idle');
-	readonly markOffline = vi.fn(() => this.status.set('offline'));
+	readonly markOffline = vi.fn(() => {
+		if (this.status() === 'ready') this.status.set('offline');
+	});
+	readonly markOnline = vi.fn(() => {
+		if (this.status() === 'offline') this.status.set('ready');
+	});
+}
+
+class FakeOfflineConnectivity {
+	readonly online = signal(true);
 }
 
 describe('Garage', () => {
 	let fixture: ComponentFixture<Garage>;
 	let http: HttpTestingController;
 	let offline: FakeOfflineWorkspaceStore;
+	let connectivity: FakeOfflineConnectivity;
 
 	beforeEach(async () => {
 		offline = new FakeOfflineWorkspaceStore();
+		connectivity = new FakeOfflineConnectivity();
 		await TestBed.configureTestingModule({
 			imports: [Garage],
 			providers: [
@@ -36,6 +48,7 @@ describe('Garage', () => {
 				provideRouter([]),
 				GarageGateway,
 				GarageStore,
+				{ provide: OfflineConnectivity, useValue: connectivity },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 			],
 		}).compileComponents();
@@ -227,6 +240,7 @@ describe('Garage', () => {
 			},
 		]);
 		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
 		http.expectOne('/api/v1/cars').error(new ProgressEvent('offline'));
 		await fixture.whenStable();
 		fixture.detectChanges();
@@ -268,6 +282,18 @@ describe('Garage', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Archived offline truck',
 		);
+
+		connectivity.online.set(false);
+		fixture.detectChanges();
+		connectivity.online.set(true);
+		let recovery: TestRequest | undefined;
+		await vi.waitFor(() => {
+			recovery = http.expectOne(
+				(request) => request.params.get('archived') === 'all',
+			);
+		});
+		recovery?.flush({ cars: [{ id: 'car-1', name: 'Recovered buggy' }] });
+		await vi.waitFor(() => expect(offline.markOnline).toHaveBeenCalled());
 	});
 
 	it('opens and cancels the toolbar create form', async () => {
