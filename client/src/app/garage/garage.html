@@ -13,10 +13,24 @@
 		}
 	</header>
 	@if (!store.carMutationsAvailable()) {
-		<p id="offline-garage-limit" class="alloy-supporting-text m-0">Car changes need a connection. You can keep reading the Garage already on this screen.</p>
+		<p id="offline-garage-limit" class="alloy-supporting-text m-0">Car changes are unavailable until this Garage is prepared or the connection returns.</p>
 	}
 	@if (store.carMessage()) {
 		<p class="alloy-state alloy-live-state mt-0" role="status"><span>{{ store.carMessage() }}</span></p>
+	}
+	@switch (store.syncMark().kind) {
+			@case ('pending') {
+				<p class="alloy-state alloy-live-state mt-0" role="status"><span><strong>Pending sync</strong> — saved on this device.</span></p>
+			}
+			@case ('syncing') {
+				<p class="alloy-state alloy-live-state mt-0" role="status"><span><strong>Syncing</strong> — sending saved Car changes.</span></p>
+			}
+			@case ('needs-attention') {
+				<p class="alloy-state alloy-error-state mt-0" role="alert"><span><strong>Needs attention</strong> — {{ store.syncFeedback() }}</span></p>
+			}
+			@case ('conflict') {
+				<p class="alloy-state alloy-error-state mt-0" role="alert"><span><strong>Sync conflict</strong> — the local and server Car records were both retained for review.</span></p>
+			}
 	}
 
 	@if (editing()) {
@@ -153,6 +167,11 @@
 								</span>
 								<svg lucideChevronRight size="20" strokeWidth="1.8" aria-hidden="true"></svg>
 							</a>
+							@if (store.carSyncLabel(car.id); as syncLabel) {
+								<p class="m-0 px-3 pb-3 text-sm font-semibold text-alloy-text-secondary">
+									{{ syncLabel }}
+								</p>
+							}
 						</li>
 					}
 				</ul>

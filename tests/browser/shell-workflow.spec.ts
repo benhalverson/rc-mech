@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
+test.use({ serviceWorkers: 'allow' });
+
 let ownerAuthentication = 0;
 
 const scan = async (page: import('@playwright/test').Page) => {
@@ -157,6 +159,9 @@ test('car context switches at 1024px and the mobile picker handles long, numerou
 	const pickerBox = await picker.boundingBox();
 	expect(pickerBox?.x).toBe(0);
 	expect(pickerBox?.width).toBe(390);
+	await expect(
+		picker.getByText('Picker car 15', { exact: true }),
+	).toBeVisible();
 	const pickerLabels = await picker.locator('.picker-car').allTextContents();
 	expect(pickerLabels.length).toBeGreaterThanOrEqual(names.length);
 	for (const name of names)

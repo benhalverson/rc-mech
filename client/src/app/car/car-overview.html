@@ -13,6 +13,23 @@
 	</div>
 } @else if (store.car(); as car) {
 	<app-car-section-shell [car]="car" section="overview">
+		@if (!store.mutationsAvailable()) {
+			<p class="alloy-state alloy-live-state mt-0" role="status"><span>Car changes are unavailable until this Garage is prepared or the connection returns.</span></p>
+		}
+		@switch (store.syncMark().kind) {
+				@case ('pending') {
+					<p class="alloy-state alloy-live-state mt-0" role="status"><span><strong>Pending sync</strong> — this Car change is saved on this device.</span></p>
+				}
+				@case ('syncing') {
+					<p class="alloy-state alloy-live-state mt-0" role="status"><span><strong>Syncing</strong> — sending saved Car changes.</span></p>
+				}
+				@case ('needs-attention') {
+					<p class="alloy-state alloy-error-state mt-0" role="alert"><span><strong>Needs attention</strong> — {{ store.syncFeedback() }}</span></p>
+				}
+				@case ('conflict') {
+					<p class="alloy-state alloy-error-state mt-0" role="alert"><span><strong>Sync conflict</strong> — the local and server Car records were both retained for review.</span></p>
+				}
+		}
 		<app-current-setup [carId]="car.id" [archived]="!!car.archivedAt" />
 		<app-voice-note-workspace class="mt-6" [carId]="car.id" [archived]="!!car.archivedAt" />
 		@if (editing()) {
@@ -38,7 +55,7 @@
 					<label class="wide grid gap-1 sm:col-span-2"><span class="text-sm font-semibold text-alloy-text">Notes</span><textarea class="alloy-field min-h-32 w-full py-3" rows="5" [formField]="carFields.notes" [attr.aria-describedby]="formError() && carFields.notes().invalid() ? 'car-form-error' : null"></textarea></label>
 				</div>
 				<div class="form-actions flex flex-col gap-2 sm:flex-row">
-					<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="store.carAction() !== null"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.carAction() === 'update' ? 'Saving…' : 'Save car' }}</button>
+					<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="store.carAction() !== null || !store.mutationsAvailable()"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.carAction() === 'update' ? 'Saving…' : 'Save car' }}</button>
 					<button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="cancelEdit()" [disabled]="store.carAction() !== null">Cancel</button>
 				</div>
 			</form>
@@ -47,11 +64,11 @@
 				<header class="grid items-end gap-4 border-b border-alloy-separator pb-4 sm:grid-cols-[minmax(0,1fr)_auto]">
 					<div><div class="alloy-section-heading">Car record</div><h3 id="overview-title" class="alloy-screen-title mb-0">Car overview</h3></div>
 					<div class="overview-actions flex flex-col gap-2 sm:flex-row">
-						<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openEdit(car)" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit details</button>
+						<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openEdit(car)" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null || !store.mutationsAvailable()"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit details</button>
 						@if (car.archivedAt) {
-							<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="store.changeArchiveState('restore')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.lifecycleAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button>
+							<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="store.changeArchiveState('restore')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null || !store.mutationsAvailable()"><svg lucideArchiveRestore size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.lifecycleAction() === 'restore' ? 'Restoring…' : 'Restore car' }}</button>
 						} @else {
-							<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="store.changeArchiveState('archive')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.lifecycleAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button>
+							<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="store.changeArchiveState('archive')" [disabled]="store.lifecycleAction() !== null || store.carAction() !== null || !store.mutationsAvailable()"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ store.lifecycleAction() === 'archive' ? 'Archiving…' : 'Archive car' }}</button>
 						}
 					</div>
 				</header>

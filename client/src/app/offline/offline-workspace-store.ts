@@ -1,9 +1,8 @@
-import { computed, effect, inject, untracked } from '@angular/core';
+import { computed, inject, untracked } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
-	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -11,7 +10,6 @@ import {
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, from, switchMap, tap } from 'rxjs';
 import type { GarageCar } from '../garage/garage.models';
-import { OfflineConnectivity } from './offline-connectivity';
 import type { OfflineGarageSnapshot } from './offline-garage-storage';
 import type { OfflineOwner } from './offline-owner';
 import { OfflineWorkspaceAccess } from './offline-workspace-access';
@@ -30,7 +28,9 @@ type OfflineWorkspaceState = {
 	status: OfflineWorkspaceStatus;
 	onlineOnlyReason: OnlineOnlyReason;
 	networkUnavailable: boolean;
+	ownerKey: string;
 	ownerEmail: string;
+	sessionKey: string;
 	cars: readonly GarageCar[];
 };
 
@@ -45,12 +45,13 @@ export const OfflineWorkspaceStore = signalStore(
 		status: 'idle',
 		onlineOnlyReason: null,
 		networkUnavailable: false,
+		ownerKey: '',
 		ownerEmail: '',
+		sessionKey: '',
 		cars: [],
 	}),
 	withProps(() => ({
 		access: inject(OfflineWorkspaceAccess),
-		connectivity: inject(OfflineConnectivity),
 	})),
 	withComputed((store) => ({
 		hasSnapshot: computed(
@@ -61,7 +62,8 @@ export const OfflineWorkspaceStore = signalStore(
 			if (status === 'idle') return '';
 			if (status === 'preparing') return 'Preparing offline access…';
 			if (status === 'ready') return 'Offline ready';
-			if (status === 'offline') return 'Offline—prepared Garage is read-only';
+			if (status === 'offline')
+				return 'Offline—changes will be saved here and sync when connection returns.';
 			if (status === 'offline-unavailable')
 				return 'Offline—this browser has no prepared Garage.';
 			return store.onlineOnlyReason() === 'unsupported'
@@ -76,7 +78,9 @@ export const OfflineWorkspaceStore = signalStore(
 					patchState(store, {
 						status: 'preparing',
 						onlineOnlyReason: null,
+						ownerKey: owner.key,
 						ownerEmail: owner.email,
+						sessionKey: owner.sessionKey,
 						cars: [],
 					});
 					return from(store.access.prepare(owner)).pipe(
@@ -94,6 +98,7 @@ export const OfflineWorkspaceStore = signalStore(
 								status: 'ready',
 								onlineOnlyReason: null,
 								networkUnavailable: false,
+								ownerKey: result.snapshot.ownerKey,
 								ownerEmail: result.snapshot.ownerEmail,
 								cars: result.snapshot.cars,
 							});
@@ -114,6 +119,16 @@ export const OfflineWorkspaceStore = signalStore(
 		);
 
 		return {
+			hasSnapshotFor(owner: OfflineOwner): boolean {
+				return (
+					untracked(store.hasSnapshot) &&
+					untracked(store.ownerKey) === owner.key &&
+					untracked(store.sessionKey) === owner.sessionKey
+				);
+			},
+			setCars(cars: readonly GarageCar[]): void {
+				patchState(store, { cars });
+			},
 			markOffline(): void {
 				const status = untracked(store.status);
 				if (status === 'ready')
@@ -144,33 +159,12 @@ export const OfflineWorkspaceStore = signalStore(
 					status: 'offline',
 					onlineOnlyReason: null,
 					networkUnavailable: true,
+					ownerKey: snapshot.ownerKey,
 					ownerEmail: snapshot.ownerEmail,
+					sessionKey: '',
 					cars: snapshot.cars,
 				});
 			},
 		};
-	}),
-	withHooks({
-		onInit(store) {
-			let wasOnline = store.connectivity.online();
-			effect(() => {
-				const online = store.connectivity.online();
-				const status = store.status();
-				const reconnected = online && !wasOnline;
-				wasOnline = online;
-				if (
-					!online &&
-					(status === 'ready' ||
-						status === 'online-only' ||
-						status === 'preparing')
-				)
-					store.markOffline();
-				else if (
-					reconnected &&
-					(status === 'offline' || status === 'offline-unavailable')
-				)
-					store.markOnline();
-			});
-		},
 	}),
 );

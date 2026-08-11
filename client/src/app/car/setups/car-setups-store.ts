@@ -7,12 +7,11 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { catchError, exhaustMap, of, tap } from 'rxjs';
+import type { CarWorkspaceMutationFailure } from '../../garage/car-sync/car-workspace-store';
+import { CarWorkspaceStore } from '../../garage/car-sync/car-workspace-store';
 import type {
 	GarageCarInput,
 	GarageCreateOutcome,
-	GarageGatewayFailure,
 } from '../../garage/garage.models';
 import { GarageGateway } from '../../garage/garage-gateway';
 import { carReadFailure } from '../car-read-failure';
@@ -22,10 +21,19 @@ const idleOutcome = (): GarageCreateOutcome => ({
 	operationId: null,
 });
 
-const createError = (failure: GarageGatewayFailure): string =>
+const createError = (failure: CarWorkspaceMutationFailure): string =>
 	failure.kind === 'http' && failure.status === 401
 		? 'Your garage session has expired. Sign in again to continue.'
 		: 'The new car could not be created from this reviewed import.';
+
+const legacyFailure = (
+	failure: CarWorkspaceMutationFailure,
+): Extract<GarageCreateOutcome, { status: 'failed' }>['error'] =>
+	failure.kind === 'http' ||
+	failure.kind === 'unavailable' ||
+	failure.kind === 'invalid-response'
+		? failure
+		: { kind: 'invalid-response' };
 
 export type CreateSetupImportCarCommand = {
 	readonly sourceCarId: string;
@@ -33,81 +41,113 @@ export type CreateSetupImportCarCommand = {
 };
 
 export const CarSetupsStore = signalStore(
-	withState<{ sourceCarId: string; createOutcome: GarageCreateOutcome }>({
+	withState<{ sourceCarId: string; activeRequestId: number | null }>({
 		sourceCarId: '',
-		createOutcome: idleOutcome(),
+		activeRequestId: null,
 	}),
 	withProps(() => ({
 		gateway: inject(GarageGateway),
-		nextOperationId: { value: 0 },
+		workspace: inject(CarWorkspaceStore),
 	})),
-	withComputed((store) => ({
-		availableCars: computed(() =>
-			store.gateway.collection.hasValue()
-				? store.gateway.collection.value().cars
-				: [],
-		),
-		loading: computed(() => store.gateway.collection.isLoading()),
-		failure: computed(() =>
-			carReadFailure(
-				store.gateway.collectionFailure(),
-				'The garage list needed for setup imports could not be loaded.',
-			),
-		),
-		createAction: computed(() => store.createOutcome().status === 'pending'),
-		createError: computed(() => {
-			const outcome = store.createOutcome();
-			return outcome.status === 'failed' ? createError(outcome.error) : '';
-		}),
-	})),
-	withMethods((store) => {
-		const create = rxMethod<CreateSetupImportCarCommand>((commands$) =>
-			commands$.pipe(
-				exhaustMap(({ sourceCarId, input }) => {
-					const operationId = ++store.nextOperationId.value;
-					patchState(store, {
-						createOutcome: { status: 'pending', operationId },
-					});
-					return store.gateway.createCar(input).pipe(
-						tap((car) => {
-							if (store.sourceCarId() !== sourceCarId) return;
-							store.gateway.refresh();
-							patchState(store, {
-								createOutcome: { status: 'succeeded', operationId, car },
-							});
-						}),
-						catchError((error: GarageGatewayFailure) => {
-							if (store.sourceCarId() !== sourceCarId) return of(null);
-							patchState(store, {
-								createOutcome: { status: 'failed', operationId, error },
-							});
-							return of(null);
-						}),
-					);
-				}),
-			),
-		);
+	withComputed((store) => {
+		const createOutcome = computed<GarageCreateOutcome>(() => {
+			const requestId = store.activeRequestId();
+			const outcome = store.workspace.mutationOutcome();
+			if (
+				requestId === null ||
+				outcome.status === 'idle' ||
+				outcome.requestId !== requestId ||
+				outcome.command.type !== 'create'
+			)
+				return idleOutcome();
+			if (outcome.status === 'pending')
+				return { status: 'pending', operationId: requestId };
+			if (outcome.status === 'succeeded')
+				return {
+					status: 'succeeded',
+					operationId: requestId,
+					car: outcome.car,
+				};
+			return {
+				status: 'failed',
+				operationId: requestId,
+				error: legacyFailure(outcome.error),
+			};
+		});
+		const workspaceAvailable = computed(() => store.workspace.opened());
 		return {
-			selectSourceCar(sourceCarId: string): void {
-				if (store.sourceCarId() !== sourceCarId)
-					patchState(store, { sourceCarId, createOutcome: idleOutcome() });
-			},
-			retry(): void {
-				store.gateway.refresh();
-			},
-			refresh(): void {
-				store.gateway.refresh();
-			},
-			clearCreateOutcome(): void {
-				patchState(store, { createOutcome: idleOutcome() });
-			},
-			createCar(command: CreateSetupImportCarCommand): void {
-				if (
-					store.sourceCarId() === command.sourceCarId &&
-					store.createOutcome().status !== 'pending'
-				)
-					create(command);
-			},
+			createOutcome,
+			availableCars: computed(() => {
+				const cars = new Map(
+					(store.gateway.collection.hasValue()
+						? store.gateway.collection.value().cars
+						: []
+					).map((car) => [car.id, car]),
+				);
+				for (const car of store.workspace.cars()) cars.set(car.id, car);
+				return [...cars.values()];
+			}),
+			loading: computed(
+				() => !workspaceAvailable() && store.gateway.collection.isLoading(),
+			),
+			failure: computed(() => {
+				const failure = store.gateway.collectionFailure();
+				return workspaceAvailable() &&
+					!(failure?.kind === 'http' && failure.status === 401)
+					? null
+					: carReadFailure(
+							failure,
+							'The garage list needed for setup imports could not be loaded.',
+						);
+			}),
+			createAction: computed(() => createOutcome().status === 'pending'),
+			createError: computed(() => {
+				const requestId = store.activeRequestId();
+				const outcome = store.workspace.mutationOutcome();
+				return requestId !== null &&
+					outcome.status === 'failed' &&
+					outcome.requestId === requestId &&
+					outcome.command.type === 'create'
+					? createError(outcome.error)
+					: '';
+			}),
 		};
 	}),
+	withMethods((store) => ({
+		selectSourceCar(sourceCarId: string): void {
+			if (store.sourceCarId() !== sourceCarId)
+				patchState(store, { sourceCarId, activeRequestId: null });
+		},
+		retry(): void {
+			store.gateway.refresh();
+		},
+		refresh(): void {
+			store.gateway.refresh();
+		},
+		clearCreateOutcome(): void {
+			patchState(store, { activeRequestId: null });
+			store.workspace.clearMutationState();
+		},
+		createCar(command: CreateSetupImportCarCommand): void {
+			if (
+				store.sourceCarId() !== command.sourceCarId ||
+				!store.workspace.mutationsAvailable() ||
+				store.workspace.mutationOutcome().status === 'pending'
+			)
+				return;
+			store.workspace.clearMutationState();
+			const workspaceCommand = {
+				type: 'create' as const,
+				input: command.input,
+			};
+			store.workspace.commit(workspaceCommand);
+			const outcome = store.workspace.mutationOutcome();
+			if (
+				outcome.status === 'pending' &&
+				outcome.command === workspaceCommand
+			) {
+				patchState(store, { activeRequestId: outcome.requestId });
+			}
+		},
+	})),
 );

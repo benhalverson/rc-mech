@@ -9,6 +9,15 @@ const carProperties = {
 	powerType: { type: 'string', maxLength: 80 },
 	notes: { type: 'string', maxLength: 4000 },
 };
+const carBaseProperties = {
+	name: carProperties.name,
+	make: { ...carProperties.make, type: ['string', 'null'] },
+	model: { ...carProperties.model, type: ['string', 'null'] },
+	scale: { ...carProperties.scale, type: ['string', 'null'] },
+	vehicleType: { ...carProperties.vehicleType, type: ['string', 'null'] },
+	powerType: { ...carProperties.powerType, type: ['string', 'null'] },
+	notes: { ...carProperties.notes, type: ['string', 'null'] },
+};
 const componentProperties = {
 	slot: {
 		type: 'string',
@@ -161,6 +170,111 @@ export const openApi = {
 					200: { description: 'Car restored' },
 					404: { description: 'Car not found' },
 					409: { description: 'Already active' },
+				},
+			},
+		},
+		'/api/v1/sync/operations/{operationId}': {
+			parameters: [
+				{
+					name: 'operationId',
+					in: 'path',
+					required: true,
+					schema: { type: 'string', format: 'uuid' },
+				},
+			],
+			put: {
+				summary:
+					'Idempotently apply one owner-scoped, version-aware Car operation',
+				requestBody: {
+					required: true,
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								required: ['contractVersion', 'command'],
+								properties: {
+									contractVersion: { type: 'integer', enum: [1] },
+									command: {
+										oneOf: [
+											{
+												type: 'object',
+												required: ['type', 'carId', 'car'],
+												properties: {
+													type: { const: 'car.create' },
+													carId: { type: 'string', format: 'uuid' },
+													car: {
+														type: 'object',
+														required: ['name'],
+														properties: carProperties,
+													},
+												},
+											},
+											{
+												type: 'object',
+												required: [
+													'type',
+													'carId',
+													'baseVersion',
+													'base',
+													'changes',
+												],
+												properties: {
+													type: { const: 'car.edit' },
+													carId: { type: 'string', format: 'uuid' },
+													baseVersion: { type: 'integer', minimum: 0 },
+													base: {
+														type: 'object',
+														description:
+															'Must contain exactly the fields present in changes.',
+														properties: carBaseProperties,
+													},
+													changes: {
+														type: 'object',
+														minProperties: 1,
+														properties: carProperties,
+													},
+												},
+											},
+											...(['archive', 'restore'] as const).map((action) => ({
+												type: 'object',
+												required: ['type', 'carId', 'baseVersion', 'base'],
+												properties: {
+													type: { const: `car.${action}` },
+													carId: { type: 'string', format: 'uuid' },
+													baseVersion: { type: 'integer', minimum: 0 },
+													base: {
+														type: 'object',
+														required: ['archivedAt'],
+														properties: {
+															archivedAt:
+																action === 'archive'
+																	? { type: 'null' }
+																	: { type: 'string', format: 'date-time' },
+														},
+													},
+												},
+											})),
+										],
+									},
+								},
+								additionalProperties: false,
+							},
+						},
+					},
+				},
+				responses: {
+					200: { description: 'Applied or exact terminal replay' },
+					400: { description: 'Malformed operation envelope or identifier' },
+					401: { description: 'Authentication required' },
+					404: { description: 'Owned Car is unavailable' },
+					409: {
+						description:
+							'Operation ID reuse, unsupported contract, or Sync conflict',
+					},
+					422: { description: 'Stable Needs-attention validation rejection' },
+					503: {
+						description: 'Transient synchronization infrastructure failure',
+					},
 				},
 			},
 		},

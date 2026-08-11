@@ -83,6 +83,31 @@ silently overwritten.
 - Preserve existing backend routes and user-facing contracts where practical. Add synchronization, idempotency, and concurrency contracts without changing garage ownership or exposing private records.
 - Keep Worker port `8787`, Angular development port `4200`, and existing browser-test infrastructure unchanged.
 
+### Car synchronization contract
+
+- `car.create`, `car.edit`, `car.archive`, and `car.restore` use the versioned
+  `PUT /api/v1/sync/operations/:operationId` contract.
+- The client-generated operation ID and Car ID are stable across retries. The
+  server scopes receipts to the authenticated owner and rejects reuse of an ID
+  with a different request.
+- The local snapshot remains the canonical acknowledged copy. Pending
+  operations are replayed over it to form the immediate working copy, so an
+  acknowledgement cannot erase a later local command.
+- Related commands declare dependencies; a rejected or conflicted Car command
+  blocks only later work for that Car. Ready work for another Car continues.
+- Server validation is retained verbatim as Needs attention. Overlapping field
+  or lifecycle changes retain the local command and remote Car as a Sync
+  conflict. A version difference without overlap is not itself a conflict.
+- Browsers without the required durable capabilities use the same operation
+  endpoint while connected, but do not report that the change survived locally.
+- Owner and session identity fence the materialized working copy as well as its
+  IndexedDB records. Changing either identity hides the previous copy
+  immediately and invalidates delayed reads, merges, requests, and local
+  transaction completions.
+- An unavailable request schedules bounded retries. Browser connectivity events
+  remain hints, while any later successful request immediately wakes queued
+  synchronization.
+
 ## Deferred and Unavailable Operations
 
 - Voice recording and text capture work offline. Cloudflare transcription, structured draft extraction, correction processing, and confirmation requiring remote state wait for connectivity.

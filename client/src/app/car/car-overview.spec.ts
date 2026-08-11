@@ -7,6 +7,7 @@ import {
 } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CarSyncMark } from '../garage/car-sync/car-sync.models';
 import type { GarageCar, GarageCarInput } from '../garage/garage-store';
 import type { VoiceOperationOutcome } from '../voice/voice.models';
 import { VoiceLogStore } from '../voice/voice-log-store';
@@ -33,12 +34,17 @@ class FakeCarStore {
 	readonly carMessage = signal('');
 	readonly lifecycleAction = signal<'archive' | 'restore' | null>(null);
 	readonly lifecycleError = signal('');
+	readonly mutationsAvailable = signal(true);
+	readonly syncMark = signal<CarSyncMark>({ kind: 'synced' });
+	readonly syncFeedback = signal('');
 	readonly selectCar = vi.fn((carId: string): void => {
 		if (this.selectedCarId() === carId) return;
 		this.selectedCarId.set(carId);
 	});
 	readonly retry = vi.fn((): void => undefined);
-	readonly updateCar = vi.fn((_input: GarageCarInput): void => undefined);
+	readonly updateCar = vi.fn(
+		(_input: Partial<GarageCarInput>): void => undefined,
+	);
 	readonly changeArchiveState = vi.fn(
 		(_action: 'archive' | 'restore'): void => undefined,
 	);
@@ -319,6 +325,31 @@ describe('Car overview', () => {
 		expect(store.clearCarMutationState).toHaveBeenCalled();
 	});
 
+	it('submits only changed fields and closes an unchanged edit', async () => {
+		store.car.set(car({ notes: 'Original note' }));
+		const view = await navigate();
+		button('Edit details').click();
+		harness.detectChanges();
+		const form = view.querySelector('.car-form') as HTMLFormElement;
+		const name = form.querySelector('input') as HTMLInputElement;
+		name.value = '  Red Runner Evo  ';
+		name.dispatchEvent(new Event('input'));
+		form.dispatchEvent(new Event('submit'));
+		expect(store.updateCar).toHaveBeenCalledWith({ name: 'Red Runner Evo' });
+
+		store.updateCar.mockClear();
+		button('Cancel').click();
+		harness.detectChanges();
+		button('Edit details').click();
+		harness.detectChanges();
+		(view.querySelector('.car-form') as HTMLFormElement).dispatchEvent(
+			new Event('submit'),
+		);
+		harness.detectChanges();
+		expect(store.updateCar).not.toHaveBeenCalled();
+		expect(view.querySelector('.car-form')).toBeNull();
+	});
+
 	it('reacts once to each successful update operation ID', async () => {
 		store.car.set(car());
 		await navigate();
@@ -413,5 +444,44 @@ describe('Car overview', () => {
 		button('Cancel').click();
 		harness.detectChanges();
 		expect(root().querySelector('.car-form')).toBeNull();
+	});
+
+	it('renders offline availability and each durable Car sync state', async () => {
+		store.car.set(car());
+		const view = await navigate();
+		store.mutationsAvailable.set(false);
+		store.syncMark.set({
+			kind: 'pending',
+			operationIds: ['operation-1'],
+		});
+		harness.detectChanges();
+		expect(view.textContent).toContain('Car changes are unavailable');
+		expect(view.textContent).toContain('Pending sync');
+		expect(button('Edit details').disabled).toBe(true);
+
+		store.syncMark.set({
+			kind: 'syncing',
+			operationIds: ['operation-1'],
+		});
+		harness.detectChanges();
+		expect(view.textContent).toContain('Syncing');
+
+		store.syncMark.set({
+			kind: 'needs-attention',
+			operationId: 'operation-1',
+			feedback: { code: 'INVALID', message: 'Correct the Car name.' },
+		});
+		store.syncFeedback.set('Correct the Car name.');
+		harness.detectChanges();
+		expect(view.textContent).toContain('Needs attention');
+		expect(view.textContent).toContain('Correct the Car name.');
+
+		store.syncMark.set({
+			kind: 'conflict',
+			operationId: 'operation-1',
+			remote: { id: 'car-1', name: 'Remote Runner', version: 2 },
+		});
+		harness.detectChanges();
+		expect(view.textContent).toContain('Sync conflict');
 	});
 });

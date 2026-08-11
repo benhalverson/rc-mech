@@ -5,6 +5,7 @@ import {
 	withMethods,
 	withProps,
 } from '@ngrx/signals';
+import { CarWorkspaceStore } from '../garage/car-sync/car-workspace-store';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { ShellCarGateway } from './shell-car-gateway';
 import { ShellRouteContext } from './shell-route-context';
@@ -17,19 +18,26 @@ export const ShellCarStore = signalStore(
 	withProps(() => ({
 		gateway: inject(ShellCarGateway),
 		offline: inject(OfflineWorkspaceStore),
+		workspace: inject(CarWorkspaceStore),
 		route: inject(ShellRouteContext),
 	})),
 	withComputed((store) => {
 		const cars = computed(() =>
-			store.gateway.collection.hasValue()
-				? store.gateway.collection.value().cars
-				: store.offline.hasSnapshot()
-					? store.offline.cars().map((car) => ({
-							id: car.id,
-							name: car.name,
-							archivedAt: car.archivedAt ?? null,
-						}))
-					: [],
+			store.workspace.opened()
+				? store.workspace.cars().map((car) => ({
+						id: car.id,
+						name: car.name,
+						archivedAt: car.archivedAt ?? null,
+					}))
+				: store.gateway.collection.hasValue()
+					? store.gateway.collection.value().cars
+					: store.offline.hasSnapshot()
+						? store.offline.cars().map((car) => ({
+								id: car.id,
+								name: car.name,
+								archivedAt: car.archivedAt ?? null,
+							}))
+						: [],
 		);
 		return {
 			cars,

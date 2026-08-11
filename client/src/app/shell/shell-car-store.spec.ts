@@ -1,6 +1,8 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CarWorkspaceStore } from '../garage/car-sync/car-workspace-store';
+import type { GarageCar } from '../garage/garage.models';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import {
 	type ShellCar,
@@ -16,6 +18,11 @@ import {
 class FakeOfflineWorkspaceStore {
 	readonly cars = signal<ShellCar[]>([]);
 	readonly hasSnapshot = signal(false);
+}
+
+class FakeCarWorkspaceStore {
+	readonly opened = signal(false);
+	readonly cars = signal<GarageCar[]>([]);
 }
 
 class FakeShellCarGateway {
@@ -48,6 +55,7 @@ describe('ShellCarStore', () => {
 	const section = signal<CarWorkspaceSection | null>(null);
 	let gateway: FakeShellCarGateway;
 	let offline: FakeOfflineWorkspaceStore;
+	let workspace: FakeCarWorkspaceStore;
 	let store: InstanceType<typeof ShellCarStore>;
 
 	beforeEach(() => {
@@ -55,12 +63,14 @@ describe('ShellCarStore', () => {
 		section.set(null);
 		gateway = new FakeShellCarGateway();
 		offline = new FakeOfflineWorkspaceStore();
+		workspace = new FakeCarWorkspaceStore();
 		TestBed.configureTestingModule({
 			providers: [
 				ShellCarStore,
 				{ provide: ShellCarGateway, useValue: gateway },
 				{ provide: ShellRouteContext, useValue: { carId, section } },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
+				{ provide: CarWorkspaceStore, useValue: workspace },
 			],
 		});
 		store = TestBed.inject(ShellCarStore);
@@ -125,5 +135,20 @@ describe('ShellCarStore', () => {
 		expect(store.currentCar()?.name).toBe('Offline buggy');
 		expect(store.loading()).toBe(false);
 		expect(store.error()).toBe('');
+	});
+
+	it('prefers the shared local-first Car working copy', () => {
+		carId.set('car-1');
+		workspace.cars.set([
+			{ id: 'car-1', name: 'Pending rename', archivedAt: null },
+			{ id: 'car-2', name: 'New local Car' },
+		]);
+		workspace.opened.set(true);
+
+		expect(store.cars()).toEqual([
+			{ id: 'car-1', name: 'Pending rename', archivedAt: null },
+			{ id: 'car-2', name: 'New local Car', archivedAt: null },
+		]);
+		expect(store.currentCar()?.name).toBe('Pending rename');
 	});
 });

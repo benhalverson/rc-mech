@@ -29,10 +29,11 @@ class FakeBrowser implements OfflineConnectivityBrowser {
 describe('OfflineConnectivity', () => {
 	afterEach(() => {
 		TestBed.resetTestingModule();
+		vi.useRealTimers();
 		vi.unstubAllGlobals();
 	});
 
-	it('tracks browser connectivity events and removes its listeners', () => {
+	it('treats browser connectivity as a retry hint and removes its listeners', () => {
 		const browser = new FakeBrowser(true);
 		TestBed.configureTestingModule({
 			providers: [
@@ -41,12 +42,12 @@ describe('OfflineConnectivity', () => {
 			],
 		});
 		const connectivity = TestBed.inject(OfflineConnectivity);
-		expect(connectivity.online()).toBe(true);
+		expect(connectivity.retryHint()).toBe(0);
 
 		browser.emit('offline');
-		expect(connectivity.online()).toBe(false);
+		expect(connectivity.retryHint()).toBe(0);
 		browser.emit('online');
-		expect(connectivity.online()).toBe(true);
+		expect(connectivity.retryHint()).toBe(1);
 
 		TestBed.resetTestingModule();
 		expect(browser.removeEventListener).toHaveBeenCalledTimes(2);
@@ -62,5 +63,36 @@ describe('OfflineConnectivity', () => {
 
 		vi.stubGlobal('navigator', undefined);
 		expect(currentOfflineConnectivityBrowser().online).toBe(true);
+	});
+
+	it('retries from request outcomes with bounded backoff and resets after success', () => {
+		vi.useFakeTimers();
+		const browser = new FakeBrowser(true);
+		TestBed.configureTestingModule({
+			providers: [
+				OfflineConnectivity,
+				{ provide: OFFLINE_CONNECTIVITY_BROWSER, useValue: browser },
+			],
+		});
+		const connectivity = TestBed.inject(OfflineConnectivity);
+
+		connectivity.scheduleRetry();
+		connectivity.scheduleRetry();
+		vi.advanceTimersByTime(499);
+		expect(connectivity.retryHint()).toBe(0);
+		vi.advanceTimersByTime(1);
+		expect(connectivity.retryHint()).toBe(1);
+
+		connectivity.scheduleRetry();
+		connectivity.markRequestSucceeded();
+		vi.advanceTimersByTime(1_000);
+		expect(connectivity.retryHint()).toBe(2);
+
+		connectivity.markRequestSucceeded();
+		connectivity.scheduleRetry();
+		browser.emit('online');
+		expect(connectivity.retryHint()).toBe(3);
+		vi.advanceTimersByTime(500);
+		expect(connectivity.retryHint()).toBe(3);
 	});
 });

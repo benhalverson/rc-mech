@@ -54,6 +54,11 @@ describe('GarageGateway', () => {
 			kind: 'unavailable',
 		});
 		expect(
+			garageGatewayFailure(new HttpErrorResponse({ status: 503 })),
+		).toEqual({
+			kind: 'unavailable',
+		});
+		expect(
 			garageGatewayFailure(new HttpErrorResponse({ status: 401 })),
 		).toEqual({ kind: 'http', status: 401 });
 		expect(garageGatewayFailure('offline')).toEqual({ kind: 'unavailable' });

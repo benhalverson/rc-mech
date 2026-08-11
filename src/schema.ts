@@ -1,4 +1,11 @@
-import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import {
+	index,
+	integer,
+	primaryKey,
+	real,
+	sqliteTable,
+	text,
+} from 'drizzle-orm/sqlite-core';
 
 const id = (name: string) => text(name).primaryKey();
 export const car = sqliteTable('car', {
@@ -14,7 +21,35 @@ export const car = sqliteTable('car', {
 	currentSetupId: text('current_setup_id'),
 	createdAt: text('created_at').notNull(),
 	archivedAt: text('archived_at'),
+	version: integer('version').notNull().default(1),
+	lastOperationId: text('last_operation_id'),
 });
+export const syncOperation = sqliteTable(
+	'sync_operation',
+	{
+		ownerId: text('owner_id').notNull(),
+		operationId: text('operation_id').notNull(),
+		contractVersion: integer('contract_version').notNull(),
+		kind: text('kind').notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: text('entity_id').notNull(),
+		requestHash: text('request_hash').notNull(),
+		outcome: text('outcome').notNull(),
+		httpStatus: integer('http_status'),
+		responseJson: text('response_json'),
+		createdAt: text('created_at').notNull(),
+		completedAt: text('completed_at'),
+	},
+	(table) => [
+		primaryKey({ columns: [table.ownerId, table.operationId] }),
+		index('sync_operation_owner_entity_idx').on(
+			table.ownerId,
+			table.entityType,
+			table.entityId,
+			table.createdAt,
+		),
+	],
+);
 export const setup = sqliteTable('setup', {
 	id: id('id'),
 	carId: text('car_id').notNull(),

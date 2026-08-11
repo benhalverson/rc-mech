@@ -18,7 +18,11 @@ export const ownedCar = async (c: AppContext, carId: string) => {
 };
 
 export const publicCar = (value: typeof car.$inferSelect) => {
-	const { ownerId: _ownerId, ...result } = value;
+	const {
+		ownerId: _ownerId,
+		lastOperationId: _lastOperationId,
+		...result
+	} = value;
 	return result;
 };
 

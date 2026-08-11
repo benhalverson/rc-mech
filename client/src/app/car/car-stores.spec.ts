@@ -7,8 +7,19 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+	CarSyncCommand,
+	CarSyncMark,
+	CarSyncOperation,
+} from '../garage/car-sync/car-sync.models';
+import {
+	type CarWorkspaceMutationOutcome,
+	CarWorkspaceStore,
+} from '../garage/car-sync/car-workspace-store';
 import type { GarageCar } from '../garage/garage.models';
 import { GarageGateway } from '../garage/garage-gateway';
+import { OfflineConnectivity } from '../offline/offline-connectivity';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import type {
 	CarGatewayFailure,
 	ChangeCarLifecycleCommand,
@@ -90,6 +101,66 @@ class FakeCarGateway {
 	}
 }
 
+class FakeCarWorkspace {
+	readonly cars = signal<readonly GarageCar[]>([]);
+	readonly operations = signal<readonly CarSyncOperation[]>([]);
+	readonly mutationsAvailable = signal(true);
+	readonly mark = signal<CarSyncMark>({ kind: 'synced' });
+	readonly mutationOutcome = signal<CarWorkspaceMutationOutcome>({
+		status: 'idle',
+		requestId: null,
+	});
+	private requestId = 0;
+	readonly commit = vi.fn((command: CarSyncCommand) => {
+		if (this.mutationOutcome().status === 'pending') return;
+		this.mutationOutcome.set({
+			status: 'pending',
+			requestId: ++this.requestId,
+			command,
+		});
+	});
+	readonly clearMutationState = vi.fn(() => {
+		if (this.mutationOutcome().status !== 'pending')
+			this.mutationOutcome.set({ status: 'idle', requestId: null });
+	});
+	readonly observeServerCars = vi.fn((cars: readonly GarageCar[]) =>
+		this.cars.set(cars),
+	);
+	readonly retrySync = vi.fn();
+	readonly carMark = vi.fn(() => this.mark());
+
+	succeed(car: GarageCar, retainedLocally = false): void {
+		const pending = this.mutationOutcome();
+		if (pending.status !== 'pending') return;
+		this.cars.set([...this.cars().filter((value) => value.id !== car.id), car]);
+		this.mutationOutcome.set({
+			...pending,
+			status: 'succeeded',
+			operationId: `operation-${pending.requestId}`,
+			car,
+			retainedLocally,
+		});
+	}
+
+	fail(
+		error: Extract<CarWorkspaceMutationOutcome, { status: 'failed' }>['error'],
+	): void {
+		const pending = this.mutationOutcome();
+		if (pending.status === 'pending')
+			this.mutationOutcome.set({ ...pending, status: 'failed', error });
+	}
+}
+
+const fakeOfflineWorkspace = {
+	markOnline: vi.fn(),
+	markOffline: vi.fn(),
+};
+
+const fakeConnectivity = {
+	scheduleRetry: vi.fn(),
+	markRequestSucceeded: vi.fn(),
+};
+
 describe('car route stores', () => {
 	let http: HttpTestingController | undefined;
 
@@ -109,13 +180,21 @@ describe('car route stores', () => {
 
 	const configureCarStore = (): {
 		gateway: FakeCarGateway;
+		workspace: FakeCarWorkspace;
 		store: InstanceType<typeof CarStore>;
 	} => {
 		const gateway = new FakeCarGateway();
+		const workspace = new FakeCarWorkspace();
 		TestBed.configureTestingModule({
-			providers: [CarStore, { provide: CarGateway, useValue: gateway }],
+			providers: [
+				CarStore,
+				{ provide: CarGateway, useValue: gateway },
+				{ provide: CarWorkspaceStore, useValue: workspace },
+				{ provide: OfflineWorkspaceStore, useValue: fakeOfflineWorkspace },
+				{ provide: OfflineConnectivity, useValue: fakeConnectivity },
+			],
 		});
-		return { gateway, store: TestBed.inject(CarStore) };
+		return { gateway, workspace, store: TestBed.inject(CarStore) };
 	};
 
 	afterEach(() => {
@@ -227,7 +306,7 @@ describe('car route stores', () => {
 	});
 
 	it('publishes current-car resource and mutation success state', () => {
-		const { gateway, store } = configureCarStore();
+		const { gateway, workspace, store } = configureCarStore();
 		expect(store.car()).toBeNull();
 		expect(store.loading()).toBe(false);
 		expect(store.failure()).toBeNull();
@@ -244,36 +323,45 @@ describe('car route stores', () => {
 		store.selectCar('car-1');
 		expect(gateway.selectCar).toHaveBeenCalledOnce();
 		expect(gateway.selectCar).toHaveBeenCalledWith('car-1');
+		workspace.cars.set([car({ id: 'another-car' })]);
+		expect(store.car()).toBeNull();
 		gateway.setCar(car());
 		expect(store.car()).toEqual(car());
+		workspace.cars.set([car()]);
+		gateway.setFailure({ kind: 'http', status: 404 });
+		TestBed.flushEffects();
+		expect(fakeOfflineWorkspace.markOnline).toHaveBeenCalled();
+		expect(fakeConnectivity.markRequestSucceeded).toHaveBeenCalled();
+		expect(store.failure()).toBeNull();
+		gateway.setFailure(null);
 
 		store.updateCar({ name: 'Updated' });
-		expect(gateway.updateCar).toHaveBeenCalledWith({
+		expect(workspace.commit).toHaveBeenCalledWith({
+			type: 'edit',
 			carId: 'car-1',
 			input: { name: 'Updated' },
 		});
 		expect(store.carAction()).toBe('update');
 		expect(store.carMutationError()).toBe('');
 		expect(store.carMessage()).toBe('');
-		gateway.succeedUpdate(car({ name: 'Updated' }));
+		workspace.succeed(car({ name: 'Updated' }));
 		expect(store.updateOutcome()).toEqual({
 			status: 'succeeded',
 			operationId: 1,
 		});
 		expect(store.carAction()).toBeNull();
 		expect(store.carMessage()).toBe('Car details saved.');
-		expect(gateway.refresh).toHaveBeenCalledOnce();
 		store.clearCarMutationState();
 		expect(store.carMessage()).toBe('');
 
 		store.changeArchiveState('archive');
-		expect(gateway.changeLifecycle).toHaveBeenCalledWith({
+		expect(workspace.commit).toHaveBeenLastCalledWith({
+			type: 'archive',
 			carId: 'car-1',
-			action: 'archive',
 		});
 		expect(store.lifecycleAction()).toBe('archive');
 		expect(store.lifecycleError()).toBe('');
-		gateway.succeedLifecycle(car({ name: 'Updated', archivedAt: 'now' }));
+		workspace.succeed(car({ name: 'Updated', archivedAt: 'now' }));
 		expect(store.lifecycleOutcome()).toEqual({
 			status: 'succeeded',
 			operationId: 2,
@@ -281,11 +369,10 @@ describe('car route stores', () => {
 		});
 		expect(store.lifecycleAction()).toBeNull();
 		expect(store.lifecycleError()).toBe('');
-		expect(gateway.refresh).toHaveBeenCalledTimes(2);
 	});
 
 	it('maps car failures and blocks overlapping store commands', () => {
-		const { gateway, store } = configureCarStore();
+		const { gateway, workspace, store } = configureCarStore();
 		expect(carReadFailure('offline', 'Fallback read failure.')).toEqual({
 			message: 'Fallback read failure.',
 			retryable: true,
@@ -293,14 +380,14 @@ describe('car route stores', () => {
 
 		store.updateCar({ name: 'No car' });
 		store.changeArchiveState('archive');
-		expect(gateway.updateCar).not.toHaveBeenCalled();
-		expect(gateway.changeLifecycle).not.toHaveBeenCalled();
+		expect(workspace.commit).not.toHaveBeenCalled();
 
 		store.selectCar('missing');
 		gateway.setFailure({ kind: 'http', status: 404 });
 		expect(store.failure()?.message).toContain('Car not found');
 		store.retry();
 		expect(gateway.refresh).toHaveBeenCalledOnce();
+		expect(workspace.retrySync).toHaveBeenCalledOnce();
 		gateway.setFailure({ kind: 'http', status: 503 });
 		expect(store.failure()?.message).toContain('could not be loaded');
 		gateway.setFailure({ kind: 'invalid-response' });
@@ -310,7 +397,7 @@ describe('car route stores', () => {
 
 		store.selectCar('car-1');
 		store.updateCar({ name: 'Expired' });
-		gateway.failUpdate({ kind: 'http', status: 401 });
+		workspace.fail({ kind: 'http', status: 401 });
 		expect(store.updateOutcome()).toEqual({
 			status: 'failed',
 			operationId: 1,
@@ -318,9 +405,8 @@ describe('car route stores', () => {
 		});
 		expect(store.carMutationError()).toContain('session has expired');
 
-		gateway.resetUpdate();
 		store.updateCar({ name: 'Unavailable' });
-		gateway.failUpdate({ kind: 'unavailable' });
+		workspace.fail({ kind: 'unavailable' });
 		expect(store.updateOutcome()).toEqual({
 			status: 'failed',
 			operationId: 2,
@@ -328,15 +414,14 @@ describe('car route stores', () => {
 		});
 		expect(store.carMutationError()).toContain('could not be saved');
 
-		gateway.resetUpdate();
 		store.updateCar({ name: 'Pending update' });
 		expect(store.updateOutcome()).toEqual({
 			status: 'pending',
 			operationId: 3,
 		});
 		store.changeArchiveState('archive');
-		expect(gateway.changeLifecycle).not.toHaveBeenCalled();
-		gateway.succeedUpdate(car({ name: 'Pending update' }));
+		expect(workspace.commit).toHaveBeenCalledTimes(3);
+		workspace.succeed(car({ name: 'Pending update' }));
 
 		store.changeArchiveState('archive');
 		expect(store.lifecycleOutcome()).toEqual({
@@ -345,8 +430,8 @@ describe('car route stores', () => {
 			action: 'archive',
 		});
 		store.updateCar({ name: 'Blocked update' });
-		expect(gateway.updateCar).toHaveBeenCalledTimes(3);
-		gateway.failLifecycle({ kind: 'http', status: 401 });
+		expect(workspace.commit).toHaveBeenCalledTimes(4);
+		workspace.fail({ kind: 'http', status: 401 });
 		expect(store.lifecycleOutcome()).toEqual({
 			status: 'failed',
 			operationId: 4,
@@ -355,9 +440,8 @@ describe('car route stores', () => {
 		});
 		expect(store.lifecycleError()).toContain('session has expired');
 
-		gateway.resetLifecycle();
 		store.changeArchiveState('restore');
-		gateway.failLifecycle({ kind: 'unavailable' });
+		workspace.fail({ kind: 'unavailable' });
 		expect(store.lifecycleOutcome()).toEqual({
 			status: 'failed',
 			operationId: 5,
@@ -366,9 +450,8 @@ describe('car route stores', () => {
 		});
 		expect(store.lifecycleError()).toContain('could not be restored');
 
-		gateway.resetLifecycle();
 		store.changeArchiveState('archive');
-		gateway.failLifecycle({ kind: 'unavailable' });
+		workspace.fail({ kind: 'unavailable' });
 		expect(store.lifecycleOutcome()).toEqual({
 			status: 'failed',
 			operationId: 6,
@@ -379,34 +462,107 @@ describe('car route stores', () => {
 	});
 
 	it('ignores duplicate and stale mutation responses after route reuse', () => {
-		const { gateway, store } = configureCarStore();
+		const { workspace, store } = configureCarStore();
 		store.selectCar('car-1');
 		store.updateCar({ name: 'Updated' });
 		store.updateCar({ name: 'Duplicate' });
 		store.changeArchiveState('archive');
-		expect(gateway.updateCar).toHaveBeenCalledOnce();
-		expect(gateway.changeLifecycle).not.toHaveBeenCalled();
+		expect(workspace.commit).toHaveBeenCalledOnce();
 		store.selectCar('car-2');
-		gateway.succeedUpdate(car({ name: 'Updated' }));
+		workspace.succeed(car({ name: 'Updated' }));
 		expect(store.updateOutcome().status).toBe('idle');
 
-		gateway.resetUpdate();
 		store.updateCar({ name: 'Failed' });
 		store.selectCar('car-3');
-		gateway.failUpdate({ kind: 'unavailable' });
+		workspace.fail({ kind: 'unavailable' });
 		expect(store.updateOutcome().status).toBe('idle');
 
 		store.changeArchiveState('archive');
 		store.changeArchiveState('restore');
-		expect(gateway.changeLifecycle).toHaveBeenCalledOnce();
+		expect(workspace.commit).toHaveBeenCalledTimes(3);
 		store.selectCar('car-4');
-		gateway.succeedLifecycle(car({ id: 'car-3', archivedAt: 'now' }));
+		workspace.succeed(car({ id: 'car-3', archivedAt: 'now' }));
 		expect(store.lifecycleOutcome().status).toBe('idle');
 
-		gateway.resetLifecycle();
 		store.changeArchiveState('archive');
 		store.selectCar('car-5');
-		gateway.failLifecycle({ kind: 'unavailable' });
+		workspace.fail({ kind: 'unavailable' });
 		expect(store.lifecycleOutcome().status).toBe('idle');
+	});
+
+	it('publishes local, validation, conflict, and retained sync state', async () => {
+		const { gateway, workspace, store } = configureCarStore();
+		expect(store.syncMark()).toEqual({ kind: 'synced' });
+		expect(store.syncFeedback()).toBe('');
+		workspace.mark.set({
+			kind: 'needs-attention',
+			operationId: 'operation-attention',
+			feedback: { code: 'INVALID', message: 'Correct this Car.' },
+		});
+		expect(store.syncFeedback()).toBe('Correct this Car.');
+		workspace.mutationsAvailable.set(false);
+		store.selectCar('car-1');
+		store.updateCar({ name: 'Blocked' });
+		store.changeArchiveState('archive');
+		expect(workspace.commit).not.toHaveBeenCalled();
+
+		workspace.mutationsAvailable.set(true);
+		workspace.cars.set([car()]);
+		store.updateCar({ name: 'Local failure' });
+		workspace.fail({ kind: 'local', message: 'IndexedDB is full.' });
+		expect(store.carMutationError()).toBe('IndexedDB is full.');
+		expect(store.updateOutcome()).toMatchObject({
+			status: 'failed',
+			error: { kind: 'invalid-response' },
+		});
+
+		store.updateCar({ name: 'Needs attention' });
+		workspace.fail({
+			kind: 'needs-attention',
+			feedback: { code: 'INVALID', message: 'Correct the Car name.' },
+		});
+		expect(store.carMutationError()).toBe('Correct the Car name.');
+
+		store.updateCar({ name: 'Conflict' });
+		workspace.fail({
+			kind: 'conflict',
+			feedback: { code: 'CONFLICT', message: 'Review both Cars.' },
+			remote: car({ name: 'Remote' }),
+		});
+		expect(store.carMutationError()).toBe('Review both Cars.');
+
+		store.updateCar({ name: 'Retained' });
+		workspace.operations.set([
+			{
+				operationId: 'operation-4',
+				ownerKey: 'owner-1',
+				carId: 'car-1',
+				command: {
+					type: 'car.edit',
+					carId: 'car-1',
+					baseVersion: 1,
+					base: { name: 'One' },
+					changes: { name: 'Retained' },
+				},
+				dependencies: [],
+				status: 'pending',
+				createdAt: '2026-08-11T12:00:00.000Z',
+			},
+		]);
+		workspace.succeed(car({ name: 'Retained' }), true);
+		expect(store.carMessage()).toContain('saved locally');
+
+		store.changeArchiveState('archive');
+		workspace.fail({ kind: 'local', message: 'Archive was not retained.' });
+		expect(store.lifecycleError()).toBe('Archive was not retained.');
+		expect(store.lifecycleOutcome()).toMatchObject({
+			status: 'failed',
+			error: { kind: 'invalid-response' },
+		});
+
+		gateway.setFailure({ kind: 'unavailable' });
+		await vi.waitFor(() =>
+			expect(fakeOfflineWorkspace.markOffline).toHaveBeenCalled(),
+		);
 	});
 });

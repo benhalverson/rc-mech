@@ -278,6 +278,7 @@ export class MockR2Controller {
 type HonoFixtureOptions = {
 	authenticated?: boolean;
 	handleAuth?: AppDependencies['handleAuth'];
+	userId?: string;
 	voiceProcessor?: VoiceProcessor;
 };
 
@@ -337,7 +338,7 @@ export const createHonoFixture = (
 	const auth: AppDependencies = {
 		getSession: async () =>
 			fixtureOptions.authenticated !== false
-				? { user: { id: 'owner-1' } }
+				? { user: { id: fixtureOptions.userId ?? 'owner-1' } }
 				: null,
 		handleAuth:
 			fixtureOptions.handleAuth ??

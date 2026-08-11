@@ -8,10 +8,10 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { catchError, exhaustMap, of, tap } from 'rxjs';
 import { OfflineConnectivity } from '../offline/offline-connectivity';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
+import type { CarWorkspaceMutationFailure } from './car-sync/car-workspace-store';
+import { CarWorkspaceStore } from './car-sync/car-workspace-store';
 import type {
 	CreateCarCommand,
 	GarageCreateOutcome,
@@ -21,10 +21,7 @@ import { GarageGateway } from './garage-gateway';
 
 export type { GarageCar, GarageCarInput } from './garage.models';
 
-type GarageState = {
-	showArchived: boolean;
-	createOutcome: GarageCreateOutcome;
-};
+type GarageState = { showArchived: boolean };
 
 const collectionErrorMessage = (
 	failure: GarageGatewayFailure | null,
@@ -36,128 +33,162 @@ const collectionErrorMessage = (
 		: '';
 };
 
-const mutationErrorMessage = (failure: GarageGatewayFailure): string =>
+const gatewayMutationError = (failure: GarageGatewayFailure): string =>
 	failure.kind === 'http' && failure.status === 401
 		? 'Your garage session has expired. Sign in again to continue.'
 		: 'The car could not be saved. Check the details and try again.';
 
+const mutationErrorMessage = (failure: CarWorkspaceMutationFailure): string => {
+	if (failure.kind === 'local') return failure.message;
+	if (failure.kind === 'needs-attention' || failure.kind === 'conflict')
+		return failure.feedback.message;
+	return gatewayMutationError(failure);
+};
+
+const legacyFailure = (
+	failure: CarWorkspaceMutationFailure,
+): GarageGatewayFailure =>
+	failure.kind === 'http' ||
+	failure.kind === 'unavailable' ||
+	failure.kind === 'invalid-response'
+		? failure
+		: { kind: 'invalid-response' };
+
 export const GarageStore = signalStore(
-	withState<GarageState>({
-		showArchived: false,
-		createOutcome: { status: 'idle', operationId: null },
-	}),
+	withState<GarageState>({ showArchived: false }),
 	withProps(() => ({
 		gateway: inject(GarageGateway),
 		connectivity: inject(OfflineConnectivity),
 		offline: inject(OfflineWorkspaceStore),
-		nextOperationId: { value: 0 },
+		workspace: inject(CarWorkspaceStore),
 	})),
-	withComputed((store) => ({
-		cars: computed(() =>
-			store.gateway.collection.hasValue()
-				? store.gateway.collection.value().cars
-				: store.offline.hasSnapshot()
-					? store.offline
-							.cars()
-							.filter((car) => store.showArchived() || !car.archivedAt)
-					: [],
-		),
-		collectionLoading: computed(
-			() =>
-				!store.offline.hasSnapshot() && store.gateway.collection.isLoading(),
-		),
-		collectionError: computed(() =>
-			store.offline.hasSnapshot()
-				? ''
-				: collectionErrorMessage(store.gateway.collectionFailure()),
-		),
-		carAction: computed(() =>
-			store.createOutcome().status === 'pending' ? ('create' as const) : null,
-		),
-		carMutationsAvailable: computed(
-			() => store.connectivity.online() && !store.offline.networkUnavailable(),
-		),
-		carMutationError: computed(() => {
-			const outcome = store.createOutcome();
-			return outcome.status === 'failed'
-				? mutationErrorMessage(outcome.error)
-				: '';
-		}),
-		carMessage: computed(() =>
-			store.createOutcome().status === 'succeeded'
-				? 'Car added to the garage.'
-				: '',
-		),
-	})),
+	withComputed((store) => {
+		const createOutcome = computed<GarageCreateOutcome>(() => {
+			const outcome = store.workspace.mutationOutcome();
+			if (outcome.status === 'idle' || outcome.command.type !== 'create')
+				return { status: 'idle', operationId: null };
+			if (outcome.status === 'pending')
+				return { status: 'pending', operationId: outcome.requestId };
+			if (outcome.status === 'succeeded')
+				return {
+					status: 'succeeded',
+					operationId: outcome.requestId,
+					car: outcome.car,
+				};
+			return {
+				status: 'failed',
+				operationId: outcome.requestId,
+				error: legacyFailure(outcome.error),
+			};
+		});
+		return {
+			createOutcome,
+			cars: computed(() => {
+				const cars = store.workspace.opened()
+					? store.workspace.cars()
+					: store.gateway.collection.hasValue()
+						? store.gateway.collection.value().cars
+						: store.offline.hasSnapshot()
+							? store.offline.cars()
+							: [];
+				return cars.filter((car) => store.showArchived() || !car.archivedAt);
+			}),
+			collectionLoading: computed(
+				() =>
+					!store.workspace.opened() &&
+					!store.offline.hasSnapshot() &&
+					store.gateway.collection.isLoading(),
+			),
+			collectionError: computed(() =>
+				store.workspace.opened() || store.offline.hasSnapshot()
+					? ''
+					: collectionErrorMessage(store.gateway.collectionFailure()),
+			),
+			carAction: computed(() =>
+				createOutcome().status === 'pending' ? ('create' as const) : null,
+			),
+			carMutationsAvailable: store.workspace.mutationsAvailable,
+			carMutationError: computed(() => {
+				const outcome = store.workspace.mutationOutcome();
+				return outcome.status === 'failed' && outcome.command.type === 'create'
+					? mutationErrorMessage(outcome.error)
+					: '';
+			}),
+			carMessage: computed(() => {
+				const outcome = store.workspace.mutationOutcome();
+				if (outcome.status !== 'succeeded' || outcome.command.type !== 'create')
+					return '';
+				return outcome.retainedLocally && store.workspace.operations().length
+					? 'Car saved locally. Pending sync.'
+					: 'Car added to the garage.';
+			}),
+			syncMark: store.workspace.syncMark,
+			syncFeedback: computed(() => {
+				const mark = store.workspace.syncMark();
+				return mark.kind === 'needs-attention' ? mark.feedback.message : '';
+			}),
+		};
+	}),
 	withHooks({
 		onInit(store) {
 			effect(() => {
+				const failure = store.gateway.collectionFailure();
 				if (store.gateway.collectionUnavailable()) {
 					store.offline.markOffline();
+					store.connectivity.scheduleRetry();
+					return;
+				}
+				if (failure) {
+					store.offline.markOnline();
+					store.connectivity.markRequestSucceeded();
 					return;
 				}
 				if (
-					store.connectivity.online() &&
 					store.gateway.collection.status() === 'resolved' &&
 					store.gateway.collection.hasValue()
-				)
+				) {
 					store.offline.markOnline();
+					store.connectivity.markRequestSucceeded();
+					store.workspace.observeServerCars(
+						store.gateway.collection.value().cars,
+					);
+				}
 			});
-			let wasOnline = store.connectivity.online();
+			let retryHint = store.connectivity.retryHint();
 			effect(() => {
-				const online = store.connectivity.online();
-				if (online && !wasOnline) store.gateway.refresh();
-				wasOnline = online;
+				const nextRetryHint = store.connectivity.retryHint();
+				if (nextRetryHint !== retryHint) store.gateway.refresh();
+				retryHint = nextRetryHint;
 			});
 		},
 	}),
-	withMethods((store) => {
-		const create = rxMethod<CreateCarCommand>((commands$) =>
-			commands$.pipe(
-				exhaustMap(({ input }) => {
-					const operationId = ++store.nextOperationId.value;
-					patchState(store, {
-						createOutcome: { status: 'pending', operationId },
-					});
-					return store.gateway.createCar(input).pipe(
-						tap((car) => {
-							store.gateway.refresh();
-							patchState(store, {
-								createOutcome: {
-									status: 'succeeded',
-									operationId,
-									car,
-								},
-							});
-						}),
-						catchError((error: GarageGatewayFailure) => {
-							patchState(store, {
-								createOutcome: { status: 'failed', operationId, error },
-							});
-							return of(null);
-						}),
-					);
-				}),
-			),
-		);
-		return {
-			toggleArchived(): void {
-				const showArchived = !store.showArchived();
-				patchState(store, { showArchived });
-				store.gateway.setShowArchived(showArchived);
-			},
-			retryCollection(): void {
-				store.gateway.refresh();
-			},
-			clearCarMutationState(): void {
-				patchState(store, {
-					createOutcome: { status: 'idle', operationId: null },
-				});
-			},
-			createCar(command: CreateCarCommand): void {
-				if (!store.carMutationsAvailable()) return;
-				create(command);
-			},
-		};
-	}),
+	withMethods((store) => ({
+		toggleArchived(): void {
+			const showArchived = !store.showArchived();
+			patchState(store, { showArchived });
+			store.gateway.setShowArchived(showArchived);
+		},
+		retryCollection(): void {
+			store.gateway.refresh();
+			store.workspace.retrySync();
+		},
+		clearCarMutationState(): void {
+			store.workspace.clearMutationState();
+		},
+		createCar({ input }: CreateCarCommand): void {
+			if (
+				store.workspace.mutationsAvailable() &&
+				store.workspace.mutationOutcome().status !== 'pending'
+			)
+				store.workspace.commit({ type: 'create', input });
+		},
+		carSyncLabel(carId: string): string {
+			const mark = store.workspace.carMark(carId);
+			if (mark.kind === 'pending') return 'Pending sync';
+			if (mark.kind === 'syncing') return 'Syncing';
+			if (mark.kind === 'needs-attention') return 'Needs attention';
+			if (mark.kind === 'conflict') return 'Sync conflict';
+			return '';
+		},
+	})),
 );

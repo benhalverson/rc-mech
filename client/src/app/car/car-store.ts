@@ -1,30 +1,27 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
 } from '@ngrx/signals';
-import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { catchError, exhaustMap, of, tap } from 'rxjs';
+import type { CarWorkspaceMutationFailure } from '../garage/car-sync/car-workspace-store';
+import { CarWorkspaceStore } from '../garage/car-sync/car-workspace-store';
 import type { GarageCarInput } from '../garage/garage-store';
+import { OfflineConnectivity } from '../offline/offline-connectivity';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import type {
 	CarGatewayFailure,
 	CarLifecycleOutcome,
 	CarUpdateOutcome,
-	ChangeCarLifecycleCommand,
-	UpdateCarCommand,
 } from './car.models';
 import { CarGateway } from './car-gateway';
 import { type CarReadFailure, carReadFailure } from './car-read-failure';
 
-type CarState = {
-	carId: string | null;
-	updateOutcome: CarUpdateOutcome;
-	lifecycleOutcome: CarLifecycleOutcome;
-};
+type CarState = { carId: string | null };
 
 const idleUpdate = (): CarUpdateOutcome => ({
 	status: 'idle',
@@ -53,151 +50,208 @@ const carFailure = (
 				)
 			: null;
 
-const mutationError = (failure: CarGatewayFailure): string =>
-	failure.kind === 'http' && failure.status === 401
+const mutationError = (failure: CarWorkspaceMutationFailure): string => {
+	if (failure.kind === 'local') return failure.message;
+	if (failure.kind === 'needs-attention' || failure.kind === 'conflict')
+		return failure.feedback.message;
+	return failure.kind === 'http' && failure.status === 401
 		? 'Your garage session has expired. Sign in again to continue.'
 		: 'The car could not be saved. Check the details and try again.';
+};
+
+const lifecycleMutationError = (
+	failure: CarWorkspaceMutationFailure,
+	action: 'archive' | 'restore',
+): string => {
+	if (
+		failure.kind === 'local' ||
+		failure.kind === 'needs-attention' ||
+		failure.kind === 'conflict' ||
+		(failure.kind === 'http' && failure.status === 401)
+	)
+		return mutationError(failure);
+	return `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`;
+};
 
 export const CarStore = signalStore(
-	withState<CarState>({
-		carId: null,
-		updateOutcome: idleUpdate(),
-		lifecycleOutcome: idleLifecycle(),
-	}),
+	withState<CarState>({ carId: null }),
 	withProps(() => ({
 		gateway: inject(CarGateway),
-		nextOperationId: { value: 0 },
+		workspace: inject(CarWorkspaceStore),
+		offline: inject(OfflineWorkspaceStore),
+		connectivity: inject(OfflineConnectivity),
 	})),
-	withComputed((store) => ({
-		car: computed(() =>
-			store.gateway.car.hasValue() ? store.gateway.car.value() : null,
-		),
-		loading: computed(() => store.gateway.car.isLoading()),
-		failure: computed(() => carFailure(store.gateway.failure())),
-		carAction: computed(() =>
-			store.updateOutcome().status === 'pending' ? ('update' as const) : null,
-		),
-		carMutationError: computed(() => {
-			const outcome = store.updateOutcome();
-			return outcome.status === 'failed' ? mutationError(outcome.error) : '';
-		}),
-		carMessage: computed(() =>
-			store.updateOutcome().status === 'succeeded' ? 'Car details saved.' : '',
-		),
-		lifecycleAction: computed(() => {
-			const outcome = store.lifecycleOutcome();
-			return outcome.status === 'pending' ? outcome.action : null;
-		}),
-		lifecycleError: computed(() => {
-			const outcome = store.lifecycleOutcome();
-			if (outcome.status !== 'failed') return '';
-			return outcome.error.kind === 'http' && outcome.error.status === 401
-				? 'Your garage session has expired. Sign in again to continue.'
-				: `The car could not be ${outcome.action === 'archive' ? 'archived' : 'restored'}.`;
-		}),
-	})),
-	withMethods((store) => {
-		const update = rxMethod<UpdateCarCommand>((commands$) =>
-			commands$.pipe(
-				exhaustMap((command) => {
-					const operationId = ++store.nextOperationId.value;
-					patchState(store, {
-						updateOutcome: { status: 'pending', operationId },
-					});
-					return store.gateway.updateCar(command).pipe(
-						tap(() => {
-							if (store.carId() !== command.carId) return;
-							store.gateway.refresh();
-							patchState(store, {
-								updateOutcome: { status: 'succeeded', operationId },
-							});
-						}),
-						catchError((error: CarGatewayFailure) => {
-							if (store.carId() === command.carId)
-								patchState(store, {
-									updateOutcome: { status: 'failed', operationId, error },
-								});
-							return of(null);
-						}),
-					);
-				}),
-			),
-		);
-		const changeLifecycle = rxMethod<ChangeCarLifecycleCommand>((commands$) =>
-			commands$.pipe(
-				exhaustMap((command) => {
-					const operationId = ++store.nextOperationId.value;
-					patchState(store, {
-						lifecycleOutcome: {
-							status: 'pending',
-							operationId,
-							action: command.action,
-						},
-					});
-					return store.gateway.changeLifecycle(command).pipe(
-						tap(() => {
-							if (store.carId() !== command.carId) return;
-							store.gateway.refresh();
-							patchState(store, {
-								lifecycleOutcome: {
-									status: 'succeeded',
-									operationId,
-									action: command.action,
-								},
-							});
-						}),
-						catchError((error: CarGatewayFailure) => {
-							if (store.carId() === command.carId)
-								patchState(store, {
-									lifecycleOutcome: {
-										status: 'failed',
-										operationId,
-										action: command.action,
-										error,
-									},
-								});
-							return of(null);
-						}),
-					);
-				}),
-			),
-		);
+	withComputed((store) => {
+		const selectedWorkspaceCar = computed(() => {
+			const carId = store.carId();
+			return carId
+				? (store.workspace.cars().find((car) => car.id === carId) ?? null)
+				: null;
+		});
+		const updateOutcome = computed<CarUpdateOutcome>(() => {
+			const outcome = store.workspace.mutationOutcome();
+			if (
+				outcome.status === 'idle' ||
+				outcome.command.type !== 'edit' ||
+				outcome.command.carId !== store.carId()
+			)
+				return idleUpdate();
+			if (outcome.status === 'pending')
+				return { status: 'pending', operationId: outcome.requestId };
+			if (outcome.status === 'succeeded')
+				return { status: 'succeeded', operationId: outcome.requestId };
+			return {
+				status: 'failed',
+				operationId: outcome.requestId,
+				error:
+					outcome.error.kind === 'http' ||
+					outcome.error.kind === 'unavailable' ||
+					outcome.error.kind === 'invalid-response'
+						? outcome.error
+						: { kind: 'invalid-response' },
+			};
+		});
+		const lifecycleOutcome = computed<CarLifecycleOutcome>(() => {
+			const outcome = store.workspace.mutationOutcome();
+			if (
+				outcome.status === 'idle' ||
+				(outcome.command.type !== 'archive' &&
+					outcome.command.type !== 'restore') ||
+				outcome.command.carId !== store.carId()
+			)
+				return idleLifecycle();
+			const action = outcome.command.type;
+			if (outcome.status === 'pending' || outcome.status === 'succeeded')
+				return {
+					status: outcome.status,
+					operationId: outcome.requestId,
+					action,
+				};
+			return {
+				status: 'failed',
+				operationId: outcome.requestId,
+				action,
+				error:
+					outcome.error.kind === 'http' ||
+					outcome.error.kind === 'unavailable' ||
+					outcome.error.kind === 'invalid-response'
+						? outcome.error
+						: { kind: 'invalid-response' },
+			};
+		});
 		return {
-			selectCar(carId: string): void {
-				if (store.carId() === carId) return;
-				patchState(store, {
-					carId,
-					updateOutcome: idleUpdate(),
-					lifecycleOutcome: idleLifecycle(),
-				});
-				store.gateway.selectCar(carId);
-			},
-			retry(): void {
-				store.gateway.refresh();
-			},
-			clearCarMutationState(): void {
-				patchState(store, { updateOutcome: idleUpdate() });
-			},
-			updateCar(input: GarageCarInput): void {
-				const carId = store.carId();
+			updateOutcome,
+			lifecycleOutcome,
+			car: computed(
+				() =>
+					selectedWorkspaceCar() ??
+					(store.gateway.car.hasValue() ? store.gateway.car.value() : null),
+			),
+			loading: computed(
+				() => !selectedWorkspaceCar() && store.gateway.car.isLoading(),
+			),
+			failure: computed(() =>
+				selectedWorkspaceCar() ? null : carFailure(store.gateway.failure()),
+			),
+			carAction: computed(() =>
+				updateOutcome().status === 'pending' ? ('update' as const) : null,
+			),
+			carMutationError: computed(() => {
+				const outcome = store.workspace.mutationOutcome();
+				return outcome.status === 'failed' &&
+					outcome.command.type === 'edit' &&
+					outcome.command.carId === store.carId()
+					? mutationError(outcome.error)
+					: '';
+			}),
+			carMessage: computed(() => {
+				const outcome = store.workspace.mutationOutcome();
 				if (
-					!carId ||
-					store.updateOutcome().status === 'pending' ||
-					store.lifecycleOutcome().status === 'pending'
+					outcome.status !== 'succeeded' ||
+					outcome.command.type !== 'edit' ||
+					outcome.command.carId !== store.carId()
 				)
-					return;
-				update({ carId, input });
-			},
-			changeArchiveState(action: 'archive' | 'restore'): void {
-				const carId = store.carId();
-				if (
-					!carId ||
-					store.lifecycleOutcome().status === 'pending' ||
-					store.updateOutcome().status === 'pending'
-				)
-					return;
-				changeLifecycle({ carId, action });
-			},
+					return '';
+				return outcome.retainedLocally && store.workspace.operations().length
+					? 'Car details saved locally. Pending sync.'
+					: 'Car details saved.';
+			}),
+			lifecycleAction: computed(() => {
+				const outcome = lifecycleOutcome();
+				return outcome.status === 'pending' ? outcome.action : null;
+			}),
+			lifecycleError: computed(() => {
+				const outcome = store.workspace.mutationOutcome();
+				return outcome.status === 'failed' &&
+					(outcome.command.type === 'archive' ||
+						outcome.command.type === 'restore') &&
+					outcome.command.carId === store.carId()
+					? lifecycleMutationError(outcome.error, outcome.command.type)
+					: '';
+			}),
+			mutationsAvailable: store.workspace.mutationsAvailable,
+			syncMark: computed(() => {
+				return store.workspace.carMark(store.carId() ?? '');
+			}),
+			syncFeedback: computed(() => {
+				const mark = store.workspace.carMark(store.carId() ?? '');
+				return mark.kind === 'needs-attention' ? mark.feedback.message : '';
+			}),
 		};
 	}),
+	withHooks({
+		onInit(store) {
+			effect(() => {
+				const failure = store.gateway.failure();
+				if (failure?.kind === 'unavailable') {
+					store.offline.markOffline();
+					store.connectivity.scheduleRetry();
+					return;
+				}
+				if (failure) {
+					store.offline.markOnline();
+					store.connectivity.markRequestSucceeded();
+					return;
+				}
+				if (store.gateway.car.hasValue()) {
+					store.offline.markOnline();
+					store.connectivity.markRequestSucceeded();
+					store.workspace.observeServerCars([store.gateway.car.value()]);
+				}
+			});
+		},
+	}),
+	withMethods((store) => ({
+		selectCar(carId: string): void {
+			if (store.carId() === carId) return;
+			patchState(store, { carId });
+			store.workspace.clearMutationState();
+			store.gateway.selectCar(carId);
+		},
+		retry(): void {
+			store.gateway.refresh();
+			store.workspace.retrySync();
+		},
+		clearCarMutationState(): void {
+			store.workspace.clearMutationState();
+		},
+		updateCar(input: Partial<GarageCarInput>): void {
+			const carId = store.carId();
+			if (
+				carId &&
+				store.workspace.mutationsAvailable() &&
+				store.workspace.mutationOutcome().status !== 'pending'
+			)
+				store.workspace.commit({ type: 'edit', carId, input });
+		},
+		changeArchiveState(action: 'archive' | 'restore'): void {
+			const carId = store.carId();
+			if (
+				carId &&
+				store.workspace.mutationsAvailable() &&
+				store.workspace.mutationOutcome().status !== 'pending'
+			)
+				store.workspace.commit({ type: action, carId });
+		},
+	})),
 );

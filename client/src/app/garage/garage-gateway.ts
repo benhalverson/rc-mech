@@ -30,7 +30,7 @@ export const parseGarageMutation = (value: unknown): GarageCar => {
 
 export const garageGatewayFailure = (error: unknown): GarageGatewayFailure => {
 	if (error instanceof HttpErrorResponse)
-		return error.status === 0
+		return error.status === 0 || error.status >= 500
 			? { kind: 'unavailable' }
 			: { kind: 'http', status: error.status };
 	return error instanceof InvalidGarageResponse
@@ -73,9 +73,7 @@ export class GarageGateway {
 	}
 
 	collectionUnavailable(): boolean {
-		return (
-			this.collection.status() === 'error' && this.collection.statusCode() === 0
-		);
+		return this.collectionFailure()?.kind === 'unavailable';
 	}
 
 	refresh(): void {
