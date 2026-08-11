@@ -6,6 +6,7 @@ import {
 	withDisabledInitialNavigation,
 } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
 import { ResponsiveViewport } from './responsive-viewport';
@@ -72,6 +73,11 @@ class FakeRouteTransitionAnnouncer {
 	readonly retry = vi.fn();
 }
 
+class FakeOfflineWorkspaceStore {
+	readonly status = signal<'idle' | 'ready'>('idle');
+	readonly message = signal('');
+}
+
 describe('WorkspaceShell', () => {
 	let fixture: ComponentFixture<WorkspaceShell>;
 	let session: FakeOwnerSessionStore;
@@ -79,6 +85,7 @@ describe('WorkspaceShell', () => {
 	let viewport: FakeResponsiveViewport;
 	let cars: FakeShellCarStore;
 	let transition: FakeRouteTransitionAnnouncer;
+	let offline: FakeOfflineWorkspaceStore;
 
 	beforeEach(async () => {
 		session = new FakeOwnerSessionStore();
@@ -86,6 +93,7 @@ describe('WorkspaceShell', () => {
 		viewport = new FakeResponsiveViewport();
 		cars = new FakeShellCarStore();
 		transition = new FakeRouteTransitionAnnouncer();
+		offline = new FakeOfflineWorkspaceStore();
 		await TestBed.configureTestingModule({
 			imports: [WorkspaceShell],
 			providers: [
@@ -95,6 +103,7 @@ describe('WorkspaceShell', () => {
 				{ provide: ResponsiveViewport, useValue: viewport },
 				{ provide: ShellCarStore, useValue: cars },
 				{ provide: RouteTransitionAnnouncer, useValue: transition },
+				{ provide: OfflineWorkspaceStore, useValue: offline },
 			],
 		}).compileComponents();
 	});
@@ -119,6 +128,11 @@ describe('WorkspaceShell', () => {
 		expect(root.querySelector('.context-rail')).toBeFalsy();
 		expect(root.textContent).toContain('Chassis Notes');
 		expect(root.textContent).not.toContain('RC Mech');
+
+		offline.status.set('ready');
+		offline.message.set('Offline ready');
+		fixture.detectChanges();
+		expect(root.querySelector('[data-offline-status="ready"]')).toBeTruthy();
 
 		transition.loading.set(true);
 		transition.announcement.set('Loading page…');

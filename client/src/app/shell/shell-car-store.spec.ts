@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import {
 	type ShellCar,
 	type ShellCarCollection,
@@ -11,6 +12,11 @@ import {
 	type CarWorkspaceSection,
 	ShellRouteContext,
 } from './shell-route-context';
+
+class FakeOfflineWorkspaceStore {
+	readonly cars = signal<ShellCar[]>([]);
+	readonly hasSnapshot = signal(false);
+}
 
 class FakeShellCarGateway {
 	private readonly value = signal<ShellCarCollection | undefined>(undefined);
@@ -41,17 +47,20 @@ describe('ShellCarStore', () => {
 	const carId = signal<string | null>(null);
 	const section = signal<CarWorkspaceSection | null>(null);
 	let gateway: FakeShellCarGateway;
+	let offline: FakeOfflineWorkspaceStore;
 	let store: InstanceType<typeof ShellCarStore>;
 
 	beforeEach(() => {
 		carId.set(null);
 		section.set(null);
 		gateway = new FakeShellCarGateway();
+		offline = new FakeOfflineWorkspaceStore();
 		TestBed.configureTestingModule({
 			providers: [
 				ShellCarStore,
 				{ provide: ShellCarGateway, useValue: gateway },
 				{ provide: ShellRouteContext, useValue: { carId, section } },
+				{ provide: OfflineWorkspaceStore, useValue: offline },
 			],
 		});
 		store = TestBed.inject(ShellCarStore);
@@ -98,5 +107,23 @@ describe('ShellCarStore', () => {
 
 		store.retry();
 		expect(gateway.refresh).toHaveBeenCalledOnce();
+	});
+
+	it('uses the durable Garage snapshot when the shell read fails offline', () => {
+		carId.set('car-1');
+		section.set('overview');
+		offline.cars.set([
+			{ id: 'car-1', name: 'Offline buggy', archivedAt: null },
+		]);
+		offline.hasSnapshot.set(true);
+		gateway.setLoading(true);
+		gateway.setError(new Error('offline'));
+
+		expect(store.cars()).toEqual([
+			{ id: 'car-1', name: 'Offline buggy', archivedAt: null },
+		]);
+		expect(store.currentCar()?.name).toBe('Offline buggy');
+		expect(store.loading()).toBe(false);
+		expect(store.error()).toBe('');
 	});
 });

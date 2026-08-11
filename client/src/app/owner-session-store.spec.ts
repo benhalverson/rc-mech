@@ -30,10 +30,25 @@ describe('OwnerSessionStore', () => {
 
 	it('exposes safe computed defaults for incomplete session data', () => {
 		expect(store.hasResolvedSession).toBe(false);
+		expect(store.resolutionFailed()).toBe(false);
 		store.session.set({});
 		expect(store.authenticated()).toBe(false);
 		expect(store.ownerEmail()).toBe('Owner');
 		store.session.set({ user: {} });
+		expect(store.ownerEmail()).toBe('Owner');
+	});
+
+	it('distinguishes a failed session request from a signed-out response', async () => {
+		const resolved = store.resolved();
+		await vi.waitFor(() =>
+			http
+				.expectOne('/api/auth/get-session')
+				.error(new ProgressEvent('offline')),
+		);
+
+		expect(await resolved).toBeNull();
+		expect(store.resolutionFailed()).toBe(true);
+		expect(store.authenticated()).toBe(false);
 		expect(store.ownerEmail()).toBe('Owner');
 	});
 

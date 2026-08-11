@@ -9,6 +9,7 @@ import {
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, exhaustMap, of, tap } from 'rxjs';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import type {
 	CreateCarCommand,
 	GarageCreateOutcome,
@@ -45,17 +46,27 @@ export const GarageStore = signalStore(
 	}),
 	withProps(() => ({
 		gateway: inject(GarageGateway),
+		offline: inject(OfflineWorkspaceStore),
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => ({
 		cars: computed(() =>
 			store.gateway.collection.hasValue()
 				? store.gateway.collection.value().cars
-				: [],
+				: store.offline.hasSnapshot()
+					? store.offline
+							.cars()
+							.filter((car) => store.showArchived() || !car.archivedAt)
+					: [],
 		),
-		collectionLoading: computed(() => store.gateway.collection.isLoading()),
+		collectionLoading: computed(
+			() =>
+				!store.offline.hasSnapshot() && store.gateway.collection.isLoading(),
+		),
 		collectionError: computed(() =>
-			collectionErrorMessage(store.gateway.collectionFailure()),
+			store.offline.hasSnapshot()
+				? ''
+				: collectionErrorMessage(store.gateway.collectionFailure()),
 		),
 		carAction: computed(() =>
 			store.createOutcome().status === 'pending' ? ('create' as const) : null,
