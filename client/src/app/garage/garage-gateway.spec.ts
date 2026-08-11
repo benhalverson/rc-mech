@@ -130,4 +130,15 @@ describe('GarageGateway', () => {
 		http.expectOne('/api/v1/cars').flush({ car: { id: 4 } });
 		await expect(malformed).rejects.toEqual({ kind: 'invalid-response' });
 	});
+
+	it('identifies a network-level collection outage', async () => {
+		gateway.collection.value();
+		let read: ReturnType<HttpTestingController['expectOne']> | undefined;
+		await vi.waitFor(() => {
+			read = http.expectOne('/api/v1/cars');
+		});
+		expect(gateway.collectionUnavailable()).toBe(false);
+		read?.error(new ProgressEvent('offline'));
+		await vi.waitFor(() => expect(gateway.collectionUnavailable()).toBe(true));
+	});
 });

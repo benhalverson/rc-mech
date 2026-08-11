@@ -17,18 +17,39 @@ export type OfflineGarageSnapshot = Readonly<{
 	cars: readonly GarageCar[];
 }>;
 
+type OfflineMetadata = Readonly<{
+	key: 'active-owner';
+	ownerKey: string;
+}>;
+
 @Service()
 export class OfflineGarageStorage {
 	private readonly database = new Dexie(inject(OFFLINE_DATABASE_NAME));
 	private readonly snapshots: Table<OfflineGarageSnapshot, string>;
+	private readonly metadata: Table<OfflineMetadata, string>;
 
 	constructor() {
-		this.database.version(1).stores({ snapshots: '&ownerKey,preparedAt' });
+		this.database
+			.version(1)
+			.stores({ snapshots: '&ownerKey,preparedAt', metadata: '&key' });
 		this.snapshots = this.database.table('snapshots');
+		this.metadata = this.database.table('metadata');
+	}
+
+	async activate(ownerKey: string): Promise<void> {
+		await this.metadata.put({ key: 'active-owner', ownerKey });
 	}
 
 	async save(snapshot: OfflineGarageSnapshot): Promise<void> {
-		await this.snapshots.put(snapshot);
+		await this.database.transaction(
+			'rw',
+			this.snapshots,
+			this.metadata,
+			async () => {
+				await this.snapshots.put(snapshot);
+				await this.activate(snapshot.ownerKey);
+			},
+		);
 	}
 
 	async read(ownerKey: string): Promise<OfflineGarageSnapshot | null> {
@@ -38,7 +59,9 @@ export class OfflineGarageStorage {
 	async restoreCurrent(
 		now = new Date(),
 	): Promise<OfflineGarageSnapshot | null> {
-		const snapshot = await this.snapshots.orderBy('preparedAt').last();
+		const active = await this.metadata.get('active-owner');
+		if (!active) return null;
+		const snapshot = await this.read(active.ownerKey);
 		if (!snapshot || Date.parse(snapshot.offlineUntil) <= now.valueOf())
 			return null;
 		return snapshot;

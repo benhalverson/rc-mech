@@ -65,6 +65,14 @@ describe('OfflineGarageStorage', () => {
 			ownerKey: 'user-b',
 			cars: [{ id: 'car-b', name: 'Buggy B' }],
 		});
+
+		await storage.activate('user-without-a-snapshot');
+		expect(
+			await storage.restoreCurrent(new Date('2026-08-11T12:02:00.000Z')),
+		).toBeNull();
+		expect(await storage.read('user-a')).toMatchObject({
+			cars: [{ id: 'car-a' }],
+		});
 	});
 
 	it('refuses to restore a Garage after the server session expiry', async () => {

@@ -17,6 +17,8 @@ import { GarageStore } from './garage-store';
 class FakeOfflineWorkspaceStore {
 	readonly cars = signal<readonly GarageCar[]>([]);
 	readonly hasSnapshot = signal(false);
+	readonly status = signal('idle');
+	readonly markOffline = vi.fn(() => this.status.set('offline'));
 }
 
 describe('Garage', () => {
@@ -229,6 +231,22 @@ describe('Garage', () => {
 		await fixture.whenStable();
 		fixture.detectChanges();
 
+		expect(offline.markOffline).toHaveBeenCalled();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Car changes need a connection',
+		);
+		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.trim() === 'Add a car',
+		) as HTMLButtonElement;
+		expect(add.disabled).toBe(true);
+		const internal = fixture.componentInstance as unknown as {
+			openCreate(): void;
+			save(event: Event): void;
+		};
+		internal.openCreate();
+		internal.save(new Event('submit'));
+		TestBed.inject(GarageStore).createCar({ input: { name: 'Blocked' } });
+		expect(fixture.nativeElement.querySelector('.car-form')).toBeNull();
 		expect(fixture.nativeElement.textContent).toContain('Offline buggy');
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Archived offline truck',

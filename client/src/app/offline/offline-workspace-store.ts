@@ -1,8 +1,9 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -10,6 +11,7 @@ import {
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, exhaustMap, from, tap } from 'rxjs';
 import type { GarageCar } from '../garage/garage.models';
+import { OfflineConnectivity } from './offline-connectivity';
 import type { OfflineGarageSnapshot } from './offline-garage-storage';
 import type { OfflineOwner } from './offline-owner';
 import { OfflineWorkspaceAccess } from './offline-workspace-access';
@@ -43,7 +45,10 @@ export const OfflineWorkspaceStore = signalStore(
 		ownerEmail: '',
 		cars: [],
 	}),
-	withProps(() => ({ access: inject(OfflineWorkspaceAccess) })),
+	withProps(() => ({
+		access: inject(OfflineWorkspaceAccess),
+		connectivity: inject(OfflineConnectivity),
+	})),
 	withComputed((store) => ({
 		hasSnapshot: computed(
 			() => store.status() === 'ready' || store.status() === 'offline',
@@ -53,7 +58,7 @@ export const OfflineWorkspaceStore = signalStore(
 			if (status === 'idle') return '';
 			if (status === 'preparing') return 'Preparing offline access…';
 			if (status === 'ready') return 'Offline ready';
-			if (status === 'offline') return 'Offline—changes will sync later';
+			if (status === 'offline') return 'Offline—prepared Garage is read-only';
 			return store.onlineOnlyReason() === 'unsupported'
 				? 'Offline access is unavailable in this browser. Chassis Notes remains available while connected.'
 				: 'Offline access could not be prepared. Chassis Notes remains available while connected.';
@@ -99,6 +104,10 @@ export const OfflineWorkspaceStore = signalStore(
 		);
 
 		return {
+			markOffline(): void {
+				if (store.status() === 'ready')
+					patchState(store, { status: 'offline' });
+			},
 			prepare(command: PrepareOfflineWorkspaceCommand): void {
 				prepare(command);
 			},
@@ -111,5 +120,13 @@ export const OfflineWorkspaceStore = signalStore(
 				});
 			},
 		};
+	}),
+	withHooks({
+		onInit(store) {
+			effect(() => {
+				if (!store.connectivity.online() && store.status() === 'ready')
+					store.markOffline();
+			});
+		},
 	}),
 );

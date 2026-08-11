@@ -1,5 +1,7 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineConnectivity } from './offline-connectivity';
 import type { OfflinePreparationResult } from './offline-workspace-access';
 import { OfflineWorkspaceAccess } from './offline-workspace-access';
 import { OfflineWorkspaceStore } from './offline-workspace-store';
@@ -21,16 +23,23 @@ class FakeAccess {
 	);
 }
 
+class FakeConnectivity {
+	readonly online = signal(true);
+}
+
 describe('OfflineWorkspaceStore', () => {
 	let access: FakeAccess;
+	let connectivity: FakeConnectivity;
 	let store: InstanceType<typeof OfflineWorkspaceStore>;
 
 	beforeEach(() => {
 		access = new FakeAccess();
+		connectivity = new FakeConnectivity();
 		TestBed.configureTestingModule({
 			providers: [
 				OfflineWorkspaceStore,
 				{ provide: OfflineWorkspaceAccess, useValue: access },
+				{ provide: OfflineConnectivity, useValue: connectivity },
 			],
 		});
 		store = TestBed.inject(OfflineWorkspaceStore);
@@ -45,7 +54,7 @@ describe('OfflineWorkspaceStore', () => {
 
 		store.openOffline({ snapshot });
 		expect(store.status()).toBe('offline');
-		expect(store.message()).toBe('Offline—changes will sync later');
+		expect(store.message()).toBe('Offline—prepared Garage is read-only');
 		expect(store.cars()).toEqual(snapshot.cars);
 		expect(store.hasSnapshot()).toBe(true);
 		expect(store.ownerEmail()).toBe('racer@example.test');
@@ -75,6 +84,28 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.message()).toBe('Offline ready');
 		expect(store.cars()).toEqual(snapshot.cars);
 		expect(store.hasSnapshot()).toBe(true);
+	});
+
+	it('moves a prepared workspace offline after a failed live request', async () => {
+		store.markOffline();
+		expect(store.status()).toBe('idle');
+
+		store.prepare({
+			owner: {
+				key: 'user-1',
+				email: 'racer@example.test',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			},
+		});
+		await vi.waitFor(() => expect(store.status()).toBe('ready'));
+
+		connectivity.online.set(false);
+		await vi.waitFor(() => expect(store.status()).toBe('offline'));
+		expect(store.status()).toBe('offline');
+		expect(store.message()).toBe('Offline—prepared Garage is read-only');
+
+		store.markOffline();
+		expect(store.status()).toBe('offline');
 	});
 
 	it('explains unsupported capability and preparation failures honestly', async () => {

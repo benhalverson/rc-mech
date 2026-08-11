@@ -28,6 +28,7 @@ export class OfflineWorkspaceAccess {
 
 	async prepare(owner: OfflineOwner): Promise<OfflinePreparationResult> {
 		if (!this.capabilities.supported) return { kind: 'unsupported' };
+		await this.storage.activate(owner.key);
 		await this.capabilities.prepareShell();
 		const collection = await firstValueFrom(this.gateway.load());
 		const snapshot: OfflineGarageSnapshot = {

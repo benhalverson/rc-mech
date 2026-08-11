@@ -33,7 +33,7 @@ describe('OfflineStatus', () => {
 		for (const [status, message] of [
 			['preparing', 'Preparing offline access…'],
 			['ready', 'Offline ready'],
-			['offline', 'Offline—changes will sync later'],
+			['offline', 'Offline—prepared Garage is read-only'],
 			[
 				'online-only',
 				'Offline access is unavailable in this browser. Chassis Notes remains available while connected.',

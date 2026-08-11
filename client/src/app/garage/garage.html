@@ -6,12 +6,15 @@
 			<p class="alloy-supporting-text mb-0 max-w-2xl">Keep the cars you drive close at hand. Build sheets, sessions, and service history stay with each car.</p>
 		</div>
 		@if (!editing() && !store.showArchived()) {
-			<button class="alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" (click)="openCreate()">
+			<button class="alloy-control alloy-focus-ring inline-flex w-full items-center justify-center gap-2 sm:w-auto" type="button" (click)="openCreate()" [disabled]="!store.carMutationsAvailable()" [attr.aria-describedby]="!store.carMutationsAvailable() ? 'offline-garage-limit' : null">
 				<svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>
 				Add a car
 			</button>
 		}
 	</header>
+	@if (!store.carMutationsAvailable()) {
+		<p id="offline-garage-limit" class="alloy-supporting-text m-0">Car changes need a connection until offline sync is available. You can still read the prepared Garage.</p>
+	}
 	@if (store.carMessage()) {
 		<p class="alloy-state alloy-live-state mt-0" role="status"><span>{{ store.carMessage() }}</span></p>
 	}
@@ -83,7 +86,7 @@
 				</label>
 			</div>
 			<div class="flex flex-col gap-2 sm:flex-row">
-				<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="store.carAction() !== null">
+				<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="store.carAction() !== null || !store.carMutationsAvailable()">
 					<svg lucidePlus size="18" strokeWidth="1.8" aria-hidden="true"></svg>
 					{{ store.carAction() === 'create' ? 'Adding…' : 'Save car' }}
 				</button>

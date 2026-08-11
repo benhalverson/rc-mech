@@ -61,10 +61,30 @@ test('reopens the prepared User-scoped Garage after the page closes offline', as
 		),
 	).toBe(true);
 
+	const verificationResponse = page.waitForResponse((response) =>
+		response.url().includes('/api/auth/magic-link/verify'),
+	);
+	await page.goto(
+		'/api/auth/magic-link/verify?token=local-test-token&callbackURL=%2Fgarage',
+	);
+	expect((await verificationResponse).status()).toBe(302);
+	await page.goto('http://127.0.0.1:4201/garage');
+	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
+		'Offline ready',
+	);
+
+	await context.setOffline(true);
+	await expect(page.locator('[data-offline-status="offline"]')).toContainText(
+		'Offline—prepared Garage is read-only',
+	);
+	await expect(page.getByRole('button', { name: 'Add a car' })).toBeDisabled();
+	await expect(page.getByText('Car changes need a connection')).toBeVisible();
+	await context.setOffline(false);
+
 	const reopened = await reopenOffline(context, page);
 	await expect(
 		reopened.locator('[data-offline-status="offline"]'),
-	).toContainText('Offline—changes will sync later');
+	).toContainText('Offline—prepared Garage is read-only');
 	await expect(
 		reopened.getByRole('link', { name: /Offline B7 buggy/ }),
 	).toBeVisible();

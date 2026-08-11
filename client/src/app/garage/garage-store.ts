@@ -1,8 +1,9 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -71,6 +72,7 @@ export const GarageStore = signalStore(
 		carAction: computed(() =>
 			store.createOutcome().status === 'pending' ? ('create' as const) : null,
 		),
+		carMutationsAvailable: computed(() => store.offline.status() !== 'offline'),
 		carMutationError: computed(() => {
 			const outcome = store.createOutcome();
 			return outcome.status === 'failed'
@@ -83,6 +85,13 @@ export const GarageStore = signalStore(
 				: '',
 		),
 	})),
+	withHooks({
+		onInit(store) {
+			effect(() => {
+				if (store.gateway.collectionUnavailable()) store.offline.markOffline();
+			});
+		},
+	}),
 	withMethods((store) => {
 		const create = rxMethod<CreateCarCommand>((commands$) =>
 			commands$.pipe(
@@ -127,6 +136,7 @@ export const GarageStore = signalStore(
 				});
 			},
 			createCar(command: CreateCarCommand): void {
+				if (!store.carMutationsAvailable()) return;
 				create(command);
 			},
 		};

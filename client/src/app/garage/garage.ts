@@ -113,7 +113,7 @@ export class Garage {
 	}
 
 	protected openCreate(): void {
-		if (this.store.carAction()) return;
+		if (this.store.carAction() || !this.store.carMutationsAvailable()) return;
 		this.store.clearCarMutationState();
 		this.formValidationError.set('');
 		this.carFields().reset(emptyCarForm());
@@ -130,7 +130,7 @@ export class Garage {
 
 	protected save(event: Event): void {
 		event.preventDefault();
-		if (this.store.carAction()) return;
+		if (this.store.carAction() || !this.store.carMutationsAvailable()) return;
 		this.carFields().markAsTouched();
 		if (this.carFields().invalid()) {
 			this.formValidationError.set(
