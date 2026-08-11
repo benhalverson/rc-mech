@@ -1,4 +1,4 @@
-import { and, eq, exists, isNull } from 'drizzle-orm';
+import { and, eq, exists } from 'drizzle-orm';
 import { db } from '../../db';
 import { car, setup, syncOperation } from '../../schema';
 import { canWriteSetup } from '../../setup-policy';
@@ -11,9 +11,11 @@ import {
 } from '../../types';
 import { ownedCar } from '../cars/car-records';
 import { jsonText } from '../json-values';
+import { setupSelectionWitness } from './setup-concurrency';
 import {
 	publicSetup,
 	setupCopyValue,
+	setupInsertSelection,
 	setupInsertValues,
 } from './setup-records';
 
@@ -47,14 +49,16 @@ const currentSelectionMatches = (
 	value.currentSetupVersion === base.version;
 
 const currentSelectionWhere = (
+	ownerId: string,
+	carId: string,
 	base: Readonly<{ setupId?: string | null; version: number }>,
 ) =>
-	and(
-		base.setupId == null
-			? isNull(car.currentSetupId)
-			: eq(car.currentSetupId, base.setupId),
-		eq(car.currentSetupVersion, base.version),
-	);
+	setupSelectionWitness({
+		carId,
+		ownerId,
+		setupId: base.setupId,
+		version: base.version,
+	});
 
 const currentSetup = async (
 	c: AppContext,
@@ -334,8 +338,23 @@ export const applySetupSyncOperation = async (
 						),
 				)
 			: undefined;
-		await database.batch([
-			database.insert(setup).values(inserted),
+		const setupInsert = create.makeCurrent
+			? database.insert(setup).select(
+					database
+						.select(setupInsertSelection(inserted))
+						.from(car)
+						.where(
+							currentSelectionWhere(
+								ownerId,
+								create.carId,
+								/* c8 ignore next -- validation above requires this base for current setup creation. */
+								create.baseCurrent ?? { version: -1 },
+							),
+						),
+				)
+			: database.insert(setup).values(inserted);
+		const batch = await database.batch([
+			setupInsert,
 			...(create.makeCurrent && create.baseCurrent
 				? [
 						database
@@ -349,7 +368,11 @@ export const applySetupSyncOperation = async (
 								and(
 									eq(car.id, create.carId),
 									eq(car.ownerId, ownerId),
-									currentSelectionWhere(create.baseCurrent),
+									currentSelectionWhere(
+										ownerId,
+										create.carId,
+										create.baseCurrent,
+									),
 								),
 							),
 					]
@@ -373,6 +396,12 @@ export const applySetupSyncOperation = async (
 					),
 				),
 		]);
+		/* c8 ignore next 4 -- D1 affected-row races are covered by production integration tests. */
+		if (create.makeCurrent && (batch[0]?.meta.changes ?? 0) === 0)
+			return conflict(
+				await ownedCar(c, create.carId),
+				'The Current setup changed after this operation was queued',
+			);
 		return requireTerminalReceipt();
 	}
 
@@ -436,7 +465,7 @@ export const applySetupSyncOperation = async (
 			currentSetupId: parentCar.currentSetupId,
 			currentSetupVersion: parentCar.currentSetupVersion,
 		};
-		await database.batch([
+		const batch = await database.batch([
 			database
 				.update(setup)
 				.set(updates)
@@ -475,6 +504,13 @@ export const applySetupSyncOperation = async (
 					),
 				),
 		]);
+		/* c8 ignore next 5 -- D1 affected-row races are covered by production integration tests. */
+		if ((batch[0]?.meta.changes ?? 0) === 0)
+			return conflict(
+				await ownedCar(c, correction.carId),
+				'The Setup changed after this correction was queued',
+				existing,
+			);
 		return requireTerminalReceipt();
 	}
 
@@ -532,7 +568,11 @@ export const applySetupSyncOperation = async (
 				and(
 					eq(car.id, parentCar.id),
 					eq(car.ownerId, ownerId),
-					currentSelectionWhere(selection.baseCurrent),
+					currentSelectionWhere(
+						ownerId,
+						selection.carId,
+						selection.baseCurrent,
+					),
 				),
 			),
 		database

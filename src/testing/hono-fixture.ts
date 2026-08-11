@@ -12,9 +12,9 @@ const D1_META: D1Meta & Record<string, unknown> = {
 	changes: 0,
 };
 
-const d1Result = <T>(results: T[]): D1Result<T> => ({
+const d1Result = <T>(results: T[], changes = 0): D1Result<T> => ({
 	success: true,
-	meta: D1_META,
+	meta: { ...D1_META, changes },
 	results,
 });
 
@@ -54,8 +54,12 @@ const rawRow = (
 export type D1Step =
 	| { kind: 'first'; value: Record<string, unknown> | null }
 	| { kind: 'all'; rows: readonly Record<string, unknown>[] }
-	| { kind: 'run'; rows?: readonly Record<string, unknown>[] }
-	| { kind: 'batch'; rows?: readonly (readonly Record<string, unknown>[])[] }
+	| { kind: 'run'; rows?: readonly Record<string, unknown>[]; changes?: number }
+	| {
+			kind: 'batch';
+			rows?: readonly (readonly Record<string, unknown>[])[];
+			changes?: readonly number[];
+	  }
 	| { kind: 'error'; error: unknown };
 
 export type RecordedD1Query = {
@@ -109,9 +113,10 @@ export class MockD1Controller {
 			},
 			run: async <T = Record<string, unknown>>() => {
 				const step = record('run');
-				return d1Result([
-					...((step.kind === 'run' ? step.rows : undefined) ?? []),
-				]) as D1Result<T>;
+				return d1Result(
+					[...((step.kind === 'run' ? step.rows : undefined) ?? [])],
+					step.kind === 'run' ? (step.changes ?? 1) : 1,
+				) as D1Result<T>;
 			},
 			all: async <T = Record<string, unknown>>() => {
 				const step = record('all');
@@ -149,7 +154,10 @@ export class MockD1Controller {
 			const step = this.#take('batch');
 			const rows = step.kind === 'batch' ? step.rows : undefined;
 			return statements.map((_, index) =>
-				d1Result((rows?.[index] ?? []) as T[]),
+				d1Result(
+					(rows?.[index] ?? []) as T[],
+					step.kind === 'batch' ? (step.changes?.[index] ?? 1) : 1,
+				),
 			);
 		};
 		const session: D1DatabaseSession = {

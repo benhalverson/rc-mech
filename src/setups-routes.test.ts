@@ -1140,4 +1140,80 @@ describe('setup import routes', () => {
 		);
 		expect(response.status).toBe(404);
 	});
+
+	test('rejects a stale current setup creation without inserting an orphan', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: car() },
+			{ kind: 'batch', changes: [0, 0] },
+		);
+		const response = await request(
+			'/api/v1/cars/car-1/setups',
+			json('POST', { name: 'Stale', makeCurrent: true }),
+		);
+		expect(response.status).toBe(409);
+	});
+
+	test('rejects stale import acceptance without saving its setup', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: draft() },
+			{ kind: 'first', value: car() },
+			{ kind: 'all', rows: [] },
+			{ kind: 'batch', changes: [0, 1, 0] },
+		);
+		const response = await request(
+			'/api/v1/setup-imports/drafts/draft-1/accept',
+			json('POST', { carId: 'car-1', makeCurrent: true }),
+		);
+		expect(response.status).toBe(409);
+	});
+
+	test('rejects a stale current setup copy', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'all', rows: [setup()] },
+			{ kind: 'batch', changes: [0, 0] },
+		);
+		const response = await request(
+			'/api/v1/cars/car-1/setups/copy',
+			json('POST', { makeCurrent: true }),
+		);
+		expect(response.status).toBe(409);
+	});
+
+	test('rejects a stale setup correction and current selection', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'first', value: setup() },
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'run', changes: 0 },
+		);
+		expect(
+			(
+				await request(
+					'/api/v1/cars/car-1/setups/setup-1',
+					json('PATCH', { name: 'Changed' }),
+				)
+			).status,
+		).toBe(409);
+
+		const second = fixture();
+		second.d1.queue(
+			{ kind: 'first', value: car() },
+			{ kind: 'first', value: setup() },
+			{ kind: 'first', value: car() },
+			{ kind: 'run', changes: 0 },
+		);
+		expect(
+			(
+				await second.request(
+					'/api/v1/cars/car-1/setups/setup-1/current',
+					json('POST', {}),
+				)
+			).status,
+		).toBe(409);
+	});
 });

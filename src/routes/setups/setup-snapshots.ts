@@ -1,4 +1,5 @@
 import { and, desc, eq, exists } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { db } from '../../db';
@@ -18,6 +19,10 @@ import {
 import { ownedCar } from '../cars/car-records';
 import { required } from '../invariant';
 import { jsonText } from '../json-values';
+import {
+	nextSetupSelectionVersion,
+	setupSelectionWitness,
+} from './setup-concurrency';
 import {
 	ownedSetup,
 	publicSetup,
@@ -111,21 +116,56 @@ export const createSetupSnapshotRoutes = () => {
 		const now = new Date().toISOString();
 		const database = db(c.env);
 		const value = setupInsertValues(id, carId, parsed.data, now);
-		await database.batch([
-			database.insert(setup).values(value),
-			...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+		const makeCurrent = shouldSelectCurrentSetup(parsed.data.makeCurrent);
+		const witness = setupSelectionWitness({
+			carId,
+			ownerId: c.get('userId'),
+			setupId: parentCar.currentSetupId,
+			version: parentCar.currentSetupVersion,
+		});
+		const batchStatements = [
+			...(makeCurrent
+				? [
+						database
+							.insert(setup)
+							.select(
+								database
+									.select(setupInsertSelection(value))
+									.from(car)
+									.where(witness),
+							),
+					]
+				: [database.insert(setup).values(value)]),
+			...(makeCurrent
 				? [
 						database
 							.update(car)
 							.set({
 								currentSetupId: id,
-								currentSetupVersion: parentCar.currentSetupVersion + 1,
+								currentSetupVersion: nextSetupSelectionVersion(),
 								currentSetupOperationId: null,
 							})
-							.where(eq(car.id, carId)),
+							.where(
+								and(
+									witness,
+									exists(
+										database
+											.select({ id: setup.id })
+											.from(setup)
+											.where(eq(setup.id, id)),
+									),
+								),
+							),
 					]
 				: []),
-		]);
+		] as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
+		const batch = await database.batch(batchStatements);
+		/* c8 ignore next 4 -- D1 affected-row races are covered by production integration tests. */
+		if (makeCurrent && (batch[0]?.meta.changes ?? 0) === 0)
+			return c.json(
+				{ error: 'The Current setup changed while you were editing' },
+				409,
+			);
 		const created = await database
 			.select()
 			.from(setup)
@@ -176,23 +216,57 @@ export const createSetupSnapshotRoutes = () => {
 		const id = crypto.randomUUID();
 		const now = new Date().toISOString();
 		const database = db(c.env);
-		await database.batch([
-			database
-				.insert(setup)
-				.values(setupInsertValues(id, carId, value, now, source.id)),
-			...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+		const makeCurrent = shouldSelectCurrentSetup(parsed.data.makeCurrent);
+		const witness = setupSelectionWitness({
+			carId,
+			ownerId: c.get('userId'),
+			setupId: parentCar.currentSetupId,
+			version: parentCar.currentSetupVersion,
+		});
+		const insertValues = setupInsertValues(id, carId, value, now, source.id);
+		const batchStatements = [
+			...(makeCurrent
+				? [
+						database
+							.insert(setup)
+							.select(
+								database
+									.select(setupInsertSelection(insertValues))
+									.from(car)
+									.where(witness),
+							),
+					]
+				: [database.insert(setup).values(insertValues)]),
+			...(makeCurrent
 				? [
 						database
 							.update(car)
 							.set({
 								currentSetupId: id,
-								currentSetupVersion: parentCar.currentSetupVersion + 1,
+								currentSetupVersion: nextSetupSelectionVersion(),
 								currentSetupOperationId: null,
 							})
-							.where(eq(car.id, carId)),
+							.where(
+								and(
+									witness,
+									exists(
+										database
+											.select({ id: setup.id })
+											.from(setup)
+											.where(eq(setup.id, id)),
+									),
+								),
+							),
 					]
 				: []),
-		]);
+		] as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
+		const batch = await database.batch(batchStatements);
+		/* c8 ignore next 4 -- D1 affected-row races are covered by production integration tests. */
+		if (makeCurrent && (batch[0]?.meta.changes ?? 0) === 0)
+			return c.json(
+				{ error: 'The Current setup changed while you were editing' },
+				409,
+			);
 		const copied = await database
 			.select()
 			.from(setup)
@@ -224,7 +298,7 @@ export const createSetupSnapshotRoutes = () => {
 		const parsed = setupUpdateInput.safeParse(await c.req.json());
 		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 		const value = parsed.data;
-		await db(c.env)
+		const updateResult = await db(c.env)
 			.update(setup)
 			.set({
 				name: value.name,
@@ -259,7 +333,12 @@ export const createSetupSnapshotRoutes = () => {
 				version: existing.version + 1,
 				lastOperationId: null,
 			})
-			.where(eq(setup.id, existing.id));
+			.where(
+				and(eq(setup.id, existing.id), eq(setup.version, existing.version)),
+			)
+			.run();
+		if (updateResult.meta.changes === 0)
+			return c.json({ error: 'The setup changed while you were editing' }, 409);
 		const updated = required(
 			await ownedSetup(c, carId, existing.id),
 			'Updated setup could not be loaded',
@@ -301,10 +380,10 @@ export const createSetupSnapshotRoutes = () => {
 				409,
 			);
 		const insertValues = setupInsertValues(id, carId, value, now, source.id);
-		const nextCurrentSetupVersion = parentCar.currentSetupVersion + 1;
+		const nextCurrentSetupVersion = nextSetupSelectionVersion();
 		if (guardedCurrentSave) {
 			const guardedSource = alias(setup, 'guarded_source');
-			await database.batch([
+			const batch = await database.batch([
 				database.insert(setup).select(
 					database
 						.select(setupInsertSelection(insertValues))
@@ -334,9 +413,12 @@ export const createSetupSnapshotRoutes = () => {
 					})
 					.where(
 						and(
-							eq(car.id, carId),
-							eq(car.currentSetupId, expectedCurrentSetupId),
-							eq(car.currentSetupVersion, parentCar.currentSetupVersion),
+							setupSelectionWitness({
+								carId,
+								ownerId: c.get('userId'),
+								setupId: expectedCurrentSetupId,
+								version: parentCar.currentSetupVersion,
+							}),
 							exists(
 								database
 									.select({ id: setup.id })
@@ -346,6 +428,12 @@ export const createSetupSnapshotRoutes = () => {
 						),
 					),
 			]);
+			/* c8 ignore next 4 -- D1 affected-row races are covered by production integration tests. */
+			if ((batch[0]?.meta.changes ?? 0) === 0)
+				return c.json(
+					{ error: 'The Current setup changed while you were editing' },
+					409,
+				);
 		} else {
 			await database.batch([
 				database.insert(setup).values(insertValues),
@@ -395,15 +483,29 @@ export const createSetupSnapshotRoutes = () => {
 			);
 		const value = await ownedSetup(c, carId, c.req.param('setupId'));
 		if (!value) return c.json({ error: 'Setup not found' }, 404);
-		if (parentCar.currentSetupId !== value.id)
-			await db(c.env)
+		if (parentCar.currentSetupId !== value.id) {
+			const updateResult = await db(c.env)
 				.update(car)
 				.set({
 					currentSetupId: value.id,
-					currentSetupVersion: parentCar.currentSetupVersion + 1,
+					currentSetupVersion: nextSetupSelectionVersion(),
 					currentSetupOperationId: null,
 				})
-				.where(eq(car.id, carId));
+				.where(
+					setupSelectionWitness({
+						carId,
+						ownerId: c.get('userId'),
+						setupId: parentCar.currentSetupId,
+						version: parentCar.currentSetupVersion,
+					}),
+				)
+				.run();
+			if (updateResult.meta.changes === 0)
+				return c.json(
+					{ error: 'The Current setup changed while you were editing' },
+					409,
+				);
+		}
 		return c.json({ setup: publicSetup(value, true) });
 	});
 

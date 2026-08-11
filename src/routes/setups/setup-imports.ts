@@ -1,4 +1,5 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, exists } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono } from 'hono';
 import { db } from '../../db';
 import { car, setup, setupImportDraft } from '../../schema';
@@ -26,7 +27,15 @@ import {
 	publicImportDraft,
 } from './import-records';
 import { fetchSoDialedSource } from './import-source';
-import { publicSetup, setupInsertValues } from './setup-records';
+import {
+	nextSetupSelectionVersion,
+	setupSelectionWitness,
+} from './setup-concurrency';
+import {
+	publicSetup,
+	setupInsertSelection,
+	setupInsertValues,
+} from './setup-records';
 
 export const createSetupImportRoutes = () => {
 	const routes = new Hono<AppEnv>();
@@ -257,10 +266,32 @@ export const createSetupImportRoutes = () => {
 		const now = new Date().toISOString();
 		const value = draftSetupInput(draft, parsed.data.name);
 		const database = db(c.env);
-		await database.batch([
-			database
-				.insert(setup)
-				.values(setupInsertValues(setupId, parsed.data.carId, value, now)),
+		const makeCurrent = shouldSelectCurrentSetup(parsed.data.makeCurrent);
+		const witness = setupSelectionWitness({
+			carId: parsed.data.carId,
+			ownerId: c.get('userId'),
+			setupId: parentCar.currentSetupId,
+			version: parentCar.currentSetupVersion,
+		});
+		const insertValues = setupInsertValues(
+			setupId,
+			parsed.data.carId,
+			value,
+			now,
+		);
+		const batchStatements = [
+			...(makeCurrent
+				? [
+						database
+							.insert(setup)
+							.select(
+								database
+									.select(setupInsertSelection(insertValues))
+									.from(car)
+									.where(witness),
+							),
+					]
+				: [database.insert(setup).values(insertValues)]),
 			database
 				.update(setupImportDraft)
 				.set({
@@ -270,19 +301,36 @@ export const createSetupImportRoutes = () => {
 					updatedAt: now,
 				})
 				.where(eq(setupImportDraft.id, draft.id)),
-			...(shouldSelectCurrentSetup(parsed.data.makeCurrent)
+			...(makeCurrent
 				? [
 						database
 							.update(car)
 							.set({
 								currentSetupId: setupId,
-								currentSetupVersion: parentCar.currentSetupVersion + 1,
+								currentSetupVersion: nextSetupSelectionVersion(),
 								currentSetupOperationId: null,
 							})
-							.where(eq(car.id, parsed.data.carId)),
+							.where(
+								and(
+									witness,
+									exists(
+										database
+											.select({ id: setup.id })
+											.from(setup)
+											.where(eq(setup.id, setupId)),
+									),
+								),
+							),
 					]
 				: []),
-		]);
+		] as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
+		const batch = await database.batch(batchStatements);
+		/* c8 ignore next 4 -- D1 affected-row races are covered by production integration tests. */
+		if (makeCurrent && (batch[0]?.meta.changes ?? 0) === 0)
+			return c.json(
+				{ error: 'The Current setup changed while you were editing' },
+				409,
+			);
 		const created = await database
 			.select()
 			.from(setup)
