@@ -19,6 +19,8 @@ export const car = sqliteTable('car', {
 	powerType: text('power_type'),
 	notes: text('notes'),
 	currentSetupId: text('current_setup_id'),
+	currentSetupVersion: integer('current_setup_version').notNull().default(0),
+	currentSetupOperationId: text('current_setup_operation_id'),
 	createdAt: text('created_at').notNull(),
 	archivedAt: text('archived_at'),
 	version: integer('version').notNull().default(1),
@@ -79,6 +81,8 @@ export const setup = sqliteTable('setup', {
 	unmappedValues: text('unmapped_values'),
 	createdAt: text('created_at').notNull(),
 	updatedAt: text('updated_at').notNull(),
+	version: integer('version').notNull().default(1),
+	lastOperationId: text('last_operation_id'),
 });
 export const setupImportDraft = sqliteTable('setup_import_draft', {
 	id: id('id'),

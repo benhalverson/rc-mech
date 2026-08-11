@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	parseSetupCollection,
 	parseSetupMutation,
+	parseSetupSyncCollections,
 	type SetupSnapshot,
 	SetupSnapshotGateway,
 	SoDialedImportGateway,
@@ -57,8 +58,44 @@ describe('setup snapshot clients', () => {
 			snapshot(),
 		]);
 		expect(parseSetupMutation({ setup: snapshot() })).toEqual(snapshot());
+		expect(
+			parseSetupSyncCollections({
+				setupCollections: [
+					{ carId: 'car-1', setups: [snapshot()] },
+					{
+						carId: 'car-2',
+						currentSetupId: 'setup-2',
+						currentSetupVersion: 4,
+						setups: [snapshot('setup-2', 'car-2')],
+					},
+				],
+			}),
+		).toEqual([
+			{
+				carId: 'car-1',
+				currentSetupId: null,
+				currentSetupVersion: 0,
+				setups: [snapshot()],
+			},
+			{
+				carId: 'car-2',
+				currentSetupId: 'setup-2',
+				currentSetupVersion: 4,
+				setups: [snapshot('setup-2', 'car-2')],
+			},
+		]);
 		expect(() => parseSetupCollection({ setups: [{ id: 4 }] })).toThrow();
 		expect(() => parseSetupMutation({ setup: null })).toThrow();
+		expect(() =>
+			parseSetupSyncCollections({ setupCollections: null }),
+		).toThrow();
+		expect(() =>
+			parseSetupSyncCollections({
+				setupCollections: [
+					{ carId: 'car-2', setups: [snapshot('setup-1', 'car-1')] },
+				],
+			}),
+		).toThrow();
 		expect(setupGatewayFailure(new HttpErrorResponse({ status: 0 }))).toEqual({
 			kind: 'unavailable',
 		});

@@ -38,6 +38,7 @@ export class OfflineWorkspaceAccess {
 			offlineUntil: owner.offlineUntil,
 			preparedAt: this.now().toISOString(),
 			cars: collection.cars,
+			setupCollections: collection.setupCollections,
 		};
 		if (!(await this.storage.save(snapshot, owner.sessionKey)))
 			throw new Error('Offline preparation was superseded by another User.');

@@ -3,6 +3,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SetupSyncMark } from '../setups/setup-sync.models';
 import { CurrentSetup } from './current-setup';
 import type {
 	CurrentSetupChange,
@@ -56,6 +57,7 @@ class FakeCurrentSetupStore {
 		operationId: null,
 	});
 	readonly pending = signal(false);
+	readonly syncMark = signal<SetupSyncMark>({ kind: 'synced' });
 	readonly saveError = signal('');
 	readonly retry = vi.fn();
 	readonly selectCar = vi.fn();
@@ -366,6 +368,59 @@ describe('CurrentSetup', () => {
 				'[data-change-trigger="name"]',
 			)?.disabled,
 		).toBe(true);
+	});
+
+	it('reports locally retained changes and setup synchronization states', () => {
+		store.current.set(setup);
+		let root = detect();
+		root
+			.querySelector<HTMLButtonElement>('[data-change-trigger="name"]')
+			?.click();
+		detect();
+		store.outcome.set({
+			status: 'succeeded',
+			operation: 'save-current-setup',
+			operationId: 1,
+			setup,
+			retainedLocally: true,
+		});
+		fixture.debugElement
+			.query(By.directive(SetupChangeEditor))
+			.triggerEventHandler('completed');
+		root = detect();
+		expect(root.textContent).toContain('saved on this device. Pending sync');
+
+		for (const [mark, text] of [
+			[{ kind: 'pending', operationIds: ['operation-1'] }, 'Pending sync'],
+			[
+				{ kind: 'syncing', operationIds: ['operation-1'] },
+				'Syncing setup history',
+			],
+			[
+				{
+					kind: 'needs-attention',
+					operationId: 'operation-1',
+					feedback: { code: 'invalid', message: 'Review this setup.' },
+				},
+				'Needs attention',
+			],
+			[
+				{
+					kind: 'conflict',
+					operationId: 'operation-1',
+					remote: {
+						currentSetupId: 'remote',
+						currentSetupVersion: 2,
+						setup: null,
+					},
+				},
+				'Setup conflict',
+			],
+		] as const) {
+			store.syncMark.set(mark);
+			root = detect();
+			expect(root.textContent).toContain(text);
+		}
 	});
 
 	it('keeps archived setup values visible and removes mutation affordances', () => {

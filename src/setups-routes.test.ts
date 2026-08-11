@@ -15,8 +15,12 @@ const car = (overrides: Record<string, unknown> = {}) => ({
 	powerType: null,
 	notes: null,
 	currentSetupId: null,
+	currentSetupVersion: 0,
+	currentSetupOperationId: null,
 	createdAt: '2026-01-01T00:00:00.000Z',
 	archivedAt: null,
+	version: 1,
+	lastOperationId: null,
 	...overrides,
 });
 
@@ -49,6 +53,8 @@ const setup = (overrides: Record<string, unknown> = {}) => ({
 	unmappedValues: null,
 	createdAt: '2026-01-01T00:00:00.000Z',
 	updatedAt: '2026-01-01T00:00:00.000Z',
+	version: 1,
+	lastOperationId: null,
 	...overrides,
 });
 
@@ -93,6 +99,46 @@ afterEach(() => {
 });
 
 describe('setup routes', () => {
+	test('lists the complete owner-scoped setup snapshot without per-car requests', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{
+				kind: 'all',
+				rows: [
+					car({ currentSetupId: 'setup-1', currentSetupVersion: 3 }),
+					car({ id: 'car-2', name: 'Truggy' }),
+				],
+			},
+			{
+				kind: 'all',
+				rows: [setup(), setup({ id: 'setup-2', name: 'Wet track' })],
+			},
+		);
+
+		const response = await request('/api/v1/setups');
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			setupCollections: [
+				{
+					carId: 'car-1',
+					currentSetupId: 'setup-1',
+					currentSetupVersion: 3,
+					setups: [
+						{ id: 'setup-1', current: true },
+						{ id: 'setup-2', current: false },
+					],
+				},
+				{
+					carId: 'car-2',
+					currentSetupId: null,
+					currentSetupVersion: 0,
+					setups: [],
+				},
+			],
+		});
+	});
+
 	test('returns a null current setup when the car has no selection', async () => {
 		const { d1, request } = fixture();
 		d1.queue({ kind: 'first', value: car() });
@@ -201,6 +247,11 @@ describe('setup routes', () => {
 			expect(await response.json()).toMatchObject({
 				setup: { name: 'New setup', current: makeCurrent },
 			});
+			expect(d1.batches[0]).toHaveLength(makeCurrent ? 2 : 1);
+			if (makeCurrent) {
+				expect(d1.batches[0]?.[1]).toContain('"current_setup_version"');
+				expect(d1.batches[0]?.[1]).toContain('"current_setup_operation_id"');
+			}
 		},
 	);
 
@@ -266,6 +317,9 @@ describe('setup routes', () => {
 			);
 			expect(response.status).toBe(201);
 			expect(await response.json()).toMatchObject({ sourceSetupId: 'setup-1' });
+			expect(d1.batches[0]).toHaveLength(makeCurrent ? 2 : 1);
+			if (makeCurrent)
+				expect(d1.batches[0]?.[1]).toContain('"current_setup_version"');
 		},
 	);
 
@@ -335,6 +389,12 @@ describe('setup routes', () => {
 		);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ setup: { name: 'Updated' } });
+		const update = d1.queries.find(
+			(query) =>
+				query.operation === 'run' && query.query.includes('update "setup"'),
+		);
+		expect(update?.query).toContain('"version"');
+		expect(update?.query).toContain('"last_operation_id"');
 	});
 
 	test.each([{ name: 'Name only' }, { setupDate: null }])(
@@ -403,6 +463,7 @@ describe('setup routes', () => {
 			'"guarded_source"."updated_at" = ?',
 		);
 		expect(d1.batches.at(-1)?.[1]).toContain('exists (select');
+		expect(d1.batches.at(-1)?.[1]).toContain('"current_setup_version"');
 	});
 
 	test('rejects a stale guarded Current setup without creating a copy', async () => {
@@ -475,6 +536,26 @@ describe('setup routes', () => {
 		);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ setup: { current: true } });
+		expect(
+			d1.queries.find((query) => query.operation === 'run')?.query,
+		).toContain('"current_setup_version"');
+	});
+
+	test('keeps the Current setup version unchanged when selecting it again', async () => {
+		const { d1, request } = fixture();
+		d1.queue(
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+			{ kind: 'first', value: setup() },
+			{ kind: 'first', value: car({ currentSetupId: 'setup-1' }) },
+		);
+
+		const response = await request(
+			'/api/v1/cars/car-1/setups/setup-1/current',
+			{ method: 'POST' },
+		);
+
+		expect(response.status).toBe(200);
+		expect(d1.queries.some((query) => query.operation === 'run')).toBe(false);
 	});
 
 	test.each([
@@ -909,6 +990,12 @@ describe('setup import routes', () => {
 				json('POST', { carId: 'car-1', name: 'Accepted import', makeCurrent }),
 			);
 			expect(response.status).toBe(201);
+			expect(await response.json()).toMatchObject({
+				setup: { current: makeCurrent },
+			});
+			expect(d1.batches[0]).toHaveLength(makeCurrent ? 3 : 2);
+			if (makeCurrent)
+				expect(d1.batches[0]?.[2]).toContain('"current_setup_version"');
 		},
 	);
 

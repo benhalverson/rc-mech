@@ -22,6 +22,7 @@ import type {
 import {
 	type CarWorkspaceMutationOutcome,
 	CarWorkspaceStore,
+	type SetupWorkspaceMutationOutcome,
 } from '../../garage/car-sync/car-workspace-store';
 import type { GarageCar } from '../../garage/garage.models';
 import { GarageGateway } from '../../garage/garage-gateway';
@@ -31,6 +32,10 @@ import { CarSetups } from './car-setups';
 import { CarSetupsStore } from './car-setups-store';
 import { SetupSnapshotGateway, SoDialedImportGateway } from './setup-snapshot';
 import { SetupSnapshotStore } from './setup-snapshot-store';
+import type {
+	SetupSyncCollection,
+	SetupSyncCommand,
+} from './setup-sync.models';
 
 const testRoutes: Routes = [
 	{
@@ -57,6 +62,12 @@ class FakeCarWorkspaceStore {
 		status: 'idle',
 		requestId: null,
 	});
+	readonly setupCollections = signal<readonly SetupSyncCollection[]>([]);
+	readonly setupMutationOutcome = signal<SetupWorkspaceMutationOutcome>({
+		status: 'idle',
+		requestId: null,
+	});
+	readonly externalRequestsAvailable = signal(true);
 	preserveCommandIdentity = true;
 	private requestId = 0;
 	readonly commit = vi.fn((command: CarSyncCommand) => {
@@ -83,6 +94,10 @@ class FakeCarWorkspaceStore {
 	});
 	readonly retrySync = vi.fn();
 	readonly carMark = vi.fn(() => ({ kind: 'synced' as const }));
+	readonly setupMark = vi.fn(() => ({ kind: 'synced' as const }));
+	readonly observeServerSetupCollection = vi.fn();
+	readonly commitSetup = vi.fn((_command: SetupSyncCommand) => {});
+	readonly clearSetupMutationState = vi.fn();
 
 	succeed(car: GarageCar): void {
 		const pending = this.mutationOutcome();

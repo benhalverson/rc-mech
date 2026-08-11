@@ -9,6 +9,22 @@ import {
 	withState,
 } from '@ngrx/signals';
 import { firstValueFrom } from 'rxjs';
+import type { SetupSnapshot } from '../../car/setups/setup-snapshot';
+import type {
+	SetupSyncCollection,
+	SetupSyncCommand,
+	SetupSyncOperation,
+	SetupSyncRemoteOutcome,
+	SetupSyncView,
+} from '../../car/setups/setup-sync.models';
+import {
+	SetupSyncGateway,
+	type SetupSyncGatewayFailure,
+} from '../../car/setups/setup-sync-gateway';
+import {
+	materializeSetupCollections,
+	setupSyncMark,
+} from '../../car/setups/setup-sync-rules';
 import { OfflineConnectivity } from '../../offline/offline-connectivity';
 import {
 	OFFLINE_CURRENT_TIME,
@@ -72,19 +88,66 @@ export type CarWorkspaceMutationOutcome =
 			error: CarWorkspaceMutationFailure;
 	  }>;
 
+export type SetupWorkspaceMutationFailure =
+	| SetupSyncGatewayFailure
+	| CarWorkspaceLocalFailure
+	| Readonly<{ kind: 'needs-attention'; feedback: CarSyncFeedback }>
+	| Readonly<{
+			kind: 'conflict';
+			feedback: CarSyncFeedback;
+			remote: Exclude<
+				SetupSyncRemoteOutcome,
+				{ outcome: 'applied' | 'rejected' }
+			>['remote'];
+	  }>;
+
+export type SetupWorkspaceMutationOutcome =
+	| Readonly<{ status: 'idle'; requestId: null }>
+	| Readonly<{
+			status: 'pending';
+			requestId: number;
+			command: SetupSyncCommand;
+	  }>
+	| Readonly<{
+			status: 'succeeded';
+			requestId: number;
+			operationId: string;
+			command: SetupSyncCommand;
+			setup: SetupSnapshot;
+			retainedLocally: boolean;
+	  }>
+	| Readonly<{
+			status: 'failed';
+			requestId: number;
+			command: SetupSyncCommand;
+			error: SetupWorkspaceMutationFailure;
+	  }>;
+
 type CarWorkspaceState = Readonly<{
 	view: CarSyncView;
+	setupView: SetupSyncView;
 	viewOwnerKey: string;
 	viewSessionKey: string;
 	workspaceOpened: boolean;
 	workspaceMutationOutcome: CarWorkspaceMutationOutcome;
 	syncingOperationIds: readonly string[];
 	workspaceSyncFailure: CarWorkspaceSyncFailure | null;
+	setupWorkspaceMutationOutcome: SetupWorkspaceMutationOutcome;
+	setupWorkspaceSyncFailure:
+		| SetupSyncGatewayFailure
+		| CarWorkspaceLocalFailure
+		| null;
 }>;
 
 const emptyView = (): CarSyncView => ({
 	canonicalCars: [],
 	cars: [],
+	operations: [],
+});
+
+const emptySetupView = (): SetupSyncView => ({
+	canonicalCollections: [],
+	collections: [],
 	operations: [],
 });
 
@@ -111,6 +174,39 @@ export const mergeWorkspaceCars = (
 		merged.set(car.id, car);
 	}
 	return [...merged.values()];
+};
+
+export const mergeWorkspaceSetupCollection = (
+	current: readonly SetupSyncCollection[],
+	incoming: SetupSyncCollection,
+): readonly SetupSyncCollection[] => {
+	const existing = current.find(
+		(collection) => collection.carId === incoming.carId,
+	);
+	if (!existing) return [...current, incoming];
+	const setups = new Map(existing.setups.map((setup) => [setup.id, setup]));
+	for (const setup of incoming.setups) {
+		const previous = setups.get(setup.id);
+		if (
+			previous?.version !== undefined &&
+			(setup.version === undefined || setup.version < previous.version)
+		)
+			continue;
+		setups.set(setup.id, setup);
+	}
+	const selection =
+		incoming.currentSetupVersion >= existing.currentSetupVersion
+			? incoming
+			: existing;
+	const merged: SetupSyncCollection = {
+		carId: existing.carId,
+		currentSetupId: selection.currentSetupId,
+		currentSetupVersion: selection.currentSetupVersion,
+		setups: [...setups.values()],
+	};
+	return current.map((collection) =>
+		collection.carId === incoming.carId ? merged : collection,
+	);
 };
 
 export const carWorkspaceGatewayFailure = (
@@ -147,22 +243,41 @@ export const carWorkspaceTerminalFailure = (
 				remote: outcome.remote.car,
 			};
 
+export const setupWorkspaceGatewayFailure = (
+	error: unknown,
+): SetupSyncGatewayFailure => {
+	if (
+		typeof error === 'object' &&
+		error !== null &&
+		'kind' in error &&
+		(error.kind === 'unavailable' ||
+			error.kind === 'invalid-response' ||
+			error.kind === 'http')
+	)
+		return error as SetupSyncGatewayFailure;
+	return { kind: 'unavailable' };
+};
+
 export const CarWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<CarWorkspaceState>({
 		view: emptyView(),
+		setupView: emptySetupView(),
 		viewOwnerKey: '',
 		viewSessionKey: '',
 		workspaceOpened: false,
 		workspaceMutationOutcome: { status: 'idle', requestId: null },
 		syncingOperationIds: [],
 		workspaceSyncFailure: null,
+		setupWorkspaceMutationOutcome: { status: 'idle', requestId: null },
+		setupWorkspaceSyncFailure: null,
 	}),
 	withProps(() => {
 		const offline = inject(OfflineWorkspaceStore);
 		return {
 			storage: inject(OfflineGarageStorage),
 			gateway: inject(CarSyncGateway),
+			setupGateway: inject(SetupSyncGateway),
 			offline,
 			connectivity: inject(OfflineConnectivity),
 			nextOperationId: inject(OFFLINE_OPERATION_ID),
@@ -187,10 +302,17 @@ export const CarWorkspaceStore = signalStore(
 		const operations = computed(() =>
 			opened() ? store.view().operations : [],
 		);
+		const setupOperations = computed(() =>
+			opened() ? store.setupView().operations : [],
+		);
 		return {
 			opened,
 			cars: computed(() => (opened() ? store.view().cars : [])),
 			operations,
+			setupCollections: computed(() =>
+				opened() ? store.setupView().collections : [],
+			),
+			setupOperations,
 			mutationOutcome: computed<CarWorkspaceMutationOutcome>(() =>
 				identityMatches()
 					? store.workspaceMutationOutcome()
@@ -199,8 +321,19 @@ export const CarWorkspaceStore = signalStore(
 			syncFailure: computed(() =>
 				identityMatches() ? store.workspaceSyncFailure() : null,
 			),
+			setupMutationOutcome: computed<SetupWorkspaceMutationOutcome>(() =>
+				identityMatches()
+					? store.setupWorkspaceMutationOutcome()
+					: { status: 'idle', requestId: null },
+			),
+			setupSyncFailure: computed(() =>
+				identityMatches() ? store.setupWorkspaceSyncFailure() : null,
+			),
 			syncMark: computed(() =>
 				carSyncMark(operations(), new Set(store.syncingOperationIds())),
+			),
+			setupSyncMark: computed(() =>
+				setupSyncMark(setupOperations(), new Set(store.syncingOperationIds())),
 			),
 			mutationsAvailable: computed(() => {
 				const status = store.offline.status();
@@ -209,6 +342,12 @@ export const CarWorkspaceStore = signalStore(
 					(status === 'online-only' && !store.offline.networkUnavailable())
 				);
 			}),
+			durableSetupMutationsAvailable: computed(() =>
+				store.offline.hasSnapshot(),
+			),
+			externalRequestsAvailable: computed(
+				() => !store.offline.networkUnavailable(),
+			),
 		};
 	}),
 	withMethods((store) => {
@@ -227,6 +366,19 @@ export const CarWorkspaceStore = signalStore(
 			});
 			store.offline.setCars(view.cars);
 		};
+		const publishSetupView = (
+			view: SetupSyncView,
+			generation: number,
+		): void => {
+			if (!isCurrentGeneration(generation)) return;
+			patchState(store, {
+				setupView: view,
+				viewOwnerKey: store.offline.ownerKey(),
+				viewSessionKey: store.offline.sessionKey(),
+				workspaceOpened: true,
+				setupWorkspaceSyncFailure: null,
+			});
+		};
 		const publishLocalSyncFailure = (
 			error: unknown,
 			generation: number,
@@ -236,6 +388,20 @@ export const CarWorkspaceStore = signalStore(
 				viewOwnerKey: store.offline.ownerKey(),
 				viewSessionKey: store.offline.sessionKey(),
 				workspaceSyncFailure: carWorkspaceLocalFailure(error),
+			});
+		};
+		const publishSetupLocalSyncFailure = (
+			error: unknown,
+			generation: number,
+		): void => {
+			if (!isCurrentGeneration(generation)) return;
+			patchState(store, {
+				viewOwnerKey: store.offline.ownerKey(),
+				viewSessionKey: store.offline.sessionKey(),
+				setupWorkspaceSyncFailure: carWorkspaceLocalFailure(
+					error,
+					'The local Setup history could not be updated.',
+				),
 			});
 		};
 
@@ -253,7 +419,44 @@ export const CarWorkspaceStore = signalStore(
 				for (;;) {
 					const [operation] = await store.storage.readyCarOperations();
 					if (!isCurrentGeneration(generation)) return;
-					if (!operation) break;
+					if (!operation) {
+						const [setupOperation] = await store.storage.readySetupOperations();
+						if (!isCurrentGeneration(generation)) return;
+						if (!setupOperation) break;
+						patchState(store, {
+							syncingOperationIds: [setupOperation.operationId],
+							setupWorkspaceSyncFailure: null,
+						});
+						let setupOutcome: SetupSyncRemoteOutcome;
+						try {
+							setupOutcome = await firstValueFrom(
+								store.setupGateway.apply(setupOperation),
+							);
+						} catch (error) {
+							if (!isCurrentGeneration(generation)) return;
+							const failure = setupWorkspaceGatewayFailure(error);
+							if (failure.kind === 'unavailable') {
+								store.offline.markOffline();
+								store.connectivity.scheduleRetry();
+							} else {
+								store.offline.markOnline();
+								store.connectivity.markRequestSucceeded();
+							}
+							patchState(store, {
+								syncingOperationIds: [],
+								setupWorkspaceSyncFailure: failure,
+							});
+							return;
+						}
+						if (!isCurrentGeneration(generation)) return;
+						store.offline.markOnline();
+						store.connectivity.markRequestSucceeded();
+						const setupView =
+							await store.storage.recordSetupOutcome(setupOutcome);
+						publishSetupView(setupView, generation);
+						patchState(store, { syncingOperationIds: [] });
+						continue;
+					}
 					patchState(store, {
 						syncingOperationIds: [operation.operationId],
 						workspaceSyncFailure: null,
@@ -286,6 +489,7 @@ export const CarWorkspaceStore = signalStore(
 				}
 			} catch (error) {
 				publishLocalSyncFailure(error, generation);
+				publishSetupLocalSyncFailure(error, generation);
 			} finally {
 				if (isCurrentGeneration(generation)) {
 					store.synchronizing.value = false;
@@ -299,13 +503,18 @@ export const CarWorkspaceStore = signalStore(
 			const generation = store.identity.generation;
 			store.opening.value = true;
 			try {
-				const view = await store.storage.carSyncView();
-				if (view && isCurrentGeneration(generation)) {
+				const [view, setupView] = await Promise.all([
+					store.storage.carSyncView(),
+					store.storage.setupSyncView(),
+				]);
+				if (view && setupView && isCurrentGeneration(generation)) {
 					publishView(view, generation);
+					publishSetupView(setupView, generation);
 					void runSync(generation);
 				}
 			} catch (error) {
 				publishLocalSyncFailure(error, generation);
+				publishSetupLocalSyncFailure(error, generation);
 			} finally {
 				if (isCurrentGeneration(generation)) store.opening.value = false;
 			}
@@ -423,6 +632,45 @@ export const CarWorkspaceStore = signalStore(
 			}
 		};
 
+		const commitSetupDurable = async (
+			command: SetupSyncCommand,
+			requestId: number,
+			generation: number,
+		): Promise<void> => {
+			try {
+				const committed = await store.storage.commitSetup(command, {
+					ownerKey: store.identity.ownerKey,
+					sessionKey: store.identity.sessionKey,
+				});
+				if (!isCurrentGeneration(generation)) return;
+				publishSetupView(committed.view, generation);
+				patchState(store, {
+					setupWorkspaceMutationOutcome: {
+						status: 'succeeded',
+						requestId,
+						operationId: committed.operation.operationId,
+						command,
+						setup: committed.setup,
+						retainedLocally: true,
+					},
+				});
+				void runSync(generation);
+			} catch (error) {
+				if (!isCurrentGeneration(generation)) return;
+				patchState(store, {
+					setupWorkspaceMutationOutcome: {
+						status: 'failed',
+						requestId,
+						command,
+						error: carWorkspaceLocalFailure(
+							error,
+							'The Setup change could not be saved locally.',
+						),
+					},
+				});
+			}
+		};
+
 		return {
 			open(): void {
 				void open();
@@ -453,6 +701,38 @@ export const CarWorkspaceStore = signalStore(
 					generation,
 				);
 			},
+			observeServerSetupCollection(collection: SetupSyncCollection): void {
+				if (!store.opened() && store.offline.status() !== 'online-only') return;
+				const generation = store.identity.generation;
+				if (store.offline.hasSnapshot()) {
+					void store.storage
+						.mergeSetupCollection(collection, {
+							ownerKey: store.identity.ownerKey,
+							sessionKey: store.identity.sessionKey,
+						})
+						.then((view) => publishSetupView(view, generation))
+						.catch((error: unknown) =>
+							publishSetupLocalSyncFailure(error, generation),
+						);
+					return;
+				}
+				const current = untracked(store.setupView);
+				const canonicalCollections = mergeWorkspaceSetupCollection(
+					current.canonicalCollections,
+					collection,
+				);
+				publishSetupView(
+					{
+						canonicalCollections,
+						collections: materializeSetupCollections(
+							canonicalCollections,
+							current.operations,
+						),
+						operations: current.operations,
+					},
+					generation,
+				);
+			},
 			commit(command: CarSyncCommand): void {
 				if (
 					!isCurrentGeneration(store.identity.generation) ||
@@ -477,6 +757,36 @@ export const CarWorkspaceStore = signalStore(
 						workspaceMutationOutcome: { status: 'idle', requestId: null },
 					});
 			},
+			commitSetup(command: SetupSyncCommand): void {
+				if (
+					!isCurrentGeneration(store.identity.generation) ||
+					!store.offline.hasSnapshot() ||
+					!untracked(store.mutationsAvailable) ||
+					untracked(store.setupMutationOutcome).status === 'pending'
+				)
+					return;
+				const requestId = ++store.requestSequence.value;
+				const generation = store.identity.generation;
+				patchState(store, {
+					viewOwnerKey: store.offline.ownerKey(),
+					viewSessionKey: store.offline.sessionKey(),
+					setupWorkspaceMutationOutcome: {
+						status: 'pending',
+						requestId,
+						command,
+					},
+				});
+				void commitSetupDurable(command, requestId, generation);
+			},
+			clearSetupMutationState(): void {
+				if (untracked(store.setupMutationOutcome).status !== 'pending')
+					patchState(store, {
+						setupWorkspaceMutationOutcome: {
+							status: 'idle',
+							requestId: null,
+						},
+					});
+			},
 			retrySync(): void {
 				void runSync();
 			},
@@ -485,6 +795,16 @@ export const CarWorkspaceStore = signalStore(
 					store
 						.operations()
 						.filter((operation: CarSyncOperation) => operation.carId === carId),
+					new Set(store.syncingOperationIds()),
+				);
+			},
+			setupMark(carId: string) {
+				return setupSyncMark(
+					store
+						.setupOperations()
+						.filter(
+							(operation: SetupSyncOperation) => operation.carId === carId,
+						),
 					new Set(store.syncingOperationIds()),
 				);
 			},
@@ -507,12 +827,18 @@ export const CarWorkspaceStore = signalStore(
 				store.synchronizing.value = false;
 				patchState(store, {
 					view: emptyView(),
+					setupView: emptySetupView(),
 					viewOwnerKey: ownerKey,
 					viewSessionKey: sessionKey,
 					workspaceOpened: false,
 					workspaceMutationOutcome: { status: 'idle', requestId: null },
 					syncingOperationIds: [],
 					workspaceSyncFailure: null,
+					setupWorkspaceMutationOutcome: {
+						status: 'idle',
+						requestId: null,
+					},
+					setupWorkspaceSyncFailure: null,
 				});
 			});
 			effect(() => {

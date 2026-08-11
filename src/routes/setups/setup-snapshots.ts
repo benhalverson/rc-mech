@@ -29,6 +29,47 @@ import {
 export const createSetupSnapshotRoutes = () => {
 	const routes = new Hono<AppEnv>();
 
+	routes.get('/setups', async (c) => {
+		const database = db(c.env);
+		const ownerId = c.get('userId');
+		const cars = await database
+			.select({
+				id: car.id,
+				currentSetupId: car.currentSetupId,
+				currentSetupVersion: car.currentSetupVersion,
+			})
+			.from(car)
+			.where(eq(car.ownerId, ownerId));
+		const setups = await database
+			.select()
+			.from(setup)
+			.where(
+				exists(
+					database
+						.select({ id: car.id })
+						.from(car)
+						.where(and(eq(car.id, setup.carId), eq(car.ownerId, ownerId))),
+				),
+			)
+			.orderBy(desc(setup.updatedAt), desc(setup.createdAt));
+		const setupsByCar = new Map<string, (typeof setups)[number][]>();
+		for (const value of setups) {
+			const values = setupsByCar.get(value.carId) ?? [];
+			values.push(value);
+			setupsByCar.set(value.carId, values);
+		}
+		return c.json({
+			setupCollections: cars.map((parentCar) => ({
+				carId: parentCar.id,
+				currentSetupId: parentCar.currentSetupId,
+				currentSetupVersion: parentCar.currentSetupVersion,
+				setups: (setupsByCar.get(parentCar.id) ?? []).map((value) =>
+					publicSetup(value, value.id === parentCar.currentSetupId),
+				),
+			})),
+		});
+	});
+
 	routes.get('/cars/:carId/setups/current', async (c) => {
 		const parentCar = await ownedCar(c, c.req.param('carId'));
 		if (!parentCar) return c.json({ error: 'Car not found' }, 404);
@@ -48,6 +89,7 @@ export const createSetupSnapshotRoutes = () => {
 			.orderBy(desc(setup.updatedAt), desc(setup.createdAt));
 		return c.json({
 			currentSetupId: parentCar.currentSetupId,
+			currentSetupVersion: parentCar.currentSetupVersion,
 			setups: values.map((value) =>
 				publicSetup(value, value.id === parentCar?.currentSetupId),
 			),
@@ -75,7 +117,11 @@ export const createSetupSnapshotRoutes = () => {
 				? [
 						database
 							.update(car)
-							.set({ currentSetupId: id })
+							.set({
+								currentSetupId: id,
+								currentSetupVersion: parentCar.currentSetupVersion + 1,
+								currentSetupOperationId: null,
+							})
 							.where(eq(car.id, carId)),
 					]
 				: []),
@@ -138,7 +184,11 @@ export const createSetupSnapshotRoutes = () => {
 				? [
 						database
 							.update(car)
-							.set({ currentSetupId: id })
+							.set({
+								currentSetupId: id,
+								currentSetupVersion: parentCar.currentSetupVersion + 1,
+								currentSetupOperationId: null,
+							})
 							.where(eq(car.id, carId)),
 					]
 				: []),
@@ -206,6 +256,8 @@ export const createSetupSnapshotRoutes = () => {
 				rawValues: jsonText(value.rawValues),
 				unmappedValues: jsonText(value.unmappedValues),
 				updatedAt: new Date().toISOString(),
+				version: existing.version + 1,
+				lastOperationId: null,
 			})
 			.where(eq(setup.id, existing.id));
 		const updated = required(
@@ -249,6 +301,7 @@ export const createSetupSnapshotRoutes = () => {
 				409,
 			);
 		const insertValues = setupInsertValues(id, carId, value, now, source.id);
+		const nextCurrentSetupVersion = parentCar.currentSetupVersion + 1;
 		if (guardedCurrentSave) {
 			const guardedSource = alias(setup, 'guarded_source');
 			await database.batch([
@@ -268,16 +321,22 @@ export const createSetupSnapshotRoutes = () => {
 							and(
 								eq(car.id, carId),
 								eq(car.currentSetupId, expectedCurrentSetupId),
+								eq(car.currentSetupVersion, parentCar.currentSetupVersion),
 							),
 						),
 				),
 				database
 					.update(car)
-					.set({ currentSetupId: id })
+					.set({
+						currentSetupId: id,
+						currentSetupVersion: nextCurrentSetupVersion,
+						currentSetupOperationId: null,
+					})
 					.where(
 						and(
 							eq(car.id, carId),
 							eq(car.currentSetupId, expectedCurrentSetupId),
+							eq(car.currentSetupVersion, parentCar.currentSetupVersion),
 							exists(
 								database
 									.select({ id: setup.id })
@@ -294,7 +353,11 @@ export const createSetupSnapshotRoutes = () => {
 					? [
 							database
 								.update(car)
-								.set({ currentSetupId: id })
+								.set({
+									currentSetupId: id,
+									currentSetupVersion: nextCurrentSetupVersion,
+									currentSetupOperationId: null,
+								})
 								.where(eq(car.id, carId)),
 						]
 					: []),
@@ -332,10 +395,15 @@ export const createSetupSnapshotRoutes = () => {
 			);
 		const value = await ownedSetup(c, carId, c.req.param('setupId'));
 		if (!value) return c.json({ error: 'Setup not found' }, 404);
-		await db(c.env)
-			.update(car)
-			.set({ currentSetupId: value.id })
-			.where(eq(car.id, carId));
+		if (parentCar.currentSetupId !== value.id)
+			await db(c.env)
+				.update(car)
+				.set({
+					currentSetupId: value.id,
+					currentSetupVersion: parentCar.currentSetupVersion + 1,
+					currentSetupOperationId: null,
+				})
+				.where(eq(car.id, carId));
 		return c.json({ setup: publicSetup(value, true) });
 	});
 

@@ -274,7 +274,11 @@ export const createSetupImportRoutes = () => {
 				? [
 						database
 							.update(car)
-							.set({ currentSetupId: setupId })
+							.set({
+								currentSetupId: setupId,
+								currentSetupVersion: parentCar.currentSetupVersion + 1,
+								currentSetupOperationId: null,
+							})
 							.where(eq(car.id, parsed.data.carId)),
 					]
 				: []),
@@ -288,6 +292,7 @@ export const createSetupImportRoutes = () => {
 			{
 				setup: publicSetup(
 					required(created, 'Imported setup could not be loaded'),
+					parsed.data.makeCurrent === true,
 				),
 			},
 			201,

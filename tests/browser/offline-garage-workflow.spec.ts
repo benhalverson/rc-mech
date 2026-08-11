@@ -29,11 +29,12 @@ const expectAxeClean = async (page: Page): Promise<void> => {
 const reopenOffline = async (
 	context: BrowserContext,
 	page: Page,
+	path = '/garage',
 ): Promise<Page> => {
 	await page.close();
 	await context.setOffline(true);
 	const reopened = await context.newPage();
-	await reopened.goto('/garage');
+	await reopened.goto(path);
 	return reopened;
 };
 
@@ -111,6 +112,138 @@ test('reopens the prepared User-scoped Garage after the page closes offline', as
 	await expect(
 		reopened.getByText('Pending sync', { exact: false }),
 	).toHaveCount(0);
+});
+
+test('retains complete Setup work across an offline page restart and reconnects cleanly', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const carResponse = await page.request.post('/api/v1/cars', {
+		data: {
+			name: 'Trackside setup buggy',
+			make: 'Team Associated',
+			model: 'B7',
+		},
+	});
+	expect(carResponse.ok()).toBe(true);
+	const { car } = (await carResponse.json()) as { car: { id: string } };
+	const baselineResponse = await page.request.post(
+		`/api/v1/cars/${car.id}/setups`,
+		{
+			data: {
+				name: 'Indoor clay baseline',
+				track: 'Club track',
+				condition: 'Dry',
+				vehicle: { rideHeight: '12 mm' },
+				makeCurrent: true,
+			},
+		},
+	);
+	expect(baselineResponse.ok()).toBe(true);
+	const historicalResponse = await page.request.post(
+		`/api/v1/cars/${car.id}/setups`,
+		{
+			data: {
+				name: 'Outdoor reference',
+				track: 'Outdoor track',
+				makeCurrent: false,
+			},
+		},
+	);
+	expect(historicalResponse.ok()).toBe(true);
+
+	const setupPath = `/garage/${car.id}/setups`;
+	await page.goto(setupPath);
+	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
+		'Offline ready',
+	);
+	await expect(
+		page.getByRole('heading', { name: 'Setup snapshots' }),
+	).toBeVisible();
+	await expect(
+		page.getByRole('button', { name: /Indoor clay baseline/ }),
+	).toBeVisible();
+	await expect(
+		page.getByRole('button', { name: /Outdoor reference/ }),
+	).toBeVisible();
+
+	await context.setOffline(true);
+	await page.getByRole('button', { name: /Indoor clay baseline/ }).click();
+	await page.getByRole('button', { name: 'Copy setup' }).click();
+	await expect(
+		page.getByText('Setup copy saved on this device. Pending sync.'),
+	).toBeVisible();
+	await expect(
+		page.getByRole('heading', { name: 'Repair a recording mistake' }),
+	).toBeVisible();
+	await page.getByLabel('Setup name').fill('Offline copied baseline');
+	await page.getByLabel('Track').fill('Trackside correction');
+	await page.getByRole('button', { name: 'Save snapshot' }).click();
+	await expect(
+		page.getByText('Setup saved on this device. Pending sync.'),
+	).toBeVisible();
+	await expect(
+		page.getByRole('heading', { name: 'Offline copied baseline' }),
+	).toBeVisible();
+	await page.getByRole('button', { name: 'Select as current' }).click();
+	await expect(
+		page.getByText('Current setup saved on this device. Pending sync.'),
+	).toBeVisible();
+
+	await page.getByRole('button', { name: 'New setup' }).click();
+	await page.getByLabel('Setup name').fill('Offline scratch baseline');
+	await page.getByLabel('Track').fill('No-service pit');
+	await page.getByRole('button', { name: 'Save snapshot' }).click();
+	await expect(
+		page.getByText('Setup saved on this device. Pending sync.'),
+	).toBeVisible();
+
+	await page
+		.getByLabel('So Dialed setup URL')
+		.fill('https://sodialed.com/setup/offlineSource');
+	await page.getByRole('button', { name: 'Review setup' }).click();
+	await expect(page.getByRole('alert')).toContainText(
+		'That source could not be read',
+	);
+
+	const reopened = await reopenOffline(context, page, setupPath);
+	await expect(
+		reopened.locator('[data-offline-status="offline"]'),
+	).toContainText('Offline—changes will be saved here');
+	await expect(
+		reopened.getByRole('button', { name: /Offline copied baseline/ }),
+	).toBeVisible();
+	await expect(
+		reopened.getByRole('button', { name: /Offline scratch baseline/ }),
+	).toBeVisible();
+	await expect(
+		reopened.getByRole('button', { name: /Indoor clay baseline/ }),
+	).toBeVisible();
+	await expect(
+		reopened.getByRole('button', { name: /Outdoor reference/ }),
+	).toBeVisible();
+	await expect(
+		reopened.getByText('Pending sync', { exact: false }).first(),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+
+	await reopened.goto(`/garage/${car.id}/overview`);
+	await expect(
+		reopened.getByRole('heading', { name: 'Current setup' }),
+	).toBeVisible();
+	await expect(reopened.locator('.current-setup-sheet')).toContainText(
+		'Offline copied baseline',
+	);
+
+	await context.setOffline(false);
+	await expect(reopened.locator('[data-offline-status="ready"]')).toContainText(
+		'Offline ready',
+		{ timeout: 10_000 },
+	);
+	await expect(
+		reopened.getByText('Pending sync', { exact: false }),
+	).toHaveCount(0, { timeout: 10_000 });
 });
 
 test('keeps a browser without required capabilities honestly online-only', async ({

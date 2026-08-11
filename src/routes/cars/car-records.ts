@@ -21,6 +21,7 @@ export const publicCar = (value: typeof car.$inferSelect) => {
 	const {
 		ownerId: _ownerId,
 		lastOperationId: _lastOperationId,
+		currentSetupOperationId: _currentSetupOperationId,
 		...result
 	} = value;
 	return result;

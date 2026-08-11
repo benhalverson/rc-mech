@@ -11,6 +11,7 @@ import {
 	carSyncOperationId,
 	carUpdateInput,
 } from '../../types';
+import { applySetupSyncOperation } from '../setups/setup-sync';
 import { ownedCar, publicCar } from './car-records';
 
 const canonicalJson = (value: unknown): string => {
@@ -94,6 +95,8 @@ export const createCarSyncRoutes = () => {
 
 		const ownerId = c.get('userId');
 		const command = parsed.data.command;
+		const isSetupCommand = command.type.startsWith('setup.');
+		const setupId = command['setupId'];
 		const now = new Date().toISOString();
 		const database = db(c.env);
 		const requestHash = await requestDigest(parsed.data);
@@ -111,7 +114,7 @@ export const createCarSyncRoutes = () => {
 		const requireTerminalReceipt = async () => {
 			const completed = storedReceiptResponse(await readReceipt());
 			if (!completed)
-				throw new Error('Car operation did not produce a terminal receipt');
+				throw new Error('Sync operation did not produce a terminal receipt');
 			return completed;
 		};
 		const claimed = await database
@@ -121,8 +124,11 @@ export const createCarSyncRoutes = () => {
 				operationId: operationId.data,
 				contractVersion: parsed.data.contractVersion,
 				kind: command.type,
-				entityType: 'car',
-				entityId: command.carId,
+				entityType: isSetupCommand ? 'setup' : 'car',
+				entityId:
+					isSetupCommand && typeof setupId === 'string'
+						? setupId
+						: command.carId,
 				requestHash,
 				outcome: 'pending',
 				createdAt: now,
@@ -239,6 +245,15 @@ export const createCarSyncRoutes = () => {
 				.run();
 			return c.json(response, 404);
 		};
+
+		if (isSetupCommand)
+			return applySetupSyncOperation(c, {
+				command,
+				operationId: operationId.data,
+				requestHash,
+				now,
+				requireTerminalReceipt,
+			});
 
 		if (command.type === 'car.edit') {
 			const editCommand = carEditSyncCommandInput.safeParse(command);

@@ -1,7 +1,12 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { type Observable, of, Subject, throwError } from 'rxjs';
+import { type Observable, of, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	CarWorkspaceStore,
+	type SetupWorkspaceMutationFailure,
+	type SetupWorkspaceMutationOutcome,
+} from '../../garage/car-sync/car-workspace-store';
 import {
 	type SetupGatewayFailure,
 	type SetupImportReview,
@@ -16,6 +21,10 @@ import {
 	type SetupWorkflowCommand,
 	setupCollectionAfterResult,
 } from './setup-snapshot-store';
+import type {
+	SetupSyncCollection,
+	SetupSyncCommand,
+} from './setup-sync.models';
 
 const snapshot = (
 	id: string,
@@ -85,6 +94,7 @@ describe('setupCollectionAfterResult', () => {
 });
 
 class FakeSnapshotGateway {
+	readonly synchronizedCollection = signal<SetupSyncCollection | null>(null);
 	readonly hasCollection = signal(false);
 	readonly collectionValue = signal<SetupSnapshot[]>([]);
 	readonly collection = {
@@ -119,6 +129,60 @@ class FakeSnapshotGateway {
 		(_carId: string, _setupId: string): Observable<SetupSnapshot> =>
 			this.currentResult,
 	);
+}
+
+class FakeWorkspace {
+	readonly setupCollections = signal<readonly SetupSyncCollection[]>([]);
+	readonly setupMutationOutcome = signal<SetupWorkspaceMutationOutcome>({
+		status: 'idle',
+		requestId: null,
+	});
+	readonly durableSetupMutationsAvailable = signal(true);
+	readonly externalRequestsAvailable = signal(true);
+	readonly acceptSetupCommits = signal(true);
+	readonly observeServerSetupCollection = vi.fn();
+	readonly setupMark = vi.fn(() => ({ kind: 'synced' }) as const);
+	private requestId = 0;
+
+	readonly clearSetupMutationState = vi.fn(() => {
+		if (this.setupMutationOutcome().status !== 'pending')
+			this.setupMutationOutcome.set({ status: 'idle', requestId: null });
+	});
+
+	readonly commitSetup = vi.fn((command: SetupSyncCommand) => {
+		if (!this.acceptSetupCommits()) return;
+		this.setupMutationOutcome.set({
+			status: 'pending',
+			requestId: ++this.requestId,
+			command,
+		});
+	});
+
+	succeed(setup: SetupSnapshot, retainedLocally = true): void {
+		const pending = this.setupMutationOutcome();
+		if (pending.status !== 'pending')
+			throw new Error('No pending setup command.');
+		this.setupMutationOutcome.set({
+			status: 'succeeded',
+			requestId: pending.requestId,
+			operationId: `operation-${pending.requestId}`,
+			command: pending.command,
+			setup,
+			retainedLocally,
+		});
+	}
+
+	fail(error: SetupWorkspaceMutationFailure): void {
+		const pending = this.setupMutationOutcome();
+		if (pending.status !== 'pending')
+			throw new Error('No pending setup command.');
+		this.setupMutationOutcome.set({
+			status: 'failed',
+			requestId: pending.requestId,
+			command: pending.command,
+			error,
+		});
+	}
 }
 
 class FakeImporter {
@@ -167,16 +231,19 @@ class FakeImporter {
 describe('SetupSnapshotStore focused commands', () => {
 	let gateway: FakeSnapshotGateway;
 	let importer: FakeImporter;
+	let workspace: FakeWorkspace;
 	let store: InstanceType<typeof SetupSnapshotStore>;
 
 	beforeEach(() => {
 		gateway = new FakeSnapshotGateway();
 		importer = new FakeImporter();
+		workspace = new FakeWorkspace();
 		TestBed.configureTestingModule({
 			providers: [
 				SetupSnapshotStore,
 				{ provide: SetupSnapshotGateway, useValue: gateway },
 				{ provide: SoDialedImportGateway, useValue: importer },
+				{ provide: CarWorkspaceStore, useValue: workspace },
 			],
 		});
 		store = TestBed.inject(SetupSnapshotStore);
@@ -193,6 +260,7 @@ describe('SetupSnapshotStore focused commands', () => {
 		expect(store.loading()).toBe(false);
 		expect(store.failure()).toBeNull();
 		expect(store.action()).toBeNull();
+		expect(store.syncMark()).toEqual({ kind: 'synced' });
 		store.mutate(cancel);
 		expect(importer.cancel).not.toHaveBeenCalled();
 
@@ -256,9 +324,17 @@ describe('SetupSnapshotStore focused commands', () => {
 			snapshot: draft,
 			importDraft: null,
 		});
-		expect(gateway.create).toHaveBeenCalledWith('car-1', draft);
-		expect(store.setups()[0]?.id).toBe('created');
-		expect(gateway.refresh).toHaveBeenCalledOnce();
+		expect(workspace.commitSetup).toHaveBeenLastCalledWith({
+			type: 'create',
+			carId: 'car-1',
+			draft,
+		});
+		workspace.succeed(snapshot('created'));
+		TestBed.flushEffects();
+		expect(store.outcome()).toMatchObject({
+			status: 'succeeded',
+			result: { kind: 'save', retainedLocally: true },
+		});
 
 		store.mutate({
 			kind: 'save',
@@ -269,7 +345,14 @@ describe('SetupSnapshotStore focused commands', () => {
 			snapshot: draft,
 			importDraft: null,
 		});
-		expect(gateway.update).toHaveBeenCalledWith('car-1', 'setup-1', draft);
+		expect(workspace.commitSetup).toHaveBeenLastCalledWith({
+			type: 'correct',
+			carId: 'car-1',
+			setupId: 'setup-1',
+			draft,
+		});
+		workspace.succeed(snapshot('setup-1', { name: 'Corrected' }));
+		TestBed.flushEffects();
 
 		const review: SetupImportReview = {
 			carId: 'car-2',
@@ -297,23 +380,113 @@ describe('SetupSnapshotStore focused commands', () => {
 		expect(store.setups().some((entry) => entry.id === 'imported')).toBe(false);
 
 		store.mutate({ kind: 'copy', carId: 'car-1', setupId: 'created' });
-		expect(gateway.copy).toHaveBeenCalledWith('car-1', 'created');
-		expect(store.action()).toBeNull();
-		expect(store.setups()[0]?.id).toBe('copied');
+		expect(workspace.commitSetup).toHaveBeenLastCalledWith({
+			type: 'copy',
+			carId: 'car-1',
+			setupId: 'created',
+		});
+		expect(store.action()).toBe('copy');
+		workspace.succeed(snapshot('copied'));
+		TestBed.flushEffects();
 
-		gateway.currentResult = of(snapshot('created', { current: true }));
+		store.mutate({
+			kind: 'select-current',
+			carId: 'car-1',
+			setupId: 'created',
+		});
+		expect(workspace.commitSetup).toHaveBeenLastCalledWith({
+			type: 'select-current',
+			carId: 'car-1',
+			setupId: 'created',
+		});
+		workspace.succeed(snapshot('created', { current: true }), false);
+		TestBed.flushEffects();
+		expect(store.outcome()).toMatchObject({
+			status: 'succeeded',
+			result: { kind: 'select-current', retainedLocally: false },
+		});
+	});
+
+	it('keeps feature gateway mutations active without a durable workspace', () => {
+		workspace.durableSetupMutationsAvailable.set(false);
+		store.selectCar('car-1');
+		const draft: SetupSnapshotDraft = { name: 'Connected setup' };
+
+		store.mutate({
+			kind: 'save',
+			sourceCarId: 'car-1',
+			targetCarId: 'car-1',
+			mode: 'add',
+			setupId: null,
+			snapshot: draft,
+			importDraft: null,
+		});
+		expect(gateway.create).toHaveBeenCalledWith('car-1', draft);
+
+		store.mutate({
+			kind: 'save',
+			sourceCarId: 'car-1',
+			targetCarId: 'car-1',
+			mode: 'edit',
+			setupId: 'created',
+			snapshot: draft,
+			importDraft: null,
+		});
+		expect(gateway.update).toHaveBeenCalledWith('car-1', 'created', draft);
+
+		store.mutate({ kind: 'copy', carId: 'car-1', setupId: 'created' });
+		expect(gateway.copy).toHaveBeenCalledWith('car-1', 'created');
+
 		store.mutate({
 			kind: 'select-current',
 			carId: 'car-1',
 			setupId: 'created',
 		});
 		expect(gateway.selectCurrent).toHaveBeenCalledWith('car-1', 'created');
-		expect(
-			store.setups().find((entry) => entry.id === 'created')?.current,
-		).toBe(true);
-		expect(store.setups().find((entry) => entry.id === 'copied')?.current).toBe(
-			false,
-		);
+		expect(workspace.commitSetup).not.toHaveBeenCalled();
+		expect(gateway.refresh).toHaveBeenCalledTimes(4);
+		expect(store.outcome()).toMatchObject({
+			status: 'succeeded',
+			result: { kind: 'select-current', setup: { id: 'current' } },
+		});
+	});
+
+	it('ignores late connected gateway results after the route changes', () => {
+		workspace.durableSetupMutationsAvailable.set(false);
+		const copy = new Subject<SetupSnapshot>();
+		gateway.copyResult = copy;
+		store.selectCar('car-1');
+		store.mutate({ kind: 'copy', carId: 'car-1', setupId: 'setup-1' });
+		store.selectCar('car-2');
+		copy.next(snapshot('late-copy'));
+		copy.complete();
+		expect(store.outcome()).toEqual({ status: 'idle', operationId: null });
+		expect(gateway.refresh).not.toHaveBeenCalled();
+
+		const update = new Subject<SetupSnapshot>();
+		gateway.updateResult = update;
+		store.mutate({
+			kind: 'save',
+			sourceCarId: 'car-2',
+			targetCarId: 'car-2',
+			mode: 'edit',
+			setupId: 'setup-2',
+			snapshot: { name: 'Late correction' },
+			importDraft: null,
+		});
+		store.selectCar('car-3');
+		update.error({ kind: 'unavailable' } satisfies SetupGatewayFailure);
+		expect(store.outcome()).toEqual({ status: 'idle', operationId: null });
+	});
+
+	it('publishes a local failure when durable coordination refuses a command', () => {
+		workspace.acceptSetupCommits.set(false);
+		store.selectCar('car-1');
+		store.mutate({ kind: 'copy', carId: 'car-1', setupId: 'setup-1' });
+		expect(store.outcome()).toMatchObject({
+			status: 'failed',
+			error: { kind: 'local' },
+		});
 	});
 
 	it('exposes loading, collection, failure, and pending action states', () => {
@@ -329,69 +502,126 @@ describe('SetupSnapshotStore focused commands', () => {
 
 		gateway.hasCollection.set(true);
 		gateway.collectionValue.set([snapshot('remote')]);
+		gateway.synchronizedCollection.set({
+			carId: 'car-1',
+			currentSetupId: null,
+			currentSetupVersion: 0,
+			setups: [snapshot('remote')],
+		});
 		TestBed.flushEffects();
 		expect(gateway.collection.value).not.toHaveBeenCalled();
 		gateway.collection.isLoading.set(false);
 		TestBed.flushEffects();
 		expect(gateway.collection.value).toHaveBeenCalled();
+		expect(workspace.observeServerSetupCollection).toHaveBeenCalledWith(
+			gateway.synchronizedCollection(),
+		);
+		const observationCount =
+			workspace.observeServerSetupCollection.mock.calls.length;
+		gateway.synchronizedCollection.set(null);
+		TestBed.flushEffects();
+		expect(workspace.observeServerSetupCollection).toHaveBeenCalledTimes(
+			observationCount,
+		);
 		expect(store.setups()).toEqual([snapshot('remote')]);
 
-		const pending = new Subject<SetupSnapshot>();
-		gateway.copyResult = pending;
 		store.selectCar('car-1');
 		store.mutate({ kind: 'copy', carId: 'car-1', setupId: 'remote' });
 		expect(store.action()).toBe('copy');
 		store.mutate({ kind: 'copy', carId: 'car-1', setupId: 'remote' });
-		expect(gateway.copy).toHaveBeenCalledOnce();
-		pending.next(snapshot('copy'));
-		pending.complete();
+		expect(workspace.commitSetup).toHaveBeenCalledOnce();
+		workspace.succeed(snapshot('copy'));
+		TestBed.flushEffects();
 
-		const selecting = new Subject<SetupSnapshot>();
-		gateway.currentResult = selecting;
 		store.mutate({
 			kind: 'select-current',
 			carId: 'car-1',
 			setupId: 'remote',
 		});
 		expect(store.action()).toBe('current');
-		selecting.next(snapshot('remote', { current: true }));
-		selecting.complete();
+		workspace.succeed(snapshot('remote', { current: true }));
+		TestBed.flushEffects();
 	});
 
 	it('ignores late successes and failures after the active car changes', () => {
 		store.selectCar('car-1');
-		const copy = new Subject<SetupSnapshot>();
-		gateway.copyResult = copy;
 		store.mutate({ kind: 'copy', carId: 'car-1', setupId: 'setup-1' });
 		store.selectCar('car-2');
-		copy.next(snapshot('late'));
-		copy.complete();
+		workspace.succeed(snapshot('late'));
+		TestBed.flushEffects();
 		expect(store.outcome()).toEqual({ status: 'idle', operationId: null });
 		expect(gateway.refresh).not.toHaveBeenCalled();
 
-		const failure = new Subject<SetupSnapshot>();
-		gateway.copyResult = failure;
 		store.mutate({ kind: 'copy', carId: 'car-2', setupId: 'setup-2' });
 		store.selectCar('car-3');
-		failure.error({ kind: 'unavailable' });
+		workspace.fail({ kind: 'unavailable' });
+		TestBed.flushEffects();
 		expect(store.outcome()).toEqual({ status: 'idle', operationId: null });
 	});
 
-	it('publishes active mutation failures', () => {
+	it('publishes active local, terminal, conflict, and gateway mutation failures', () => {
 		store.selectCar('car-1');
-		gateway.createResult = throwError(() => ({ kind: 'invalid-response' }));
+		const command: SetupWorkflowCommand = {
+			kind: 'copy',
+			carId: 'car-1',
+			setupId: 'setup-1',
+		};
+		const failures: readonly SetupWorkspaceMutationFailure[] = [
+			{ kind: 'local', message: 'IndexedDB failed.' },
+			{
+				kind: 'needs-attention',
+				feedback: { code: 'invalid', message: 'Review this setup.' },
+			},
+			{
+				kind: 'conflict',
+				feedback: { code: 'conflict', message: 'Choose a current setup.' },
+				remote: {
+					currentSetupId: null,
+					currentSetupVersion: 2,
+					setup: null,
+				},
+			},
+			{ kind: 'invalid-response' },
+		];
+		for (const failure of failures) {
+			store.clearOutcome();
+			store.mutate(command);
+			workspace.fail(failure);
+			TestBed.flushEffects();
+			expect(store.outcome()).toMatchObject({
+				status: 'failed',
+				error:
+					failure.kind === 'needs-attention' || failure.kind === 'conflict'
+						? { kind: failure.kind, message: failure.feedback.message }
+						: failure,
+			});
+		}
+	});
+
+	it('uses durable setup history while offline and blocks uncached imports', () => {
+		store.selectCar('car-1');
+		workspace.setupCollections.set([
+			{
+				carId: 'car-1',
+				currentSetupId: 'local',
+				currentSetupVersion: 1,
+				setups: [snapshot('local', { current: true })],
+			},
+		]);
+		gateway.failureValue.set({ kind: 'unavailable' });
+		expect(store.setups()).toEqual([snapshot('local', { current: true })]);
+		expect(store.failure()).toBeNull();
+
+		workspace.externalRequestsAvailable.set(false);
 		store.mutate({
-			kind: 'save',
-			sourceCarId: 'car-1',
-			targetCarId: 'car-1',
-			mode: 'add',
-			setupId: null,
-			snapshot: { name: 'Bad' },
-			importDraft: null,
+			kind: 'preview',
+			carId: 'car-1',
+			url: 'https://sodialed.com/setup/offline',
 		});
+		expect(importer.preview).not.toHaveBeenCalled();
 		expect(store.outcome()).toMatchObject({
 			status: 'failed',
-			error: { kind: 'invalid-response' },
+			error: { kind: 'unavailable' },
 		});
 	});
 });

@@ -18,6 +18,39 @@ const d1Result = <T>(results: T[]): D1Result<T> => ({
 	results,
 });
 
+const camelCase = (value: string): string =>
+	value.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+
+const selectedKeys = (query: string): readonly string[] | null => {
+	const selection =
+		/^select\s+(.+?)\s+from\s/is.exec(query)?.[1] ??
+		/\sreturning\s+(.+)$/is.exec(query)?.[1];
+	if (!selection) return null;
+	const expressions = selection.split(', ');
+	const keys = expressions.map((expression) => {
+		const alias = /\s+as\s+"([^"]+)"\s*$/i.exec(expression)?.[1];
+		if (alias) return alias;
+		const quoted = [...expression.matchAll(/"([^"]+)"/g)];
+		return quoted.at(-1)?.[1] ?? null;
+	});
+	return keys.every((key): key is string => key !== null) ? keys : null;
+};
+
+const rawRow = (
+	query: string,
+	row: Readonly<Record<string, unknown>>,
+): readonly unknown[] => {
+	const keys = selectedKeys(query);
+	if (!keys) return Object.values(row);
+	const resolved = keys.map((key) => {
+		if (key in row) return row[key];
+		return row[camelCase(key)];
+	});
+	return keys.some((key) => key in row || camelCase(key) in row)
+		? resolved
+		: Object.values(row);
+};
+
 export type D1Step =
 	| { kind: 'first'; value: Record<string, unknown> | null }
 	| { kind: 'all'; rows: readonly Record<string, unknown>[] }
@@ -97,7 +130,7 @@ export class MockD1Controller {
 				this.queries.push({ query, values, operation: step.kind });
 				const rows =
 					step.kind === 'first' ? (step.value ? [step.value] : []) : step.rows;
-				return rows.map((row) => Object.values(row));
+				return rows.map((row) => rawRow(query, row));
 			}) as D1PreparedStatement['raw'],
 		};
 		this.#queryByStatement.set(statement, query);

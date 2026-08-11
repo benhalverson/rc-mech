@@ -18,8 +18,12 @@ const car = (overrides: Record<string, unknown> = {}) => ({
 	powerType: null,
 	notes: null,
 	currentSetupId: null,
+	currentSetupVersion: 0,
+	currentSetupOperationId: null,
 	createdAt: now,
 	archivedAt: null,
+	version: 1,
+	lastOperationId: null,
 	...overrides,
 });
 
@@ -274,6 +278,9 @@ describe('voice confirmation routes', () => {
 		});
 		const batch = d1.queries.find((query) => query.operation === 'batch');
 		expect(batch).toBeDefined();
+		expect(
+			d1.batches[0]?.find((query) => query.includes('update "car" set')),
+		).toContain('"current_setup_version"');
 	});
 
 	test('creates a setup and drive history when no prior context exists', async () => {

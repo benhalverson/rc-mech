@@ -231,7 +231,11 @@ export const createVoiceConfirmationRoutes = () => {
 					),
 				database
 					.update(car)
-					.set({ currentSetupId: setupId })
+					.set({
+						currentSetupId: setupId,
+						currentSetupVersion: parentCar.currentSetupVersion + 1,
+						currentSetupOperationId: null,
+					})
 					.where(eq(car.id, parentCar.id)),
 			);
 			results.push(

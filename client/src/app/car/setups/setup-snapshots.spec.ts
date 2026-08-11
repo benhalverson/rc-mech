@@ -16,6 +16,7 @@ import {
 	type SetupWorkflowResult,
 } from './setup-snapshot-store';
 import { SetupSnapshots } from './setup-snapshots';
+import type { SetupSyncMark } from './setup-sync.models';
 
 const sections = (vehicle: SetupSectionValues = {}) => ({
 	vehicle,
@@ -69,6 +70,7 @@ class FakeSetupStore {
 	readonly action = signal<'preview' | 'save' | 'copy' | 'current' | null>(
 		null,
 	);
+	readonly syncMark = signal<SetupSyncMark>({ kind: 'synced' });
 	readonly outcome = signal<SetupWorkflowOutcome>({
 		status: 'idle',
 		operationId: null,
@@ -357,6 +359,90 @@ describe('SetupSnapshots', () => {
 			store.fail(failure);
 			fixture.detectChanges();
 			expect(harness().actionError()).toContain(message);
+		}
+	});
+
+	it('reports durable saves and every setup synchronization state', () => {
+		const historical = { ...currentSetup, id: 'setup-old', current: false };
+		open([historical]);
+		store.mutate({
+			kind: 'select-current',
+			carId: 'car-1',
+			setupId: historical.id,
+		});
+		store.succeed({
+			kind: 'select-current',
+			setup: { ...historical, current: true },
+			retainedLocally: true,
+		});
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Current setup saved on this device',
+		);
+		store.mutate({
+			kind: 'save',
+			sourceCarId: 'car-1',
+			targetCarId: 'car-1',
+			mode: 'add',
+			setupId: null,
+			snapshot: { name: 'Local setup' },
+			importDraft: null,
+		});
+		store.succeed({
+			kind: 'save',
+			setup: currentSetup,
+			targetCarId: 'car-1',
+			retainedLocally: true,
+		});
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Setup saved on this device',
+		);
+		store.mutate({
+			kind: 'copy',
+			carId: 'car-1',
+			setupId: historical.id,
+		});
+		store.succeed({
+			kind: 'copy',
+			setup: historical,
+			retainedLocally: true,
+		});
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Setup copy saved on this device',
+		);
+
+		for (const [mark, text] of [
+			[{ kind: 'pending', operationIds: ['operation-1'] }, 'Pending sync'],
+			[
+				{ kind: 'syncing', operationIds: ['operation-1'] },
+				'Syncing setup history',
+			],
+			[
+				{
+					kind: 'needs-attention',
+					operationId: 'operation-1',
+					feedback: { code: 'invalid', message: 'Review the setup.' },
+				},
+				'Needs attention',
+			],
+			[
+				{
+					kind: 'conflict',
+					operationId: 'operation-1',
+					remote: {
+						currentSetupId: 'remote',
+						currentSetupVersion: 2,
+						setup: null,
+					},
+				},
+				'Setup conflict',
+			],
+		] as const) {
+			store.syncMark.set(mark);
+			fixture.detectChanges();
+			expect(fixture.nativeElement.textContent).toContain(text);
 		}
 	});
 

@@ -55,6 +55,7 @@ export const publicSetup = (
 		unmappedValues: jsonValue(value.unmappedValues),
 		createdAt: value.createdAt,
 		updatedAt: value.updatedAt,
+		version: value.version,
 	};
 };
 
@@ -64,6 +65,7 @@ export const setupInsertValues = (
 	value: SetupInput,
 	now: string,
 	copiedFromId: string | null = null,
+	lastOperationId: string | null = null,
 ) => ({
 	id,
 	carId,
@@ -93,6 +95,8 @@ export const setupInsertValues = (
 	unmappedValues: jsonText(value.unmappedValues) ?? null,
 	createdAt: now,
 	updatedAt: now,
+	version: 1,
+	lastOperationId,
 });
 
 const setupInsertParameter = <T>(value: T, column: { readonly name: string }) =>
@@ -144,6 +148,11 @@ export const setupInsertSelection = (
 	),
 	createdAt: setupInsertParameter(value.createdAt, setup.createdAt),
 	updatedAt: setupInsertParameter(value.updatedAt, setup.updatedAt),
+	version: setupInsertParameter(value.version, setup.version),
+	lastOperationId: setupInsertParameter(
+		value.lastOperationId,
+		setup.lastOperationId,
+	),
 });
 
 export const setupCopyValue = (

@@ -2,6 +2,16 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	CarWorkspaceStore,
+	type SetupWorkspaceMutationFailure,
+	type SetupWorkspaceMutationOutcome,
+} from '../../garage/car-sync/car-workspace-store';
+import type { SetupSnapshot } from '../setups/setup-snapshot';
+import type {
+	SetupSyncCollection,
+	SetupSyncCommand,
+} from '../setups/setup-sync.models';
 import type {
 	CurrentSetupCollection,
 	CurrentSetupSnapshot,
@@ -16,6 +26,29 @@ import { CurrentSetupStore } from './current-setup-store';
 const snapshot = (
 	overrides: Partial<CurrentSetupSnapshot> = {},
 ): CurrentSetupSnapshot => ({
+	id: 'setup-1',
+	carId: 'car-1',
+	name: 'Current setup',
+	current: true,
+	context: {},
+	sections: {
+		vehicle: { rideHeight: '12 mm', weight: '1500 g' },
+		drivetrain: {},
+		electronics: {},
+		tires: {},
+		shocks: {},
+		frontSuspension: {},
+		rearSuspension: {},
+		notes: {},
+	},
+	copiedFromSetupId: null,
+	updatedAt: '2026-08-09T21:00:00.000Z',
+	...overrides,
+});
+
+const syncedSnapshot = (
+	overrides: Partial<SetupSnapshot> = {},
+): SetupSnapshot => ({
 	id: 'setup-1',
 	carId: 'car-1',
 	name: 'Current setup',
@@ -101,16 +134,103 @@ class FakeCurrentSetupGateway {
 	}
 }
 
+class FakeWorkspace {
+	readonly setupCollections = signal<readonly SetupSyncCollection[]>([]);
+	readonly setupMutationOutcome = signal<SetupWorkspaceMutationOutcome>({
+		status: 'idle',
+		requestId: null,
+	});
+	readonly durableSetupMutationsAvailable = signal(true);
+	readonly externalRequestsAvailable = signal(true);
+	readonly acceptSetupCommits = signal(true);
+	readonly setupMark = vi.fn(() => ({ kind: 'synced' }) as const);
+	private requestId = 0;
+
+	readonly observeServerSetupCollection = vi.fn(
+		(collection: SetupSyncCollection) => {
+			this.setupCollections.update((collections) => [
+				...collections.filter((entry) => entry.carId !== collection.carId),
+				collection,
+			]);
+		},
+	);
+	readonly clearSetupMutationState = vi.fn(() => {
+		if (this.setupMutationOutcome().status !== 'pending')
+			this.setupMutationOutcome.set({ status: 'idle', requestId: null });
+	});
+	readonly commitSetup = vi.fn((command: SetupSyncCommand) => {
+		if (!this.acceptSetupCommits()) return;
+		this.setupMutationOutcome.set({
+			status: 'pending',
+			requestId: ++this.requestId,
+			command,
+		});
+	});
+
+	succeed(setup: SetupSnapshot, retainedLocally = true): void {
+		const pending = this.setupMutationOutcome();
+		if (pending.status !== 'pending')
+			throw new Error('No pending setup command.');
+		const collection = this.setupCollections().find(
+			(entry) => entry.carId === pending.command.carId,
+		) ?? {
+			carId: pending.command.carId,
+			currentSetupId: null,
+			currentSetupVersion: 0,
+			setups: [],
+		};
+		this.setupCollections.set([
+			...this.setupCollections().filter(
+				(entry) => entry.carId !== pending.command.carId,
+			),
+			{
+				...collection,
+				currentSetupId: setup.id,
+				currentSetupVersion: collection.currentSetupVersion + 1,
+				setups: [
+					setup,
+					...collection.setups
+						.filter((entry) => entry.id !== setup.id)
+						.map((entry) => ({ ...entry, current: false })),
+				],
+			},
+		]);
+		this.setupMutationOutcome.set({
+			status: 'succeeded',
+			requestId: pending.requestId,
+			operationId: `operation-${pending.requestId}`,
+			command: pending.command,
+			setup,
+			retainedLocally,
+		});
+	}
+
+	fail(error: SetupWorkspaceMutationFailure): void {
+		const pending = this.setupMutationOutcome();
+		if (pending.status !== 'pending')
+			throw new Error('No pending setup command.');
+		this.setupMutationOutcome.set({
+			status: 'failed',
+			requestId: pending.requestId,
+			command: pending.command,
+			error,
+		});
+	}
+}
+
 describe('CurrentSetupStore', () => {
 	let gateway: FakeCurrentSetupGateway;
+	let workspace: FakeWorkspace;
 	let store: InstanceType<typeof CurrentSetupStore>;
 
 	beforeEach(() => {
 		gateway = new FakeCurrentSetupGateway();
+		workspace = new FakeWorkspace();
 		TestBed.configureTestingModule({
 			providers: [
 				CurrentSetupStore,
 				{ provide: CurrentSetupGateway, useValue: gateway },
+				{ provide: CarWorkspaceStore, useValue: workspace },
 			],
 		});
 		store = TestBed.inject(CurrentSetupStore);
@@ -177,15 +297,38 @@ describe('CurrentSetupStore', () => {
 		expect(store.remainingRows()[0]?.value).toBe('1500 g');
 		gateway.setLoading(true);
 		expect(store.loading()).toBe(false);
+		TestBed.flushEffects();
 		gateway.setLoading(false);
 
 		gateway.setCollection({ currentSetupId: 'missing', setups: [marked] });
 		expect(store.current()?.id).toBe('marked');
 		gateway.setCollection({
 			currentSetupId: null,
-			setups: [snapshot({ current: false })],
+			setups: [
+				snapshot({
+					current: false,
+					context: {},
+					copiedFromSetupId: undefined,
+					sections: {
+						...snapshot().sections,
+						vehicle: { numberValue: 2, emptyValue: null },
+					},
+				}),
+			],
 		});
 		expect(store.current()).toBeNull();
+		TestBed.flushEffects();
+		expect(workspace.observeServerSetupCollection).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				setups: [
+					expect.objectContaining({
+						sections: expect.objectContaining({
+							vehicle: { numberValue: '2', emptyValue: null },
+						}),
+					}),
+				],
+			}),
+		);
 	});
 
 	it('derives changes from the copied setup and retries reads', () => {
@@ -244,6 +387,7 @@ describe('CurrentSetupStore', () => {
 		const source = snapshot();
 		gateway.setCollection({ currentSetupId: source.id, setups: [source] });
 		store.selectCar('car-1');
+		TestBed.flushEffects();
 		store.saveCurrentSetup(command());
 		expect(store.pending()).toBe(true);
 		expect(store.outcome()).toEqual({
@@ -252,32 +396,144 @@ describe('CurrentSetupStore', () => {
 			operationId: 1,
 		});
 		store.saveCurrentSetup(command({ sourceSetupId: 'duplicate' }));
-		expect(gateway.saveCurrentSetup).toHaveBeenCalledOnce();
+		expect(workspace.commitSetup).toHaveBeenCalledOnce();
+		expect(workspace.commitSetup).toHaveBeenCalledWith({
+			type: 'change',
+			carId: 'car-1',
+			setupId: 'setup-1',
+			draft: expect.objectContaining({
+				name: 'Current setup · Aug 9, 3:15 AM',
+				setupDate: '2026-08-09T00:00:00.000Z',
+				status: 'active',
+			}),
+		});
 		store.clearSaveOutcome();
 		expect(store.outcome().status).toBe('pending');
 
-		const saved = snapshot({
+		const saved = syncedSnapshot({
 			id: 'setup-2',
 			name: 'Current setup · Aug 9, 3:15 AM',
+			copiedFromSetupId: source.id,
+		});
+		workspace.succeed(saved);
+		TestBed.flushEffects();
+		expect(store.outcome()).toMatchObject({
+			status: 'succeeded',
+			operationId: 1,
+			setup: { id: 'setup-2' },
+			retainedLocally: true,
+		});
+		expect(store.current()?.id).toBe('setup-2');
+		expect(store.setups()).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: 'setup-2', current: true }),
+				expect.objectContaining({ id: 'setup-1', current: false }),
+			]),
+		);
+		expect(store.saveError()).toBe('');
+		gateway.setFailure({ kind: 'unavailable' });
+		expect(store.failure()).toBeNull();
+		store.clearSaveOutcome();
+		expect(store.outcome().status).toBe('idle');
+	});
+
+	it('keeps CurrentSetupGateway as the connected mutation transport', () => {
+		workspace.durableSetupMutationsAvailable.set(false);
+		const source = snapshot();
+		gateway.setCollection({ currentSetupId: source.id, setups: [source] });
+		store.selectCar('car-1');
+		TestBed.flushEffects();
+
+		store.saveCurrentSetup(command());
+		expect(gateway.saveCurrentSetup).toHaveBeenCalledWith(command());
+		expect(workspace.commitSetup).not.toHaveBeenCalled();
+		store.saveCurrentSetup(command({ sourceSetupId: 'duplicate' }));
+		expect(gateway.saveCurrentSetup).toHaveBeenCalledOnce();
+
+		const saved = snapshot({
+			id: 'setup-2',
+			name: 'Connected save',
 			copiedFromSetupId: source.id,
 		});
 		gateway.succeedSave(saved);
 		expect(store.outcome()).toMatchObject({
 			status: 'succeeded',
-			operationId: 1,
 			setup: { id: 'setup-2' },
+			retainedLocally: false,
 		});
 		expect(store.current()?.id).toBe('setup-2');
-		expect(store.setups()).toEqual([
-			saved,
-			expect.objectContaining({ id: 'setup-1', current: false }),
-		]);
-		expect(store.saveError()).toBe('');
+		expect(store.setups()).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: 'setup-2', current: true }),
+				expect.objectContaining({ id: 'setup-1', current: false }),
+			]),
+		);
 		expect(gateway.refresh).toHaveBeenCalledOnce();
-		gateway.setFailure({ kind: 'unavailable' });
-		expect(store.failure()).toBeNull();
-		store.clearSaveOutcome();
-		expect(store.outcome().status).toBe('idle');
+	});
+
+	it('ignores stale connected gateway completions', () => {
+		workspace.durableSetupMutationsAvailable.set(false);
+		const source = snapshot();
+		gateway.setCollection({ currentSetupId: source.id, setups: [source] });
+		store.selectCar('car-1');
+		store.saveCurrentSetup(command());
+		(
+			store as unknown as { selectionGeneration: { value: number } }
+		).selectionGeneration.value += 1;
+		gateway.succeedSave(snapshot({ id: 'stale-success' }));
+		expect(store.outcome().status).toBe('pending');
+
+		store.selectCar('car-2');
+		store.selectCar('car-1');
+		gateway.resetSave();
+		store.saveCurrentSetup(command());
+		(
+			store as unknown as { selectionGeneration: { value: number } }
+		).selectionGeneration.value += 1;
+		gateway.failSave({ kind: 'unavailable' });
+		expect(store.outcome().status).toBe('pending');
+	});
+
+	it('publishes a local failure when durable coordination refuses the save', () => {
+		workspace.acceptSetupCommits.set(false);
+		const source = snapshot();
+		gateway.setCollection({ currentSetupId: source.id, setups: [source] });
+		store.selectCar('car-1');
+		store.saveCurrentSetup(
+			command({
+				draft: {
+					...command().draft,
+					sections: {
+						...command().draft.sections,
+						notes: { setupNotes: 'Fresh notes' },
+					},
+				},
+			}),
+		);
+		expect(store.outcome()).toMatchObject({
+			status: 'failed',
+			error: { kind: 'local' },
+		});
+	});
+
+	it('maps connected gateway failures and unavailable online-only saves', () => {
+		workspace.durableSetupMutationsAvailable.set(false);
+		const source = snapshot();
+		gateway.setCollection({ currentSetupId: source.id, setups: [source] });
+		store.selectCar('car-1');
+		store.saveCurrentSetup(command());
+		gateway.failSave({
+			kind: 'rejected-response',
+			status: 422,
+			message: 'Review the connected setup.',
+		});
+		expect(store.saveError()).toBe('Review the connected setup.');
+
+		gateway.resetSave();
+		workspace.externalRequestsAvailable.set(false);
+		store.saveCurrentSetup(command());
+		expect(gateway.saveCurrentSetup).toHaveBeenCalledOnce();
+		expect(store.saveError()).toContain('could not be saved');
 	});
 
 	it('validates commands, rejects stale sources, and maps save failures', () => {
@@ -287,7 +543,7 @@ describe('CurrentSetupStore', () => {
 			command({ draft: { ...command().draft, name: '   ' } }),
 		);
 		expect(store.saveError()).toContain('Name this setup');
-		expect(gateway.saveCurrentSetup).not.toHaveBeenCalled();
+		expect(workspace.commitSetup).not.toHaveBeenCalled();
 
 		store.saveCurrentSetup(command({ sourceSetupId: 'stale' }));
 		expect(store.saveError()).toContain('changed while you were editing');
@@ -300,66 +556,96 @@ describe('CurrentSetupStore', () => {
 		);
 		expect(store.saveError()).toContain('changed while you were editing');
 
-		gateway.resetSave();
 		store.saveCurrentSetup(command());
-		gateway.failSave({
-			kind: 'rejected-response',
-			status: 422,
-			message: 'That setup value is unavailable.',
-		});
-		expect(store.saveError()).toBe('That setup value is unavailable.');
-
-		gateway.resetSave();
-		store.saveCurrentSetup(command());
-		gateway.failSave({ kind: 'http', status: 401 });
+		workspace.fail({ kind: 'http', status: 401 });
+		TestBed.flushEffects();
 		expect(store.saveError()).toContain('session has expired');
 
-		gateway.resetSave();
 		store.saveCurrentSetup(command());
-		gateway.failSave({ kind: 'http', status: 409 });
+		workspace.fail({ kind: 'http', status: 409 });
+		TestBed.flushEffects();
 		expect(store.saveError()).toContain('Restore this car');
 
-		gateway.resetSave();
 		store.saveCurrentSetup(command());
-		gateway.failSave({ kind: 'unavailable' });
+		workspace.fail({ kind: 'unavailable' });
+		TestBed.flushEffects();
 		expect(store.saveError()).toContain('could not be saved');
+
+		for (const failure of [
+			{ kind: 'local', message: 'IndexedDB failed.' } as const,
+			{
+				kind: 'needs-attention',
+				feedback: { code: 'invalid', message: 'Review the setup values.' },
+			} as const,
+			{
+				kind: 'conflict',
+				feedback: { code: 'conflict', message: 'Choose the current setup.' },
+				remote: {
+					currentSetupId: 'remote',
+					currentSetupVersion: 2,
+					setup: syncedSnapshot({ id: 'remote' }),
+				},
+			} as const,
+		]) {
+			store.saveCurrentSetup(command());
+			workspace.fail(failure);
+			TestBed.flushEffects();
+			expect(store.saveError()).toBe(
+				failure.kind === 'local' ? failure.message : failure.feedback.message,
+			);
+		}
 	});
 
 	it('cancels stale route mutations and ignores commands for another car', () => {
 		gateway.setCollection({ currentSetupId: 'setup-1', setups: [snapshot()] });
 		store.saveCurrentSetup(command());
-		expect(gateway.saveCurrentSetup).not.toHaveBeenCalled();
+		expect(workspace.commitSetup).not.toHaveBeenCalled();
 		store.selectCar('car-1');
 		store.saveCurrentSetup(command());
 		store.selectCar('car-2');
 		expect(store.outcome().status).toBe('idle');
-		gateway.succeedSave(snapshot({ id: 'stale-save' }));
+		workspace.succeed(syncedSnapshot({ id: 'stale-save' }));
+		TestBed.flushEffects();
 		expect(store.current()).toBeNull();
 		expect(store.setups()).toEqual([]);
-		expect(gateway.refresh).not.toHaveBeenCalled();
 
 		store.clearSaveOutcome();
 		expect(store.outcome().status).toBe('idle');
 	});
 
-	it('guards both success and failure with the captured route generation', () => {
+	it('guards workspace outcomes with the captured route generation', () => {
 		gateway.setCollection({ currentSetupId: 'setup-1', setups: [snapshot()] });
 		store.selectCar('car-1');
 		store.saveCurrentSetup(command());
 		(
 			store as unknown as { selectionGeneration: { value: number } }
 		).selectionGeneration.value += 1;
-		gateway.succeedSave(snapshot({ id: 'stale-success' }));
+		workspace.succeed(syncedSnapshot({ id: 'stale-success' }));
+		TestBed.flushEffects();
 		expect(store.outcome().status).toBe('pending');
-		expect(gateway.refresh).not.toHaveBeenCalled();
+	});
 
-		gateway.resetSave();
-		store.saveCurrentSetup(command());
-		(
-			store as unknown as { selectionGeneration: { value: number } }
-		).selectionGeneration.value += 1;
-		gateway.failSave({ kind: 'unavailable' });
-		expect(store.outcome().status).toBe('pending');
-		expect(gateway.refresh).not.toHaveBeenCalled();
+	it('keeps cached setup history readable when the remote read fails', () => {
+		store.selectCar('car-1');
+		workspace.setupCollections.set([
+			{
+				carId: 'car-1',
+				currentSetupId: 'cached',
+				currentSetupVersion: 3,
+				setups: [
+					syncedSnapshot({
+						id: 'cached',
+						context: null,
+						copiedFromSetupId: undefined,
+					}),
+				],
+			},
+		]);
+		gateway.setFailure({ kind: 'unavailable' });
+		expect(store.current()?.id).toBe('cached');
+		expect(store.current()?.context).toEqual({});
+		expect(store.current()?.copiedFromSetupId).toBeNull();
+		expect(store.failure()).toBeNull();
+		expect(store.syncMark()).toEqual({ kind: 'synced' });
 	});
 });

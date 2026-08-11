@@ -22,7 +22,15 @@ export const carSyncEnvelopeInput = z
 		contractVersion: z.number().int(),
 		command: z
 			.object({
-				type: z.enum(['car.create', 'car.edit', 'car.archive', 'car.restore']),
+				type: z.enum([
+					'car.create',
+					'car.edit',
+					'car.archive',
+					'car.restore',
+					'setup.create',
+					'setup.correct',
+					'setup.select-current',
+				]),
 				carId: z.string().uuid(),
 			})
 			.passthrough(),
@@ -320,6 +328,45 @@ export const setupInput = z.object({
 	makeCurrent: z.boolean().optional(),
 });
 export type SetupInput = z.infer<typeof setupInput>;
+
+const setupCurrentSelectionInput = z
+	.object({
+		setupId: z.string().uuid().nullable(),
+		version: z.number().int().nonnegative(),
+	})
+	.strict();
+
+export const setupCreateSyncCommandInput = z
+	.object({
+		type: z.literal('setup.create'),
+		carId: z.string().uuid(),
+		setupId: z.string().uuid(),
+		copiedFromSetupId: z.string().uuid().nullable(),
+		setup: setupInput.omit({ makeCurrent: true }).strict(),
+		makeCurrent: z.boolean(),
+		baseCurrent: setupCurrentSelectionInput.nullable(),
+	})
+	.strict();
+
+export const setupCorrectSyncCommandInput = z
+	.object({
+		type: z.literal('setup.correct'),
+		carId: z.string().uuid(),
+		setupId: z.string().uuid(),
+		baseVersion: z.number().int().nonnegative(),
+		base: z.record(z.string(), z.unknown()),
+		changes: z.record(z.string(), z.unknown()),
+	})
+	.strict();
+
+export const setupSelectCurrentSyncCommandInput = z
+	.object({
+		type: z.literal('setup.select-current'),
+		carId: z.string().uuid(),
+		setupId: z.string().uuid(),
+		baseCurrent: setupCurrentSelectionInput,
+	})
+	.strict();
 
 export const setupUpdateInput = z
 	.object({

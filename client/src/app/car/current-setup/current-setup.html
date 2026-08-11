@@ -17,6 +17,21 @@
 	@if (saveMessage()) {
 		<p class="alloy-state alloy-live-state m-4" role="status">{{ saveMessage() }}</p>
 	}
+	@let setupSyncMark = syncMark();
+	@switch (setupSyncMark.kind) {
+		@case ('pending') {
+			<p class="alloy-state alloy-attention-state m-4" role="status"><strong>Pending sync.</strong> Current setup changes are saved on this device.</p>
+		}
+		@case ('syncing') {
+			<p class="alloy-state alloy-live-state m-4" role="status"><strong>Syncing setup history.</strong> Sending saved trackside changes…</p>
+		}
+		@case ('needs-attention') {
+			<p class="alloy-state alloy-error-state m-4" role="alert"><strong>Needs attention.</strong> {{ setupSyncMark.feedback.message }}</p>
+		}
+		@case ('conflict') {
+			<p class="alloy-state alloy-attention-state m-4" role="alert"><strong>Setup conflict.</strong> The local and server versions remain available for review.</p>
+		}
+	}
 
 	@if (store.loading()) {
 		<div class="alloy-state m-0 p-4" role="status">Reading the current setup…</div>
