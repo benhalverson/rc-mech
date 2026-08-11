@@ -1,6 +1,8 @@
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
+test.use({ serviceWorkers: 'allow' });
+
 let authentication = 0;
 
 const authenticateOwner = async (page: Page): Promise<void> => {

@@ -8,6 +8,7 @@ export default defineConfig({
 	use: {
 		actionTimeout: 5_000,
 		baseURL: 'http://127.0.0.1:4201',
+		serviceWorkers: 'block',
 		trace: 'retain-on-failure',
 	},
 	webServer: [
