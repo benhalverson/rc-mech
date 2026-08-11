@@ -8,6 +8,16 @@ export type OwnerSessionResponse = {
 	user?: { email?: string };
 } | null;
 
+export const ownerSessionKey = (
+	response: OwnerSessionResponse,
+): string | null => {
+	const session = response?.session;
+	if (typeof session !== 'object' || session === null || !('id' in session))
+		return null;
+	const id = session.id;
+	return typeof id === 'string' && id.trim() ? id.trim() : null;
+};
+
 @Service()
 export class OwnerSessionStore {
 	private resolvedOnce = false;
@@ -24,6 +34,11 @@ export class OwnerSessionStore {
 		() =>
 			(this.session.hasValue() ? this.session.value()?.user?.email : null) ??
 			'Owner',
+	);
+	readonly sessionKey = computed(() =>
+		ownerSessionKey(
+			this.session.hasValue() ? (this.session.value() ?? null) : null,
+		),
 	);
 
 	async resolved(): Promise<OwnerSessionResponse> {

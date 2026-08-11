@@ -75,7 +75,7 @@ export const GarageStore = signalStore(
 			store.createOutcome().status === 'pending' ? ('create' as const) : null,
 		),
 		carMutationsAvailable: computed(
-			() => store.connectivity.online() && store.offline.status() !== 'offline',
+			() => store.connectivity.online() && !store.offline.networkUnavailable(),
 		),
 		carMutationError: computed(() => {
 			const outcome = store.createOutcome();

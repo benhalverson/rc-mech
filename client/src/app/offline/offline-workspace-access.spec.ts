@@ -18,6 +18,7 @@ import {
 const owner: OfflineOwner = {
 	key: 'user-1',
 	email: 'racer@example.test',
+	sessionKey: 'session-1',
 	offlineUntil: '2026-08-12T12:00:00.000Z',
 };
 
@@ -33,8 +34,12 @@ class FakeGateway {
 }
 
 class FakeStorage {
-	readonly activate = vi.fn(async (_ownerKey: string) => undefined);
-	readonly save = vi.fn(async (_snapshot: OfflineGarageSnapshot) => true);
+	readonly activate = vi.fn(
+		async (_ownerKey: string, _sessionKey: string) => true,
+	);
+	readonly save = vi.fn(
+		async (_snapshot: OfflineGarageSnapshot, _sessionKey: string) => true,
+	);
 	readonly restoreCurrent = vi.fn(
 		async () => null as OfflineGarageSnapshot | null,
 	);
@@ -79,8 +84,12 @@ describe('OfflineWorkspaceAccess', () => {
 			},
 		});
 		expect(capabilities.prepareShell).toHaveBeenCalledOnce();
-		expect(storage.activate).toHaveBeenCalledWith('user-1');
+		expect(storage.activate).toHaveBeenCalledWith('user-1', 'session-1');
 		expect(storage.save).toHaveBeenCalledOnce();
+		expect(storage.save).toHaveBeenCalledWith(
+			expect.objectContaining({ ownerKey: 'user-1' }),
+			'session-1',
+		);
 
 		const snapshot = storage.save.mock.calls[0]?.[0] ?? null;
 		storage.restoreCurrent.mockResolvedValue(snapshot);
@@ -103,5 +112,12 @@ describe('OfflineWorkspaceAccess', () => {
 	it('rejects a preparation superseded by another User', async () => {
 		storage.save.mockResolvedValueOnce(false);
 		await expect(access.prepare(owner)).rejects.toThrow('superseded');
+	});
+
+	it('rejects preparation after the current session was signed out', async () => {
+		storage.activate.mockResolvedValueOnce(false);
+		await expect(access.prepare(owner)).rejects.toThrow('sign-out');
+		expect(capabilities.prepareShell).not.toHaveBeenCalled();
+		expect(gateway.load).not.toHaveBeenCalled();
 	});
 });

@@ -99,6 +99,7 @@ describe('ownerSessionCanMatch', () => {
 			owner: {
 				key: 'user-1',
 				email: 'owner@example.test',
+				sessionKey: 'session-1',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 			},
 		});

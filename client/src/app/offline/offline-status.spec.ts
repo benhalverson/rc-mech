@@ -6,7 +6,12 @@ import { OfflineWorkspaceStore } from './offline-workspace-store';
 
 class FakeOfflineWorkspaceStore {
 	readonly status = signal<
-		'idle' | 'preparing' | 'ready' | 'offline' | 'online-only'
+		| 'idle'
+		| 'preparing'
+		| 'ready'
+		| 'offline'
+		| 'offline-unavailable'
+		| 'online-only'
 	>('idle');
 	readonly message = signal('');
 }
@@ -34,6 +39,7 @@ describe('OfflineStatus', () => {
 			['preparing', 'Preparing offline access…'],
 			['ready', 'Offline ready'],
 			['offline', 'Offline—prepared Garage is read-only'],
+			['offline-unavailable', 'Offline—this browser has no prepared Garage.'],
 			[
 				'online-only',
 				'Offline access is unavailable in this browser. Chassis Notes remains available while connected.',

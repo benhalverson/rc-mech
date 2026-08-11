@@ -5,7 +5,7 @@ import {
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OwnerSessionStore } from './owner-session-store';
+import { OwnerSessionStore, ownerSessionKey } from './owner-session-store';
 
 describe('OwnerSessionStore', () => {
 	let http: HttpTestingController;
@@ -31,11 +31,24 @@ describe('OwnerSessionStore', () => {
 	it('exposes safe computed defaults for incomplete session data', () => {
 		expect(store.hasResolvedSession).toBe(false);
 		expect(store.resolutionFailed()).toBe(false);
+		expect(store.sessionKey()).toBeNull();
+		store.session.set(null);
+		expect(store.sessionKey()).toBeNull();
 		store.session.set({});
 		expect(store.authenticated()).toBe(false);
 		expect(store.ownerEmail()).toBe('Owner');
 		store.session.set({ user: {} });
 		expect(store.ownerEmail()).toBe('Owner');
+		expect(store.sessionKey()).toBeNull();
+		for (const response of [
+			null,
+			{},
+			{ session: null },
+			{ session: {} },
+			{ session: { id: 42 } },
+			{ session: { id: '   ' } },
+		])
+			expect(ownerSessionKey(response)).toBeNull();
 	});
 
 	it('distinguishes a failed session request from a signed-out response', async () => {
@@ -67,6 +80,7 @@ describe('OwnerSessionStore', () => {
 		expect(store.hasResolvedSession).toBe(true);
 		expect(store.authenticated()).toBe(true);
 		expect(store.ownerEmail()).toBe('owner@example.test');
+		expect(store.sessionKey()).toBe('session-1');
 	});
 
 	it('reuses resolution when a resource reload cannot start', async () => {

@@ -55,7 +55,9 @@ test('reopens the prepared User-scoped Garage after the page closes offline', as
 	await expect(page.locator('[data-offline-status="ready"]')).toContainText(
 		'Offline ready',
 	);
-	await expect(page.getByRole('heading', { name: 'The garage' })).toBeFocused();
+	await expect(
+		page.getByRole('heading', { name: 'The garage', exact: true }),
+	).toBeFocused();
 	expect(
 		await page.evaluate(
 			() =>
@@ -95,7 +97,7 @@ test('reopens the prepared User-scoped Garage after the page closes offline', as
 		reopened.getByRole('link', { name: /Offline B7 buggy/ }),
 	).toBeVisible();
 	await expect(
-		reopened.getByRole('heading', { name: 'The garage' }),
+		reopened.getByRole('heading', { name: 'The garage', exact: true }),
 	).toBeFocused();
 	await expect(reopened.getByRole('alert')).toHaveCount(0);
 	await expectAxeClean(reopened);
@@ -117,10 +119,29 @@ test('keeps a browser without required capabilities honestly online-only', async
 	await expect(status).toContainText(
 		'Offline access is unavailable in this browser',
 	);
-	await expect(page.getByRole('heading', { name: 'The garage' })).toBeFocused();
+	await expect(
+		page.getByRole('heading', { name: 'The garage', exact: true }),
+	).toBeFocused();
 	await expectAxeClean(page);
 
+	const signOutResponse = page.waitForResponse((response) =>
+		response.url().endsWith('/api/auth/sign-out'),
+	);
+	await page.getByRole('button', { name: 'Sign out' }).click();
+	expect((await signOutResponse).ok()).toBe(true);
+	await expect(
+		page.getByRole('heading', { name: 'Back to the workbench.' }),
+	).toBeVisible();
+
+	await authenticateOwner(page);
+	await page.goto('/garage');
+	await expect(status).toContainText(
+		'Offline access is unavailable in this browser',
+	);
 	await page.context().setOffline(true);
+	await expect(
+		page.locator('[data-offline-status="offline-unavailable"]'),
+	).toContainText('Offline—this browser has no prepared Garage.');
 	await expect(page.getByRole('button', { name: 'Add a car' })).toBeDisabled();
 	await expect(page.getByText('Car changes need a connection')).toBeVisible();
 });

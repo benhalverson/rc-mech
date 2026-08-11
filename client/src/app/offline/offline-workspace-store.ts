@@ -21,6 +21,7 @@ type OfflineWorkspaceStatus =
 	| 'preparing'
 	| 'ready'
 	| 'offline'
+	| 'offline-unavailable'
 	| 'online-only';
 
 type OnlineOnlyReason = 'unsupported' | 'preparation-failed' | null;
@@ -28,6 +29,7 @@ type OnlineOnlyReason = 'unsupported' | 'preparation-failed' | null;
 type OfflineWorkspaceState = {
 	status: OfflineWorkspaceStatus;
 	onlineOnlyReason: OnlineOnlyReason;
+	networkUnavailable: boolean;
 	ownerEmail: string;
 	cars: readonly GarageCar[];
 };
@@ -42,6 +44,7 @@ export const OfflineWorkspaceStore = signalStore(
 	withState<OfflineWorkspaceState>({
 		status: 'idle',
 		onlineOnlyReason: null,
+		networkUnavailable: false,
 		ownerEmail: '',
 		cars: [],
 	}),
@@ -59,6 +62,8 @@ export const OfflineWorkspaceStore = signalStore(
 			if (status === 'preparing') return 'Preparing offline access…';
 			if (status === 'ready') return 'Offline ready';
 			if (status === 'offline') return 'Offline—prepared Garage is read-only';
+			if (status === 'offline-unavailable')
+				return 'Offline—this browser has no prepared Garage.';
 			return store.onlineOnlyReason() === 'unsupported'
 				? 'Offline access is unavailable in this browser. Chassis Notes remains available while connected.'
 				: 'Offline access could not be prepared. Chassis Notes remains available while connected.';
@@ -78,7 +83,9 @@ export const OfflineWorkspaceStore = signalStore(
 						tap((result) => {
 							if (result.kind === 'unsupported') {
 								patchState(store, {
-									status: 'online-only',
+									status: untracked(store.networkUnavailable)
+										? 'offline-unavailable'
+										: 'online-only',
 									onlineOnlyReason: 'unsupported',
 								});
 								return;
@@ -86,13 +93,16 @@ export const OfflineWorkspaceStore = signalStore(
 							patchState(store, {
 								status: 'ready',
 								onlineOnlyReason: null,
+								networkUnavailable: false,
 								ownerEmail: result.snapshot.ownerEmail,
 								cars: result.snapshot.cars,
 							});
 						}),
 						catchError(() => {
 							patchState(store, {
-								status: 'online-only',
+								status: untracked(store.networkUnavailable)
+									? 'offline-unavailable'
+									: 'online-only',
 								onlineOnlyReason: 'preparation-failed',
 								cars: [],
 							});
@@ -105,12 +115,26 @@ export const OfflineWorkspaceStore = signalStore(
 
 		return {
 			markOffline(): void {
-				if (untracked(store.status) === 'ready')
-					patchState(store, { status: 'offline' });
+				const status = untracked(store.status);
+				if (status === 'ready')
+					patchState(store, { status: 'offline', networkUnavailable: true });
+				else if (status === 'online-only')
+					patchState(store, {
+						status: 'offline-unavailable',
+						networkUnavailable: true,
+					});
+				else patchState(store, { networkUnavailable: true });
 			},
 			markOnline(): void {
-				if (untracked(store.status) === 'offline')
-					patchState(store, { status: 'ready' });
+				const status = untracked(store.status);
+				if (status === 'offline')
+					patchState(store, { status: 'ready', networkUnavailable: false });
+				else if (status === 'offline-unavailable')
+					patchState(store, {
+						status: 'online-only',
+						networkUnavailable: false,
+					});
+				else patchState(store, { networkUnavailable: false });
 			},
 			prepare(command: PrepareOfflineWorkspaceCommand): void {
 				prepare(command);
@@ -119,6 +143,7 @@ export const OfflineWorkspaceStore = signalStore(
 				patchState(store, {
 					status: 'offline',
 					onlineOnlyReason: null,
+					networkUnavailable: true,
 					ownerEmail: snapshot.ownerEmail,
 					cars: snapshot.cars,
 				});
@@ -133,8 +158,18 @@ export const OfflineWorkspaceStore = signalStore(
 				const status = store.status();
 				const reconnected = online && !wasOnline;
 				wasOnline = online;
-				if (!online && status === 'ready') store.markOffline();
-				else if (reconnected && status === 'offline') store.markOnline();
+				if (
+					!online &&
+					(status === 'ready' ||
+						status === 'online-only' ||
+						status === 'preparing')
+				)
+					store.markOffline();
+				else if (
+					reconnected &&
+					(status === 'offline' || status === 'offline-unavailable')
+				)
+					store.markOnline();
 			});
 		},
 	}),

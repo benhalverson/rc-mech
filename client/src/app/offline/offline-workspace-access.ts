@@ -28,7 +28,8 @@ export class OfflineWorkspaceAccess {
 
 	async prepare(owner: OfflineOwner): Promise<OfflinePreparationResult> {
 		if (!this.capabilities.supported) return { kind: 'unsupported' };
-		await this.storage.activate(owner.key);
+		if (!(await this.storage.activate(owner.key, owner.sessionKey)))
+			throw new Error('Offline preparation was superseded by sign-out.');
 		await this.capabilities.prepareShell();
 		const collection = await firstValueFrom(this.gateway.load());
 		const snapshot: OfflineGarageSnapshot = {
@@ -38,7 +39,7 @@ export class OfflineWorkspaceAccess {
 			preparedAt: this.now().toISOString(),
 			cars: collection.cars,
 		};
-		if (!(await this.storage.save(snapshot)))
+		if (!(await this.storage.save(snapshot, owner.sessionKey)))
 			throw new Error('Offline preparation was superseded by another User.');
 		return { kind: 'ready', snapshot };
 	}

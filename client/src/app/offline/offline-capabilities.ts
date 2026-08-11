@@ -31,6 +31,7 @@ export const OFFLINE_BROWSER = new InjectionToken<OfflineBrowserCapabilities>(
 export class OfflineCapabilities {
 	private readonly browser = inject(OFFLINE_BROWSER);
 	readonly supported = offlineCapabilities(this.browser).supported;
+	readonly storageAvailable = Boolean(this.browser.indexedDB);
 
 	async prepareShell(): Promise<boolean> {
 		if (!this.supported) return false;

@@ -44,6 +44,7 @@ describe('offlineCapabilities', () => {
 		});
 		const supported = TestBed.inject(OfflineCapabilities);
 		expect(supported.supported).toBe(true);
+		expect(supported.storageAvailable).toBe(true);
 		await expect(supported.prepareShell()).resolves.toBe(true);
 
 		TestBed.resetTestingModule();
@@ -55,6 +56,7 @@ describe('offlineCapabilities', () => {
 		});
 		const unsupported = TestBed.inject(OfflineCapabilities);
 		expect(unsupported.supported).toBe(false);
+		expect(unsupported.storageAvailable).toBe(false);
 		await expect(unsupported.prepareShell()).resolves.toBe(false);
 		expect(currentOfflineBrowser()).toHaveProperty('indexedDB');
 	});

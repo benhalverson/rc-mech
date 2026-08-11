@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineCapabilities } from '../offline/offline-capabilities';
 import { OfflineGarageStorage } from '../offline/offline-garage-storage';
 import { OwnerSessionStore } from '../owner-session-store';
 import { type SignOutGatewayFailure } from './sign-out-contract';
@@ -34,20 +35,30 @@ describe('SignOutStore', () => {
 	let navigate: ReturnType<typeof vi.fn>;
 	let expire: ReturnType<typeof vi.fn>;
 	let deactivate: ReturnType<typeof vi.fn>;
+	let completeSignOut: ReturnType<typeof vi.fn>;
+	let sessionKey: ReturnType<typeof vi.fn>;
+	let capabilities: { storageAvailable: boolean };
 	let store: InstanceType<typeof SignOutStore>;
 
 	beforeEach(() => {
 		gateway = new FakeSignOutGateway();
 		navigate = vi.fn(() => Promise.resolve(true));
 		expire = vi.fn();
-		deactivate = vi.fn(() => Promise.resolve());
+		deactivate = vi.fn(() => Promise.resolve('sign-out-1'));
+		completeSignOut = vi.fn(() => Promise.resolve());
+		sessionKey = vi.fn(() => 'session-1');
+		capabilities = { storageAvailable: true };
 		TestBed.configureTestingModule({
 			providers: [
 				SignOutStore,
+				{ provide: OfflineCapabilities, useValue: capabilities },
 				{ provide: SignOutGateway, useValue: gateway },
-				{ provide: OfflineGarageStorage, useValue: { deactivate } },
+				{
+					provide: OfflineGarageStorage,
+					useValue: { completeSignOut, deactivate },
+				},
 				{ provide: Router, useValue: { navigate } },
-				{ provide: OwnerSessionStore, useValue: { expire } },
+				{ provide: OwnerSessionStore, useValue: { expire, sessionKey } },
 			],
 		});
 		store = TestBed.inject(SignOutStore);
@@ -87,19 +98,24 @@ describe('SignOutStore', () => {
 		);
 		expect(expire).toHaveBeenCalledOnce();
 		expect(navigate).toHaveBeenCalledWith(['/sign-in']);
-		expect(deactivate).toHaveBeenCalledOnce();
+		expect(deactivate).toHaveBeenCalledWith('session-1');
+		expect(completeSignOut).toHaveBeenCalledOnce();
+		expect(completeSignOut).toHaveBeenCalledWith('sign-out-1');
 		expect(store.error()).toBe('');
 
 		gateway.reset();
 		store.signOut(command);
 		await vi.waitFor(() => expect(gateway.signOut).toHaveBeenCalledTimes(2));
 		gateway.fail({ kind: 'http', status: 503 });
-		expect(store.outcome()).toEqual({
-			status: 'failed',
-			operation: 'sign-out',
-			operationId: 2,
-			error: { kind: 'http', status: 503 },
-		});
+		await vi.waitFor(() =>
+			expect(store.outcome()).toEqual({
+				status: 'failed',
+				operation: 'sign-out',
+				operationId: 2,
+				error: { kind: 'http', status: 503 },
+			}),
+		);
+		expect(completeSignOut).toHaveBeenCalledOnce();
 		expect(store.error()).toContain('could not sign you out');
 	});
 
@@ -122,5 +138,31 @@ describe('SignOutStore', () => {
 		expect(gateway.signOut).not.toHaveBeenCalled();
 		expect(expire).not.toHaveBeenCalled();
 		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it('signs out online-only browsers without opening IndexedDB', async () => {
+		TestBed.resetTestingModule();
+		capabilities.storageAvailable = false;
+		TestBed.configureTestingModule({
+			providers: [
+				SignOutStore,
+				{ provide: OfflineCapabilities, useValue: capabilities },
+				{ provide: SignOutGateway, useValue: gateway },
+				{
+					provide: OfflineGarageStorage,
+					useFactory: () => {
+						throw new Error('IndexedDB unavailable');
+					},
+				},
+				{ provide: Router, useValue: { navigate } },
+				{ provide: OwnerSessionStore, useValue: { expire, sessionKey } },
+			],
+		});
+		store = TestBed.inject(SignOutStore);
+		store.signOut({ operation: 'sign-out' });
+		await vi.waitFor(() => expect(gateway.signOut).toHaveBeenCalledOnce());
+		gateway.succeed();
+		await vi.waitFor(() => expect(store.outcome().status).toBe('succeeded'));
+		expect(deactivate).not.toHaveBeenCalled();
 	});
 });

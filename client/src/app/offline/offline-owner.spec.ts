@@ -8,7 +8,10 @@ describe('offlineOwnerFromSession', () => {
 		expect(
 			offlineOwnerFromSession(
 				{
-					session: { expiresAt: '2026-08-12T12:00:00.000Z' },
+					session: {
+						id: 'session-1',
+						expiresAt: '2026-08-12T12:00:00.000Z',
+					},
 					user: { id: 'user-1', email: 'Racer@Example.Test' },
 				},
 				now,
@@ -16,6 +19,7 @@ describe('offlineOwnerFromSession', () => {
 		).toEqual({
 			key: 'user-1',
 			email: 'Racer@Example.Test',
+			sessionKey: 'session-1',
 			offlineUntil: '2026-08-12T12:00:00.000Z',
 		});
 	});
@@ -24,7 +28,10 @@ describe('offlineOwnerFromSession', () => {
 		expect(
 			offlineOwnerFromSession(
 				{
-					session: { expiresAt: '2026-08-12T12:00:00.000Z' },
+					session: {
+						id: 'session-1',
+						expiresAt: '2026-08-12T12:00:00.000Z',
+					},
 					user: { email: ' Racer@Example.Test ' },
 				},
 				now,
@@ -32,6 +39,7 @@ describe('offlineOwnerFromSession', () => {
 		).toMatchObject({
 			key: 'racer@example.test',
 			email: 'Racer@Example.Test',
+			sessionKey: 'session-1',
 		});
 
 		for (const response of [
@@ -39,15 +47,29 @@ describe('offlineOwnerFromSession', () => {
 			{},
 			{ session: {}, user: { email: 'racer@example.test' } },
 			{
-				session: { expiresAt: 'not-a-date' },
-				user: { email: 'racer@example.test' },
-			},
-			{
-				session: { expiresAt: '2026-08-11T11:59:59.000Z' },
-				user: { email: 'racer@example.test' },
-			},
-			{
 				session: { expiresAt: '2026-08-12T12:00:00.000Z' },
+				user: { email: 'racer@example.test' },
+			},
+			{
+				session: { id: '   ', expiresAt: '2026-08-12T12:00:00.000Z' },
+				user: { email: 'racer@example.test' },
+			},
+			{
+				session: { id: 'session-1', expiresAt: 'not-a-date' },
+				user: { email: 'racer@example.test' },
+			},
+			{
+				session: {
+					id: 'session-1',
+					expiresAt: '2026-08-11T11:59:59.000Z',
+				},
+				user: { email: 'racer@example.test' },
+			},
+			{
+				session: {
+					id: 'session-1',
+					expiresAt: '2026-08-12T12:00:00.000Z',
+				},
 				user: { email: '   ' },
 			},
 		])

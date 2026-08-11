@@ -19,10 +19,15 @@ class FakeOfflineWorkspaceStore {
 	readonly cars = signal<readonly GarageCar[]>([]);
 	readonly hasSnapshot = signal(false);
 	readonly status = signal('idle');
+	readonly networkUnavailable = signal(false);
 	readonly markOffline = vi.fn(() => {
+		this.networkUnavailable.set(true);
 		if (this.status() === 'ready') this.status.set('offline');
+		else if (this.status() === 'online-only')
+			this.status.set('offline-unavailable');
 	});
 	readonly markOnline = vi.fn(() => {
+		this.networkUnavailable.set(false);
 		if (this.status() === 'offline') this.status.set('ready');
 	});
 }
@@ -228,6 +233,22 @@ describe('Garage', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Check the connection and try again',
 		);
+	});
+
+	it('blocks mutations after a confirmed outage without an offline snapshot', async () => {
+		offline.status.set('online-only');
+		http.expectOne('/api/v1/cars').error(new ProgressEvent('offline'));
+		await fixture.whenStable();
+		fixture.detectChanges();
+
+		expect(offline.status()).toBe('offline-unavailable');
+		expect(offline.networkUnavailable()).toBe(true);
+		expect(connectivity.online()).toBe(true);
+		expect(TestBed.inject(GarageStore).carMutationsAvailable()).toBe(false);
+		const add = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(button: HTMLButtonElement) => button.textContent?.trim() === 'Add a car',
+		) as HTMLButtonElement;
+		expect(add.disabled).toBe(true);
 	});
 
 	it('reads the User-scoped Garage snapshot after the live collection fails', async () => {

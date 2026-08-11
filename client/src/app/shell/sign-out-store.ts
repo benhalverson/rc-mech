@@ -18,6 +18,7 @@ import {
 	tap,
 	throwError,
 } from 'rxjs';
+import { OfflineCapabilities } from '../offline/offline-capabilities';
 import { OfflineGarageStorage } from '../offline/offline-garage-storage';
 import { OwnerSessionStore } from '../owner-session-store';
 import type { SignOutGatewayFailure } from './sign-out-contract';
@@ -45,13 +46,18 @@ const initialState: SignOutState = {
 export const SignOutStore = signalStore(
 	{ providedIn: 'root' },
 	withState(initialState),
-	withProps(() => ({
-		gateway: inject(SignOutGateway),
-		offlineStorage: inject(OfflineGarageStorage),
-		router: inject(Router),
-		session: inject(OwnerSessionStore),
-		nextOperationId: { value: 0 },
-	})),
+	withProps(() => {
+		const offlineCapabilities = inject(OfflineCapabilities);
+		return {
+			gateway: inject(SignOutGateway),
+			offlineStorage: offlineCapabilities.storageAvailable
+				? inject(OfflineGarageStorage)
+				: null,
+			router: inject(Router),
+			session: inject(OwnerSessionStore),
+			nextOperationId: { value: 0 },
+		};
+	}),
 	withComputed((store) => ({
 		signingOut: computed(() => store.outcome().status === 'pending'),
 		error: computed(() =>
@@ -72,7 +78,10 @@ export const SignOutStore = signalStore(
 							operationId,
 						},
 					});
-					return from(store.offlineStorage.deactivate()).pipe(
+					const cleanup = store.offlineStorage
+						? store.offlineStorage.deactivate(store.session.sessionKey())
+						: Promise.resolve(null);
+					return from(cleanup).pipe(
 						catchError(() =>
 							throwError(
 								() =>
@@ -81,7 +90,21 @@ export const SignOutStore = signalStore(
 									}) as const satisfies SignOutGatewayFailure,
 							),
 						),
-						switchMap(() => store.gateway.signOut()),
+						switchMap((signOutOperationId) =>
+							store.gateway
+								.signOut()
+								.pipe(
+									switchMap((response) =>
+										from(
+											store.offlineStorage && signOutOperationId
+												? store.offlineStorage.completeSignOut(
+														signOutOperationId,
+													)
+												: Promise.resolve(),
+										).pipe(switchMap(() => of(response))),
+									),
+								),
+						),
 						tap(() => store.session.expire()),
 						switchMap(() =>
 							from(store.router.navigate(['/sign-in'])).pipe(

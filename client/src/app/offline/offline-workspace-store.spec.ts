@@ -51,9 +51,11 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.status()).toBe('idle');
 		expect(store.message()).toBe('');
 		expect(store.hasSnapshot()).toBe(false);
+		expect(store.networkUnavailable()).toBe(false);
 
 		store.openOffline({ snapshot });
 		expect(store.status()).toBe('offline');
+		expect(store.networkUnavailable()).toBe(true);
 		expect(store.message()).toBe('Offline—prepared Garage is read-only');
 		expect(store.cars()).toEqual(snapshot.cars);
 		expect(store.hasSnapshot()).toBe(true);
@@ -70,6 +72,7 @@ describe('OfflineWorkspaceStore', () => {
 			owner: {
 				key: 'user-2',
 				email: 'second@example.test',
+				sessionKey: 'session-2',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 			},
 		});
@@ -82,6 +85,7 @@ describe('OfflineWorkspaceStore', () => {
 		finishPreparation({ kind: 'ready', snapshot });
 		await vi.waitFor(() => expect(store.status()).toBe('ready'));
 		expect(store.message()).toBe('Offline ready');
+		expect(store.networkUnavailable()).toBe(false);
 		expect(store.cars()).toEqual(snapshot.cars);
 		expect(store.hasSnapshot()).toBe(true);
 	});
@@ -94,6 +98,7 @@ describe('OfflineWorkspaceStore', () => {
 			owner: {
 				key: 'user-1',
 				email: 'racer@example.test',
+				sessionKey: 'session-1',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 			},
 		});
@@ -134,6 +139,7 @@ describe('OfflineWorkspaceStore', () => {
 			owner: {
 				key: 'user-1',
 				email: 'first@example.test',
+				sessionKey: 'session-1',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 			},
 		});
@@ -141,6 +147,7 @@ describe('OfflineWorkspaceStore', () => {
 			owner: {
 				key: 'user-2',
 				email: 'second@example.test',
+				sessionKey: 'session-2',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 			},
 		});
@@ -168,6 +175,7 @@ describe('OfflineWorkspaceStore', () => {
 			owner: {
 				key: 'user-1',
 				email: 'racer@example.test',
+				sessionKey: 'session-1',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 			},
 		});
@@ -175,12 +183,35 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.message()).toContain(
 			'Offline access is unavailable in this browser',
 		);
+		connectivity.online.set(false);
+		await vi.waitFor(() => expect(store.status()).toBe('offline-unavailable'));
+		expect(store.networkUnavailable()).toBe(true);
+		expect(store.hasSnapshot()).toBe(false);
+		expect(store.message()).toBe(
+			'Offline—this browser has no prepared Garage.',
+		);
+
+		access.prepare.mockResolvedValueOnce({ kind: 'unsupported' });
+		store.prepare({
+			owner: {
+				key: 'user-1',
+				email: 'racer@example.test',
+				sessionKey: 'session-1',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			},
+		});
+		await vi.waitFor(() => expect(store.status()).toBe('offline-unavailable'));
+
+		connectivity.online.set(true);
+		await vi.waitFor(() => expect(store.status()).toBe('online-only'));
+		expect(store.networkUnavailable()).toBe(false);
 
 		access.prepare.mockRejectedValueOnce(new Error('IndexedDB failed'));
 		store.prepare({
 			owner: {
 				key: 'user-1',
 				email: 'racer@example.test',
+				sessionKey: 'session-1',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 			},
 		});
@@ -188,5 +219,31 @@ describe('OfflineWorkspaceStore', () => {
 			expect(store.message()).toContain('could not be prepared'),
 		);
 		expect(store.cars()).toEqual([]);
+	});
+
+	it('preserves a confirmed outage while preparation fails', async () => {
+		let rejectPreparation!: (error: Error) => void;
+		access.prepare.mockImplementationOnce(
+			() =>
+				new Promise((_resolve, reject) => {
+					rejectPreparation = reject;
+				}),
+		);
+		store.prepare({
+			owner: {
+				key: 'user-1',
+				email: 'racer@example.test',
+				sessionKey: 'session-1',
+				offlineUntil: '2026-08-12T12:00:00.000Z',
+			},
+		});
+		store.markOffline();
+		expect(store.status()).toBe('preparing');
+		expect(store.networkUnavailable()).toBe(true);
+
+		rejectPreparation(new Error('network unavailable'));
+		await vi.waitFor(() => expect(store.status()).toBe('offline-unavailable'));
+		expect(store.networkUnavailable()).toBe(true);
+		expect(store.hasSnapshot()).toBe(false);
 	});
 });

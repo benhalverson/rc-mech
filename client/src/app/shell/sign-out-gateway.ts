@@ -7,6 +7,7 @@ import {
 	type Observable,
 	switchMap,
 	throwError,
+	timeout,
 } from 'rxjs';
 import {
 	InvalidSignOutResponse,
@@ -16,6 +17,12 @@ import type { SignOutResponse } from './sign-out-response';
 
 export type SignOutResponseModule = typeof import('./sign-out-response');
 export type SignOutResponseLoader = () => Promise<SignOutResponseModule>;
+
+export const signOutTimeoutMs = (): number => 15_000;
+export const SIGN_OUT_TIMEOUT_MS = new InjectionToken<number>(
+	'SIGN_OUT_TIMEOUT_MS',
+	{ factory: signOutTimeoutMs },
+);
 
 export const SIGN_OUT_RESPONSE_LOADER =
 	new InjectionToken<SignOutResponseLoader>('SIGN_OUT_RESPONSE_LOADER', {
@@ -39,6 +46,7 @@ export const signOutGatewayFailure = (
 export class SignOutGateway {
 	private readonly http = inject(HttpClient);
 	private readonly loadResponseParser = inject(SIGN_OUT_RESPONSE_LOADER);
+	private readonly timeoutMs = inject(SIGN_OUT_TIMEOUT_MS);
 
 	signOut(): Observable<SignOutResponse> {
 		return defer(this.loadResponseParser).pipe(
@@ -47,6 +55,7 @@ export class SignOutGateway {
 					.post<unknown>('/api/auth/sign-out', {}, { withCredentials: true })
 					.pipe(map(parseSignOutResponse)),
 			),
+			timeout({ first: this.timeoutMs }),
 			catchError((error: unknown) =>
 				throwError(() => signOutGatewayFailure(error)),
 			),
