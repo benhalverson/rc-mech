@@ -1,6 +1,8 @@
 import hashlib
 import json
+import os
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -465,6 +467,48 @@ def test_probe_rejects_non_regular_staged_input(
 
     assert response.json()["error"]["code"] == "UNSUPPORTED_MEDIA"
     _assert_consumed_and_clean(settings)
+
+
+def test_probe_rejects_and_consumes_a_staged_fifo_without_blocking(
+    settings: ServiceSettings,
+) -> None:
+    settings.prepare_roots()
+    staged_path = settings.staging_root / f"{STAGED_MEDIA_ID}.media"
+    os.mkfifo(staged_path)
+
+    started_at = time.monotonic()
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(1))
+
+    assert time.monotonic() - started_at < 1
+    _assert_consumed_and_clean(settings)
+    assert response.json()["error"] == {
+        "code": "UNSUPPORTED_MEDIA",
+        "stage": "claim",
+        "message": "The staged input is not a supported media file.",
+    }
+
+
+def test_probe_rejects_and_consumes_a_staged_symlink(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    settings.prepare_roots()
+    target = tmp_path / "outside.media"
+    target.write_bytes(b"private")
+    staged_path = settings.staging_root / f"{STAGED_MEDIA_ID}.media"
+    staged_path.symlink_to(target)
+
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(7))
+
+    _assert_consumed_and_clean(settings)
+    assert response.json()["error"] == {
+        "code": "UNSUPPORTED_MEDIA",
+        "stage": "claim",
+        "message": "The staged input is not a supported media file.",
+    }
+    assert target.read_bytes() == b"private"
 
 
 def test_probe_rejects_hls_that_references_media_outside_the_request(

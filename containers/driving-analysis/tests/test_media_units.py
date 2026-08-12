@@ -430,6 +430,23 @@ def test_cross_filesystem_copy_detects_source_identity_change(
         media_module._copy_and_consume(source, destination, max_bytes=100)
 
 
+def test_open_staged_source_preserves_a_regular_file_when_open_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.media"
+    source.write_bytes(b"media")
+
+    def deny_open(*_args: object, **_kwargs: object) -> int:
+        raise PermissionError
+
+    monkeypatch.setattr(os, "open", deny_open)
+    with pytest.raises(PermissionError):
+        media_module._open_staged_source(source)
+
+    assert source.read_bytes() == b"media"
+
+
 def test_unlink_same_file_tolerates_an_already_consumed_source(tmp_path: Path) -> None:
     media_module._unlink_same_file(tmp_path / "missing", 1, 1)
 

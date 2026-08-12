@@ -235,7 +235,7 @@ def _discard_staged_input(path: Path) -> None:
 
 
 def _copy_and_consume(source: Path, destination: Path, *, max_bytes: int) -> None:
-    source_descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    source_descriptor = _open_staged_source(source)
     destination_descriptor: int | None = None
     source_identity = os.fstat(source_descriptor)
     try:
@@ -266,6 +266,21 @@ def _copy_and_consume(source: Path, destination: Path, *, max_bytes: int) -> Non
         if destination_descriptor is not None:
             os.close(destination_descriptor)
         _unlink_same_file(source, source_identity.st_dev, source_identity.st_ino)
+
+
+def _open_staged_source(source: Path) -> int:
+    try:
+        return os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        source_identity = source.lstat()
+        if stat.S_ISREG(source_identity.st_mode):
+            raise
+        _unlink_same_file(source, source_identity.st_dev, source_identity.st_ino)
+        raise MediaValidationError(
+            code="UNSUPPORTED_MEDIA",
+            stage="claim",
+            safe_message="The staged input is not a supported media file.",
+        ) from error
 
 
 def _write_all(file_descriptor: int, data: bytes) -> None:
