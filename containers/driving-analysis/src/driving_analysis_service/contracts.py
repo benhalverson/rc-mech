@@ -10,6 +10,28 @@ UUID_V4_PATTERN = (
 )
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 MAX_DECLARED_BYTES = 50 * 1024 * 1024 * 1024
+type ErrorCode = Literal[
+    "INVALID_REQUEST",
+    "SERVICE_UNAVAILABLE",
+    "STAGED_MEDIA_NOT_FOUND",
+    "STAGED_MEDIA_MISMATCH",
+    "CORRUPT_MEDIA",
+    "UNSUPPORTED_MEDIA",
+    "MEDIA_OVER_LIMIT",
+    "PROCESS_TIMEOUT",
+    "INCOMPATIBLE_LAYOUT",
+    "INTERNAL_ERROR",
+    "SERVICE_BUSY",
+]
+type ErrorStage = Literal[
+    "request",
+    "claim",
+    "inspect",
+    "probe",
+    "decode",
+    "cleanup",
+    "admission",
+]
 
 UuidV4String = Annotated[
     str,
@@ -90,19 +112,8 @@ class MediaFacts(StrictContract):
 
 
 class SafeError(StrictContract):
-    code: Literal[
-        "INVALID_REQUEST",
-        "SERVICE_UNAVAILABLE",
-        "STAGED_MEDIA_NOT_FOUND",
-        "STAGED_MEDIA_MISMATCH",
-        "CORRUPT_MEDIA",
-        "UNSUPPORTED_MEDIA",
-        "MEDIA_OVER_LIMIT",
-        "PROCESS_TIMEOUT",
-        "INCOMPATIBLE_LAYOUT",
-        "INTERNAL_ERROR",
-    ]
-    stage: Literal["request", "claim", "inspect", "probe", "decode", "cleanup"]
+    code: ErrorCode
+    stage: ErrorStage
     message: Annotated[str, StringConstraints(min_length=1, max_length=160)]
 
 

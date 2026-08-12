@@ -1,19 +1,6 @@
 from dataclasses import dataclass
-from typing import Literal
 
-from driving_analysis_service.contracts import SafeError
-
-ErrorCode = Literal[
-    "STAGED_MEDIA_NOT_FOUND",
-    "STAGED_MEDIA_MISMATCH",
-    "CORRUPT_MEDIA",
-    "UNSUPPORTED_MEDIA",
-    "MEDIA_OVER_LIMIT",
-    "PROCESS_TIMEOUT",
-    "INCOMPATIBLE_LAYOUT",
-    "INTERNAL_ERROR",
-]
-ErrorStage = Literal["claim", "inspect", "probe", "decode", "cleanup"]
+from driving_analysis_service.contracts import ErrorCode, ErrorStage, SafeError
 
 
 @dataclass(frozen=True)

@@ -60,6 +60,7 @@ def run_bounded_process(
         raise ValueError(msg)
 
     started_at = time.monotonic()
+    deadline = started_at + timeout_seconds
     process = subprocess.Popen(  # noqa: S603 - executable and arguments are internal
         (str(executable), *arguments),
         stdin=subprocess.DEVNULL,
@@ -77,10 +78,15 @@ def run_bounded_process(
             process,
             stdout,
             stderr,
-            deadline=started_at + timeout_seconds,
+            deadline=deadline,
             max_output_bytes=max_output_bytes,
         )
-        return_code = process.wait()
+        remaining_seconds = max(0.0, deadline - time.monotonic())
+        try:
+            return_code = process.wait(timeout=remaining_seconds)
+        except subprocess.TimeoutExpired as error:
+            _terminate_process_group(process)
+            raise ProcessTimeoutError from error
 
     elapsed_ms = max(0, round((time.monotonic() - started_at) * 1000))
     return ProcessResult(

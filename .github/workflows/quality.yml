@@ -26,6 +26,10 @@ jobs:
           python-version: "3.13"
       - name: Run Python quality gate
         run: uv run --frozen python -m driving_analysis_service.quality
+      - name: Build production-runtime test image
+        run: docker build --target test --tag rc-mech-driving-analysis:test .
+      - name: Run real fixtures in production runtime
+        run: docker run --rm rc-mech-driving-analysis:test
 
   lint:
     name: Lint and format

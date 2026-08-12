@@ -1,4 +1,3 @@
-import errno
 import io
 import os
 from collections.abc import Callable
@@ -327,6 +326,20 @@ def test_inspection_detects_a_file_that_changes_during_hashing(
     )
 
 
+def test_inspection_rejects_a_file_over_the_byte_limit(tmp_path: Path) -> None:
+    media_path = tmp_path / "large.media"
+    media_path.write_bytes(b"large")
+
+    _error_code(
+        lambda: media_module._inspect_file(
+            media_path,
+            expected_byte_count=5,
+            max_bytes=1,
+        ),
+        "MEDIA_OVER_LIMIT",
+    )
+
+
 def test_service_redacts_unexpected_internal_errors(
     settings: ServiceSettings,
     monkeypatch: pytest.MonkeyPatch,
@@ -354,32 +367,31 @@ def test_claim_maps_non_missing_os_errors_and_cleanup_is_idempotent(
     request = MediaValidationRequest.model_validate(request_body(1))
     claim = media_module._claimed_media(request, settings)
 
-    def deny_replace(_source: Path, _target: Path) -> Path:
+    def deny_copy(*_args: object, **_kwargs: object) -> None:
         raise PermissionError
 
-    monkeypatch.setattr(Path, "replace", deny_replace)
+    monkeypatch.setattr(media_module, "_copy_and_consume", deny_copy)
     _error_code(claim.__enter__, "INTERNAL_ERROR")
     claim._cleanup()
     assert list(settings.work_root.iterdir()) == []
 
 
-def test_claim_falls_back_to_bounded_cross_filesystem_copy(
+def test_claim_creates_a_private_snapshot_before_validation(
     settings: ServiceSettings,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings.prepare_roots()
     source = settings.staging_root / f"{STAGED_MEDIA_ID}.media"
     source.write_bytes(b"media")
+    retained_link = settings.staging_root / "retained-link.media"
+    retained_link.hardlink_to(source)
     request = MediaValidationRequest.model_validate(request_body(5))
     claim = media_module._claimed_media(request, settings)
 
-    def cross_filesystem(_source: Path, _target: Path) -> Path:
-        raise OSError(errno.EXDEV, "cross-device link")
-
-    monkeypatch.setattr(Path, "replace", cross_filesystem)
     with claim as claimed_path:
         assert claimed_path.read_bytes() == b"media"
         assert not source.exists()
+        retained_link.write_bytes(b"other")
+        assert claimed_path.read_bytes() == b"media"
 
     assert list(settings.work_root.iterdir()) == []
 
@@ -450,7 +462,6 @@ def test_claim_reports_cleanup_failure_for_nonempty_invalid_input(
 
 def test_claim_cleans_workspace_when_cross_filesystem_copy_is_over_limit(
     settings: ServiceSettings,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     limited_settings = replace(settings, limits=replace(settings.limits, max_bytes=1))
     limited_settings.prepare_roots()
@@ -458,10 +469,6 @@ def test_claim_cleans_workspace_when_cross_filesystem_copy_is_over_limit(
     source.write_bytes(b"media")
     request = MediaValidationRequest.model_validate(request_body(5))
 
-    def cross_filesystem(_source: Path, _target: Path) -> Path:
-        raise OSError(errno.EXDEV, "cross-device link")
-
-    monkeypatch.setattr(Path, "replace", cross_filesystem)
     _error_code(
         media_module._claimed_media(request, limited_settings).__enter__,
         "MEDIA_OVER_LIMIT",
@@ -477,47 +484,14 @@ def test_claim_maps_cross_filesystem_copy_failure(
     (settings.staging_root / f"{STAGED_MEDIA_ID}.media").write_bytes(b"x")
     request = MediaValidationRequest.model_validate(request_body(1))
 
-    def cross_filesystem(_source: Path, _target: Path) -> Path:
-        raise OSError(errno.EXDEV, "cross-device link")
-
     def copy_failure(*_args: object, **_kwargs: object) -> None:
         raise OSError
 
-    monkeypatch.setattr(Path, "replace", cross_filesystem)
     monkeypatch.setattr(media_module, "_copy_and_consume", copy_failure)
     _error_code(
         media_module._claimed_media(request, settings).__enter__,
         "INTERNAL_ERROR",
     )
-
-
-def test_claim_cleans_workspace_if_claimed_file_becomes_invalid(
-    settings: ServiceSettings,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings.prepare_roots()
-    (settings.staging_root / f"{STAGED_MEDIA_ID}.media").write_bytes(b"x")
-    request = MediaValidationRequest.model_validate(request_body(1))
-    real_ensure = media_module._ensure_regular_file
-    call_count = 0
-
-    def invalidate_second_check(path: Path) -> None:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 2:
-            raise MediaValidationError(
-                code="UNSUPPORTED_MEDIA",
-                stage="claim",
-                safe_message="invalid",
-            )
-        real_ensure(path)
-
-    monkeypatch.setattr(media_module, "_ensure_regular_file", invalidate_second_check)
-    _error_code(
-        media_module._claimed_media(request, settings).__enter__,
-        "UNSUPPORTED_MEDIA",
-    )
-    assert list(settings.work_root.iterdir()) == []
 
 
 def test_cross_filesystem_copy_rejects_a_nonregular_source(tmp_path: Path) -> None:
@@ -530,3 +504,55 @@ def test_cross_filesystem_copy_rejects_a_nonregular_source(tmp_path: Path) -> No
         "UNSUPPORTED_MEDIA",
     )
     assert not source.exists()
+
+
+def test_service_rejects_when_validation_capacity_is_exhausted(
+    settings: ServiceSettings,
+) -> None:
+    limited = replace(
+        settings,
+        limits=replace(settings.limits, max_concurrent_validations=1),
+    )
+    service = MediaValidationService(limited)
+    request = MediaValidationRequest.model_validate(request_body(1))
+    assert service._admission.acquire(blocking=False)
+    try:
+        response = service.validate(request)
+    finally:
+        service._admission.release()
+
+    assert response.outcome == "rejected"
+    assert response.error.code == "SERVICE_BUSY"
+    assert response.error.stage == "admission"
+
+
+@pytest.mark.parametrize("manifest", [b"#EXTM3U\n", b"ffconcat version 1.0\n"])
+def test_indirect_media_is_rejected_before_process_invocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    manifest: bytes,
+) -> None:
+    media_path = tmp_path / "manifest.media"
+    media_path.write_bytes(manifest)
+    invoked = False
+
+    def unexpected_process(*_args: object, **_kwargs: object) -> ProcessResult:
+        nonlocal invoked
+        invoked = True
+        return ProcessResult(0, b"{}", b"", 0)
+
+    monkeypatch.setattr(media_module, "run_bounded_process", unexpected_process)
+    _error_code(
+        lambda: media_module._reject_indirect_media(media_path),
+        "UNSUPPORTED_MEDIA",
+    )
+    assert invoked is False
+
+
+def test_parse_probe_rejects_unapproved_container_format(
+    settings: ServiceSettings,
+) -> None:
+    probe = _valid_probe()
+    cast("dict[str, object]", probe["format"])["format_name"] = "hls"
+
+    _error_code(lambda: media_module._parse_probe(probe, settings))

@@ -1,7 +1,6 @@
 import shutil
 import subprocess
 from collections.abc import Callable
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -99,17 +98,6 @@ def request_body(
             "expectedByteCount": byte_count,
         },
     }
-
-
-@pytest.fixture
-def settings_with_limits() -> Callable[[ServiceSettings, MediaLimits], ServiceSettings]:
-    def update(
-        original: ServiceSettings,
-        limits: MediaLimits,
-    ) -> ServiceSettings:
-        return replace(original, limits=limits)
-
-    return update
 
 
 @pytest.fixture(autouse=True)

@@ -15,9 +15,17 @@ class MediaLimits:
     max_frames: int = 1_000_000
     process_timeout_seconds: float = 15 * 60
     max_process_output_bytes: int = 1024 * 1024
+    max_request_body_bytes: int = 4 * 1024
+    max_concurrent_validations: int = 2
     supported_video_codecs: frozenset[str] = field(
         default_factory=lambda: frozenset(
             {"av1", "h264", "hevc", "mpeg4", "vp8", "vp9"}
+        )
+    )
+    supported_demuxers: tuple[str, ...] = ("matroska", "mov")
+    supported_container_formats: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            {"3g2", "3gp", "m4a", "matroska", "mj2", "mov", "mp4", "webm"}
         )
     )
 

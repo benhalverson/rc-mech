@@ -9,6 +9,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from driving_analysis_service.api import create_app
+from driving_analysis_service.contracts import (
+    AcceptedValidationResponse,
+    HealthResponse,
+    MediaFacts,
+    MediaValidationRequest,
+    RationalValue,
+    RejectedValidationResponse,
+    SafeError,
+    StagedMediaInput,
+)
 from driving_analysis_service.safe_logging import LOGGER
 from driving_analysis_service.settings import ServiceSettings
 from tests.conftest import (
@@ -72,9 +82,8 @@ def test_health_returns_safe_error_when_scratch_roots_cannot_be_prepared(
         raise PermissionError
 
     monkeypatch.setattr(ServiceSettings, "prepare_roots", deny_roots)
-    client = _client(settings)
-
-    response = client.get("/health")
+    with _client(settings) as client:
+        response = client.get("/health")
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
@@ -220,7 +229,7 @@ def test_probe_rejects_an_unsupported_real_codec(
 @pytest.mark.parametrize(
     ("limit_name", "limit_value", "expected_stage"),
     [
-        ("max_bytes", 1, "inspect"),
+        ("max_bytes", 1, "claim"),
         ("max_duration_ms", 100, "probe"),
         ("max_width", 100, "probe"),
         ("max_frames", 2, "probe"),
@@ -381,22 +390,32 @@ def test_probe_maps_process_output_limit_without_exposing_output(
     _assert_consumed_and_clean(settings)
 
 
-def test_openapi_marks_contract_objects_as_closed(settings: ServiceSettings) -> None:
-    with _client(settings) as client:
-        schema = client.get("/openapi.json").json()
+@pytest.mark.parametrize(
+    "contract",
+    [
+        AcceptedValidationResponse,
+        HealthResponse,
+        MediaFacts,
+        MediaValidationRequest,
+        RationalValue,
+        RejectedValidationResponse,
+        SafeError,
+        StagedMediaInput,
+    ],
+)
+def test_contract_objects_are_closed(contract: type[object]) -> None:
+    assert contract.model_json_schema()["additionalProperties"] is False  # type: ignore[attr-defined]
 
-    contract_names = {
-        "AcceptedValidationResponse",
-        "HealthResponse",
-        "MediaFacts",
-        "MediaValidationRequest",
-        "RationalValue",
-        "RejectedValidationResponse",
-        "SafeError",
-        "StagedMediaInput",
-    }
-    for name in contract_names:
-        assert schema["components"]["schemas"][name]["additionalProperties"] is False
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_service_does_not_expose_documentation_routes(
+    settings: ServiceSettings,
+    path: str,
+) -> None:
+    with _client(settings) as client:
+        response = client.get(path)
+
+    assert response.status_code == 404
 
 
 def test_probe_does_not_invoke_a_shell(
@@ -446,3 +465,72 @@ def test_probe_rejects_non_regular_staged_input(
 
     assert response.json()["error"]["code"] == "UNSUPPORTED_MEDIA"
     _assert_consumed_and_clean(settings)
+
+
+def test_probe_rejects_hls_that_references_media_outside_the_request(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    external_segment = tmp_path / "outside.ts"
+    subprocess.run(  # noqa: S603 - fixed test-only FFmpeg command
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=160x90:r=10:d=0.5",
+            "-c:v",
+            "libx264",
+            "-f",
+            "mpegts",
+            "-y",
+            str(external_segment),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    manifest = tmp_path / "attack.m3u8"
+    manifest.write_text(
+        "\n".join(
+            (
+                "#EXTM3U",
+                "#EXT-X-VERSION:3",
+                "#EXT-X-TARGETDURATION:1",
+                "#EXTINF:0.5,",
+                str(external_segment),
+                "#EXT-X-ENDLIST",
+            )
+        )
+    )
+    byte_count = stage_media(settings, manifest)
+
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(byte_count))
+
+    assert response.json()["error"] == {
+        "code": "UNSUPPORTED_MEDIA",
+        "stage": "inspect",
+        "message": "Indirect media manifests are unsupported.",
+    }
+    assert external_segment.exists()
+    _assert_consumed_and_clean(settings)
+
+
+def test_probe_rejects_oversized_request_body_before_parsing(
+    settings: ServiceSettings,
+) -> None:
+    oversized = {**request_body(1), "padding": "private" * 1024}
+
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=oversized)
+
+    assert response.status_code == 413
+    assert response.json()["error"] == {
+        "code": "INVALID_REQUEST",
+        "stage": "request",
+        "message": "The request body exceeds the configured limit.",
+    }
+    assert "private" not in response.text

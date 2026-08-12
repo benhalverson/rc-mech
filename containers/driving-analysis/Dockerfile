@@ -14,7 +14,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev
 
-FROM python:3.13.11-slim-bookworm@sha256:ac76900038d8606cc99b413d4ede77bc7152f1e42b94cf5d50d4b80a999652fe AS runtime
+FROM python:3.13.11-slim-bookworm@sha256:ac76900038d8606cc99b413d4ede77bc7152f1e42b94cf5d50d4b80a999652fe AS runtime-base
 
 ENV PATH="/service/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -25,8 +25,8 @@ ENV PATH="/service/.venv/bin:$PATH" \
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /var/lib/rc-mech/staged /tmp/rc-mech-media \
-    && chown -R 10001:10001 /var/lib/rc-mech /tmp/rc-mech-media
+    && install -d -m 0700 -o 10001 -g 10001 \
+        /var/lib/rc-mech/staged /tmp/rc-mech-media
 
 WORKDIR /service
 
@@ -36,5 +36,17 @@ COPY --from=build /service/src /service/src
 USER 10001:10001
 
 EXPOSE 8080
+
+FROM runtime-base AS test
+
+USER root
+COPY --from=build /usr/local/bin/uv /usr/local/bin/uv
+COPY pyproject.toml uv.lock README.md ./
+COPY tests ./tests
+RUN uv sync --frozen && chown -R 10001:10001 /service
+USER 10001:10001
+CMD ["python", "-m", "driving_analysis_service.quality"]
+
+FROM runtime-base AS runtime
 
 CMD ["uvicorn", "driving_analysis_service.api:app", "--host", "0.0.0.0", "--port", "8080", "--no-server-header", "--no-access-log"]

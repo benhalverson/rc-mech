@@ -1,6 +1,7 @@
 import os
 import selectors
 import subprocess
+import sys
 import time
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -16,7 +17,7 @@ from driving_analysis_service.processes import (
     run_bounded_process,
 )
 
-PYTHON = Path("/usr/bin/python3")
+PYTHON = Path(sys.executable).resolve()
 
 
 def test_bounded_process_captures_stdout_stderr_and_return_code() -> None:
@@ -64,6 +65,23 @@ def test_bounded_process_enforces_timeout() -> None:
             timeout_seconds=0.01,
             max_output_bytes=1024,
         )
+
+
+def test_bounded_process_enforces_timeout_after_output_pipes_close() -> None:
+    started_at = time.monotonic()
+
+    with pytest.raises(ProcessTimeoutError):
+        run_bounded_process(
+            PYTHON,
+            (
+                "-c",
+                "import os,time; os.close(1); os.close(2); time.sleep(0.5)",
+            ),
+            timeout_seconds=0.02,
+            max_output_bytes=1024,
+        )
+
+    assert time.monotonic() - started_at < 0.4
 
 
 def test_bounded_process_enforces_combined_output_limit() -> None:

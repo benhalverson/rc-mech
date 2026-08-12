@@ -1,6 +1,4 @@
 import os
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -16,6 +14,7 @@ from driving_analysis_service.contracts import (
     ValidationResponse,
 )
 from driving_analysis_service.media import MediaValidationService
+from driving_analysis_service.request_limits import RequestBodyLimitMiddleware
 from driving_analysis_service.settings import ServiceSettings
 
 
@@ -23,15 +22,16 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
     resolved_settings = settings or ServiceSettings.from_environment()
     service = MediaValidationService(resolved_settings)
 
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        resolved_settings.prepare_roots()
-        yield
-
     application = FastAPI(
         title="RC Mech driving-analysis media service",
         version=CONTRACT_VERSION,
-        lifespan=lifespan,
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
+    )
+    application.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=resolved_settings.limits.max_request_body_bytes,
     )
 
     @application.exception_handler(RequestValidationError)

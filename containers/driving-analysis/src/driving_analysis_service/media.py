@@ -1,4 +1,3 @@
-import errno
 import hashlib
 import json
 import math
@@ -6,6 +5,7 @@ import os
 import shutil
 import stat
 import tempfile
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +17,7 @@ from typing import cast
 from driving_analysis_service.contracts import (
     CONTRACT_VERSION,
     AcceptedValidationResponse,
+    ErrorStage,
     MediaFacts,
     MediaValidationRequest,
     RationalValue,
@@ -24,7 +25,7 @@ from driving_analysis_service.contracts import (
     SafeError,
     ValidationResponse,
 )
-from driving_analysis_service.errors import ErrorStage, MediaValidationError
+from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessTimeoutError,
@@ -57,8 +58,37 @@ class ProbeMetadata:
 class MediaValidationService:
     def __init__(self, settings: ServiceSettings) -> None:
         self.settings = settings
+        self._admission = threading.BoundedSemaphore(
+            settings.limits.max_concurrent_validations
+        )
 
     def validate(self, request: MediaValidationRequest) -> ValidationResponse:
+        if not self._admission.acquire(blocking=False):
+            log_stage(
+                correlation_id=request.correlation_id,
+                stage="admission",
+                elapsed_ms=0,
+                outcome="SERVICE_BUSY",
+            )
+            return RejectedValidationResponse(
+                contractVersion=CONTRACT_VERSION,
+                correlationId=request.correlation_id,
+                outcome="rejected",
+                error=SafeError(
+                    code="SERVICE_BUSY",
+                    stage="admission",
+                    message="The media validation service is busy.",
+                ),
+            )
+        try:
+            return self._validate_admitted(request)
+        finally:
+            self._admission.release()
+
+    def _validate_admitted(
+        self,
+        request: MediaValidationRequest,
+    ) -> ValidationResponse:
         started_at = time.monotonic()
         stage: ErrorStage = "claim"
         try:
@@ -70,6 +100,7 @@ class MediaValidationService:
                     expected_byte_count=request.input.expected_byte_count,
                     max_bytes=self.settings.limits.max_bytes,
                 )
+                _reject_indirect_media(claimed_path)
                 stage = "probe"
                 metadata = _probe_media(claimed_path, self.settings)
                 stage = "decode"
@@ -150,8 +181,11 @@ class _ClaimedMedia:
         )
         self.claimed_path = self.request_directory / "input.media"
         try:
-            _ensure_regular_file(self.source_path)
-            self.source_path.replace(self.claimed_path)
+            _copy_and_consume(
+                self.source_path,
+                self.claimed_path,
+                max_bytes=self.max_bytes,
+            )
         except FileNotFoundError as error:
             self._cleanup()
             raise MediaValidationError(
@@ -160,48 +194,15 @@ class _ClaimedMedia:
                 safe_message="The staged media is unavailable.",
             ) from error
         except MediaValidationError:
-            try:
-                _discard_staged_input(self.source_path)
-            except OSError as cleanup_error:
-                self._cleanup()
-                raise MediaValidationError(
-                    code="INTERNAL_ERROR",
-                    stage="cleanup",
-                    safe_message="Temporary media cleanup failed safely.",
-                ) from cleanup_error
             self._cleanup()
             raise
         except OSError as error:
-            if error.errno == errno.EXDEV:
-                try:
-                    _copy_and_consume(
-                        self.source_path,
-                        self.claimed_path,
-                        max_bytes=self.max_bytes,
-                    )
-                except MediaValidationError:
-                    self._cleanup()
-                    raise
-                except OSError as copy_error:
-                    self._cleanup()
-                    raise MediaValidationError(
-                        code="INTERNAL_ERROR",
-                        stage="claim",
-                        safe_message="The staged media could not be claimed safely.",
-                    ) from copy_error
-            else:
-                self._cleanup()
-                raise MediaValidationError(
-                    code="INTERNAL_ERROR",
-                    stage="claim",
-                    safe_message="The staged media could not be claimed safely.",
-                ) from error
-
-        try:
-            _ensure_regular_file(self.claimed_path)
-        except Exception:
             self._cleanup()
-            raise
+            raise MediaValidationError(
+                code="INTERNAL_ERROR",
+                stage="claim",
+                safe_message="The staged media could not be claimed safely.",
+            ) from error
         return self.claimed_path
 
     def __exit__(
@@ -222,15 +223,6 @@ def _claimed_media(
     settings: ServiceSettings,
 ) -> _ClaimedMedia:
     return _ClaimedMedia(request, settings)
-
-
-def _ensure_regular_file(path: Path) -> None:
-    if not stat.S_ISREG(path.lstat().st_mode):
-        raise MediaValidationError(
-            code="UNSUPPORTED_MEDIA",
-            stage="claim",
-            safe_message="The staged input is not a supported media file.",
-        )
 
 
 def _discard_staged_input(path: Path) -> None:
@@ -346,6 +338,17 @@ def _inspect_file(
     return byte_count, digest.hexdigest()
 
 
+def _reject_indirect_media(path: Path) -> None:
+    with path.open("rb") as media_file:
+        header = media_file.read(4096).lstrip()
+    if header.startswith((b"#EXTM3U", b"ffconcat version")):
+        raise MediaValidationError(
+            code="UNSUPPORTED_MEDIA",
+            stage="inspect",
+            safe_message="Indirect media manifests are unsupported.",
+        )
+
+
 def _probe_media(path: Path, settings: ServiceSettings) -> ProbeMetadata:
     arguments = (
         "-hide_banner",
@@ -353,6 +356,10 @@ def _probe_media(path: Path, settings: ServiceSettings) -> ProbeMetadata:
         "error",
         "-print_format",
         "json",
+        "-protocol_whitelist",
+        "file",
+        "-format_whitelist",
+        ",".join(settings.limits.supported_demuxers),
         "-show_format",
         "-show_streams",
         str(path),
@@ -453,6 +460,8 @@ def _parse_probe(raw_probe: object, settings: ServiceSettings) -> ProbeMetadata:
     )
     if not container_formats or len(container_formats) > MAX_METADATA_ITEMS:
         raise _unsupported_probe()
+    if not set(container_formats).issubset(settings.limits.supported_container_formats):
+        raise _unsupported_probe()
 
     return ProbeMetadata(
         duration_ms=duration_ms,
@@ -515,6 +524,10 @@ def _decode_media(
         "error",
         "-nostdin",
         "-xerror",
+        "-protocol_whitelist",
+        "file",
+        "-format_whitelist",
+        ",".join(settings.limits.supported_demuxers),
         "-i",
         str(path),
         "-map",
