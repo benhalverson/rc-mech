@@ -1,5 +1,6 @@
 import io
 import os
+import tempfile
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
@@ -445,6 +446,29 @@ def test_claim_maps_non_missing_os_errors_and_cleanup_is_idempotent(
     monkeypatch.setattr(media_module, "_copy_and_consume", deny_copy)
     _error_code(claim.__enter__, "INTERNAL_ERROR")
     claim._cleanup()
+    assert list(settings.work_root.iterdir()) == []
+
+
+def test_claim_cleans_staging_when_work_directory_creation_fails(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    request = MediaValidationRequest.model_validate(request_body(1))
+    real_mkdtemp = tempfile.mkdtemp
+
+    def deny_work_directory(*, prefix: str, dir: Path) -> str:  # noqa: A002
+        if prefix == "request-":
+            raise PermissionError
+        return real_mkdtemp(prefix=prefix, dir=dir)
+
+    monkeypatch.setattr(tempfile, "mkdtemp", deny_work_directory)
+
+    _error_code(
+        media_module._claimed_media(request, settings).__enter__,
+        "INTERNAL_ERROR",
+    )
+    assert list(settings.staging_root.iterdir()) == []
     assert list(settings.work_root.iterdir()) == []
 
 

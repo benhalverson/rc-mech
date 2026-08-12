@@ -224,19 +224,34 @@ class _ClaimedMedia:
         self.source_path = settings.staging_root / (
             f"{request.input.staged_media_id}.media"
         )
+        self.staging_root = settings.staging_root
         self.work_root = settings.work_root
         self.max_bytes = settings.limits.max_bytes
+        self.claim_directory: Path | None = None
         self.request_directory: Path | None = None
         self.claimed_path: Path | None = None
 
     def __enter__(self) -> Path:
-        self.request_directory = Path(
-            tempfile.mkdtemp(prefix="request-", dir=self.work_root)
-        )
-        self.claimed_path = self.request_directory / "input.media"
         try:
+            self.claim_directory = Path(
+                tempfile.mkdtemp(prefix="claim-", dir=self.staging_root)
+            )
+            self.request_directory = Path(
+                tempfile.mkdtemp(prefix="request-", dir=self.work_root)
+            )
+        except OSError as error:
+            self._cleanup()
+            raise MediaValidationError(
+                code="INTERNAL_ERROR",
+                stage="claim",
+                safe_message="The staged media could not be claimed safely.",
+            ) from error
+        self.claimed_path = self.request_directory / "input.media"
+        staged_claim_path = self.claim_directory / "input.media"
+        try:
+            self.source_path.rename(staged_claim_path)
             _copy_and_consume(
-                self.source_path,
+                staged_claim_path,
                 self.claimed_path,
                 max_bytes=self.max_bytes,
             )
@@ -270,6 +285,8 @@ class _ClaimedMedia:
     def _cleanup(self) -> None:
         if self.request_directory is not None and self.request_directory.exists():
             shutil.rmtree(self.request_directory)
+        if self.claim_directory is not None and self.claim_directory.exists():
+            shutil.rmtree(self.claim_directory)
 
 
 def _claimed_media(

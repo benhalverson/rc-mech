@@ -2,10 +2,12 @@ import hashlib
 import json
 import os
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -150,6 +152,42 @@ def test_probe_accepts_and_reports_real_media_facts(
     assert str(settings.staging_root) not in caplog.text
     assert STAGED_MEDIA_ID not in caplog.text
     assert checksum not in caplog.text
+    _assert_consumed_and_clean(settings)
+
+
+def test_probe_atomically_consumes_one_staged_media_id(
+    settings: ServiceSettings,
+    accepted_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    byte_count = stage_media(settings, accepted_video)
+    application = create_app(settings)
+    rename_barrier = threading.Barrier(2)
+    real_rename = Path.rename
+
+    def simultaneous_rename(source: Path, destination: Path) -> Path:
+        rename_barrier.wait(timeout=5)
+        return real_rename(source, destination)
+
+    monkeypatch.setattr(Path, "rename", simultaneous_rename)
+
+    def request_probe() -> dict[str, object]:
+        with TestClient(application) as client:
+            response = client.post("/v1/media/probe", json=request_body(byte_count))
+        return cast("dict[str, object]", response.json())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(lambda _index: request_probe(), range(2)))
+
+    def outcome(response: dict[str, object]) -> tuple[object, object | None]:
+        error = response.get("error")
+        code = error.get("code") if isinstance(error, dict) else None
+        return response["outcome"], code
+
+    assert sorted(outcome(response) for response in responses) == [
+        ("accepted", None),
+        ("rejected", "STAGED_MEDIA_NOT_FOUND"),
+    ]
     _assert_consumed_and_clean(settings)
 
 
