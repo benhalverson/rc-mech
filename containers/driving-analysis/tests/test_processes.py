@@ -13,6 +13,7 @@ import pytest
 import driving_analysis_service.processes as process_module
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
+    ProcessStreams,
     ProcessTimeoutError,
     StderrLineObserver,
     run_bounded_process,
@@ -50,7 +51,7 @@ def test_bounded_process_consumes_selected_bounded_stderr_lines() -> None:
         ),
         timeout_seconds=5,
         max_output_bytes=1024,
-        stderr_line_observer=StderrLineObserver(observe, 32),
+        streams=ProcessStreams(standard_error_observer=StderrLineObserver(observe, 32)),
     )
 
     assert observed == [b"drop", b"keep"]
@@ -178,7 +179,12 @@ def test_bounded_process_enforces_observed_line_limit(suffix: str) -> None:
             ),
             timeout_seconds=5,
             max_output_bytes=1024,
-            stderr_line_observer=StderrLineObserver(lambda _line: True, 32),
+            streams=ProcessStreams(
+                standard_error_observer=StderrLineObserver(
+                    lambda _line: True,
+                    32,
+                )
+            ),
         )
 
 

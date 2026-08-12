@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
-from typing import cast
+from typing import IO, cast
 
 
 class ProcessTimeoutError(RuntimeError):
@@ -27,6 +27,12 @@ class StderrLineObserver:
         if self.max_line_bytes <= 0:
             msg = "Observed process lines require a positive byte bound"
             raise ValueError(msg)
+
+
+@dataclass(frozen=True)
+class ProcessStreams:
+    standard_input: IO[bytes] | None = None
+    standard_error_observer: StderrLineObserver | None = None
 
 
 @dataclass(frozen=True)
@@ -114,7 +120,7 @@ def run_bounded_process(
     *,
     timeout_seconds: float,
     max_output_bytes: int,
-    stderr_line_observer: StderrLineObserver | None = None,
+    streams: ProcessStreams | None = None,
 ) -> ProcessResult:
     if not executable.is_absolute():
         msg = "Media executables must use absolute paths"
@@ -124,9 +130,14 @@ def run_bounded_process(
         raise ValueError(msg)
     started_at = time.monotonic()
     deadline = started_at + timeout_seconds
+    resolved_streams = streams or ProcessStreams()
     process = subprocess.Popen(  # noqa: S603 - executable and arguments are internal
         (str(executable), *arguments),
-        stdin=subprocess.DEVNULL,
+        stdin=(
+            subprocess.DEVNULL
+            if resolved_streams.standard_input is None
+            else resolved_streams.standard_input
+        ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=False,
@@ -134,7 +145,10 @@ def run_bounded_process(
         start_new_session=True,
     )
 
-    capture = _ProcessCapture(max_output_bytes, stderr_line_observer)
+    capture = _ProcessCapture(
+        max_output_bytes,
+        resolved_streams.standard_error_observer,
+    )
     with _ProcessScope(process):
         _read_process_output(
             process,

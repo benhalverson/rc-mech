@@ -356,6 +356,7 @@ def test_probe_maps_bounded_process_and_json_failures(
             raise result_or_error
         return result_or_error
 
+    (tmp_path / "input.media").write_bytes(b"media")
     monkeypatch.setattr(media_module, "run_bounded_process", fake_run)
     _error_code(
         lambda: media_module._probe_media(tmp_path / "input.media", settings),

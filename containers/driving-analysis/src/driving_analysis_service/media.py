@@ -29,6 +29,7 @@ from driving_analysis_service.contracts import (
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
+    ProcessStreams,
     ProcessTimeoutError,
     StderrLineObserver,
     run_bounded_process,
@@ -444,20 +445,20 @@ def _probe_media(path: Path, settings: ServiceSettings) -> ProbeMetadata:
         "-print_format",
         "json",
         "-protocol_whitelist",
-        "file",
-        "-format_whitelist",
-        ",".join(settings.limits.supported_demuxers),
+        "pipe",
         "-show_format",
         "-show_streams",
-        str(path),
+        "pipe:0",
     )
     try:
-        result = run_bounded_process(
-            settings.ffprobe_executable,
-            arguments,
-            timeout_seconds=settings.limits.process_timeout_seconds,
-            max_output_bytes=settings.limits.max_process_output_bytes,
-        )
+        with path.open("rb") as media_file:
+            result = run_bounded_process(
+                settings.ffprobe_executable,
+                arguments,
+                timeout_seconds=settings.limits.process_timeout_seconds,
+                max_output_bytes=settings.limits.max_process_output_bytes,
+                streams=ProcessStreams(standard_input=media_file),
+            )
     except ProcessTimeoutError as error:
         raise MediaValidationError(
             code="PROCESS_TIMEOUT",
@@ -640,9 +641,11 @@ def _decode_media(
             arguments,
             timeout_seconds=settings.limits.process_timeout_seconds,
             max_output_bytes=settings.limits.max_process_output_bytes,
-            stderr_line_observer=StderrLineObserver(
-                layout_observer,
-                MAX_SHOWINFO_LINE_BYTES,
+            streams=ProcessStreams(
+                standard_error_observer=StderrLineObserver(
+                    layout_observer,
+                    MAX_SHOWINFO_LINE_BYTES,
+                )
             ),
         )
     except ProcessTimeoutError as error:

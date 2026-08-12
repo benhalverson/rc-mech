@@ -448,6 +448,33 @@ def test_probe_rejects_an_unsupported_real_codec(
     _assert_consumed_and_clean(settings)
 
 
+def test_probe_rejects_a_valid_disallowed_container_as_unsupported(
+    settings: ServiceSettings,
+    video_factory: VideoFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    unsupported = video_factory("unsupported.avi", 160, 90, 0.5, "mpeg4")
+    byte_count = stage_media(settings, unsupported)
+
+    LOGGER.addHandler(caplog.handler)
+    try:
+        with _client(settings) as client:
+            response = client.post("/v1/media/probe", json=request_body(byte_count))
+    finally:
+        LOGGER.removeHandler(caplog.handler)
+
+    assert response.json()["error"] == {
+        "code": "UNSUPPORTED_MEDIA",
+        "stage": "probe",
+        "message": "The media format or metadata is unsupported.",
+    }
+    assert str(unsupported) not in response.text
+    assert str(unsupported) not in caplog.text
+    assert str(settings.staging_root) not in caplog.text
+    assert "pipe:0" not in caplog.text
+    _assert_consumed_and_clean(settings)
+
+
 @pytest.mark.parametrize(
     ("limit_name", "limit_value", "expected_stage"),
     [
@@ -780,6 +807,40 @@ def test_probe_rejects_hls_that_references_media_outside_the_request(
         "message": "Indirect media manifests are unsupported.",
     }
     assert external_segment.exists()
+    _assert_consumed_and_clean(settings)
+
+
+def test_probe_classification_does_not_enable_embedded_network_protocols(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    session_description = tmp_path / "network-reference.sdp"
+    session_description.write_text(
+        """v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=No Name
+c=IN IP4 127.0.0.1
+t=0 0
+m=video 5004 RTP/AVP 96
+a=rtpmap:96 H264/90000
+"""
+    )
+    byte_count = stage_media(settings, session_description)
+    bounded_settings = replace(
+        settings,
+        limits=replace(settings.limits, process_timeout_seconds=0.2),
+    )
+
+    started_at = time.monotonic()
+    with _client(bounded_settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(byte_count))
+
+    assert time.monotonic() - started_at < 1
+    assert response.json()["error"] == {
+        "code": "CORRUPT_MEDIA",
+        "stage": "probe",
+        "message": "The media could not be probed.",
+    }
     _assert_consumed_and_clean(settings)
 
 
