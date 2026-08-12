@@ -269,10 +269,14 @@ def test_layout_observer_filters_showinfo_and_rejects_invalid_frames(
     )
 
 
-def test_layout_observer_validates_display_rotation(settings: ServiceSettings) -> None:
+@pytest.mark.parametrize("matrix_name", [b"displaymatrix", b"3x3 displaymatrix"])
+def test_layout_observer_validates_display_rotation(
+    settings: ServiceSettings,
+    matrix_name: bytes,
+) -> None:
     metadata = media_module._parse_probe(_valid_probe(), settings)
     observer = media_module._DecodedLayoutObserver(metadata, 1)
-    prefix = b"[Parsed_showinfo_0 @ 0x1] side data - displaymatrix: rotation of "
+    prefix = b"[Parsed_showinfo_0 @ 0x1] side data - " + matrix_name + b": rotation of "
 
     assert observer(prefix + b"0.00 degrees")
     _error_code(lambda: observer(prefix + b"unknown degrees"), "CORRUPT_MEDIA")

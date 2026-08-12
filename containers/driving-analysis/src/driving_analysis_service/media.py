@@ -44,7 +44,8 @@ SHOWINFO_FRAME_PATTERN = re.compile(
     rb"\bn:\s*\d+\b.*\bsar:(\d+)/(\d+)\s+s:(\d+)x(\d+)\b"
 )
 SHOWINFO_ROTATION_PATTERN = re.compile(
-    rb"\bside data - displaymatrix: rotation of (-?\d+(?:\.\d+)?) degrees\s*$"
+    rb"\bside data - (?:3x3 )?displaymatrix: "
+    rb"rotation of (-?\d+(?:\.\d+)?) degrees\s*$"
 )
 
 
@@ -73,7 +74,7 @@ class _DecodedLayoutObserver:
     def __call__(self, line: bytes) -> bool:
         if not line.startswith(b"[Parsed_showinfo_"):
             return False
-        if b"side data - displaymatrix:" in line:
+        if b"displaymatrix:" in line:
             match = SHOWINFO_ROTATION_PATTERN.search(line)
             if match is None:
                 raise _invalid_decode_output()
