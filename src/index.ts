@@ -10,6 +10,7 @@ import { openApi } from './openapi';
 import { createAuthRoutes } from './routes/auth';
 import { createCarsRoutes } from './routes/cars';
 import { createInviteRoutes } from './routes/invites';
+import { createIssue230ContainerRoutes } from './routes/issue-230-container';
 import { createMaintenanceRoutes } from './routes/maintenance';
 import { createPhotosRoutes } from './routes/photos';
 import { createSetupsRoutes } from './routes/setups';
@@ -49,6 +50,7 @@ export const createApp = (
 
 	app.get('/api/v1/health', (c) => c.json({ ok: true, service: 'rc-mech' }));
 	app.route('/api/v1', createInviteRoutes());
+	app.route('/api/v1', createIssue230ContainerRoutes(dependencies));
 	app.route('/api/v1', createCarsRoutes());
 	app.route('/api/v1', createSetupsRoutes());
 	app.route('/api/v1', createPhotosRoutes());

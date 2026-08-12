@@ -25,6 +25,7 @@
 	"exclude": ["node_modules", "dist", "tests", "client"],
 	"include": [
 		"src",
+		"prototypes/issue-230/**/*.ts",
 		"scripts/browser-client.ts",
 		"scripts/browser-http.ts",
 		"scripts/browser-worker.ts",

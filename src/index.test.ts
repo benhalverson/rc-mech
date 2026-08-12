@@ -72,6 +72,11 @@ const MOCK_ENV = {
 	} as unknown as Fetcher,
 	APP_URL: 'http://localhost:8787',
 	ENVIRONMENT: 'local',
+	ISSUE_230_PYTHON_CONTAINER: {
+		getByName: () => {
+			throw new Error('Unexpected Container binding call in backend tests');
+		},
+	} as unknown as Env['ISSUE_230_PYTHON_CONTAINER'],
 } satisfies Env;
 
 const request = (path: string, init?: RequestInit) =>

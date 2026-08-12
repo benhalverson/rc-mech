@@ -23,12 +23,17 @@
 		"test:architecture": "vitest run --config tools/vitest.config.ts",
 		"test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
 		"test:production": "bash scripts/production-acceptance.sh",
+		"prototype:230:dev": "wrangler dev --env local",
+		"prototype:230:test": "tsx prototypes/issue-230/test.ts",
+		"prototype:230:prove": "tsx prototypes/issue-230/prove.ts",
+		"prototype:230:dry-run": "wrangler deploy --dry-run --env=\"\"",
 		"check:client": "pnpm --dir client build && pnpm --dir client exec ng test --watch=false --no-progress",
 		"check": "tsc --noEmit && pnpm check:client && wrangler deploy --dry-run --env=\"\""
 	},
 	"dependencies": {
 		"@better-auth/drizzle-adapter": "^1.6.26",
 		"@better-auth/passkey": "^1.6.26",
+		"@cloudflare/containers": "0.3.7",
 		"@scalar/hono-api-reference": "^0.11.13",
 		"better-auth": "^1.6.26",
 		"drizzle-orm": "^0.45.2",
@@ -48,6 +53,6 @@
 		"tsx": "^4.23.11",
 		"typescript": "^7.0.2",
 		"vitest": "^4.1.10",
-		"wrangler": "^4.120.0"
+		"wrangler": "^4.121.0"
 	}
 }

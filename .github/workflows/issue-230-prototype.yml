@@ -1,0 +1,35 @@
+name: Issue 230 Container prototype
+
+on:
+  push:
+    branches:
+      - spike/issue-230-hono-fastapi-container
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    name: Prove Worker to FastAPI Container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test prototype contracts
+        run: pnpm prototype:230:test
+      - name: Prove local Container round trip
+        run: pnpm prototype:230:prove
+      - name: Check deployment configuration
+        run: pnpm prototype:230:dry-run

@@ -318,6 +318,7 @@ export class MockR2Controller {
 
 type HonoFixtureOptions = {
 	authenticated?: boolean;
+	containerRoundTrip?: AppDependencies['containerRoundTrip'];
 	handleAuth?: AppDependencies['handleAuth'];
 	userId?: string;
 	voiceProcessor?: VoiceProcessor;
@@ -375,8 +376,18 @@ export const createHonoFixture = (
 		ASSETS: assets,
 		APP_URL: 'http://localhost:8787',
 		ENVIRONMENT: 'local',
+		ISSUE_230_PYTHON_CONTAINER: {
+			getByName: () => {
+				throw new Error('Unexpected Container binding call in backend tests');
+			},
+		} as unknown as Env['ISSUE_230_PYTHON_CONTAINER'],
 	} satisfies Env;
 	const auth: AppDependencies = {
+		containerRoundTrip:
+			fixtureOptions.containerRoundTrip ??
+			(async () => {
+				throw new Error('Unexpected Container call in backend tests');
+			}),
 		getSession: async () =>
 			fixtureOptions.authenticated !== false
 				? { user: { id: fixtureOptions.userId ?? 'owner-1' } }
