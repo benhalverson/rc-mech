@@ -29,5 +29,6 @@ await run('pnpm', [
 	'vitest',
 	'run',
 	'src/issue-230-container-routes.test.ts',
+	'prototypes/issue-230/workerd-6793.test.ts',
 	'--coverage.enabled=false',
 ]);

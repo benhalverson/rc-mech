@@ -1,9 +1,10 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
+import { diagnoseWorkerd6793 } from './workerd-6793';
 
 const port = Number.parseInt(process.env.RC_MECH_ISSUE_230_PORT ?? '8792', 10);
 if (!Number.isInteger(port) || port < 1 || port > 65_535)
@@ -326,12 +327,22 @@ try {
 	};
 	console.log(JSON.stringify(proof, null, 2));
 } catch (error) {
+	const errorMessage = error instanceof Error ? error.message : String(error);
+	const kernelRelease = await readFile(
+		'/proc/sys/kernel/osrelease',
+		'utf8',
+	).catch(() => '');
 	const containerDiagnostics = await readContainerDiagnostics();
 	console.error(
 		JSON.stringify(
 			{
 				verdict: 'FAIL',
-				error: error instanceof Error ? error.message : String(error),
+				error: errorMessage,
+				knownIssue: diagnoseWorkerd6793({
+					error: errorMessage,
+					kernelRelease,
+					workerLog,
+				}),
 				workerLog,
 				containerDiagnostics,
 			},

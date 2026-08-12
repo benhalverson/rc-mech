@@ -29,6 +29,7 @@
 		"scripts/browser-client.ts",
 		"scripts/browser-http.ts",
 		"scripts/browser-worker.ts",
+		"scripts/cloudflare-wsl-tproxy-workaround.ts",
 		"worker-configuration.d.ts"
 	],
 	"angularCompilerOptions": {
