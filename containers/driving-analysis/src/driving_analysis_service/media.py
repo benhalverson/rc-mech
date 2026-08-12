@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -29,6 +30,7 @@ from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessTimeoutError,
+    StderrLineObserver,
     run_bounded_process,
 )
 from driving_analysis_service.safe_logging import log_stage
@@ -37,6 +39,13 @@ from driving_analysis_service.settings import ServiceSettings
 JsonMapping = Mapping[str, object]
 MAX_METADATA_ITEMS = 8
 MAX_IDENTIFIER_LENGTH = 32
+MAX_SHOWINFO_LINE_BYTES = 16 * 1024
+SHOWINFO_FRAME_PATTERN = re.compile(
+    rb"\bn:\s*\d+\b.*\bsar:(\d+)/(\d+)\s+s:(\d+)x(\d+)\b"
+)
+SHOWINFO_ROTATION_PATTERN = re.compile(
+    rb"\bside data - displaymatrix: rotation of (-?\d+(?:\.\d+)?) degrees\s*$"
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +62,51 @@ class ProbeMetadata:
     sample_aspect_ratio: Fraction
     display_aspect_ratio: Fraction
     start_time_ms: int
+
+
+class _DecodedLayoutObserver:
+    def __init__(self, metadata: ProbeMetadata, max_frames: int) -> None:
+        self.metadata = metadata
+        self.max_frames = max_frames
+        self.frame_count = 0
+
+    def __call__(self, line: bytes) -> bool:
+        if not line.startswith(b"[Parsed_showinfo_"):
+            return False
+        if b"side data - displaymatrix:" in line:
+            match = SHOWINFO_ROTATION_PATTERN.search(line)
+            if match is None:
+                raise _invalid_decode_output()
+            rotation = Fraction(match.group(1).decode("ascii"))
+            if rotation % 360 != 0:
+                raise _incompatible_decoded_layout()
+            return True
+        if b" n:" not in line:
+            return True
+        match = SHOWINFO_FRAME_PATTERN.search(line)
+        if match is None:
+            raise _invalid_decode_output()
+        sar_numerator, sar_denominator, width, height = (
+            int(value) for value in match.groups()
+        )
+        try:
+            sample_aspect_ratio = Fraction(sar_numerator, sar_denominator)
+        except ZeroDivisionError as error:
+            raise _invalid_decode_output() from error
+        self.frame_count += 1
+        if self.frame_count > self.max_frames:
+            raise MediaValidationError(
+                code="MEDIA_OVER_LIMIT",
+                stage="decode",
+                safe_message="The decoded frame count exceeds the configured limit.",
+            )
+        if (
+            width != self.metadata.width
+            or height != self.metadata.height
+            or sample_aspect_ratio != self.metadata.sample_aspect_ratio
+        ):
+            raise _incompatible_decoded_layout()
+        return True
 
 
 class MediaValidationService:
@@ -106,7 +160,7 @@ class MediaValidationService:
                 stage = "decode"
                 decoded_frame_count = _decode_media(
                     claimed_path,
-                    metadata.video_stream_index,
+                    metadata,
                     self.settings,
                 )
                 media = _media_facts(
@@ -530,13 +584,14 @@ def _layout_fractions(
 
 def _decode_media(
     path: Path,
-    video_stream_index: int,
+    metadata: ProbeMetadata,
     settings: ServiceSettings,
 ) -> int:
+    layout_observer = _DecodedLayoutObserver(metadata, settings.limits.max_frames)
     arguments = (
         "-hide_banner",
         "-loglevel",
-        "error",
+        "info",
         "-nostdin",
         "-xerror",
         "-protocol_whitelist",
@@ -545,19 +600,21 @@ def _decode_media(
         ",".join(settings.limits.supported_demuxers),
         "-i",
         str(path),
+        "-filter_complex",
+        _layout_filter(metadata),
         "-map",
-        f"0:{video_stream_index}",
+        "[decoded]",
         "-an",
         "-sn",
         "-dn",
         "-frames:v",
         str(settings.limits.max_frames + 1),
-        "-progress",
-        "pipe:1",
-        "-nostats",
         "-f",
         "null",
         "-",
+        "-progress",
+        "pipe:1",
+        "-nostats",
     )
     try:
         result = run_bounded_process(
@@ -565,6 +622,10 @@ def _decode_media(
             arguments,
             timeout_seconds=settings.limits.process_timeout_seconds,
             max_output_bytes=settings.limits.max_process_output_bytes,
+            stderr_line_observer=StderrLineObserver(
+                layout_observer,
+                MAX_SHOWINFO_LINE_BYTES,
+            ),
         )
     except ProcessTimeoutError as error:
         raise MediaValidationError(
@@ -598,7 +659,29 @@ def _decode_media(
             stage="decode",
             safe_message="The media contains no decodable video frames.",
         )
+    if layout_observer.frame_count != decoded_frame_count:
+        raise _invalid_decode_output()
     return decoded_frame_count
+
+
+def _layout_filter(metadata: ProbeMetadata) -> str:
+    return f"[0:{metadata.video_stream_index}]showinfo=checksum=0[decoded]"
+
+
+def _invalid_decode_output() -> MediaValidationError:
+    return MediaValidationError(
+        code="CORRUPT_MEDIA",
+        stage="decode",
+        safe_message="The media decoder returned invalid validation output.",
+    )
+
+
+def _incompatible_decoded_layout() -> MediaValidationError:
+    return MediaValidationError(
+        code="INCOMPATIBLE_LAYOUT",
+        stage="decode",
+        safe_message="Every decoded frame must preserve the 16:9 layout.",
+    )
 
 
 def _decoded_frame_count(progress: bytes) -> int:

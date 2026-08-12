@@ -3,9 +3,11 @@ import selectors
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
+from typing import cast
 
 
 class ProcessTimeoutError(RuntimeError):
@@ -17,11 +19,73 @@ class ProcessOutputLimitError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class StderrLineObserver:
+    consume: Callable[[bytes], bool]
+    max_line_bytes: int
+
+    def __post_init__(self) -> None:
+        if self.max_line_bytes <= 0:
+            msg = "Observed process lines require a positive byte bound"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True)
 class ProcessResult:
     return_code: int
     stdout: bytes
     stderr: bytes
     elapsed_ms: int
+
+
+@dataclass
+class _ProcessCapture:
+    max_output_bytes: int
+    stderr_line_observer: StderrLineObserver | None
+    stdout: bytearray = field(default_factory=bytearray)
+    stderr: bytearray = field(default_factory=bytearray)
+    pending_stderr: bytearray = field(default_factory=bytearray)
+
+    def consume(self, destination: object, chunk: bytes) -> None:
+        if not isinstance(destination, bytearray):
+            msg = "Unexpected process output target"
+            raise TypeError(msg)
+        if destination is self.stderr and self.stderr_line_observer is not None:
+            self._consume_stderr(chunk, final=False)
+            return
+        self._append(destination, chunk)
+
+    def finish(self, destination: object) -> None:
+        if destination is self.stderr and self.stderr_line_observer is not None:
+            self._consume_stderr(b"", final=True)
+
+    def _consume_stderr(self, chunk: bytes, *, final: bool) -> None:
+        self.pending_stderr.extend(chunk)
+        while True:
+            newline_index = self.pending_stderr.find(b"\n")
+            if newline_index < 0:
+                break
+            line = bytes(self.pending_stderr[:newline_index])
+            del self.pending_stderr[: newline_index + 1]
+            self._consume_line(line, suffix=b"\n")
+        observer = cast("StderrLineObserver", self.stderr_line_observer)
+        if len(self.pending_stderr) > observer.max_line_bytes:
+            raise ProcessOutputLimitError
+        if final and self.pending_stderr:
+            line = bytes(self.pending_stderr)
+            self.pending_stderr.clear()
+            self._consume_line(line, suffix=b"")
+
+    def _consume_line(self, line: bytes, *, suffix: bytes) -> None:
+        observer = cast("StderrLineObserver", self.stderr_line_observer)
+        if len(line) > observer.max_line_bytes:
+            raise ProcessOutputLimitError
+        if not observer.consume(line):
+            self._append(self.stderr, line + suffix)
+
+    def _append(self, destination: bytearray, chunk: bytes) -> None:
+        destination.extend(chunk)
+        if len(self.stdout) + len(self.stderr) > self.max_output_bytes:
+            raise ProcessOutputLimitError
 
 
 class _ProcessScope:
@@ -51,6 +115,7 @@ def run_bounded_process(
     *,
     timeout_seconds: float,
     max_output_bytes: int,
+    stderr_line_observer: StderrLineObserver | None = None,
 ) -> ProcessResult:
     if not executable.is_absolute():
         msg = "Media executables must use absolute paths"
@@ -58,7 +123,6 @@ def run_bounded_process(
     if timeout_seconds <= 0 or max_output_bytes <= 0:
         msg = "Process bounds must be positive"
         raise ValueError(msg)
-
     started_at = time.monotonic()
     deadline = started_at + timeout_seconds
     process = subprocess.Popen(  # noqa: S603 - executable and arguments are internal
@@ -71,15 +135,12 @@ def run_bounded_process(
         start_new_session=True,
     )
 
-    stdout = bytearray()
-    stderr = bytearray()
+    capture = _ProcessCapture(max_output_bytes, stderr_line_observer)
     with _ProcessScope(process):
         _read_process_output(
             process,
-            stdout,
-            stderr,
+            capture,
             deadline=deadline,
-            max_output_bytes=max_output_bytes,
         )
         remaining_seconds = max(0.0, deadline - time.monotonic())
         try:
@@ -91,27 +152,25 @@ def run_bounded_process(
     elapsed_ms = max(0, round((time.monotonic() - started_at) * 1000))
     return ProcessResult(
         return_code=return_code,
-        stdout=bytes(stdout),
-        stderr=bytes(stderr),
+        stdout=bytes(capture.stdout),
+        stderr=bytes(capture.stderr),
         elapsed_ms=elapsed_ms,
     )
 
 
 def _read_process_output(
     process: subprocess.Popen[bytes],
-    stdout: bytearray,
-    stderr: bytearray,
+    capture: _ProcessCapture,
     *,
     deadline: float,
-    max_output_bytes: int,
 ) -> None:
     if process.stdout is None or process.stderr is None:
         msg = "Media process pipes were not created"
         raise RuntimeError(msg)
 
     with selectors.DefaultSelector() as selector:
-        selector.register(process.stdout, selectors.EVENT_READ, stdout)
-        selector.register(process.stderr, selectors.EVENT_READ, stderr)
+        selector.register(process.stdout, selectors.EVENT_READ, capture.stdout)
+        selector.register(process.stderr, selectors.EVENT_READ, capture.stderr)
 
         while selector.get_map():
             remaining_seconds = deadline - time.monotonic()
@@ -126,19 +185,13 @@ def _read_process_output(
 
             for key, _ in events:
                 stream = key.fileobj
+                destination = key.data
                 chunk = os.read(key.fd, 64 * 1024)
                 if not chunk:
                     selector.unregister(stream)
+                    capture.finish(destination)
                     continue
-
-                destination = key.data
-                if not isinstance(destination, bytearray):
-                    msg = "Unexpected process output target"
-                    raise TypeError(msg)
-                destination.extend(chunk)
-                if len(stdout) + len(stderr) > max_output_bytes:
-                    _terminate_process_group(process)
-                    raise ProcessOutputLimitError
+                capture.consume(destination, chunk)
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:

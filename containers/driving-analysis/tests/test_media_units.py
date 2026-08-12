@@ -229,6 +229,72 @@ def test_decode_progress_parsing_is_strict() -> None:
     _error_code(lambda: media_module._decoded_frame_count(b"\xff"), "CORRUPT_MEDIA")
 
 
+def test_layout_observer_rejects_a_midstream_sample_aspect_ratio_change(
+    settings: ServiceSettings,
+) -> None:
+    metadata = media_module._parse_probe(_valid_probe(), settings)
+    observer = media_module._DecodedLayoutObserver(
+        metadata,
+        settings.limits.max_frames,
+    )
+    prefix = b"[Parsed_showinfo_0 @ 0x1] n:  "
+
+    assert observer(prefix + b"0 fmt:yuv420p sar:1/1 s:160x90 i:P")
+    with pytest.raises(MediaValidationError) as raised:
+        observer(prefix + b"1 fmt:yuv420p sar:2/1 s:160x90 i:P")
+
+    assert raised.value.code == "INCOMPATIBLE_LAYOUT"
+    assert raised.value.stage == "decode"
+
+
+def test_layout_observer_filters_showinfo_and_rejects_invalid_frames(
+    settings: ServiceSettings,
+) -> None:
+    metadata = media_module._parse_probe(_valid_probe(), settings)
+    observer = media_module._DecodedLayoutObserver(metadata, 1)
+    prefix = b"[Parsed_showinfo_0 @ 0x1]"
+
+    assert not observer(b"unrelated log line")
+    assert observer(prefix + b" config in time_base: 1/1000")
+    _error_code(lambda: observer(prefix + b" n: 0 malformed"), "CORRUPT_MEDIA")
+    _error_code(
+        lambda: observer(prefix + b" n: 0 sar:1/0 s:160x90"),
+        "CORRUPT_MEDIA",
+    )
+    assert observer(prefix + b" n: 0 sar:1/1 s:160x90")
+    _error_code(
+        lambda: observer(prefix + b" n: 1 sar:1/1 s:160x90"),
+        "MEDIA_OVER_LIMIT",
+    )
+
+
+def test_layout_observer_validates_display_rotation(settings: ServiceSettings) -> None:
+    metadata = media_module._parse_probe(_valid_probe(), settings)
+    observer = media_module._DecodedLayoutObserver(metadata, 1)
+    prefix = b"[Parsed_showinfo_0 @ 0x1] side data - displaymatrix: rotation of "
+
+    assert observer(prefix + b"0.00 degrees")
+    _error_code(lambda: observer(prefix + b"unknown degrees"), "CORRUPT_MEDIA")
+    _error_code(lambda: observer(prefix + b"-90.00 degrees"), "INCOMPATIBLE_LAYOUT")
+
+
+@pytest.mark.parametrize("dimensions", [(161, 90), (160, 91)])
+def test_layout_observer_rejects_dimension_changes(
+    settings: ServiceSettings,
+    dimensions: tuple[int, int],
+) -> None:
+    metadata = media_module._parse_probe(_valid_probe(), settings)
+    observer = media_module._DecodedLayoutObserver(metadata, 1)
+    width, height = dimensions
+
+    _error_code(
+        lambda: observer(
+            b"[Parsed_showinfo_0 @ 0x1] n: 0 sar:1/1 " + f"s:{width}x{height}".encode()
+        ),
+        "INCOMPATIBLE_LAYOUT",
+    )
+
+
 @pytest.mark.parametrize(
     ("result_or_error", "expected_code"),
     [
@@ -237,6 +303,7 @@ def test_decode_progress_parsing_is_strict() -> None:
         (ProcessResult(1, b"", b"private", 1), "CORRUPT_MEDIA"),
         (ProcessResult(0, b"frame=101\n", b"", 1), "MEDIA_OVER_LIMIT"),
         (ProcessResult(0, b"progress=end\n", b"", 1), "CORRUPT_MEDIA"),
+        (ProcessResult(0, b"frame=1\nprogress=end\n", b"", 1), "CORRUPT_MEDIA"),
     ],
 )
 def test_decode_maps_bounded_process_outcomes(
@@ -252,8 +319,13 @@ def test_decode_maps_bounded_process_outcomes(
         return result_or_error
 
     monkeypatch.setattr(media_module, "run_bounded_process", fake_run)
+    metadata = media_module._parse_probe(_valid_probe(), settings)
     _error_code(
-        lambda: media_module._decode_media(tmp_path / "input.media", 0, settings),
+        lambda: media_module._decode_media(
+            tmp_path / "input.media",
+            metadata,
+            settings,
+        ),
         expected_code,
     )
 

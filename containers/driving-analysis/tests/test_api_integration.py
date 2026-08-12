@@ -153,6 +153,50 @@ def test_probe_accepts_and_reports_real_media_facts(
     _assert_consumed_and_clean(settings)
 
 
+def test_probe_accepts_anamorphic_16_9_media(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    anamorphic = tmp_path / "anamorphic.mp4"
+    subprocess.run(  # noqa: S603 - fixed test-only FFmpeg command
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=144x90:r=10:d=0.5",
+            "-vf",
+            "setsar=10/9",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(anamorphic),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    byte_count = stage_media(settings, anamorphic)
+
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(byte_count))
+
+    assert response.json()["outcome"] == "accepted"
+    assert response.json()["media"]["sampleAspectRatio"] == {
+        "numerator": 10,
+        "denominator": 9,
+    }
+    assert response.json()["media"]["displayAspectRatio"] == {
+        "numerator": 16,
+        "denominator": 9,
+    }
+    _assert_consumed_and_clean(settings)
+
+
 @pytest.mark.parametrize(
     ("file_bytes", "expected_code", "expected_stage"),
     [
@@ -211,6 +255,144 @@ def test_probe_rejects_wrong_layout(
         response = client.post("/v1/media/probe", json=request_body(byte_count))
 
     assert response.json()["error"]["code"] == "INCOMPATIBLE_LAYOUT"
+    _assert_consumed_and_clean(settings)
+
+
+def test_probe_rejects_layout_change_during_decode(
+    settings: ServiceSettings,
+    video_factory: VideoFactory,
+    tmp_path: Path,
+) -> None:
+    first = video_factory("first-layout.mp4", 160, 90, 0.5, "libx264")
+    second = video_factory("second-layout.mp4", 160, 120, 0.5, "libx264")
+    listing = tmp_path / "changing-layout.txt"
+    listing.write_text(f"file '{first}'\nfile '{second}'\n")
+    changing_layout = tmp_path / "changing-layout.mkv"
+    subprocess.run(  # noqa: S603 - fixed test-only FFmpeg command
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(listing),
+            "-c",
+            "copy",
+            "-y",
+            str(changing_layout),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    byte_count = stage_media(settings, changing_layout)
+
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(byte_count))
+
+    assert response.json()["error"] == {
+        "code": "INCOMPATIBLE_LAYOUT",
+        "stage": "decode",
+        "message": "Every decoded frame must preserve the 16:9 layout.",
+    }
+    _assert_consumed_and_clean(settings)
+
+
+def test_probe_rejects_rotation_change_during_decode(
+    settings: ServiceSettings,
+    video_factory: VideoFactory,
+    tmp_path: Path,
+) -> None:
+    first = video_factory("first-orientation.mp4", 160, 90, 0.5, "libx264")
+    second = video_factory("second-orientation.mp4", 160, 90, 0.5, "libx264")
+    rotated = tmp_path / "rotated-second.mp4"
+    subprocess.run(  # noqa: S603 - fixed test-only FFmpeg command
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(second),
+            "-c",
+            "copy",
+            "-bsf:v",
+            "h264_metadata=display_orientation=insert:rotate=180",
+            "-y",
+            str(rotated),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    listing = tmp_path / "changing-orientation.txt"
+    listing.write_text(f"file '{first}'\nfile '{rotated}'\n")
+    changing_orientation = tmp_path / "changing-orientation.mkv"
+    subprocess.run(  # noqa: S603 - fixed test-only FFmpeg command
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(listing),
+            "-c",
+            "copy",
+            "-y",
+            str(changing_orientation),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    byte_count = stage_media(settings, changing_orientation)
+
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(byte_count))
+
+    assert response.json()["error"] == {
+        "code": "INCOMPATIBLE_LAYOUT",
+        "stage": "decode",
+        "message": "Every decoded frame must preserve the 16:9 layout.",
+    }
+
+
+def test_probe_accepts_zero_degree_display_orientation(
+    settings: ServiceSettings,
+    video_factory: VideoFactory,
+    tmp_path: Path,
+) -> None:
+    source = video_factory("zero-orientation-source.mp4", 160, 90, 0.5, "libx264")
+    oriented = tmp_path / "zero-orientation.mp4"
+    subprocess.run(  # noqa: S603 - fixed test-only FFmpeg command
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-c",
+            "copy",
+            "-bsf:v",
+            "h264_metadata=display_orientation=insert:rotate=0",
+            "-y",
+            str(oriented),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    byte_count = stage_media(settings, oriented)
+
+    with _client(settings) as client:
+        response = client.post("/v1/media/probe", json=request_body(byte_count))
+
+    assert response.json()["outcome"] == "accepted"
     _assert_consumed_and_clean(settings)
 
 

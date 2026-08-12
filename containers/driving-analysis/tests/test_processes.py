@@ -14,6 +14,7 @@ import driving_analysis_service.processes as process_module
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessTimeoutError,
+    StderrLineObserver,
     run_bounded_process,
 )
 
@@ -32,6 +33,33 @@ def test_bounded_process_captures_stdout_stderr_and_return_code() -> None:
     assert result.stdout == b"out\n"
     assert result.stderr == b"err\n"
     assert result.elapsed_ms >= 0
+
+
+def test_bounded_process_consumes_selected_bounded_stderr_lines() -> None:
+    observed: list[bytes] = []
+
+    def observe(line: bytes) -> bool:
+        observed.append(line)
+        return line == b"drop"
+
+    result = run_bounded_process(
+        PYTHON,
+        (
+            "-c",
+            "import sys; sys.stderr.write('drop\\nkeep')",
+        ),
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        stderr_line_observer=StderrLineObserver(observe, 32),
+    )
+
+    assert observed == [b"drop", b"keep"]
+    assert result.stderr == b"keep"
+
+
+def test_stderr_line_observer_requires_a_positive_bound() -> None:
+    with pytest.raises(ValueError, match="positive byte bound"):
+        StderrLineObserver(lambda _line: True, 0)
 
 
 @pytest.mark.parametrize(
@@ -94,6 +122,21 @@ def test_bounded_process_enforces_combined_output_limit() -> None:
         )
 
 
+@pytest.mark.parametrize("suffix", ["", "\n"])
+def test_bounded_process_enforces_observed_line_limit(suffix: str) -> None:
+    with pytest.raises(ProcessOutputLimitError):
+        run_bounded_process(
+            PYTHON,
+            (
+                "-c",
+                f"import sys; sys.stderr.write('x' * 33 + {suffix!r})",
+            ),
+            timeout_seconds=5,
+            max_output_bytes=1024,
+            stderr_line_observer=StderrLineObserver(lambda _line: True, 32),
+        )
+
+
 def test_read_process_output_requires_both_pipes() -> None:
     process = subprocess.Popen(  # noqa: S603
         (str(PYTHON), "-c", "pass"),
@@ -107,10 +150,8 @@ def test_read_process_output_requires_both_pipes() -> None:
     with pytest.raises(RuntimeError):
         process_module._read_process_output(
             process,
-            bytearray(),
-            bytearray(),
+            process_module._ProcessCapture(1, None),
             deadline=time.monotonic() + 1,
-            max_output_bytes=1,
         )
 
 
@@ -126,10 +167,8 @@ def test_read_process_output_rejects_an_expired_deadline() -> None:
     with pytest.raises(ProcessTimeoutError):
         process_module._read_process_output(
             process,
-            bytearray(),
-            bytearray(),
+            process_module._ProcessCapture(1, None),
             deadline=time.monotonic() - 1,
-            max_output_bytes=1,
         )
 
 
@@ -235,10 +274,8 @@ def test_read_process_output_rejects_an_unexpected_output_target(
     with pytest.raises(TypeError, match="Unexpected process output target"):
         process_module._read_process_output(
             process,
-            bytearray(),
-            bytearray(),
+            process_module._ProcessCapture(1024, None),
             deadline=time.monotonic() + 1,
-            max_output_bytes=1024,
         )
 
     assert process.stdout is not None
