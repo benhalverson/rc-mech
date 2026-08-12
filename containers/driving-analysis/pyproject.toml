@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rc-mech-driving-analysis"
+version = "0.1.0"
+description = "Internal Race-video media validation service"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi==0.141.1",
+  "pydantic==2.13.4",
+  "uvicorn==0.52.1",
+]
+
+[dependency-groups]
+dev = [
+  "httpx2==2.10.0",
+  "mypy==1.19.1",
+  "pytest==9.0.2",
+  "pytest-cov==7.0.0",
+  "ruff==0.15.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/driving_analysis_service"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+  "--cov=driving_analysis_service",
+  "--cov-branch",
+  "--cov-report=term-missing:skip-covered",
+  "--cov-fail-under=100",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+omit = ["src/driving_analysis_service/quality.py"]
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "COM812",
+  "D",
+  "ISC001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "S101", "SLF001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
