@@ -42,6 +42,22 @@ _Avoid_: Workspace, inventory
 A radio-controlled vehicle tracked as a distinct thing in a user's garage.
 _Avoid_: Build, chassis
 
+**Subject car**:
+The visual identity of one existing Garage Car selected within a Race window whose observed driving belongs to a Driving analysis. Other cars visible in the Track view are context and are not analyzed by that analysis.
+_Avoid_: Target, tracked object, all cars
+
+**Tracking gap**:
+A span of a Race window where the Subject car's identity is uncertain. Motion across the gap is not interpolated, and any overlapping corner traversal is ineligible to become a Corner pass.
+_Avoid_: Missing frames, estimated path, tracking failure
+
+**Re-identification**:
+The User's confirmation of the Subject car by drawing a new box at the first clear frame after a Tracking gap. Tracking resumes from that frame without filling the gap.
+_Avoid_: Automatic reacquisition, identity guess, interpolation
+
+**Subject observation**:
+A timestamped, confidence-bearing observation of the Subject car's visible position in the Track view. It is model evidence used by deterministic gate timing, not a Corner pass or ranking by itself.
+_Avoid_: Prediction, racing line, score
+
 **Component**:
 A physical part installed on, or kept for, a car, such as a motor, battery, servo, or tire.
 _Avoid_: Part, equipment
@@ -101,8 +117,56 @@ The front and rear spring and shock-oil choices recorded together in a setup.
 _Avoid_: Suspension package, shock configuration
 
 **Drive session**:
-A recorded occasion on which a user drives a car, including the conditions and usage that matter for maintenance.
+A recorded occasion on which a User drives a Car, including the conditions and usage that matter for maintenance. A Driving analysis belongs to the Drive session whose race it interprets.
 _Avoid_: Run, outing, trip
+
+**Race recording**:
+A private video file uploaded by a User for one Drive session and stored in Driving-analysis media storage. It may contain footage before or after the race of interest, so the User still selects the exact Race window to analyze.
+_Avoid_: External video, live feed, public video
+
+**Race window**:
+The User-selected start and end timestamps for one race within a Race recording. Only this interval belongs to its Driving analysis.
+_Avoid_: Full video, trim, processing range
+
+**Track view**:
+The bottom two-thirds of a supported Race recording, where the authoritative static-camera view remains fixed for the entire Race window. Other camera panels, overlays, and broadcast graphics are outside the Driving analysis.
+_Avoid_: User-selected crop, camera feed, composite view
+
+**Track layout**:
+The physical arrangement and direction of the racing surface visible in the Track view. One venue may use different Track layouts over time.
+_Avoid_: Track, venue, camera view
+
+**Track map**:
+A reusable description of one Track layout aligned to the supported source's invariant Track view and identifying each corner with an entry Corner gate, exit Corner gate, and Corner view. Only the Owner creates, edits, and approves Track maps; Users select an approved map for a Driving analysis.
+_Avoid_: Auto-detected layout, racing line, venue map
+
+**Track-map version**:
+An immutable approved revision of a Track map. Each Driving analysis remains pinned to the version used to measure its Corner passes, even after the Owner approves later revisions.
+_Avoid_: Current map, mutable map, overwritten map
+
+**Corner gate**:
+A directed line drawn across the racing surface on a Track map. Each corner has one entry gate and one exit gate, and the Subject car's center crossing them bounds a Corner pass.
+_Avoid_: Checkpoint, corner boundary, timing loop
+
+**Corner view**:
+The fixed rectangular region of a Track map used to spatially crop every Corner clip for one corner. It shows the corner at a useful review scale while excluding unrelated parts of the Track view.
+_Avoid_: Camera view, dynamic crop, tracking box
+
+**Corner pass**:
+One fully observed traversal of a defined corner by the Subject car, measured from its center crossing the entry Corner gate to its center crossing the exit Corner gate. The car's identity must remain unambiguous throughout the gate-to-gate interval.
+_Avoid_: Lap, clip, turn
+
+**Corner clip**:
+A short reviewable video excerpt spatially cropped to the corner's Corner view, beginning 0.5 seconds before the entry-gate crossing and ending 0.5 seconds after the exit-gate crossing. Every eligible Corner pass has a clip; the clip for the Best corner pass is labeled rather than kept as the only evidence.
+_Avoid_: Highlight reel, source video, best-only clip
+
+**Best corner pass**:
+The eligible Corner pass with the shortest observed traversal time for one corner during a Driving analysis. A traversal with uncertain Subject-car identity is ineligible; the Best corner pass is measured evidence, not a generated or hypothetical racing line.
+_Avoid_: Ideal line, predicted line, recommended line
+
+**Driving analysis**:
+A post-drive interpretation attached to one Drive session and its Subject car, using one Race window to divide the track into meaningful sections and compare that car's corner entry and exit from evidence visible in that interval.
+_Avoid_: Racing line prediction, autonomous coaching, video processing job
 
 **Voice note**:
 A spoken trackside observation captured for a car and optionally associated with a drive session. It retains the original private audio and its transcript until the user deletes the note.
