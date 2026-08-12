@@ -154,11 +154,12 @@ const roundTrip = async (value: string, cookie: string) => {
 	return envelope.result;
 };
 
-const waitForEvidence = async (correlationId: string): Promise<string[]> => {
+const waitForWorkerEvidence = async (
+	correlationId: string,
+): Promise<string[]> => {
 	const expectedEvents = [
 		'issue230.worker.request',
 		'issue230.container.ready',
-		'issue230.python.received',
 		'issue230.worker.response',
 	] as const;
 	for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -174,28 +175,49 @@ const waitForEvidence = async (correlationId: string): Promise<string[]> => {
 		await delay(250);
 	}
 	throw new Error(
-		`Missing correlation evidence for ${correlationId}\n${workerLog}`,
+		`Missing Worker correlation evidence for ${correlationId}\n${workerLog}`,
 	);
 };
 
-const readSidecarDiagnostics = async (): Promise<string> => {
-	try {
-		const containerIds = (
-			await command('docker', [
-				'ps',
-				'-aq',
-				'--filter',
-				'name=workerd-rc-mech-local-Issue230PythonContainer',
-			])
-		)
-			.trim()
+const readContainerLogs = async (): Promise<string> => {
+	const containerIds = (
+		await command('docker', [
+			'ps',
+			'-aq',
+			'--filter',
+			'name=workerd-rc-mech-local-Issue230PythonContainer',
+		])
+	)
+		.trim()
+		.split('\n')
+		.filter(Boolean);
+	const logs: string[] = [];
+	for (const containerId of containerIds) {
+		logs.push(await command('docker', ['logs', containerId]));
+	}
+	return logs.join('\n');
+};
+
+const waitForPythonEvidence = async (
+	correlationId: string,
+): Promise<string> => {
+	for (let attempt = 0; attempt < 40; attempt += 1) {
+		const matchingLine = (await readContainerLogs())
 			.split('\n')
-			.filter(Boolean);
-		const diagnostics: string[] = [];
-		for (const containerId of containerIds) {
-			diagnostics.push(await command('docker', ['logs', containerId]));
-		}
-		return diagnostics.join('\n');
+			.find(
+				(line) =>
+					line.includes('issue230.python.received') &&
+					line.includes(correlationId),
+			);
+		if (matchingLine) return matchingLine;
+		await delay(250);
+	}
+	throw new Error(`Missing Python correlation evidence for ${correlationId}`);
+};
+
+const readContainerDiagnostics = async (): Promise<string> => {
+	try {
+		return await readContainerLogs();
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
 	}
@@ -278,10 +300,14 @@ try {
 		throw new Error('magic-link verification did not return a session cookie');
 
 	const cold = await roundTrip('trackside', cookie);
+	const pythonEvidence = await waitForPythonEvidence(cold.correlationId);
 	const warm = await roundTrip('pitlane', cookie);
 	await delay(12_000);
 	const afterSleep = await roundTrip('racebench', cookie);
-	const evidence = await waitForEvidence(cold.correlationId);
+	const evidence = [
+		...(await waitForWorkerEvidence(cold.correlationId)),
+		pythonEvidence,
+	];
 
 	const proof: {
 		verdict: 'PASS';
@@ -300,14 +326,14 @@ try {
 	};
 	console.log(JSON.stringify(proof, null, 2));
 } catch (error) {
-	const sidecarDiagnostics = await readSidecarDiagnostics();
+	const containerDiagnostics = await readContainerDiagnostics();
 	console.error(
 		JSON.stringify(
 			{
 				verdict: 'FAIL',
 				error: error instanceof Error ? error.message : String(error),
 				workerLog,
-				sidecarDiagnostics,
+				containerDiagnostics,
 			},
 			null,
 			2,
