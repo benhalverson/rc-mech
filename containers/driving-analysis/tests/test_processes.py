@@ -112,6 +112,51 @@ def test_bounded_process_enforces_timeout_after_output_pipes_close() -> None:
     assert time.monotonic() - started_at < 0.4
 
 
+def test_bounded_process_timeout_terminates_process_group_descendants(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "survived.txt"
+    script = (
+        "import os,time; from pathlib import Path; "
+        "pid=os.fork(); pid and os._exit(0); "
+        f"time.sleep(0.2); Path({str(marker)!r}).write_text('survived')"
+    )
+
+    with pytest.raises(ProcessTimeoutError):
+        run_bounded_process(
+            PYTHON,
+            ("-c", script),
+            timeout_seconds=0.05,
+            max_output_bytes=1024,
+        )
+
+    time.sleep(0.3)
+    assert not marker.exists()
+
+
+def test_bounded_process_output_limit_terminates_process_group_descendants(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "survived.txt"
+    script = (
+        "import os,time; from pathlib import Path; "
+        "pid=os.fork(); pid and os._exit(0); "
+        "time.sleep(0.05); os.write(2,b'x'*100); time.sleep(0.15); "
+        f"Path({str(marker)!r}).write_text('survived')"
+    )
+
+    with pytest.raises(ProcessOutputLimitError):
+        run_bounded_process(
+            PYTHON,
+            ("-c", script),
+            timeout_seconds=1,
+            max_output_bytes=32,
+        )
+
+    time.sleep(0.3)
+    assert not marker.exists()
+
+
 def test_bounded_process_enforces_combined_output_limit() -> None:
     with pytest.raises(ProcessOutputLimitError):
         run_bounded_process(

@@ -101,8 +101,7 @@ class _ProcessScope:
         exception: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        if self.process.poll() is None:
-            _terminate_process_group(self.process)
+        _terminate_process_group(self.process)
         if self.process.stdout is not None:
             self.process.stdout.close()
         if self.process.stderr is not None:
@@ -195,10 +194,9 @@ def _read_process_output(
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         return
-    process.wait()
+    if process.poll() is None:
+        process.wait()
