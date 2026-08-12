@@ -38,7 +38,8 @@ upstream fix.
 
 The proof is deliberately platform-neutral and never changes iptables. On an
 affected WSL2 host, start the explicitly named TypeScript workaround first and
-then run the proof in a second terminal while the workaround waits:
+then run the proof in a second terminal while the workaround watches for every
+sidecar Wrangler creates or replaces:
 
 ```console
 # Terminal 1
@@ -47,6 +48,11 @@ pnpm prototype:230:wsl-workaround
 # Terminal 2
 pnpm prototype:230:prove
 ```
+
+Leave terminal 1 running until terminal 2 reports its verdict, then stop the
+workaround with Ctrl+C. A patched-sidecar message is progress, not completion;
+the watcher remains active because Wrangler can replace that sidecar during
+startup or recovery.
 
 The workaround discovers the matching Cloudflare proxy sidecar and Docker's
 actual bridge CIDR. Inside that sidecar only, it idempotently ensures this is

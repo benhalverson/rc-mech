@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-	findCloudflareProxySidecarId,
+	findCloudflareProxySidecarIds,
 	hasSocketDivertRule,
 	isBridgeBypassFirst,
 	isWsl2KernelRelease,
@@ -12,7 +12,7 @@ import {
 } from '../prototypes/issue-230/workerd-6793';
 
 const sidecarNameFilter = 'name=workerd-rc-mech-local-Issue230PythonContainer';
-const waitTimeoutMs = 120_000;
+const pollIntervalMs = 100;
 
 type CommandResult = {
 	readonly exitCode: number;
@@ -53,8 +53,8 @@ const requireSuccess = async (executable: string, args: readonly string[]) => {
 	return result.output;
 };
 
-const findSidecar = async (): Promise<string | undefined> =>
-	findCloudflareProxySidecarId(
+const findSidecars = async (): Promise<readonly string[]> =>
+	findCloudflareProxySidecarIds(
 		await requireSuccess('docker', [
 			'ps',
 			'--filter',
@@ -63,18 +63,6 @@ const findSidecar = async (): Promise<string | undefined> =>
 			'{{.ID}} {{.Names}}',
 		]),
 	);
-
-const waitForSidecar = async (): Promise<string> => {
-	const deadline = Date.now() + waitTimeoutMs;
-	while (Date.now() < deadline) {
-		const sidecarId = await findSidecar();
-		if (sidecarId) return sidecarId;
-		await delay(100);
-	}
-	throw new Error(
-		'Cloudflare issue #230 proxy sidecar did not appear within 120 seconds. Start `pnpm prototype:230:prove` in another terminal while this command is waiting.',
-	);
-};
 
 const kernelRelease = await readFile('/proc/sys/kernel/osrelease', 'utf8');
 if (process.platform !== 'linux' || !isWsl2KernelRelease(kernelRelease))
@@ -92,11 +80,21 @@ const subnet = parseDockerBridgeSubnet(
 );
 
 console.error(
-	'Waiting for the issue #230 Cloudflare proxy sidecar. Start the proof in another terminal.',
+	'Watching issue #230 Cloudflare proxy sidecars. Start the proof in another terminal; leave this running until the proof finishes, then press Ctrl+C.',
 );
-const sidecarId = await waitForSidecar();
-const readRules = () =>
-	requireSuccess('docker', [
+
+let stopping = false;
+process.once('SIGINT', () => {
+	stopping = true;
+});
+process.once('SIGTERM', () => {
+	stopping = true;
+});
+
+const verifiedSidecars = new Set<string>();
+
+const readRules = async (sidecarId: string): Promise<string | undefined> => {
+	const result = await run('docker', [
 		'exec',
 		sidecarId,
 		'iptables',
@@ -105,52 +103,65 @@ const readRules = () =>
 		'-S',
 		'PREROUTING',
 	]);
+	return result.exitCode === 0 ? result.output : undefined;
+};
 
-const existingRules = await readRules();
-let status: 'already-present' | 'inserted' = 'already-present';
-if (!isBridgeBypassFirst(existingRules, subnet)) {
-	await requireSuccess('docker', [
-		'exec',
-		sidecarId,
-		'iptables',
-		'-t',
-		'mangle',
-		'-I',
-		'PREROUTING',
-		'1',
-		'-s',
-		subnet,
-		'-d',
-		subnet,
-		'-j',
-		'RETURN',
-	]);
-	status = 'inserted';
+const reconcileSidecar = async (sidecarId: string): Promise<void> => {
+	const existingRules = await readRules(sidecarId);
+	if (existingRules === undefined) return;
+	let status: 'already-present' | 'inserted' = 'already-present';
+	if (!isBridgeBypassFirst(existingRules, subnet)) {
+		const insertion = await run('docker', [
+			'exec',
+			sidecarId,
+			'iptables',
+			'-t',
+			'mangle',
+			'-I',
+			'PREROUTING',
+			'1',
+			'-s',
+			subnet,
+			'-d',
+			subnet,
+			'-j',
+			'RETURN',
+		]);
+		if (insertion.exitCode !== 0) return;
+		status = 'inserted';
+	}
+
+	const verifiedRules = await readRules(sidecarId);
+	if (
+		verifiedRules === undefined ||
+		!isBridgeBypassFirst(verifiedRules, subnet) ||
+		!hasSocketDivertRule(verifiedRules)
+	)
+		return;
+	if (verifiedSidecars.has(sidecarId) && status === 'already-present') return;
+	verifiedSidecars.add(sidecarId);
+	console.log(
+		JSON.stringify(
+			{
+				event: 'workerd-6793.sidecar-patched',
+				status,
+				sidecarId,
+				subnet,
+				rule: `iptables -t mangle -I PREROUTING 1 -s ${subnet} -d ${subnet} -j RETURN`,
+				socketDivertPresent: true,
+				temporaryUntil: WORKERD_6794_PULL_REQUEST_URL,
+				upstreamIssue: WORKERD_6793_ISSUE_URL,
+			},
+			null,
+			2,
+		),
+	);
+};
+
+while (!stopping) {
+	for (const sidecarId of await findSidecars())
+		await reconcileSidecar(sidecarId);
+	await delay(pollIntervalMs);
 }
 
-const verifiedRules = await readRules();
-if (!isBridgeBypassFirst(verifiedRules, subnet))
-	throw new Error(
-		'The Docker bridge bypass was not the first PREROUTING rule.',
-	);
-if (!hasSocketDivertRule(verifiedRules))
-	throw new Error(
-		"Cloudflare's socket DIVERT rule is absent; this does not match workerd issue #6793.",
-	);
-
-console.log(
-	JSON.stringify(
-		{
-			verdict: 'PASS',
-			status,
-			sidecarId,
-			subnet,
-			rule: `iptables -t mangle -I PREROUTING 1 -s ${subnet} -d ${subnet} -j RETURN`,
-			socketDivertPresent: true,
-			temporaryUntil: WORKERD_6794_PULL_REQUEST_URL,
-			upstreamIssue: WORKERD_6793_ISSUE_URL,
-		},
-		null,
-		2,
-	),
-);
+console.error('Stopped watching Cloudflare proxy sidecars.');

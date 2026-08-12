@@ -32,27 +32,23 @@ export const parseDockerBridgeSubnet = (output: string): string => {
 	return subnet;
 };
 
-export const findCloudflareProxySidecarId = (
+export const findCloudflareProxySidecarIds = (
 	containerList: string,
-): string | undefined => {
-	const matches = containerList
+): readonly string[] => {
+	const containerIds = containerList
 		.trim()
 		.split('\n')
 		.filter(Boolean)
 		.map((line) => line.trim().split(/\s+/, 2))
-		.filter((fields) => fields[1]?.endsWith(sidecarNameSuffix));
-	if (matches.length > 1)
-		throw new Error(
-			`Found multiple running issue #230 Cloudflare proxy sidecars: ${matches
-				.map((fields) => fields[1])
-				.join(', ')}`,
-		);
-	const containerId = matches[0]?.[0];
-	if (containerId !== undefined && !containerIdPattern.test(containerId))
-		throw new Error(
-			`Docker returned an invalid sidecar container ID: ${containerId}`,
-		);
-	return containerId;
+		.filter((fields) => fields[1]?.endsWith(sidecarNameSuffix))
+		.map((fields) => fields[0]);
+	for (const containerId of containerIds) {
+		if (containerId === undefined || !containerIdPattern.test(containerId))
+			throw new Error(
+				`Docker returned an invalid sidecar container ID: ${containerId}`,
+			);
+	}
+	return containerIds;
 };
 
 export const bridgeBypassRule = (subnet: string): string =>
@@ -95,7 +91,7 @@ export const diagnoseWorkerd6793 = ({
 		message:
 			'Known Cloudflare local Container sidecar TPROXY rule-ordering failure on WSL2.',
 		nextStep:
-			'Start `pnpm prototype:230:wsl-workaround` in another terminal, then rerun `pnpm prototype:230:prove` while the workaround waits for the sidecar.',
+			'Start `pnpm prototype:230:wsl-workaround` in another terminal, leave it watching, then rerun `pnpm prototype:230:prove` and stop the watcher only after the proof finishes.',
 		issue: WORKERD_6793_ISSUE_URL,
 		pullRequest: WORKERD_6794_PULL_REQUEST_URL,
 	} as const;

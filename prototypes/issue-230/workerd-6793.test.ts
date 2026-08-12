@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
 	bridgeBypassRule,
 	diagnoseWorkerd6793,
-	findCloudflareProxySidecarId,
+	findCloudflareProxySidecarIds,
 	hasSocketDivertRule,
 	isBridgeBypassFirst,
 	isWsl2KernelRelease,
@@ -31,23 +31,18 @@ describe('workerd issue #6793 support', () => {
 		}
 	});
 
-	test('finds exactly one matching Cloudflare proxy sidecar', () => {
+	test('finds every matching Cloudflare proxy sidecar during replacement', () => {
 		expect(
-			findCloudflareProxySidecarId(
-				'0123456789ab workerd-rc-mech-local-Issue230PythonContainer-id-proxy\n',
+			findCloudflareProxySidecarIds(
+				'0123456789ab workerd-rc-mech-local-Issue230PythonContainer-old-proxy\nabcdefabcdef workerd-rc-mech-local-Issue230PythonContainer-new-proxy\n',
 			),
-		).toBe('0123456789ab');
+		).toEqual(['0123456789ab', 'abcdefabcdef']);
 		expect(
-			findCloudflareProxySidecarId(
+			findCloudflareProxySidecarIds(
 				'0123456789ab workerd-rc-mech-local-Issue230PythonContainer-id\n',
 			),
-		).toBeUndefined();
-		expect(() =>
-			findCloudflareProxySidecarId(
-				'0123456789ab first-proxy\nabcdefabcdef second-proxy\n',
-			),
-		).toThrow('Found multiple running issue #230 Cloudflare proxy sidecars');
-		expect(() => findCloudflareProxySidecarId('not-an-id one-proxy')).toThrow(
+		).toEqual([]);
+		expect(() => findCloudflareProxySidecarIds('not-an-id one-proxy')).toThrow(
 			'Docker returned an invalid sidecar container ID',
 		);
 	});
