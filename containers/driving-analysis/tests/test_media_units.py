@@ -454,6 +454,24 @@ def test_claim_maps_non_missing_os_errors_and_cleanup_is_idempotent(
     assert list(settings.work_root.iterdir()) == []
 
 
+def test_claim_cleans_up_when_its_processing_deadline_expires(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    (settings.staging_root / f"{STAGED_MEDIA_ID}.media").write_bytes(b"x")
+    request = MediaValidationRequest.model_validate(request_body(1))
+    claim = media_module.claim_staged_media(request, settings)
+
+    def expire_copy(*_args: object, **_kwargs: object) -> None:
+        raise ProcessTimeoutError
+
+    monkeypatch.setattr(media_module, "_copy_and_consume", expire_copy)
+    with pytest.raises(ProcessTimeoutError):
+        claim.__enter__()
+    assert list(settings.work_root.iterdir()) == []
+
+
 def test_claim_cleans_staging_when_work_directory_creation_fails(
     settings: ServiceSettings,
     monkeypatch: pytest.MonkeyPatch,

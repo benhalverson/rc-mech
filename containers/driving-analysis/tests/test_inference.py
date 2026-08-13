@@ -255,6 +255,7 @@ def test_ollama_readiness_covers_vision_and_connection_failures(
             _self: OllamaInferenceProvider,
             path: str,
             _payload: object,
+            **_kwargs: object,
         ) -> dict[str, object]:
             return (
                 {"capabilities": capabilities}
@@ -271,6 +272,7 @@ def test_ollama_readiness_covers_vision_and_connection_failures(
         readiness_response(["vision"], installed),
     )
     assert provider.ready() is True
+    assert provider.ready(timeout_seconds=1.0) is True
 
     monkeypatch.setattr(
         OllamaInferenceProvider,
@@ -306,10 +308,22 @@ def test_ollama_readiness_covers_vision_and_connection_failures(
         _self: OllamaInferenceProvider,
         _path: str,
         _payload: dict[str, object],
+        **_kwargs: object,
     ) -> dict[str, object]:
         raise InferenceUnavailableError
 
     monkeypatch.setattr(OllamaInferenceProvider, "_request", unavailable)
+    assert provider.ready() is False
+
+    def malformed(
+        _self: OllamaInferenceProvider,
+        _path: str,
+        _payload: dict[str, object],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        raise InferenceFailureError
+
+    monkeypatch.setattr(OllamaInferenceProvider, "_request", malformed)
     assert provider.ready() is False
 
 

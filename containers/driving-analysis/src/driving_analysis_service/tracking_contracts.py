@@ -66,7 +66,7 @@ class PrepareStageRequest(StrictContract):
     prepared_media_id: UuidV4String = Field(alias="preparedMediaId")
     input: StagedMediaInput
     window: RaceWindow
-    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
+    pipeline_version: Literal["subject-tracking.v1"] = Field(alias="pipelineVersion")
 
 
 class PreparedMediaArtifact(StrictContract):
@@ -98,7 +98,10 @@ class PreparedMediaArtifact(StrictContract):
     )
     average_frame_rate: RationalValue = Field(alias="averageFrameRate")
     ffmpeg_version: SafeFreeFormIdentifier = Field(alias="ffmpegVersion")
-    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
+    pipeline_version: Literal["subject-tracking.v1"] = Field(alias="pipelineVersion")
+    preparation_input_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="preparationInputDigest")
     preparation_configuration_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="preparationConfigurationDigest")
@@ -137,7 +140,10 @@ class PreparedFrameManifest(StrictContract):
     height: int = Field(gt=0, strict=True)
     average_frame_rate: RationalValue = Field(alias="averageFrameRate")
     ffmpeg_version: SafeFreeFormIdentifier = Field(alias="ffmpegVersion")
-    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
+    pipeline_version: Literal["subject-tracking.v1"] = Field(alias="pipelineVersion")
+    preparation_input_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="preparationInputDigest")
     preparation_configuration_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="preparationConfigurationDigest")
@@ -185,6 +191,7 @@ type ProcessingErrorCode = Literal[
     "INFERENCE_FAILED",
     "RESOURCE_LIMIT",
     "ARTIFACT_CONFLICT",
+    "SERVICE_BUSY",
 ]
 type ProcessingErrorStage = Literal[
     "request",
@@ -192,6 +199,7 @@ type ProcessingErrorStage = Literal[
     "initialize",
     "track",
     "serialize",
+    "admission",
 ]
 type ProcessingErrorMessage = Literal[
     "processing request rejected",
@@ -202,6 +210,7 @@ type ProcessingErrorMessage = Literal[
     "inference failed safely",
     "processing resource limit exceeded",
     "immutable artifact already exists",
+    "processing service is busy",
 ]
 
 PROCESSING_ERROR_FIELDS: dict[
@@ -228,6 +237,7 @@ PROCESSING_ERROR_FIELDS: dict[
         "serialize",
         "immutable artifact already exists",
     ),
+    "SERVICE_BUSY": ("admission", "processing service is busy"),
 }
 
 
@@ -274,6 +284,8 @@ class TrackStageRequest(StrictContract):
 
     @model_validator(mode="after")
     def seed_is_inside_prepared_window(self) -> "TrackStageRequest":
+        if self.case_id != self.prepared.case_id:
+            raise ValueError("Prepared media must belong to the Tracking case")
         if not (
             self.prepared.window.start_timestamp_ms
             <= self.subject_seed.timestamp_ms
@@ -343,6 +355,9 @@ class ObservationSegmentArtifact(StrictContract):
     preparation_configuration_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="preparationConfigurationDigest")
+    tracking_input_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="trackingInputDigest")
 
     @model_validator(mode="after")
     def completion_matches_gap(self) -> "ObservationSegmentArtifact":

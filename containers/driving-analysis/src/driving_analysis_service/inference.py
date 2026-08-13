@@ -4,6 +4,7 @@
 import base64
 import hashlib
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -52,7 +53,7 @@ class InferenceProvider(Protocol):
     @property
     def provenance(self) -> SubjectProvenance: ...
 
-    def ready(self) -> bool: ...
+    def ready(self, *, timeout_seconds: float | None = None) -> bool: ...
 
     def infer(
         self,
@@ -105,7 +106,8 @@ class DisabledInferenceProvider:
     def provenance(self) -> SubjectProvenance:
         raise InferenceUnavailableError
 
-    def ready(self) -> bool:
+    def ready(self, *, timeout_seconds: float | None = None) -> bool:
+        del timeout_seconds
         return False
 
     def infer(
@@ -129,7 +131,8 @@ class FakeInferenceProvider:
     def provenance(self) -> SubjectProvenance:
         return self._provenance
 
-    def ready(self) -> bool:
+    def ready(self, *, timeout_seconds: float | None = None) -> bool:
+        del timeout_seconds
         return True
 
     def infer(
@@ -193,7 +196,8 @@ class FixtureInferenceProvider:
     def provenance(self) -> SubjectProvenance:
         return self._provenance
 
-    def ready(self) -> bool:
+    def ready(self, *, timeout_seconds: float | None = None) -> bool:
+        del timeout_seconds
         return True
 
     def infer(
@@ -265,6 +269,12 @@ def _open_local_http(
     return cast("_HttpResponse", opener.open(request, timeout=timeout))
 
 
+def _readiness_timeout(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    return max(deadline - time.monotonic(), 1e-9)
+
+
 @dataclass(frozen=True)
 class OllamaInferenceProvider:
     settings: InferenceSettings
@@ -280,14 +290,22 @@ class OllamaInferenceProvider:
     def provenance(self) -> SubjectProvenance:
         return self._provenance
 
-    def ready(self) -> bool:
+    def ready(self, *, timeout_seconds: float | None = None) -> bool:
+        deadline = (
+            None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        )
         try:
             model_details = self._request(
                 "/api/show",
                 {"model": self.settings.model, "verbose": False},
+                timeout_seconds=_readiness_timeout(deadline),
             )
-            installed_models = self._request("/api/tags", None)
-        except InferenceUnavailableError:
+            installed_models = self._request(
+                "/api/tags",
+                None,
+                timeout_seconds=_readiness_timeout(deadline),
+            )
+        except (InferenceFailureError, InferenceUnavailableError):
             return False
         capabilities = model_details.get("capabilities")
         models = installed_models.get("models")

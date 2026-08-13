@@ -35,6 +35,10 @@ from driving_analysis_service.processes import (
     StderrLineObserver,
     run_bounded_process,
 )
+from driving_analysis_service.processing_deadline import (
+    check_deadline,
+    remaining_seconds,
+)
 from driving_analysis_service.safe_logging import log_stage
 from driving_analysis_service.settings import ServiceSettings
 
@@ -225,6 +229,7 @@ class _ClaimedMedia:
         self,
         request: _StagedMediaRequest,
         settings: ServiceSettings,
+        deadline: float | None = None,
     ) -> None:
         self.source_path = settings.staging_root / (
             f"{request.input.staged_media_id}.media"
@@ -232,11 +237,13 @@ class _ClaimedMedia:
         self.staging_root = settings.staging_root
         self.work_root = settings.work_root
         self.max_bytes = settings.limits.max_bytes
+        self.deadline = deadline
         self.claim_directory: Path | None = None
         self.request_directory: Path | None = None
         self.claimed_path: Path | None = None
 
     def __enter__(self) -> Path:
+        check_deadline(self.deadline)
         try:
             self.claim_directory = Path(
                 tempfile.mkdtemp(prefix="claim-", dir=self.staging_root)
@@ -259,6 +266,7 @@ class _ClaimedMedia:
                 staged_claim_path,
                 self.claimed_path,
                 max_bytes=self.max_bytes,
+                deadline=self.deadline,
             )
         except FileNotFoundError as error:
             self._cleanup()
@@ -268,6 +276,9 @@ class _ClaimedMedia:
                 safe_message="The staged media is unavailable.",
             ) from error
         except MediaValidationError:
+            self._cleanup()
+            raise
+        except ProcessTimeoutError:
             self._cleanup()
             raise
         except OSError as error:
@@ -297,8 +308,10 @@ class _ClaimedMedia:
 def claim_staged_media(
     request: _StagedMediaRequest,
     settings: ServiceSettings,
+    *,
+    deadline: float | None = None,
 ) -> _ClaimedMedia:
-    return _ClaimedMedia(request, settings)
+    return _ClaimedMedia(request, settings, deadline)
 
 
 def inspect_and_probe_media(
@@ -306,14 +319,16 @@ def inspect_and_probe_media(
     *,
     expected_byte_count: int,
     settings: ServiceSettings,
+    deadline: float | None = None,
 ) -> tuple[int, str, ProbeMetadata]:
     byte_count, checksum = _inspect_file(
         path,
         expected_byte_count=expected_byte_count,
         max_bytes=settings.limits.max_bytes,
+        deadline=deadline,
     )
     _reject_indirect_media(path)
-    return byte_count, checksum, _probe_media(path, settings)
+    return byte_count, checksum, _probe_media(path, settings, deadline=deadline)
 
 
 def _discard_staged_input(path: Path) -> None:
@@ -325,7 +340,13 @@ def _discard_staged_input(path: Path) -> None:
         path.rmdir()
 
 
-def _copy_and_consume(source: Path, destination: Path, *, max_bytes: int) -> None:
+def _copy_and_consume(
+    source: Path,
+    destination: Path,
+    *,
+    max_bytes: int,
+    deadline: float | None = None,
+) -> None:
     source_descriptor = _open_staged_source(source)
     destination_descriptor: int | None = None
     source_identity = os.fstat(source_descriptor)
@@ -343,6 +364,7 @@ def _copy_and_consume(source: Path, destination: Path, *, max_bytes: int) -> Non
         )
         copied_bytes = 0
         while chunk := os.read(source_descriptor, 1024 * 1024):
+            check_deadline(deadline)
             copied_bytes += len(chunk)
             if copied_bytes > max_bytes:
                 raise MediaValidationError(
@@ -403,6 +425,7 @@ def _inspect_file(
     *,
     expected_byte_count: int,
     max_bytes: int,
+    deadline: float | None = None,
 ) -> tuple[int, str]:
     byte_count = path.stat().st_size
     if byte_count > max_bytes:
@@ -427,6 +450,7 @@ def _inspect_file(
     counted_bytes = 0
     with path.open("rb") as media_file:
         while chunk := media_file.read(1024 * 1024):
+            check_deadline(deadline)
             counted_bytes += len(chunk)
             if counted_bytes > max_bytes:
                 raise MediaValidationError(
@@ -455,7 +479,12 @@ def _reject_indirect_media(path: Path) -> None:
         )
 
 
-def _probe_media(path: Path, settings: ServiceSettings) -> ProbeMetadata:
+def _probe_media(
+    path: Path,
+    settings: ServiceSettings,
+    *,
+    deadline: float | None = None,
+) -> ProbeMetadata:
     arguments = (
         "-hide_banner",
         "-v",
@@ -473,7 +502,11 @@ def _probe_media(path: Path, settings: ServiceSettings) -> ProbeMetadata:
             result = run_bounded_process(
                 settings.ffprobe_executable,
                 arguments,
-                timeout_seconds=settings.limits.process_timeout_seconds,
+                timeout_seconds=(
+                    settings.limits.process_timeout_seconds
+                    if deadline is None
+                    else remaining_seconds(deadline)
+                ),
                 max_output_bytes=settings.limits.max_process_output_bytes,
                 streams=ProcessStreams(standard_input=media_file),
             )

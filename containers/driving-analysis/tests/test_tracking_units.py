@@ -30,6 +30,8 @@ from driving_analysis_service.processes import (
     ProcessResult,
     ProcessTimeoutError,
 )
+from driving_analysis_service.processing_deadline import remaining_seconds
+from driving_analysis_service.processing_errors import InvalidProcessingRequestError
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
 from driving_analysis_service.tracking import SubjectTrackingService
 from driving_analysis_service.tracking_artifacts import (
@@ -118,6 +120,7 @@ def _dummy_prepared() -> PrepareStageAccepted:
                 "averageFrameRate": {"numerator": 10, "denominator": 1},
                 "ffmpegVersion": "4.4",
                 "pipelineVersion": "subject-tracking.v1",
+                "preparationInputDigest": SHA,
                 "preparationConfigurationDigest": SHA,
             },
         }
@@ -224,7 +227,7 @@ def test_preparation_service_maps_every_safe_error(
     code: ProcessingErrorCode,
 ) -> None:
     service = RaceWindowPreparationService(settings)
-    monkeypatch.setattr(service, "_prepare", lambda _request: _raise(error))
+    monkeypatch.setattr(service, "_prepare", lambda _request, _deadline: _raise(error))
     response = service.prepare(_prepare_request())
     assert isinstance(response, ProcessingRejected)
     assert response.error.code == code
@@ -252,7 +255,7 @@ def test_tracking_service_maps_every_safe_error(
         settings,
         FakeInferenceProvider(_provenance()),
     )
-    monkeypatch.setattr(service, "_track", lambda _request: _raise(error))
+    monkeypatch.setattr(service, "_track", lambda _request, _deadline: _raise(error))
     response = service.track(_track_request())
     assert isinstance(response, ProcessingRejected)
     assert response.error.code == code
@@ -276,9 +279,11 @@ def test_processing_stages_reject_work_when_admission_is_full(
     finally:
         admission.release()
     assert isinstance(prepared, ProcessingRejected)
-    assert prepared.error.code == "RESOURCE_LIMIT"
+    assert prepared.error.code == "SERVICE_BUSY"
+    assert prepared.error.stage == "admission"
     assert isinstance(tracked, ProcessingRejected)
-    assert tracked.error.code == "RESOURCE_LIMIT"
+    assert tracked.error.code == "SERVICE_BUSY"
+    assert tracked.error.stage == "admission"
 
 
 def _provenance() -> SubjectProvenance:
@@ -328,7 +333,7 @@ def test_preparation_rejects_frame_loss_and_an_oversized_window(
         settings,
         limits=replace(settings.limits, max_race_window_ms=1),
     )
-    with pytest.raises(ProcessOutputLimitError):
+    with pytest.raises(InvalidProcessingRequestError):
         preparation_module._validate_window(
             RaceWindow(startTimestampMs=100, endTimestampMs=400),
             _metadata(),
@@ -346,6 +351,23 @@ def test_completed_preparation_rejects_changed_input_and_tampering(
     )
     assert isinstance(changed, ProcessingRejected)
     assert changed.error.code == "ARTIFACT_CONFLICT"
+
+    changed_staged_input = _prepare_request(
+        prepared.prepared.source_byte_count
+    ).model_copy(
+        update={
+            "input": _prepare_request(
+                prepared.prepared.source_byte_count
+            ).input.model_copy(
+                update={"staged_media_id": "00d6dc08-7f28-4d85-9c3d-994614a982c4"}
+            )
+        }
+    )
+    changed_identity = RaceWindowPreparationService(configured).prepare(
+        changed_staged_input
+    )
+    assert isinstance(changed_identity, ProcessingRejected)
+    assert changed_identity.error.code == "ARTIFACT_CONFLICT"
 
     media_path = artifact_module.bundle_member_path(
         configured,
@@ -373,12 +395,13 @@ def test_preparation_recovers_a_concurrent_identical_publication(
     def recover(
         request: PrepareStageRequest,
         current_settings: ServiceSettings,
+        deadline: float,
     ) -> object:
         nonlocal calls
         calls += 1
         if calls == 1:
             return None
-        return original_recover(request, current_settings)
+        return original_recover(request, current_settings, deadline)
 
     monkeypatch.setattr(preparation_module, "_recover_completed_preparation", recover)
     stage_media(configured, accepted_video)
@@ -405,23 +428,74 @@ def test_tracking_recovers_a_concurrent_identical_publication(
     def recover(
         current_request: TrackStageRequest,
         current_settings: ServiceSettings,
+        tracking_input_digest: str,
+        deadline: float,
     ) -> object:
         nonlocal calls
         calls += 1
         if calls == 1:
             return None
-        return original_recover(current_request, current_settings)
+        return original_recover(
+            current_request,
+            current_settings,
+            tracking_input_digest,
+            deadline,
+        )
 
     monkeypatch.setattr(tracking_module, "_recover_completed_segment", recover)
     duplicate = SubjectTrackingService(configured, provider).track(request)
     assert isinstance(duplicate, TrackStageAccepted)
     assert duplicate.segment == first.segment
 
+    class OfflineProvider(FakeInferenceProvider):
+        def ready(self, *, timeout_seconds: float | None = None) -> bool:
+            del timeout_seconds
+            return False
+
+    offline_retry = SubjectTrackingService(
+        configured,
+        OfflineProvider(_provenance()),
+    ).track(request)
+    assert isinstance(offline_retry, TrackStageAccepted)
+    assert offline_retry.segment == first.segment
+    new_offline_request = request.model_copy(
+        update={"observation_segment_id": "4979546f-4377-48de-b904-17fcf96da347"}
+    )
+    unavailable = SubjectTrackingService(
+        configured,
+        OfflineProvider(_provenance()),
+    ).track(new_offline_request)
+    assert isinstance(unavailable, ProcessingRejected)
+    assert unavailable.error.code == "INFERENCE_UNAVAILABLE"
+
+    changed_seed = request.model_copy(
+        update={
+            "subject_seed": request.subject_seed.model_copy(
+                update={"identity": "different-subject"}
+            )
+        }
+    )
+    seed_conflict = SubjectTrackingService(configured, provider).track(changed_seed)
+    assert isinstance(seed_conflict, ProcessingRejected)
+    assert seed_conflict.error.code == "ARTIFACT_CONFLICT"
+
+    changed_provenance = _provenance().model_copy(
+        update={"identity_confidence_threshold": 0.9}
+    )
+    provider_conflict = SubjectTrackingService(
+        configured,
+        FakeInferenceProvider(changed_provenance),
+    ).track(request)
+    assert isinstance(provider_conflict, ProcessingRejected)
+    assert provider_conflict.error.code == "ARTIFACT_CONFLICT"
+
     conflict_calls = 0
 
     def recover_conflict(
         _current_request: TrackStageRequest,
         _current_settings: ServiceSettings,
+        _tracking_input_digest: str,
+        _deadline: float,
     ) -> object:
         nonlocal conflict_calls
         conflict_calls += 1
@@ -452,6 +526,8 @@ def test_incomplete_tracking_bundle_has_no_completed_segment(
         tracking_module._recover_completed_segment(
             _track_request(),
             settings,
+            SHA,
+            time.monotonic() + 10,
         )
         is None
     )
@@ -464,6 +540,28 @@ def test_tracking_rejects_unready_provider(settings: ServiceSettings) -> None:
     ).track(_track_request())
     assert isinstance(response, ProcessingRejected)
     assert response.error.code == "INFERENCE_UNAVAILABLE"
+
+
+def test_tracking_deadline_includes_provider_readiness(
+    settings: ServiceSettings,
+) -> None:
+    class SlowReadyProvider(FakeInferenceProvider):
+        def ready(self, *, timeout_seconds: float | None = None) -> bool:
+            assert timeout_seconds is not None
+            time.sleep(0.01)
+            return True
+
+    limited = replace(
+        settings,
+        limits=replace(settings.limits, process_timeout_seconds=0.001),
+    )
+    response = SubjectTrackingService(
+        limited,
+        SlowReadyProvider(_provenance()),
+    ).track(_track_request())
+    assert isinstance(response, ProcessingRejected)
+    assert response.error.code == "PROCESS_TIMEOUT"
+    assert response.error.stage == "track"
 
 
 def test_tracking_rejects_frame_manifest_count_mismatch(
@@ -510,12 +608,14 @@ def test_tracking_rejects_oversized_window_and_provider_digest_drift(
         FakeInferenceProvider(_provenance()),
     ).track(_track_request(prepared))
     assert isinstance(oversized, ProcessingRejected)
-    assert oversized.error.code == "RESOURCE_LIMIT"
+    assert oversized.error.code == "INVALID_REQUEST"
+    assert oversized.error.stage == "request"
 
     checks: list[bool] = []
 
     class DriftingProvider(FakeInferenceProvider):
-        def ready(self) -> bool:
+        def ready(self, *, timeout_seconds: float | None = None) -> bool:
+            del timeout_seconds
             checks.append(True)
             return len(checks) == 1
 
@@ -577,6 +677,7 @@ def _dummy_manifest() -> PreparedFrameManifest:
             "averageFrameRate": {"numerator": 10, "denominator": 1},
             "ffmpegVersion": "4.4",
             "pipelineVersion": "subject-tracking.v1",
+            "preparationInputDigest": SHA,
             "preparationConfigurationDigest": SHA,
             "frames": [
                 {"preparedFrameIndex": 0, "frameIndex": 1, "timestampMs": 100},
@@ -810,7 +911,11 @@ def test_frame_manifest_rejects_corrupt_content(
     path = _manifest_path(settings)
     path.write_bytes(raw)
     with pytest.raises(InvalidArtifactError):
-        tracking_module._load_frame_manifest(request, settings)
+        tracking_module._load_frame_manifest(
+            request,
+            settings,
+            time.monotonic() + 10,
+        )
 
 
 def _request_with_manifest_bytes(raw: bytes) -> TrackStageRequest:
@@ -841,7 +946,11 @@ def test_frame_manifest_rejects_decompression_limit_and_descriptor_mismatch(
     path.write_bytes(raw)
     monkeypatch.setattr(tracking_module, "MAX_MANIFEST_BYTES", 5)
     with pytest.raises(InvalidArtifactError):
-        tracking_module._load_frame_manifest(request, settings)
+        tracking_module._load_frame_manifest(
+            request,
+            settings,
+            time.monotonic() + 10,
+        )
 
     monkeypatch.setattr(tracking_module, "MAX_MANIFEST_BYTES", 64 * 1024 * 1024)
     manifest_raw = gzip.compress(
@@ -856,7 +965,11 @@ def test_frame_manifest_rejects_decompression_limit_and_descriptor_mismatch(
     )
     path.write_bytes(manifest_raw)
     with pytest.raises(InvalidArtifactError):
-        tracking_module._load_frame_manifest(mismatch, settings)
+        tracking_module._load_frame_manifest(
+            mismatch,
+            settings,
+            time.monotonic() + 10,
+        )
 
 
 def test_seed_lookup_can_skip_frames_and_reject_missing_seed() -> None:
@@ -1040,9 +1153,9 @@ def test_bundle_and_completion_validation_defenses(
 def test_stage_deadlines_reject_expired_work() -> None:
     expired = time.monotonic() - 1
     with pytest.raises(ProcessTimeoutError):
-        preparation_module._remaining_seconds(expired)
+        remaining_seconds(expired)
     with pytest.raises(ProcessTimeoutError):
-        tracking_module._remaining_seconds(expired)
+        remaining_seconds(expired)
 
 
 def test_write_all_rejects_zero_byte_write(

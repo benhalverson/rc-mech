@@ -9,6 +9,7 @@ from driving_analysis_service.tracking_contracts import (
     ObservationSegmentArtifact,
     PreparedFrameManifest,
     PrepareStageAccepted,
+    PrepareStageRequest,
     ProcessingRejected,
     ProcessingSafeError,
     ProviderCandidate,
@@ -38,6 +39,7 @@ def _manifest_payload() -> dict[str, object]:
         "averageFrameRate": {"numerator": 10, "denominator": 1},
         "ffmpegVersion": "4.4",
         "pipelineVersion": "subject-tracking.v1",
+        "preparationInputDigest": SHA,
         "preparationConfigurationDigest": SHA,
         "frames": [
             {"preparedFrameIndex": 0, "frameIndex": 1, "timestampMs": 100},
@@ -65,6 +67,7 @@ def _prepared_payload() -> dict[str, object]:
         "averageFrameRate": manifest["averageFrameRate"],
         "ffmpegVersion": manifest["ffmpegVersion"],
         "pipelineVersion": manifest["pipelineVersion"],
+        "preparationInputDigest": SHA,
         "preparationConfigurationDigest": SHA,
     }
 
@@ -98,6 +101,7 @@ def _segment_payload(*, completed: bool, gap: object) -> dict[str, object]:
         "sourceChecksumSha256": SHA,
         "preparedChecksumSha256": SHA,
         "preparationConfigurationDigest": SHA,
+        "trackingInputDigest": SHA,
     }
 
 
@@ -106,6 +110,21 @@ def test_race_window_and_fixed_track_view_reject_alternatives() -> None:
         RaceWindow(startTimestampMs=100, endTimestampMs=100)
     with pytest.raises(ValidationError, match="fixed bottom two-thirds"):
         FixedTrackView(x=0.0, y=0.0, width=1.0, height=1.0)
+
+
+def test_prepare_request_rejects_a_caller_claimed_pipeline_version() -> None:
+    with pytest.raises(ValidationError, match=r"subject-tracking\.v1"):
+        PrepareStageRequest.model_validate(
+            {
+                "contractVersion": "subject-tracking.v1",
+                "correlationId": UUID,
+                "caseId": "fixture-race",
+                "preparedMediaId": UUID,
+                "input": {"stagedMediaId": UUID, "expectedByteCount": 100},
+                "window": {"startTimestampMs": 100, "endTimestampMs": 400},
+                "pipelineVersion": "caller-claimed-version",
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -182,7 +201,7 @@ def test_track_seed_must_be_inside_window() -> None:
             {
                 "contractVersion": "subject-tracking.v1",
                 "correlationId": "c3d1ea64-7c62-4a1e-a41f-43fe101b7f41",
-                "caseId": "case",
+                "caseId": "fixture-race",
                 "observationSegmentId": UUID,
                 "prepared": _prepared_payload(),
                 "subjectSeed": {
@@ -193,6 +212,22 @@ def test_track_seed_must_be_inside_window() -> None:
                 },
             }
         )
+
+    mismatched_case = {
+        "contractVersion": "subject-tracking.v1",
+        "correlationId": "c3d1ea64-7c62-4a1e-a41f-43fe101b7f41",
+        "caseId": "different-case",
+        "observationSegmentId": UUID,
+        "prepared": _prepared_payload(),
+        "subjectSeed": {
+            "timestampMs": 100,
+            "frameIndex": 1,
+            "identity": "subject",
+            "box": {"x": 0.1, "y": 0.2, "width": 0.2, "height": 0.2},
+        },
+    }
+    with pytest.raises(ValidationError, match="Tracking case"):
+        TrackStageRequest.model_validate(mismatched_case)
 
 
 @pytest.mark.parametrize(

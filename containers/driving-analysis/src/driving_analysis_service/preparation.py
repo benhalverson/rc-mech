@@ -5,7 +5,6 @@
 import hashlib
 import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from fractions import Fraction
@@ -26,7 +25,16 @@ from driving_analysis_service.processes import (
     ProcessTimeoutError,
     run_bounded_process,
 )
-from driving_analysis_service.processing_errors import preparation_error_code, rejected
+from driving_analysis_service.processing_deadline import (
+    check_deadline,
+    remaining_seconds,
+    start_deadline,
+)
+from driving_analysis_service.processing_errors import (
+    InvalidProcessingRequestError,
+    preparation_error_code,
+    rejected,
+)
 from driving_analysis_service.settings import ServiceSettings
 from driving_analysis_service.tracking_artifacts import (
     FRAME_MANIFEST_SUFFIX,
@@ -84,9 +92,10 @@ class RaceWindowPreparationService:
 
     def prepare(self, request: PrepareStageRequest) -> PrepareStageResponse:
         if not self._admission.acquire(blocking=False):
-            return rejected(request, "RESOURCE_LIMIT")
+            return rejected(request, "SERVICE_BUSY")
+        deadline = start_deadline(self.settings.limits.process_timeout_seconds)
         try:
-            return self._prepare(request)
+            return self._prepare(request, deadline)
         except (
             ArtifactConflictError,
             InvalidArtifactError,
@@ -101,18 +110,28 @@ class RaceWindowPreparationService:
         finally:
             self._admission.release()
 
-    def _prepare(self, request: PrepareStageRequest) -> PrepareStageAccepted:
+    def _prepare(
+        self,
+        request: PrepareStageRequest,
+        deadline: float,
+    ) -> PrepareStageAccepted:
+        check_deadline(deadline)
         self.settings.prepare_roots()
-        recovered = _recover_completed_preparation(request, self.settings)
+        recovered = _recover_completed_preparation(request, self.settings, deadline)
         if recovered is not None:
+            check_deadline(deadline)
             return _accepted(request, recovered)
 
-        deadline = time.monotonic() + self.settings.limits.process_timeout_seconds
-        with claim_staged_media(request, self.settings) as source_path:
+        with claim_staged_media(
+            request,
+            self.settings,
+            deadline=deadline,
+        ) as source_path:
             source_bytes, source_checksum, metadata = inspect_and_probe_media(
                 source_path,
                 expected_byte_count=request.input.expected_byte_count,
                 settings=self.settings,
+                deadline=deadline,
             )
             _validate_window(request.window, metadata, self.settings)
             frames = _source_frames(
@@ -147,10 +166,13 @@ class RaceWindowPreparationService:
                     pipeline_version=request.pipeline_version,
                     ffmpeg_version=ffmpeg_version,
                 )
+                preparation_input_digest = _preparation_input_digest(request)
                 media_checksum, media_bytes = file_digest(
                     prepared_path,
                     max_bytes=self.settings.limits.max_bytes,
+                    deadline=deadline,
                 )
+                check_deadline(deadline)
                 width = metadata.width
                 height = metadata.height * 2 // 3
                 manifest = PreparedFrameManifest(
@@ -168,6 +190,7 @@ class RaceWindowPreparationService:
                     averageFrameRate=_rational(metadata.average_frame_rate),
                     ffmpegVersion=ffmpeg_version,
                     pipelineVersion=request.pipeline_version,
+                    preparationInputDigest=preparation_input_digest,
                     preparationConfigurationDigest=preparation_digest,
                     frames=frames,
                 )
@@ -191,6 +214,7 @@ class RaceWindowPreparationService:
                     averageFrameRate=_rational(metadata.average_frame_rate),
                     ffmpegVersion=ffmpeg_version,
                     pipelineVersion=request.pipeline_version,
+                    preparationInputDigest=preparation_input_digest,
                     preparationConfigurationDigest=preparation_digest,
                 )
                 names = _prepared_member_names(request.prepared_media_id)
@@ -207,21 +231,26 @@ class RaceWindowPreparationService:
                             prepared.model_dump(mode="json", by_alias=True)
                         ),
                     },
+                    deadline=deadline,
                 )
+                check_deadline(deadline)
                 if not created:
                     recovered = _recover_completed_preparation(
                         request,
                         self.settings,
+                        deadline,
                     )
                     if recovered != prepared:
                         raise ArtifactConflictError
                     prepared = recovered
+        check_deadline(deadline)
         return _accepted(request, prepared)
 
 
 def _recover_completed_preparation(
     request: PrepareStageRequest,
     settings: ServiceSettings,
+    deadline: float,
 ) -> PreparedMediaArtifact | None:
     bundle = bundle_path(settings, request.prepared_media_id, PREPARED_BUNDLE_SUFFIX)
     if not bundle.exists():
@@ -235,6 +264,7 @@ def _recover_completed_preparation(
         ),
         PreparedMediaArtifact,
         max_bytes=MAX_COMPLETION_BYTES,
+        deadline=deadline,
     )
     if completed is None:
         return None
@@ -244,6 +274,7 @@ def _recover_completed_preparation(
         or completed.source_byte_count != request.input.expected_byte_count
         or completed.window != request.window
         or completed.pipeline_version != request.pipeline_version
+        or completed.preparation_input_digest != _preparation_input_digest(request)
     ):
         raise ArtifactConflictError
     media_checksum, media_bytes = file_digest(
@@ -254,6 +285,7 @@ def _recover_completed_preparation(
             PREPARED_MEDIA_SUFFIX,
         ),
         max_bytes=settings.limits.max_bytes,
+        deadline=deadline,
     )
     if (media_bytes, media_checksum) != (
         completed.byte_count,
@@ -270,6 +302,7 @@ def _recover_completed_preparation(
         expected_bytes=completed.frame_manifest_byte_count,
         expected_checksum=completed.frame_manifest_checksum_sha256,
         max_bytes=MAX_COMPRESSED_MANIFEST_BYTES,
+        deadline=deadline,
     )
     return completed
 
@@ -306,7 +339,7 @@ def _validate_window(
         window.end_timestamp_ms - window.start_timestamp_ms
         > settings.limits.max_race_window_ms
     ):
-        raise ProcessOutputLimitError
+        raise InvalidProcessingRequestError
 
 
 def _source_frames(
@@ -338,7 +371,7 @@ def _source_frames(
             "csv=p=0",
             str(source),
         ),
-        timeout_seconds=_remaining_seconds(deadline),
+        timeout_seconds=remaining_seconds(deadline),
         max_output_bytes=output_limit,
     )
     if result.return_code != 0:
@@ -433,7 +466,7 @@ def _prepare_track_view(  # noqa: PLR0913 - bounded process inputs stay explicit
             "+faststart",
             str(destination),
         ),
-        timeout_seconds=_remaining_seconds(deadline),
+        timeout_seconds=remaining_seconds(deadline),
         max_output_bytes=settings.limits.max_process_output_bytes,
     )
     if result.return_code != 0 or not destination.is_file():
@@ -464,7 +497,7 @@ def _prepared_frame_count(
             "csv=p=0",
             str(prepared_path),
         ),
-        timeout_seconds=_remaining_seconds(deadline),
+        timeout_seconds=remaining_seconds(deadline),
         max_output_bytes=settings.limits.max_process_output_bytes,
     )
     if result.return_code != 0:
@@ -491,7 +524,7 @@ def _ffmpeg_version(settings: ServiceSettings, deadline: float) -> str:
     result = run_bounded_process(
         settings.ffmpeg_executable,
         ("-version",),
-        timeout_seconds=_remaining_seconds(deadline),
+        timeout_seconds=remaining_seconds(deadline),
         max_output_bytes=FFMPEG_VERSION_OUTPUT_BYTES,
     )
     if result.return_code != 0:
@@ -523,8 +556,13 @@ def _preparation_digest(
     return hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
-def _remaining_seconds(deadline: float) -> float:
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise ProcessTimeoutError
-    return remaining
+def _preparation_input_digest(request: PrepareStageRequest) -> str:
+    payload = {
+        "caseId": request.case_id,
+        "contractVersion": request.contract_version,
+        "input": request.input.model_dump(mode="json", by_alias=True),
+        "pipelineVersion": request.pipeline_version,
+        "preparedMediaId": request.prepared_media_id,
+        "window": request.window.model_dump(mode="json", by_alias=True),
+    }
+    return hashlib.sha256(canonical_json(payload)).hexdigest()

@@ -23,23 +23,31 @@ from driving_analysis_service.tracking_contracts import (
 )
 
 
+class InvalidProcessingRequestError(ValueError):
+    """A processing request exceeds a service-owned request boundary."""
+
+
 def preparation_error_code(error: Exception) -> ProcessingErrorCode:
-    if isinstance(error, ArtifactConflictError):
-        return "ARTIFACT_CONFLICT"
-    if isinstance(error, ProcessTimeoutError):
-        return "PROCESS_TIMEOUT"
     if isinstance(error, MediaValidationError):
         if error.code in {"STAGED_MEDIA_NOT_FOUND", "STAGED_MEDIA_MISMATCH"}:
             return "MEDIA_UNAVAILABLE"
         if error.code == "PROCESS_TIMEOUT":
             return "PROCESS_TIMEOUT"
-    if isinstance(error, ProcessOutputLimitError):
-        return "RESOURCE_LIMIT"
-    return "PREPARATION_FAILED"
+    mappings: tuple[tuple[type[Exception], ProcessingErrorCode], ...] = (
+        (InvalidProcessingRequestError, "INVALID_REQUEST"),
+        (ArtifactConflictError, "ARTIFACT_CONFLICT"),
+        (ProcessTimeoutError, "PROCESS_TIMEOUT"),
+        (ProcessOutputLimitError, "RESOURCE_LIMIT"),
+    )
+    return next(
+        (code for error_type, code in mappings if isinstance(error, error_type)),
+        "PREPARATION_FAILED",
+    )
 
 
 def tracking_error_code(error: Exception) -> ProcessingErrorCode:
     mappings: tuple[tuple[type[Exception], ProcessingErrorCode], ...] = (
+        (InvalidProcessingRequestError, "INVALID_REQUEST"),
         (ArtifactConflictError, "ARTIFACT_CONFLICT"),
         (InferenceUnavailableError, "INFERENCE_UNAVAILABLE"),
         (InvalidArtifactError, "MEDIA_UNAVAILABLE"),

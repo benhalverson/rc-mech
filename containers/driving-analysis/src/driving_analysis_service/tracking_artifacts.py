@@ -18,6 +18,7 @@ from typing import BinaryIO
 from pydantic import BaseModel, ValidationError
 
 from driving_analysis_service.processes import ProcessOutputLimitError
+from driving_analysis_service.processing_deadline import check_deadline
 from driving_analysis_service.settings import ServiceSettings
 
 PREPARED_MEDIA_SUFFIX = ".track.mp4"
@@ -92,15 +93,19 @@ def bundle_member_path(
 def publish_bundle(
     destination: Path,
     members: Mapping[str, Path | bytes],
+    *,
+    deadline: float | None = None,
 ) -> bool:
     pending = Path(tempfile.mkdtemp(prefix=".pending-bundle-", dir=destination.parent))
     try:
         for name, value in members.items():
+            check_deadline(deadline)
             target = pending / name
             if isinstance(value, Path):
-                publish_file(value, target)
+                publish_file(value, target, deadline=deadline)
             else:
-                publish_bytes(value, target)
+                publish_bytes(value, target, deadline=deadline)
+        check_deadline(deadline)
         directory_descriptor = os.open(pending, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory_descriptor)
@@ -120,16 +125,26 @@ def publish_bundle(
             pending.rmdir()
 
 
-def publish_file(source: Path, destination: Path) -> PublishedArtifact:
+def publish_file(
+    source: Path,
+    destination: Path,
+    *,
+    deadline: float | None = None,
+) -> PublishedArtifact:
     with source.open("rb") as source_file:
-        return _publish_stream(source_file, destination)
+        return _publish_stream(source_file, destination, deadline=deadline)
 
 
-def publish_bytes(value: bytes, destination: Path) -> PublishedArtifact:
+def publish_bytes(
+    value: bytes,
+    destination: Path,
+    *,
+    deadline: float | None = None,
+) -> PublishedArtifact:
     with tempfile.TemporaryFile() as stream:
         stream.write(value)
         stream.seek(0)
-        return _publish_stream(stream, destination)
+        return _publish_stream(stream, destination, deadline=deadline)
 
 
 def read_completion[ContractT: BaseModel](
@@ -137,10 +152,11 @@ def read_completion[ContractT: BaseModel](
     contract_type: type[ContractT],
     *,
     max_bytes: int,
+    deadline: float | None = None,
 ) -> ContractT | None:
     if not source.exists():
         return None
-    raw = read_artifact(source, max_bytes=max_bytes)
+    raw = read_artifact(source, max_bytes=max_bytes, deadline=deadline)
     try:
         return contract_type.model_validate_json(raw)
     except ValidationError as error:
@@ -155,16 +171,19 @@ def read_compressed_contract[ContractT: BaseModel](  # noqa: PLR0913
     expected_checksum: str,
     max_compressed_bytes: int,
     max_decompressed_bytes: int,
+    deadline: float | None = None,
 ) -> ContractT:
     raw = read_verified_artifact(
         source,
         expected_bytes=expected_bytes,
         expected_checksum=expected_checksum,
         max_bytes=max_compressed_bytes,
+        deadline=deadline,
     )
     try:
         with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
             decompressed = compressed.read(max_decompressed_bytes + 1)
+            check_deadline(deadline)
     except (EOFError, gzip.BadGzipFile) as error:
         raise InvalidArtifactError from error
     if len(decompressed) > max_decompressed_bytes:
@@ -184,11 +203,17 @@ def remove_published(artifact: PublishedArtifact) -> None:
         artifact.path.unlink()
 
 
-def read_artifact(source: Path, *, max_bytes: int) -> bytes:
+def read_artifact(
+    source: Path,
+    *,
+    max_bytes: int,
+    deadline: float | None = None,
+) -> bytes:
     descriptor = _open_artifact(source)
     result = bytearray()
     try:
         while chunk := os.read(descriptor, 1024 * 1024):
+            check_deadline(deadline)
             result.extend(chunk)
             if len(result) > max_bytes:
                 raise InvalidArtifactError
@@ -203,8 +228,9 @@ def read_verified_artifact(
     expected_bytes: int,
     expected_checksum: str,
     max_bytes: int,
+    deadline: float | None = None,
 ) -> bytes:
-    result = read_artifact(source, max_bytes=max_bytes)
+    result = read_artifact(source, max_bytes=max_bytes, deadline=deadline)
     if (
         len(result) != expected_bytes
         or hashlib.sha256(result).hexdigest() != expected_checksum
@@ -213,13 +239,14 @@ def read_verified_artifact(
     return result
 
 
-def copy_verified_artifact(
+def copy_verified_artifact(  # noqa: PLR0913
     source: Path,
     destination: Path,
     *,
     expected_bytes: int,
     expected_checksum: str,
     max_bytes: int,
+    deadline: float | None = None,
 ) -> None:
     descriptor = _open_artifact(source)
     destination_descriptor = os.open(
@@ -231,6 +258,7 @@ def copy_verified_artifact(
     byte_count = 0
     try:
         while chunk := os.read(descriptor, 1024 * 1024):
+            check_deadline(deadline)
             byte_count += len(chunk)
             if byte_count > max_bytes:
                 raise InvalidArtifactError
@@ -245,11 +273,17 @@ def copy_verified_artifact(
         raise InvalidArtifactError
 
 
-def file_digest(path: Path, *, max_bytes: int) -> tuple[str, int]:
+def file_digest(
+    path: Path,
+    *,
+    max_bytes: int,
+    deadline: float | None = None,
+) -> tuple[str, int]:
     digest = hashlib.sha256()
     byte_count = 0
     with path.open("rb") as source:
         while chunk := source.read(1024 * 1024):
+            check_deadline(deadline)
             byte_count += len(chunk)
             if byte_count > max_bytes:
                 raise ProcessOutputLimitError
@@ -259,7 +293,12 @@ def file_digest(path: Path, *, max_bytes: int) -> tuple[str, int]:
     return digest.hexdigest(), byte_count
 
 
-def _publish_stream(stream: BinaryIO, destination: Path) -> PublishedArtifact:
+def _publish_stream(
+    stream: BinaryIO,
+    destination: Path,
+    *,
+    deadline: float | None = None,
+) -> PublishedArtifact:
     descriptor, pending_name = tempfile.mkstemp(
         prefix=".pending-", dir=destination.parent
     )
@@ -269,6 +308,7 @@ def _publish_stream(stream: BinaryIO, destination: Path) -> PublishedArtifact:
     try:
         os.fchmod(descriptor, 0o600)
         while chunk := stream.read(1024 * 1024):
+            check_deadline(deadline)
             byte_count += len(chunk)
             digest.update(chunk)
             _write_all(descriptor, chunk)

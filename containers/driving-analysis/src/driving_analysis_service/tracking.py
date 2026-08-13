@@ -3,7 +3,6 @@
 import hashlib
 import tempfile
 import threading
-import time
 from pathlib import Path
 from typing import Literal
 
@@ -14,6 +13,7 @@ from driving_analysis_service.contracts import (
     NormalizedBox,
     NormalizedPoint,
     SubjectObservation,
+    SubjectProvenance,
 )
 from driving_analysis_service.inference import (
     InferenceFailureError,
@@ -26,7 +26,16 @@ from driving_analysis_service.processes import (
     ProcessTimeoutError,
     run_bounded_process,
 )
-from driving_analysis_service.processing_errors import rejected, tracking_error_code
+from driving_analysis_service.processing_deadline import (
+    check_deadline,
+    remaining_seconds,
+    start_deadline,
+)
+from driving_analysis_service.processing_errors import (
+    InvalidProcessingRequestError,
+    rejected,
+    tracking_error_code,
+)
 from driving_analysis_service.settings import ServiceSettings
 from driving_analysis_service.tracking_artifacts import (
     FRAME_MANIFEST_SUFFIX,
@@ -81,9 +90,10 @@ class SubjectTrackingService:
 
     def track(self, request: TrackStageRequest) -> TrackStageResponse:
         if not self._admission.acquire(blocking=False):
-            return rejected(request, "RESOURCE_LIMIT")
+            return rejected(request, "SERVICE_BUSY")
+        deadline = start_deadline(self.settings.limits.process_timeout_seconds)
         try:
-            return self._track(request)
+            return self._track(request, deadline)
         except (
             ArtifactConflictError,
             InferenceFailureError,
@@ -99,21 +109,36 @@ class SubjectTrackingService:
         finally:
             self._admission.release()
 
-    def _track(self, request: TrackStageRequest) -> TrackStageAccepted:
+    def _track(
+        self,
+        request: TrackStageRequest,
+        deadline: float,
+    ) -> TrackStageAccepted:
+        check_deadline(deadline)
         self.settings.prepare_roots()
-        completed = _recover_completed_segment(request, self.settings)
-        if completed is not None:
-            return _accepted(request, completed)
         if (
             request.prepared.window.end_timestamp_ms
             - request.prepared.window.start_timestamp_ms
             > self.settings.limits.max_race_window_ms
         ):
-            raise ProcessOutputLimitError
-        if not self.provider.ready():
-            raise InferenceUnavailableError
+            raise InvalidProcessingRequestError
         provenance = self.provider.provenance
-        deadline = time.monotonic() + self.settings.limits.process_timeout_seconds
+        tracking_input_digest = _tracking_input_digest(request, provenance)
+        completed = _recover_completed_segment(
+            request,
+            self.settings,
+            tracking_input_digest,
+            deadline,
+        )
+        if completed is not None:
+            check_deadline(deadline)
+            return _accepted(request, completed)
+        provider_ready = self.provider.ready(
+            timeout_seconds=remaining_seconds(deadline)
+        )
+        check_deadline(deadline)
+        if not provider_ready:
+            raise InferenceUnavailableError
         with tempfile.TemporaryDirectory(
             prefix="track-", dir=self.settings.work_root
         ) as raw_work_directory:
@@ -130,8 +155,11 @@ class SubjectTrackingService:
                 expected_bytes=request.prepared.byte_count,
                 expected_checksum=request.prepared.checksum_sha256,
                 max_bytes=self.settings.limits.max_bytes,
+                deadline=deadline,
             )
-            manifest = _load_frame_manifest(request, self.settings)
+            check_deadline(deadline)
+            manifest = _load_frame_manifest(request, self.settings, deadline)
+            check_deadline(deadline)
             frame_directory = work_directory / "frames"
             frame_directory.mkdir(mode=0o700)
             frame_paths = _extract_frames(
@@ -150,7 +178,11 @@ class SubjectTrackingService:
                 seed_position,
                 deadline,
             )
-            if not self.provider.ready() or self.provider.provenance != provenance:
+            provider_still_ready = self.provider.ready(
+                timeout_seconds=remaining_seconds(deadline)
+            )
+            check_deadline(deadline)
+            if not provider_still_ready or self.provider.provenance != provenance:
                 raise InferenceUnavailableError
 
         envelope = SubjectObservationSegment(
@@ -162,6 +194,7 @@ class SubjectTrackingService:
             provenance=provenance,
         )
         segment_bytes = compressed_contract(envelope)
+        check_deadline(deadline)
         if len(segment_bytes) > MAX_OBSERVATION_SEGMENT_BYTES:
             raise ProcessOutputLimitError
         segment_checksum = hashlib.sha256(segment_bytes).hexdigest()
@@ -170,7 +203,9 @@ class SubjectTrackingService:
             envelope,
             len(segment_bytes),
             segment_checksum,
+            tracking_input_digest,
         )
+        check_deadline(deadline)
         created = publish_bundle(
             bundle_path(
                 self.settings,
@@ -185,12 +220,20 @@ class SubjectTrackingService:
                     canonical_json(segment.model_dump(mode="json", by_alias=True))
                 ),
             },
+            deadline=deadline,
         )
+        check_deadline(deadline)
         if not created:
-            recovered = _recover_completed_segment(request, self.settings)
+            recovered = _recover_completed_segment(
+                request,
+                self.settings,
+                tracking_input_digest,
+                deadline,
+            )
             if recovered != segment:
                 raise ArtifactConflictError
             segment = recovered
+        check_deadline(deadline)
         return _accepted(request, segment)
 
     def _observe(
@@ -221,7 +264,7 @@ class SubjectTrackingService:
                 frame=InferenceFrame(frame_path, frame_provenance),
                 seed=request.subject_seed,
                 previous_box=previous_box,
-                timeout_seconds=_remaining_seconds(deadline),
+                timeout_seconds=remaining_seconds(deadline),
             )
             box = _trusted_box(candidate, threshold)
             if box is None:
@@ -265,6 +308,8 @@ def _accepted(
 def _recover_completed_segment(
     request: TrackStageRequest,
     settings: ServiceSettings,
+    tracking_input_digest: str,
+    deadline: float,
 ) -> ObservationSegmentArtifact | None:
     bundle = bundle_path(
         settings,
@@ -282,10 +327,11 @@ def _recover_completed_segment(
         ),
         ObservationSegmentArtifact,
         max_bytes=MAX_COMPLETION_BYTES,
+        deadline=deadline,
     )
     if completed is None:
         return None
-    if not _segment_matches_request(completed, request):
+    if not _segment_matches_request(completed, request, tracking_input_digest):
         raise ArtifactConflictError
     checksum, byte_count = file_digest(
         bundle_member_path(
@@ -295,6 +341,7 @@ def _recover_completed_segment(
             OBSERVATION_SEGMENT_SUFFIX,
         ),
         max_bytes=MAX_OBSERVATION_SEGMENT_BYTES,
+        deadline=deadline,
     )
     if (byte_count, checksum) != (completed.byte_count, completed.checksum_sha256):
         raise InvalidArtifactError
@@ -306,6 +353,7 @@ def _segment_descriptor(
     envelope: SubjectObservationSegment,
     byte_count: int,
     checksum: str,
+    tracking_input_digest: str,
 ) -> ObservationSegmentArtifact:
     return ObservationSegmentArtifact(
         observationSegmentId=request.observation_segment_id,
@@ -322,12 +370,14 @@ def _segment_descriptor(
         sourceChecksumSha256=request.prepared.source_checksum_sha256,
         preparedChecksumSha256=request.prepared.checksum_sha256,
         preparationConfigurationDigest=request.prepared.preparation_configuration_digest,
+        trackingInputDigest=tracking_input_digest,
     )
 
 
 def _segment_matches_request(
     segment: ObservationSegmentArtifact,
     request: TrackStageRequest,
+    tracking_input_digest: str,
 ) -> bool:
     return (
         segment.observation_segment_id == request.observation_segment_id
@@ -337,7 +387,23 @@ def _segment_matches_request(
         and segment.prepared_checksum_sha256 == request.prepared.checksum_sha256
         and segment.preparation_configuration_digest
         == request.prepared.preparation_configuration_digest
+        and segment.tracking_input_digest == tracking_input_digest
     )
+
+
+def _tracking_input_digest(
+    request: TrackStageRequest,
+    provenance: SubjectProvenance,
+) -> str:
+    payload = {
+        "caseId": request.case_id,
+        "contractVersion": request.contract_version,
+        "observationSegmentId": request.observation_segment_id,
+        "prepared": request.prepared.model_dump(mode="json", by_alias=True),
+        "providerProvenance": provenance.model_dump(mode="json", by_alias=True),
+        "subjectSeed": request.subject_seed.model_dump(mode="json", by_alias=True),
+    }
+    return hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
 def _extract_frames(
@@ -375,7 +441,7 @@ def _extract_frames(
             "2",
             str(frame_directory / "%08d.jpg"),
         ),
-        timeout_seconds=_remaining_seconds(deadline),
+        timeout_seconds=remaining_seconds(deadline),
         max_output_bytes=settings.limits.max_process_output_bytes,
     )
     if result.return_code != 0:
@@ -389,6 +455,7 @@ def _extract_frames(
 def _load_frame_manifest(
     request: TrackStageRequest,
     settings: ServiceSettings,
+    deadline: float,
 ) -> PreparedFrameManifest:
     manifest = read_compressed_contract(
         bundle_member_path(
@@ -402,6 +469,7 @@ def _load_frame_manifest(
         expected_checksum=request.prepared.frame_manifest_checksum_sha256,
         max_compressed_bytes=MAX_COMPRESSED_MANIFEST_BYTES,
         max_decompressed_bytes=MAX_MANIFEST_BYTES,
+        deadline=deadline,
     )
     if not _manifest_matches_descriptor(manifest, request.prepared):
         raise InvalidArtifactError
@@ -427,6 +495,7 @@ def _manifest_matches_descriptor(
         and manifest.average_frame_rate == descriptor.average_frame_rate
         and manifest.ffmpeg_version == descriptor.ffmpeg_version
         and manifest.pipeline_version == descriptor.pipeline_version
+        and manifest.preparation_input_digest == descriptor.preparation_input_digest
         and manifest.preparation_configuration_digest
         == descriptor.preparation_configuration_digest
     )
@@ -466,10 +535,3 @@ def _gap_reason(
     if candidate.box is None:
         return "missing"
     return "ambiguous-identity"
-
-
-def _remaining_seconds(deadline: float) -> float:
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise ProcessTimeoutError
-    return remaining

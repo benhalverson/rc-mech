@@ -20,6 +20,7 @@
     "averageFrameRate": {"numerator": 10, "denominator": 1},
     "ffmpegVersion": "5.1.9",
     "pipelineVersion": "subject-tracking.v1",
+    "preparationInputDigest": "4444444444444444444444444444444444444444444444444444444444444444",
     "preparationConfigurationDigest": "4444444444444444444444444444444444444444444444444444444444444444"
   }
 }
