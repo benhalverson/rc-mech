@@ -5,6 +5,7 @@
   "caseId": "fixture-race",
   "prepared": {
     "preparedMediaId": "bde7ec63-86b9-4c86-a5e8-dbcf4a61f820",
+    "caseId": "fixture-race",
     "byteCount": 1000,
     "checksumSha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "frameManifestByteCount": 500,

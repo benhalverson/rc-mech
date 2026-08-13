@@ -1,6 +1,9 @@
 import gzip
 import hashlib
 import os
+import subprocess
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from fractions import Fraction
@@ -9,7 +12,9 @@ from typing import Literal
 
 import pytest
 
+import driving_analysis_service.preparation as preparation_module
 import driving_analysis_service.tracking as tracking_module
+import driving_analysis_service.tracking_artifacts as artifact_module
 from driving_analysis_service.contracts import SubjectProvenance
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.inference import (
@@ -19,19 +24,20 @@ from driving_analysis_service.inference import (
     InferenceUnavailableError,
 )
 from driving_analysis_service.media import ProbeMetadata
+from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessResult,
     ProcessTimeoutError,
 )
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
-from driving_analysis_service.tracking import (
+from driving_analysis_service.tracking import SubjectTrackingService
+from driving_analysis_service.tracking_artifacts import (
     FRAME_MANIFEST_SUFFIX,
+    PREPARED_BUNDLE_SUFFIX,
     PREPARED_MEDIA_SUFFIX,
     ArtifactConflictError,
     InvalidArtifactError,
-    RaceWindowPreparationService,
-    SubjectTrackingService,
 )
 from driving_analysis_service.tracking_contracts import (
     PreparedFrameManifest,
@@ -41,6 +47,7 @@ from driving_analysis_service.tracking_contracts import (
     ProcessingRejected,
     ProviderCandidate,
     RaceWindow,
+    TrackStageAccepted,
     TrackStageRequest,
 )
 from tests.conftest import (
@@ -91,6 +98,7 @@ def _dummy_prepared() -> PrepareStageAccepted:
             "caseId": "fixture-race",
             "prepared": {
                 "preparedMediaId": PREPARED_MEDIA_ID,
+                "caseId": "fixture-race",
                 "byteCount": 10,
                 "checksumSha256": SHA,
                 "frameManifestByteCount": 10,
@@ -205,6 +213,7 @@ def _raise(error: Exception) -> None:
             ),
             "PREPARATION_FAILED",
         ),
+        (ProcessOutputLimitError(), "RESOURCE_LIMIT"),
         (ValueError(), "PREPARATION_FAILED"),
     ],
 )
@@ -250,6 +259,28 @@ def test_tracking_service_maps_every_safe_error(
     assert response.error.stage == "track" or code != "PROCESS_TIMEOUT"
 
 
+def test_processing_stages_reject_work_when_admission_is_full(
+    settings: ServiceSettings,
+) -> None:
+    admission = threading.BoundedSemaphore(1)
+    assert admission.acquire(blocking=False)
+    try:
+        prepared = RaceWindowPreparationService(settings, admission).prepare(
+            _prepare_request()
+        )
+        tracked = SubjectTrackingService(
+            settings,
+            FakeInferenceProvider(_provenance()),
+            admission,
+        ).track(_track_request())
+    finally:
+        admission.release()
+    assert isinstance(prepared, ProcessingRejected)
+    assert prepared.error.code == "RESOURCE_LIMIT"
+    assert isinstance(tracked, ProcessingRejected)
+    assert tracked.error.code == "RESOURCE_LIMIT"
+
+
 def _provenance() -> SubjectProvenance:
     return SubjectProvenance(
         provider="fake",
@@ -268,19 +299,162 @@ def test_preparation_removes_media_when_manifest_publication_conflicts(
     accepted_video: Path,
 ) -> None:
     settings.prepare_roots()
-    manifest_path = settings.artifact_root / (
-        f"{PREPARED_MEDIA_ID}{FRAME_MANIFEST_SUFFIX}"
-    )
+    bundle = settings.artifact_root / f"{PREPARED_MEDIA_ID}{PREPARED_BUNDLE_SUFFIX}"
+    bundle.mkdir()
+    manifest_path = bundle / f"{PREPARED_MEDIA_ID}{FRAME_MANIFEST_SUFFIX}"
     manifest_path.write_bytes(b"existing")
     response = RaceWindowPreparationService(settings).prepare(
         _prepare_request(stage_media(settings, accepted_video))
     )
     assert isinstance(response, ProcessingRejected)
     assert response.error.code == "ARTIFACT_CONFLICT"
-    assert not (
-        settings.artifact_root / f"{PREPARED_MEDIA_ID}{PREPARED_MEDIA_SUFFIX}"
-    ).exists()
+    assert not (bundle / f"{PREPARED_MEDIA_ID}{PREPARED_MEDIA_SUFFIX}").exists()
     assert manifest_path.read_bytes() == b"existing"
+
+
+def test_preparation_rejects_frame_loss_and_an_oversized_window(
+    settings: ServiceSettings,
+    accepted_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preparation_module, "_prepared_frame_count", lambda *_args: 0)
+    mismatch = RaceWindowPreparationService(settings).prepare(
+        _prepare_request(stage_media(settings, accepted_video))
+    )
+    assert isinstance(mismatch, ProcessingRejected)
+    assert mismatch.error.code == "PREPARATION_FAILED"
+
+    limited = replace(
+        settings,
+        limits=replace(settings.limits, max_race_window_ms=1),
+    )
+    with pytest.raises(ProcessOutputLimitError):
+        preparation_module._validate_window(
+            RaceWindow(startTimestampMs=100, endTimestampMs=400),
+            _metadata(),
+            limited,
+        )
+
+
+def test_completed_preparation_rejects_changed_input_and_tampering(
+    settings: ServiceSettings,
+    accepted_video: Path,
+) -> None:
+    configured, prepared = _real_prepared(settings, accepted_video)
+    changed = RaceWindowPreparationService(configured).prepare(
+        _prepare_request(prepared.prepared.source_byte_count + 1)
+    )
+    assert isinstance(changed, ProcessingRejected)
+    assert changed.error.code == "ARTIFACT_CONFLICT"
+
+    media_path = artifact_module.bundle_member_path(
+        configured,
+        PREPARED_MEDIA_ID,
+        PREPARED_BUNDLE_SUFFIX,
+        PREPARED_MEDIA_SUFFIX,
+    )
+    media_path.write_bytes(b"tampered")
+    tampered = RaceWindowPreparationService(configured).prepare(
+        _prepare_request(prepared.prepared.source_byte_count)
+    )
+    assert isinstance(tampered, ProcessingRejected)
+    assert tampered.error.code == "PREPARATION_FAILED"
+
+
+def test_preparation_recovers_a_concurrent_identical_publication(
+    settings: ServiceSettings,
+    accepted_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured, prepared = _real_prepared(settings, accepted_video)
+    original_recover = preparation_module._recover_completed_preparation
+    calls = 0
+
+    def recover(
+        request: PrepareStageRequest,
+        current_settings: ServiceSettings,
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        return original_recover(request, current_settings)
+
+    monkeypatch.setattr(preparation_module, "_recover_completed_preparation", recover)
+    stage_media(configured, accepted_video)
+    duplicate = RaceWindowPreparationService(configured).prepare(
+        _prepare_request(prepared.prepared.source_byte_count)
+    )
+    assert isinstance(duplicate, PrepareStageAccepted)
+    assert duplicate.prepared == prepared.prepared
+
+
+def test_tracking_recovers_a_concurrent_identical_publication(
+    settings: ServiceSettings,
+    accepted_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured, prepared = _real_prepared(settings, accepted_video)
+    provider = FakeInferenceProvider(_provenance())
+    request = _track_request(prepared)
+    first = SubjectTrackingService(configured, provider).track(request)
+    assert isinstance(first, TrackStageAccepted)
+    original_recover = tracking_module._recover_completed_segment
+    calls = 0
+
+    def recover(
+        current_request: TrackStageRequest,
+        current_settings: ServiceSettings,
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        return original_recover(current_request, current_settings)
+
+    monkeypatch.setattr(tracking_module, "_recover_completed_segment", recover)
+    duplicate = SubjectTrackingService(configured, provider).track(request)
+    assert isinstance(duplicate, TrackStageAccepted)
+    assert duplicate.segment == first.segment
+
+    conflict_calls = 0
+
+    def recover_conflict(
+        _current_request: TrackStageRequest,
+        _current_settings: ServiceSettings,
+    ) -> object:
+        nonlocal conflict_calls
+        conflict_calls += 1
+        if conflict_calls == 1:
+            return None
+        return first.segment.model_copy(update={"checksum_sha256": "0" * 64})
+
+    monkeypatch.setattr(
+        tracking_module,
+        "_recover_completed_segment",
+        recover_conflict,
+    )
+    conflict = SubjectTrackingService(configured, provider).track(request)
+    assert isinstance(conflict, ProcessingRejected)
+    assert conflict.error.code == "ARTIFACT_CONFLICT"
+
+
+def test_incomplete_tracking_bundle_has_no_completed_segment(
+    settings: ServiceSettings,
+) -> None:
+    settings.prepare_roots()
+    artifact_module.bundle_path(
+        settings,
+        SEGMENT_ID,
+        artifact_module.OBSERVATION_BUNDLE_SUFFIX,
+    ).mkdir()
+    assert (
+        tracking_module._recover_completed_segment(
+            _track_request(),
+            settings,
+        )
+        is None
+    )
 
 
 def test_tracking_rejects_unready_provider(settings: ServiceSettings) -> None:
@@ -322,6 +496,37 @@ def test_tracking_rejects_oversized_observation_segment(
     assert response.error.code == "RESOURCE_LIMIT"
 
 
+def test_tracking_rejects_oversized_window_and_provider_digest_drift(
+    settings: ServiceSettings,
+    accepted_video: Path,
+) -> None:
+    configured, prepared = _real_prepared(settings, accepted_video)
+    limited = replace(
+        configured,
+        limits=replace(configured.limits, max_race_window_ms=1),
+    )
+    oversized = SubjectTrackingService(
+        limited,
+        FakeInferenceProvider(_provenance()),
+    ).track(_track_request(prepared))
+    assert isinstance(oversized, ProcessingRejected)
+    assert oversized.error.code == "RESOURCE_LIMIT"
+
+    checks: list[bool] = []
+
+    class DriftingProvider(FakeInferenceProvider):
+        def ready(self) -> bool:
+            checks.append(True)
+            return len(checks) == 1
+
+    drifted = SubjectTrackingService(
+        configured,
+        DriftingProvider(_provenance()),
+    ).track(_track_request(prepared))
+    assert isinstance(drifted, ProcessingRejected)
+    assert drifted.error.code == "INFERENCE_UNAVAILABLE"
+
+
 def test_observer_rejects_limit_and_untrusted_first_frame(
     settings: ServiceSettings,
     monkeypatch: pytest.MonkeyPatch,
@@ -335,7 +540,7 @@ def test_observer_rejects_limit_and_untrusted_first_frame(
     )
     monkeypatch.setattr(tracking_module, "MAX_SUBJECT_OBSERVATIONS", 0)
     with pytest.raises(ProcessOutputLimitError):
-        service._observe(request, manifest, frame_paths, 0)
+        service._observe(request, manifest, frame_paths, 0, time.monotonic() + 10)
 
     class UntrustedProvider(FakeInferenceProvider):
         def infer(self, **_kwargs: object) -> ProviderCandidate:
@@ -346,11 +551,13 @@ def test_observer_rejects_limit_and_untrusted_first_frame(
             )
 
     monkeypatch.setattr(tracking_module, "MAX_SUBJECT_OBSERVATIONS", 100_000)
-    with pytest.raises(InferenceFailureError):
-        SubjectTrackingService(
-            settings,
-            UntrustedProvider(_provenance()),
-        )._observe(request, manifest, frame_paths, 0)
+    observations, gap = SubjectTrackingService(
+        settings,
+        UntrustedProvider(_provenance()),
+    )._observe(request, manifest, frame_paths, 0, time.monotonic() + 10)
+    assert observations == ()
+    assert gap is not None
+    assert gap.start_timestamp_ms == 100
 
 
 def _dummy_manifest() -> PreparedFrameManifest:
@@ -358,6 +565,7 @@ def _dummy_manifest() -> PreparedFrameManifest:
         {
             "contractVersion": "subject-tracking.v1",
             "preparedMediaId": PREPARED_MEDIA_ID,
+            "caseId": "fixture-race",
             "sourceChecksumSha256": SHA,
             "sourceByteCount": 20,
             "window": {"startTimestampMs": 100, "endTimestampMs": 400},
@@ -385,23 +593,25 @@ def test_race_window_and_ffmpeg_helpers_reject_invalid_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with pytest.raises(ValueError, match="recording duration"):
-        tracking_module._validate_window(
+        preparation_module._validate_window(
             RaceWindow(startTimestampMs=100, endTimestampMs=600),
             _metadata(),
+            settings,
         )
 
     monkeypatch.setattr(
-        tracking_module,
+        preparation_module,
         "run_bounded_process",
         lambda *_args, **_kwargs: ProcessResult(1, b"", b"", 0),
     )
     with pytest.raises(ValueError, match="preparation failed"):
-        tracking_module._prepare_track_view(
+        preparation_module._prepare_track_view(
             tmp_path / "source.mp4",
             tmp_path / "output.mp4",
             RaceWindow(startTimestampMs=100, endTimestampMs=400),
             _metadata(),
             settings,
+            time.monotonic() + 10,
         )
 
 
@@ -412,10 +622,10 @@ def test_race_window_and_ffmpeg_helpers_reject_invalid_output(
         (ProcessResult(0, b"\xff", b"", 0), 100, "invalid"),
         (ProcessResult(0, b"NaN\n", b"", 0), 100, "invalid"),
         (ProcessResult(0, b"", b"", 0), 100, "frame count"),
-        (ProcessResult(0, b"0.0\n0.1\n", b"", 0), 1, "frame count"),
+        (ProcessResult(0, b"0.1\n0.2\n", b"", 0), 1, "frame count"),
     ],
 )
-def test_prepared_frame_metadata_rejects_bad_probe_output(
+def test_source_frame_metadata_rejects_bad_probe_output(
     settings: ServiceSettings,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -424,16 +634,124 @@ def test_prepared_frame_metadata_rejects_bad_probe_output(
     result, max_frames, message = case
     limited = replace(settings, limits=replace(settings.limits, max_frames=max_frames))
     monkeypatch.setattr(
-        tracking_module,
+        preparation_module,
         "run_bounded_process",
         lambda *_args, **_kwargs: result,
     )
     with pytest.raises(ValueError, match=message):
-        tracking_module._prepared_frames(
-            tmp_path / "prepared.mp4",
+        preparation_module._source_frames(
+            tmp_path / "source.mp4",
             RaceWindow(startTimestampMs=100, endTimestampMs=400),
-            Fraction(10),
+            _metadata(),
             limited,
+            time.monotonic() + 10,
+        )
+
+
+def test_source_frame_metadata_rejects_non_monotonic_timestamps(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preparation_module,
+        "run_bounded_process",
+        lambda *_args, **_kwargs: ProcessResult(0, b"0.2\n0.1\n", b"", 0),
+    )
+    with pytest.raises(ValueError, match="not ordered"):
+        preparation_module._source_frames(
+            tmp_path / "source.mp4",
+            RaceWindow(startTimestampMs=100, endTimestampMs=400),
+            _metadata(),
+            settings,
+            time.monotonic() + 10,
+        )
+
+
+def test_real_vfr_non_aligned_window_preserves_source_provenance(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "vfr.mp4"
+    prepared = tmp_path / "prepared.mp4"
+    subprocess.run(  # noqa: S603 - fixed test-only FFmpeg command
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=160x90:r=10:d=0.7",
+            "-vf",
+            "select=eq(n\\,0)+eq(n\\,1)+eq(n\\,3)+eq(n\\,6)",
+            "-vsync",
+            "vfr",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-y",
+            str(source),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    metadata = replace(
+        _metadata(duration_ms=700),
+        average_frame_rate=Fraction(40, 7),
+    )
+    window = RaceWindow(startTimestampMs=150, endTimestampMs=650)
+    deadline = time.monotonic() + 10
+    frames = preparation_module._source_frames(
+        source,
+        window,
+        metadata,
+        settings,
+        deadline,
+    )
+    assert [(frame.frame_index, frame.timestamp_ms) for frame in frames] == [
+        (2, 300),
+        (3, 600),
+    ]
+    preparation_module._prepare_track_view(
+        source,
+        prepared,
+        window,
+        metadata,
+        settings,
+        deadline,
+    )
+    assert preparation_module._prepared_frame_count(
+        prepared,
+        settings,
+        deadline,
+    ) == len(frames)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [ProcessResult(1, b"", b"", 0), ProcessResult(0, b"invalid", b"", 0)],
+)
+def test_prepared_frame_count_rejects_invalid_output(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    result: ProcessResult,
+) -> None:
+    monkeypatch.setattr(
+        preparation_module,
+        "run_bounded_process",
+        lambda *_args, **_kwargs: result,
+    )
+    with pytest.raises(ValueError, match="frame count"):
+        preparation_module._prepared_frame_count(
+            tmp_path / "prepared.mp4",
+            settings,
+            time.monotonic() + 10,
         )
 
 
@@ -452,7 +770,9 @@ def test_frame_extraction_rejects_failed_or_empty_output(
         lambda *_args, **_kwargs: ProcessResult(return_code, b"", b"", 0),
     )
     with pytest.raises(InferenceFailureError):
-        tracking_module._extract_frames(tmp_path / "prepared.mp4", output, settings)
+        tracking_module._extract_frames(
+            tmp_path / "prepared.mp4", output, settings, time.monotonic() + 10
+        )
 
 
 def test_frame_extraction_rejects_too_many_frames(
@@ -471,7 +791,9 @@ def test_frame_extraction_rejects_too_many_frames(
         lambda *_args, **_kwargs: ProcessResult(0, b"", b"", 0),
     )
     with pytest.raises(InferenceFailureError):
-        tracking_module._extract_frames(tmp_path / "prepared.mp4", output, limited)
+        tracking_module._extract_frames(
+            tmp_path / "prepared.mp4", output, limited, time.monotonic() + 10
+        )
 
 
 @pytest.mark.parametrize(
@@ -485,7 +807,7 @@ def test_frame_manifest_rejects_corrupt_content(
     settings.prepare_roots()
     raw = raw_factory()
     request = _request_with_manifest_bytes(raw)
-    path = settings.artifact_root / f"{PREPARED_MEDIA_ID}{FRAME_MANIFEST_SUFFIX}"
+    path = _manifest_path(settings)
     path.write_bytes(raw)
     with pytest.raises(InvalidArtifactError):
         tracking_module._load_frame_manifest(request, settings)
@@ -502,6 +824,12 @@ def _request_with_manifest_bytes(raw: bytes) -> TrackStageRequest:
     return request.model_copy(update={"prepared": prepared})
 
 
+def _manifest_path(settings: ServiceSettings) -> Path:
+    bundle = settings.artifact_root / f"{PREPARED_MEDIA_ID}{PREPARED_BUNDLE_SUFFIX}"
+    bundle.mkdir(exist_ok=True)
+    return bundle / f"{PREPARED_MEDIA_ID}{FRAME_MANIFEST_SUFFIX}"
+
+
 def test_frame_manifest_rejects_decompression_limit_and_descriptor_mismatch(
     settings: ServiceSettings,
     monkeypatch: pytest.MonkeyPatch,
@@ -509,7 +837,7 @@ def test_frame_manifest_rejects_decompression_limit_and_descriptor_mismatch(
     settings.prepare_roots()
     raw = gzip.compress(b"1234567890", mtime=0)
     request = _request_with_manifest_bytes(raw)
-    path = settings.artifact_root / f"{PREPARED_MEDIA_ID}{FRAME_MANIFEST_SUFFIX}"
+    path = _manifest_path(settings)
     path.write_bytes(raw)
     monkeypatch.setattr(tracking_module, "MAX_MANIFEST_BYTES", 5)
     with pytest.raises(InvalidArtifactError):
@@ -517,7 +845,7 @@ def test_frame_manifest_rejects_decompression_limit_and_descriptor_mismatch(
 
     monkeypatch.setattr(tracking_module, "MAX_MANIFEST_BYTES", 64 * 1024 * 1024)
     manifest_raw = gzip.compress(
-        tracking_module._canonical_json(
+        artifact_module.canonical_json(
             _dummy_manifest().model_dump(mode="json", by_alias=True)
         ),
         mtime=0,
@@ -568,12 +896,12 @@ def test_ffmpeg_version_rejects_invalid_process_output(
     message: str,
 ) -> None:
     monkeypatch.setattr(
-        tracking_module,
+        preparation_module,
         "run_bounded_process",
         lambda *_args, **_kwargs: result,
     )
     with pytest.raises(ValueError, match=message):
-        tracking_module._ffmpeg_version(settings)
+        preparation_module._ffmpeg_version(settings, time.monotonic() + 10)
 
 
 def test_publish_cleanup_and_artifact_verification_defenses(
@@ -588,30 +916,39 @@ def test_publish_cleanup_and_artifact_verification_defenses(
         msg = "write failed"
         raise PermissionError(msg)
 
-    monkeypatch.setattr(tracking_module, "_write_all", fail_write)
+    monkeypatch.setattr(artifact_module, "_write_all", fail_write)
     with pytest.raises(PermissionError, match="write failed"):
-        tracking_module._publish_bytes(b"value", destination)
+        artifact_module.publish_bytes(b"value", destination)
     assert list(settings.artifact_root.iterdir()) == []
     monkeypatch.undo()
 
-    missing = tracking_module._PublishedArtifact(destination, 0, SHA)
-    tracking_module._remove_published(missing)
+    missing = artifact_module.PublishedArtifact(
+        destination,
+        0,
+        SHA,
+        created=False,
+    )
+    artifact_module.remove_published(missing)
     destination.mkdir()
-    tracking_module._remove_published(missing)
+    artifact_module.remove_published(missing)
     assert destination.is_dir()
+    destination.rmdir()
+    destination.write_bytes(b"value")
+    artifact_module.remove_published(missing)
+    assert not destination.exists()
 
     source = tmp_path / "source"
     source.write_bytes(b"value")
     digest = hashlib.sha256(b"value").hexdigest()
     with pytest.raises(InvalidArtifactError):
-        tracking_module._read_verified_artifact(
+        artifact_module.read_verified_artifact(
             source,
             expected_bytes=5,
             expected_checksum=digest,
             max_bytes=1,
         )
     with pytest.raises(InvalidArtifactError):
-        tracking_module._read_verified_artifact(
+        artifact_module.read_verified_artifact(
             source,
             expected_bytes=4,
             expected_checksum=digest,
@@ -619,7 +956,7 @@ def test_publish_cleanup_and_artifact_verification_defenses(
         )
 
     with pytest.raises(InvalidArtifactError):
-        tracking_module._copy_verified_artifact(
+        artifact_module.copy_verified_artifact(
             source,
             tmp_path / "copy-too-large",
             expected_bytes=5,
@@ -627,7 +964,7 @@ def test_publish_cleanup_and_artifact_verification_defenses(
             max_bytes=1,
         )
     with pytest.raises(InvalidArtifactError):
-        tracking_module._copy_verified_artifact(
+        artifact_module.copy_verified_artifact(
             source,
             tmp_path / "copy-mismatch",
             expected_bytes=4,
@@ -636,16 +973,76 @@ def test_publish_cleanup_and_artifact_verification_defenses(
         )
 
     with pytest.raises(InvalidArtifactError):
-        tracking_module._open_artifact(tmp_path / "missing")
+        artifact_module._open_artifact(tmp_path / "missing")
     with pytest.raises(InvalidArtifactError):
-        tracking_module._open_artifact(destination)
+        artifact_module._open_artifact(destination)
 
     empty = tmp_path / "empty"
     empty.write_bytes(b"")
     with pytest.raises(ValueError, match="empty"):
-        tracking_module._file_digest(empty, max_bytes=10)
-    with pytest.raises(ValueError, match="byte limit"):
-        tracking_module._file_digest(source, max_bytes=1)
+        artifact_module.file_digest(empty, max_bytes=10)
+    with pytest.raises(ProcessOutputLimitError):
+        artifact_module.file_digest(source, max_bytes=1)
+
+    first = artifact_module.publish_bytes(b"value", destination)
+    second = artifact_module.publish_bytes(b"value", destination)
+    assert first.created is True
+    assert second.created is False
+    with pytest.raises(ArtifactConflictError):
+        artifact_module.publish_bytes(b"different", destination)
+    destination.unlink()
+    destination.mkdir()
+    with pytest.raises(ArtifactConflictError):
+        artifact_module.publish_bytes(b"value", destination)
+
+
+def test_bundle_and_completion_validation_defenses(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.bundle_member_path(
+            settings, PREPARED_MEDIA_ID, ".missing", ".x"
+        )
+
+    not_directory = settings.artifact_root / f"{PREPARED_MEDIA_ID}.not-directory"
+    not_directory.write_bytes(b"x")
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.bundle_member_path(
+            settings,
+            PREPARED_MEDIA_ID,
+            ".not-directory",
+            ".x",
+        )
+
+    invalid_completion = tmp_path / "invalid.json"
+    invalid_completion.write_bytes(b"not-json")
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.read_completion(
+            invalid_completion,
+            PrepareStageAccepted,
+            max_bytes=100,
+        )
+
+    def deny_rename(_self: Path, _destination: Path) -> Path:
+        raise PermissionError
+
+    monkeypatch.setattr(Path, "rename", deny_rename)
+    with pytest.raises(PermissionError):
+        artifact_module.publish_bundle(
+            settings.artifact_root / "denied.bundle",
+            {"member": b"value"},
+        )
+
+
+def test_stage_deadlines_reject_expired_work() -> None:
+    expired = time.monotonic() - 1
+    with pytest.raises(ProcessTimeoutError):
+        preparation_module._remaining_seconds(expired)
+    with pytest.raises(ProcessTimeoutError):
+        tracking_module._remaining_seconds(expired)
 
 
 def test_write_all_rejects_zero_byte_write(
@@ -653,7 +1050,7 @@ def test_write_all_rejects_zero_byte_write(
 ) -> None:
     monkeypatch.setattr(os, "write", lambda _descriptor, _value: 0)
     with pytest.raises(OSError, match="Unable to write artifact"):
-        tracking_module._write_all(1, b"value")
+        artifact_module._write_all(1, b"value")
 
 
 @pytest.mark.parametrize(

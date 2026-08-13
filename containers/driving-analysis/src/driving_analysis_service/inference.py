@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Self
+from typing import Protocol, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -61,6 +61,7 @@ class InferenceProvider(Protocol):
         frame: InferenceFrame,
         seed: SubjectSeed,
         previous_box: NormalizedBox | None,
+        timeout_seconds: float | None = None,
     ) -> ProviderCandidate: ...
 
 
@@ -114,8 +115,9 @@ class DisabledInferenceProvider:
         frame: InferenceFrame,
         seed: SubjectSeed,
         previous_box: NormalizedBox | None,
+        timeout_seconds: float | None = None,
     ) -> ProviderCandidate:
-        del seed_frame, frame, seed, previous_box
+        del seed_frame, frame, seed, previous_box, timeout_seconds
         raise InferenceUnavailableError
 
 
@@ -137,8 +139,9 @@ class FakeInferenceProvider:
         frame: InferenceFrame,
         seed: SubjectSeed,
         previous_box: NormalizedBox | None,
+        timeout_seconds: float | None = None,
     ) -> ProviderCandidate:
-        del seed_frame, frame, previous_box
+        del seed_frame, frame, previous_box, timeout_seconds
         return ProviderCandidate(
             box=seed.box,
             identityConfidence=1.0,
@@ -200,8 +203,9 @@ class FixtureInferenceProvider:
         frame: InferenceFrame,
         seed: SubjectSeed,
         previous_box: NormalizedBox | None,
+        timeout_seconds: float | None = None,
     ) -> ProviderCandidate:
-        del seed_frame, seed, previous_box
+        del seed_frame, seed, previous_box, timeout_seconds
         try:
             return self._candidates[frame.provenance.frame_index]
         except KeyError as error:
@@ -219,6 +223,46 @@ class _OllamaChatResponse(BaseModel):
     model: str
     message: _OllamaMessage
     done: bool
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(  # noqa: PLR0913 - inherited urllib callback shape
+        self,
+        request: urllib.request.Request,
+        file_pointer: object,
+        code: int,
+        message: str,
+        headers: object,
+        new_url: str,
+    ) -> None:
+        del request, file_pointer, code, message, headers, new_url
+
+
+class _HttpResponse(Protocol):
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: object,
+    ) -> None: ...
+
+    def read(self, size: int) -> bytes: ...
+
+    def geturl(self) -> str: ...
+
+
+def _open_local_http(
+    request: urllib.request.Request,
+    *,
+    timeout: float,
+) -> _HttpResponse:
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+    )
+    return cast("_HttpResponse", opener.open(request, timeout=timeout))
 
 
 @dataclass(frozen=True)
@@ -261,6 +305,7 @@ class OllamaInferenceProvider:
         frame: InferenceFrame,
         seed: SubjectSeed,
         previous_box: NormalizedBox | None,
+        timeout_seconds: float | None = None,
     ) -> ProviderCandidate:
         seed_image = _read_frame(seed_frame.image_path)
         current_image = _read_frame(frame.image_path)
@@ -283,6 +328,7 @@ class OllamaInferenceProvider:
                 "stream": False,
                 "options": {"temperature": 0},
             },
+            timeout_seconds=timeout_seconds,
         )
         try:
             envelope = _OllamaChatResponse.model_validate(response)
@@ -303,9 +349,12 @@ class OllamaInferenceProvider:
         self,
         path: str,
         payload: dict[str, object] | None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> dict[str, object]:
+        target_url = f"{self.base_url}{path}"
         request = urllib.request.Request(  # noqa: S310 - locally allowlisted URL
-            f"{self.base_url}{path}",
+            target_url,
             data=(
                 None
                 if payload is None
@@ -319,10 +368,16 @@ class OllamaInferenceProvider:
             method="GET" if payload is None else "POST",
         )
         try:
-            with urllib.request.urlopen(  # noqa: S310 - URL is locally allowlisted
+            with _open_local_http(
                 request,
-                timeout=self.settings.request_timeout_seconds,
+                timeout=(
+                    self.settings.request_timeout_seconds
+                    if timeout_seconds is None
+                    else min(self.settings.request_timeout_seconds, timeout_seconds)
+                ),
             ) as response:
+                if response.geturl() != target_url:
+                    raise InferenceUnavailableError
                 raw = response.read(self.settings.max_response_bytes + 1)
         except (OSError, urllib.error.URLError) as error:
             raise InferenceUnavailableError from error

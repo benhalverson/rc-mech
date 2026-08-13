@@ -294,13 +294,6 @@ class _ClaimedMedia:
             shutil.rmtree(self.claim_directory)
 
 
-def _claimed_media(
-    request: _StagedMediaRequest,
-    settings: ServiceSettings,
-) -> _ClaimedMedia:
-    return _ClaimedMedia(request, settings)
-
-
 def claim_staged_media(
     request: _StagedMediaRequest,
     settings: ServiceSettings,

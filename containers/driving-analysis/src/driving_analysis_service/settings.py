@@ -64,6 +64,7 @@ class InferenceSettings:
 class MediaLimits:
     max_bytes: int = 50 * 1024 * 1024 * 1024
     max_duration_ms: int = 4 * 60 * 60 * 1000
+    max_race_window_ms: int = 15 * 60 * 1000
     max_width: int = 3840
     max_height: int = 2160
     max_frames: int = 1_000_000
@@ -71,6 +72,7 @@ class MediaLimits:
     max_process_output_bytes: int = 1024 * 1024
     max_request_body_bytes: int = 4 * 1024
     max_concurrent_validations: int = 2
+    max_concurrent_processing: int = 1
     supported_video_codecs: frozenset[str] = field(
         default_factory=lambda: frozenset(
             {"av1", "h264", "hevc", "mpeg4", "vp8", "vp9"}

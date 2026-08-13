@@ -15,9 +15,9 @@ from driving_analysis_service.contracts import (
     SafeFreeFormIdentifier,
     StagedMediaInput,
     StrictContract,
+    SubjectObservation,
     SubjectProvenance,
     SubjectSeed,
-    TrackingGap,
     UuidV4String,
 )
 
@@ -71,6 +71,7 @@ class PrepareStageRequest(StrictContract):
 
 class PreparedMediaArtifact(StrictContract):
     prepared_media_id: UuidV4String = Field(alias="preparedMediaId")
+    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     byte_count: int = Field(alias="byteCount", gt=0, strict=True)
     checksum_sha256: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
@@ -121,6 +122,7 @@ class PreparedFrame(StrictContract):
 class PreparedFrameManifest(StrictContract):
     contract_version: Literal["subject-tracking.v1"] = Field(alias="contractVersion")
     prepared_media_id: UuidV4String = Field(alias="preparedMediaId")
+    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     source_checksum_sha256: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="sourceChecksumSha256")
@@ -202,6 +204,32 @@ type ProcessingErrorMessage = Literal[
     "immutable artifact already exists",
 ]
 
+PROCESSING_ERROR_FIELDS: dict[
+    ProcessingErrorCode,
+    tuple[ProcessingErrorStage, ProcessingErrorMessage],
+] = {
+    "INVALID_REQUEST": ("request", "processing request rejected"),
+    "MEDIA_UNAVAILABLE": ("prepare", "processing media unavailable"),
+    "PREPARATION_FAILED": (
+        "prepare",
+        "Race window preparation failed safely",
+    ),
+    "PROCESS_TIMEOUT": ("track", "processing exceeded its time limit"),
+    "INFERENCE_UNAVAILABLE": (
+        "initialize",
+        "inference provider unavailable",
+    ),
+    "INFERENCE_FAILED": ("track", "inference failed safely"),
+    "RESOURCE_LIMIT": (
+        "serialize",
+        "processing resource limit exceeded",
+    ),
+    "ARTIFACT_CONFLICT": (
+        "serialize",
+        "immutable artifact already exists",
+    ),
+}
+
 
 class ProcessingSafeError(StrictContract):
     code: ProcessingErrorCode
@@ -217,30 +245,7 @@ class ProcessingSafeError(StrictContract):
             ):
                 raise ValueError("processing timeout error fields must be canonical")
             return self
-        expected: dict[
-            ProcessingErrorCode, tuple[ProcessingErrorStage, ProcessingErrorMessage]
-        ] = {
-            "INVALID_REQUEST": ("request", "processing request rejected"),
-            "MEDIA_UNAVAILABLE": ("prepare", "processing media unavailable"),
-            "PREPARATION_FAILED": (
-                "prepare",
-                "Race window preparation failed safely",
-            ),
-            "INFERENCE_UNAVAILABLE": (
-                "initialize",
-                "inference provider unavailable",
-            ),
-            "INFERENCE_FAILED": ("track", "inference failed safely"),
-            "RESOURCE_LIMIT": (
-                "serialize",
-                "processing resource limit exceeded",
-            ),
-            "ARTIFACT_CONFLICT": (
-                "serialize",
-                "immutable artifact already exists",
-            ),
-        }
-        if (self.stage, self.message) != expected[self.code]:
+        if (self.stage, self.message) != PROCESSING_ERROR_FIELDS[self.code]:
             raise ValueError("processing error fields must be canonical")
         return self
 
@@ -278,8 +283,39 @@ class TrackStageRequest(StrictContract):
         return self
 
 
+class OpenTrackingGap(StrictContract):
+    start_timestamp_ms: int = Field(
+        alias="startTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
+    reason: Literal["ambiguous-identity", "occluded", "missing"]
+
+
+class SubjectObservationSegment(StrictContract):
+    contract_version: Literal["subject-observation-segment.v1"] = Field(
+        alias="contractVersion"
+    )
+    outcome: Literal["accepted"]
+    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
+    observations: tuple[SubjectObservation, ...] = Field(
+        max_length=MAX_BENCHMARK_FRAME_COUNT,
+        strict=False,
+    )
+    open_gap: OpenTrackingGap | None = Field(alias="openGap")
+    provenance: SubjectProvenance
+
+    @model_validator(mode="after")
+    def observations_precede_gap(self) -> "SubjectObservationSegment":
+        if self.open_gap is not None and any(
+            observation.timestamp_ms >= self.open_gap.start_timestamp_ms
+            for observation in self.observations
+        ):
+            raise ValueError("observations must precede the open Tracking gap")
+        return self
+
+
 class ObservationSegmentArtifact(StrictContract):
     observation_segment_id: UuidV4String = Field(alias="observationSegmentId")
+    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     byte_count: int = Field(alias="byteCount", gt=0, strict=True)
     checksum_sha256: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
@@ -295,7 +331,7 @@ class ObservationSegmentArtifact(StrictContract):
         strict=True,
     )
     completed: bool
-    gap: TrackingGap | None
+    gap: OpenTrackingGap | None
     provenance: SubjectProvenance
     ffmpeg_version: SafeFreeFormIdentifier = Field(alias="ffmpegVersion")
     source_checksum_sha256: Annotated[

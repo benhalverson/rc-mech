@@ -23,8 +23,13 @@ from driving_analysis_service.contracts import (
     SafeError,
     StagedMediaInput,
 )
+from driving_analysis_service.inference import (
+    DisabledInferenceProvider,
+    FakeInferenceProvider,
+    configuration_provenance,
+)
 from driving_analysis_service.safe_logging import LOGGER
-from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.settings import InferenceSettings, ServiceSettings
 from tests.conftest import (
     CORRELATION_ID,
     STAGED_MEDIA_ID,
@@ -37,7 +42,10 @@ LimitName = Literal["max_bytes", "max_duration_ms", "max_width", "max_frames"]
 
 
 def _client(settings: ServiceSettings) -> TestClient:
-    return TestClient(create_app(settings))
+    provider = FakeInferenceProvider(
+        configuration_provenance(InferenceSettings(provider="fake"))
+    )
+    return TestClient(create_app(settings, provider))
 
 
 def _assert_consumed_and_clean(settings: ServiceSettings) -> None:
@@ -76,6 +84,16 @@ def test_health_returns_safe_error_when_an_executable_is_missing(
             "message": "The media validation service is unavailable.",
         },
     }
+
+
+def test_health_returns_safe_error_when_inference_is_unready(
+    settings: ServiceSettings,
+) -> None:
+    with TestClient(create_app(settings, DisabledInferenceProvider())) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
 
 
 def test_health_returns_safe_error_when_scratch_roots_cannot_be_prepared(

@@ -9,6 +9,7 @@ from typing import Literal, Self
 import pytest
 from pydantic import ValidationError
 
+import driving_analysis_service.inference as inference_module
 from driving_analysis_service.contracts import NormalizedBox, SubjectSeed
 from driving_analysis_service.inference import (
     MAX_FIXTURE_BYTES,
@@ -325,7 +326,10 @@ def test_ollama_inference_sends_images_schema_and_previous_box(
         _self: OllamaInferenceProvider,
         path: str,
         payload: dict[str, object],
+        *,
+        timeout_seconds: float | None = None,
     ) -> dict[str, object]:
+        assert timeout_seconds is None
         assert path == "/api/chat"
         payloads.append(payload)
         return {
@@ -412,7 +416,7 @@ def test_ollama_inference_rejects_invalid_envelopes(
     monkeypatch.setattr(
         OllamaInferenceProvider,
         "_request",
-        lambda _self, _path, _payload: response,
+        lambda _self, _path, _payload, **_kwargs: response,
     )
     with pytest.raises(expected_error):
         provider.infer(
@@ -424,8 +428,9 @@ def test_ollama_inference_rejects_invalid_envelopes(
 
 
 class _Response:
-    def __init__(self, value: bytes) -> None:
+    def __init__(self, value: bytes, url: str) -> None:
         self.value = value
+        self.url = url
 
     def __enter__(self) -> Self:
         return self
@@ -440,6 +445,36 @@ class _Response:
 
     def read(self, _size: int) -> bytes:
         return self.value
+
+    def geturl(self) -> str:
+        return self.url
+
+
+def test_local_http_opener_disables_proxies_and_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handlers: tuple[object, ...] = ()
+    response = _Response(b"{}", "http://localhost:11434/api/show")
+
+    class Opener:
+        def open(self, request: urllib.request.Request, *, timeout: float) -> _Response:
+            assert request.full_url == "http://localhost:11434/api/show"
+            assert timeout == 1.0
+            return response
+
+    def build_opener(*values: object) -> Opener:
+        nonlocal handlers
+        handlers = values
+        return Opener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
+    request = urllib.request.Request("http://localhost:11434/api/show")
+    assert inference_module._open_local_http(request, timeout=1.0) is response
+    proxy_handler, redirect_handler = handlers
+    assert isinstance(proxy_handler, urllib.request.ProxyHandler)
+    assert vars(proxy_handler)["proxies"] == {}
+    assert isinstance(redirect_handler, inference_module._RejectRedirects)
+    redirect_handler.redirect_request(request, None, 302, "redirect", {}, "/else")
 
 
 @pytest.mark.parametrize(
@@ -464,18 +499,19 @@ def test_ollama_request_bounds_and_validates_json(
         *,
         timeout: float,
     ) -> _Response:
-        assert timeout == 30.0
+        assert timeout in {1.0, 30.0}
         assert _request.get_method() in {"GET", "POST"}
-        return _Response(raw)
+        return _Response(raw, _request.full_url)
 
     monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
+        inference_module,
+        "_open_local_http",
         respond,
     )
     if expected_error is None:
         assert provider._request("/api/show", {}) == {"ok": True}
         assert provider._request("/api/tags", None) == {"ok": True}
+        assert provider._request("/api/show", {}, timeout_seconds=1.0) == {"ok": True}
     else:
         with pytest.raises(expected_error):
             provider._request("/api/show", {})
@@ -494,7 +530,20 @@ def test_ollama_request_maps_connection_failure(
         msg = "private provider detail"
         raise urllib.error.URLError(msg)
 
-    monkeypatch.setattr(urllib.request, "urlopen", fail)
+    monkeypatch.setattr(inference_module, "_open_local_http", fail)
+    with pytest.raises(InferenceUnavailableError):
+        provider._request("/api/show", {})
+
+
+def test_ollama_request_rejects_a_changed_response_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OllamaInferenceProvider.create(_settings("local-http"))
+    monkeypatch.setattr(
+        inference_module,
+        "_open_local_http",
+        lambda *_args, **_kwargs: _Response(b"{}", "http://example.com/redirect"),
+    )
     with pytest.raises(InferenceUnavailableError):
         provider._request("/api/show", {})
 

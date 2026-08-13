@@ -5,13 +5,14 @@
   "caseId": "fixture-race",
   "segment": {
     "observationSegmentId": "edb9d9c2-1ca8-48c3-ae7d-69222aab25f2",
+    "caseId": "fixture-race",
     "byteCount": 800,
     "checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
     "contentEncoding": "gzip",
     "mediaType": "application/vnd.rc-mech.subject-observations+json",
     "observationCount": 2,
     "completed": false,
-    "gap": {"startTimestampMs": 300, "endTimestampMs": 400, "reason": "ambiguous-identity"},
+    "gap": {"startTimestampMs": 300, "reason": "ambiguous-identity"},
     "provenance": {
       "provider": "local-http",
       "model": "llava:13b",

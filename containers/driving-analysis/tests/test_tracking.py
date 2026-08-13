@@ -12,11 +12,13 @@ from driving_analysis_service.inference import (
     FakeInferenceProvider,
     FixtureInferenceProvider,
 )
+from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
-from driving_analysis_service.tracking import (
+from driving_analysis_service.tracking import SubjectTrackingService
+from driving_analysis_service.tracking_artifacts import (
+    OBSERVATION_BUNDLE_SUFFIX,
     OBSERVATION_SEGMENT_SUFFIX,
-    RaceWindowPreparationService,
-    SubjectTrackingService,
+    bundle_member_path,
 )
 from driving_analysis_service.tracking_contracts import (
     PrepareStageAccepted,
@@ -118,6 +120,12 @@ def test_real_ffmpeg_prepare_and_fake_track_are_immutable(
     assert prepared.prepared.pipeline_version == "subject-tracking.v1"
     assert list(configured.staging_root.iterdir()) == []
 
+    duplicate_prepare = RaceWindowPreparationService(configured).prepare(
+        _prepare_request(byte_count)
+    )
+    assert isinstance(duplicate_prepare, PrepareStageAccepted)
+    assert duplicate_prepare.prepared == prepared.prepared
+
     with TestClient(create_app(configured)) as client:
         track_response = client.post(
             "/v1/stages/track",
@@ -132,22 +140,46 @@ def test_real_ffmpeg_prepare_and_fake_track_are_immutable(
     assert tracked.segment.content_encoding == "gzip"
     assert tracked.segment.provenance.provider == "fake"
     assert tracked.segment.provenance.identity_confidence_threshold == 0.8
-    segment_path = (
-        configured.artifact_root / f"{SEGMENT_ID}{OBSERVATION_SEGMENT_SUFFIX}"
+    segment_path = bundle_member_path(
+        configured,
+        SEGMENT_ID,
+        OBSERVATION_BUNDLE_SUFFIX,
+        OBSERVATION_SEGMENT_SUFFIX,
     )
     raw_segment = segment_path.read_bytes()
     assert hashlib.sha256(raw_segment).hexdigest() == tracked.segment.checksum_sha256
     envelope = json.loads(gzip.decompress(raw_segment))
     assert [item["timestampMs"] for item in envelope["observations"]] == [100, 200, 300]
     assert [item["frameIndex"] for item in envelope["observations"]] == [1, 2, 3]
-    assert envelope["gaps"] == []
+    assert envelope["openGap"] is None
 
     duplicate = SubjectTrackingService(
         configured,
         FakeInferenceProvider(tracked.segment.provenance),
     ).track(_track_request(prepared))
-    assert isinstance(duplicate, ProcessingRejected)
-    assert duplicate.error.code == "ARTIFACT_CONFLICT"
+    assert isinstance(duplicate, TrackStageAccepted)
+    assert duplicate.segment == tracked.segment
+
+    changed_prepared = prepared.prepared.model_copy(
+        update={"checksum_sha256": "0" * 64}
+    )
+    changed_request = _track_request(prepared).model_copy(
+        update={"prepared": changed_prepared}
+    )
+    conflict = SubjectTrackingService(
+        configured,
+        FakeInferenceProvider(tracked.segment.provenance),
+    ).track(changed_request)
+    assert isinstance(conflict, ProcessingRejected)
+    assert conflict.error.code == "ARTIFACT_CONFLICT"
+
+    segment_path.write_bytes(b"tampered")
+    tampered = SubjectTrackingService(
+        configured,
+        FakeInferenceProvider(tracked.segment.provenance),
+    ).track(_track_request(prepared))
+    assert isinstance(tampered, ProcessingRejected)
+    assert tampered.error.code == "MEDIA_UNAVAILABLE"
 
 
 def test_fixture_provider_stops_at_first_untrusted_frame(
@@ -179,9 +211,11 @@ def test_fixture_provider_stops_at_first_untrusted_frame(
     assert result.segment.observation_count == 2
     assert result.segment.gap is not None
     assert result.segment.gap.start_timestamp_ms == 300
-    assert result.segment.gap.end_timestamp_ms == 400
-    raw = (
-        configured.artifact_root / f"{SEGMENT_ID}{OBSERVATION_SEGMENT_SUFFIX}"
+    raw = bundle_member_path(
+        configured,
+        SEGMENT_ID,
+        OBSERVATION_BUNDLE_SUFFIX,
+        OBSERVATION_SEGMENT_SUFFIX,
     ).read_bytes()
     observations = json.loads(gzip.decompress(raw))["observations"]
     assert [item["frameIndex"] for item in observations] == [1, 2]

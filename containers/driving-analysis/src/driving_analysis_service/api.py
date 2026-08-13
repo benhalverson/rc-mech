@@ -1,4 +1,5 @@
 import os
+import threading
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -18,12 +19,10 @@ from driving_analysis_service.inference import (
     create_inference_provider,
 )
 from driving_analysis_service.media import MediaValidationService
+from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.request_limits import RequestBodyLimitMiddleware
 from driving_analysis_service.settings import ServiceSettings
-from driving_analysis_service.tracking import (
-    RaceWindowPreparationService,
-    SubjectTrackingService,
-)
+from driving_analysis_service.tracking import SubjectTrackingService
 from driving_analysis_service.tracking_contracts import (
     PROCESSING_CONTRACT_VERSION,
     PrepareStageRequest,
@@ -44,8 +43,18 @@ def create_app(
     provider = inference_provider or create_inference_provider(
         resolved_settings.inference
     )
-    preparation_service = RaceWindowPreparationService(resolved_settings)
-    tracking_service = SubjectTrackingService(resolved_settings, provider)
+    processing_admission = threading.BoundedSemaphore(
+        resolved_settings.limits.max_concurrent_processing
+    )
+    preparation_service = RaceWindowPreparationService(
+        resolved_settings,
+        processing_admission,
+    )
+    tracking_service = SubjectTrackingService(
+        resolved_settings,
+        provider,
+        processing_admission,
+    )
 
     application = FastAPI(
         title="RC Mech driving-analysis media service",
@@ -101,7 +110,7 @@ def create_app(
         responses={503: {"model": RejectedValidationResponse}},
     )
     def health() -> HealthResponse | JSONResponse:
-        if not _is_ready(resolved_settings):
+        if not _is_ready(resolved_settings, provider):
             response = RejectedValidationResponse(
                 contractVersion=CONTRACT_VERSION,
                 correlationId=None,
@@ -146,19 +155,20 @@ def create_app(
     return application
 
 
-def _is_ready(settings: ServiceSettings) -> bool:
+def _is_ready(settings: ServiceSettings, provider: InferenceProvider) -> bool:
     try:
         settings.prepare_roots()
     except OSError:
         return False
     executables = (settings.ffprobe_executable, settings.ffmpeg_executable)
     roots = (settings.staging_root, settings.work_root, settings.artifact_root)
-    return all(
+    local_resources_ready = all(
         executable.is_file() and os.access(executable, os.X_OK)
         for executable in executables
     ) and all(
         root.is_dir() and os.access(root, os.R_OK | os.W_OK | os.X_OK) for root in roots
     )
+    return local_resources_ready and provider.ready()
 
 
 app = create_app()

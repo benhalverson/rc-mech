@@ -13,6 +13,7 @@ from driving_analysis_service.tracking_contracts import (
     ProcessingSafeError,
     ProviderCandidate,
     RaceWindow,
+    SubjectObservationSegment,
     TrackStageAccepted,
     TrackStageRequest,
 )
@@ -25,6 +26,7 @@ def _manifest_payload() -> dict[str, object]:
     return {
         "contractVersion": "subject-tracking.v1",
         "preparedMediaId": UUID,
+        "caseId": "fixture-race",
         "sourceChecksumSha256": SHA,
         "sourceByteCount": 100,
         "window": {"startTimestampMs": 100, "endTimestampMs": 400},
@@ -48,6 +50,7 @@ def _prepared_payload() -> dict[str, object]:
     manifest = _manifest_payload()
     return {
         "preparedMediaId": UUID,
+        "caseId": "fixture-race",
         "byteCount": manifest["mediaByteCount"],
         "checksumSha256": SHA,
         "frameManifestByteCount": 40,
@@ -82,6 +85,7 @@ def _provenance() -> dict[str, object]:
 def _segment_payload(*, completed: bool, gap: object) -> dict[str, object]:
     return {
         "observationSegmentId": UUID,
+        "caseId": "fixture-race",
         "byteCount": 20,
         "checksumSha256": SHA,
         "contentEncoding": "gzip",
@@ -198,7 +202,6 @@ def test_track_seed_must_be_inside_window() -> None:
             True,
             {
                 "startTimestampMs": 200,
-                "endTimestampMs": 400,
                 "reason": "ambiguous-identity",
             },
         ),
@@ -219,6 +222,34 @@ def test_observation_segment_completion_matches_gap(
 def test_visible_provider_candidate_requires_a_box() -> None:
     with pytest.raises(ValidationError, match="require a box"):
         ProviderCandidate(box=None, identityConfidence=1.0, visibility="visible")
+
+
+def test_observation_segment_rejects_observations_inside_open_gap() -> None:
+    with pytest.raises(ValidationError, match="must precede"):
+        SubjectObservationSegment.model_validate(
+            {
+                "contractVersion": "subject-observation-segment.v1",
+                "outcome": "accepted",
+                "caseId": "fixture-race",
+                "observations": [
+                    {
+                        "timestampMs": 200,
+                        "frameIndex": 2,
+                        "box": {"x": 0.1, "y": 0.2, "width": 0.2, "height": 0.2},
+                        "center": {"x": 0.2, "y": 0.3},
+                        "identityConfidence": 0.9,
+                        "visibility": "visible",
+                        "origin": "detected",
+                        "provenance": _provenance(),
+                    }
+                ],
+                "openGap": {
+                    "startTimestampMs": 200,
+                    "reason": "ambiguous-identity",
+                },
+                "provenance": _provenance(),
+            }
+        )
 
 
 def test_inference_settings_validate_environment(
