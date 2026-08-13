@@ -1,0 +1,41 @@
+{
+  "contractVersion": "subject-benchmark-observations.v1",
+  "corpusId": "representative-private-races.v1",
+  "manifestDigest": "e31c3d7273a81a503507f48c33620d60abd28ac63e9a1ecfd9f1d2df9baec8aa",
+  "groundTruthDigest": "af43025a06c2cc061915a4cce65cde37a4ad30436515bf440e5987053d77e6dc",
+  "cases": [
+    {
+      "contractVersion": "subject-observation.v1",
+      "outcome": "accepted",
+      "caseId": "race-window-a",
+      "gaps": [{"startTimestampMs": 30700, "endTimestampMs": 369000, "reason": "occluded"}],
+      "observations": [
+        {"timestampMs": 12000, "frameIndex": 360, "box": {"x": 0.830354, "y": 0.3525, "width": 0.032, "height": 0.045}, "center": {"x": 0.846354, "y": 0.375}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
+        {"timestampMs": 12500, "frameIndex": 375, "box": {"x": 0.915771, "y": 0.506667, "width": 0.032, "height": 0.045}, "center": {"x": 0.931771, "y": 0.529167}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
+        {"timestampMs": 13000, "frameIndex": 390, "box": {"x": 0.963688, "y": 0.701111, "width": 0.032, "height": 0.045}, "center": {"x": 0.979688, "y": 0.723611}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}}
+      ]
+    },
+    {
+      "contractVersion": "subject-observation.v1",
+      "outcome": "accepted",
+      "caseId": "race-window-b",
+      "gaps": [{"startTimestampMs": 14000, "endTimestampMs": 371000, "reason": "ambiguous-identity"}],
+      "observations": [
+        {"timestampMs": 12500, "frameIndex": 375, "box": {"x": 0.55, "y": 0.5495, "width": 0.036, "height": 0.045}, "center": {"x": 0.568, "y": 0.572}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
+        {"timestampMs": 13000, "frameIndex": 390, "box": {"x": 0.8945, "y": 0.7585, "width": 0.036, "height": 0.045}, "center": {"x": 0.9125, "y": 0.781}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
+        {"timestampMs": 13500, "frameIndex": 405, "box": {"x": 0.771, "y": 0.5625, "width": 0.036, "height": 0.045}, "center": {"x": 0.789, "y": 0.585}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}}
+      ]
+    },
+    {
+      "contractVersion": "subject-observation.v1",
+      "outcome": "accepted",
+      "caseId": "race-window-c",
+      "gaps": [{"startTimestampMs": 21500, "endTimestampMs": 375000, "reason": "ambiguous-identity"}],
+      "observations": [
+        {"timestampMs": 20000, "frameIndex": 600, "box": {"x": 0.387, "y": 0.244, "width": 0.036, "height": 0.05}, "center": {"x": 0.405, "y": 0.269}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
+        {"timestampMs": 20500, "frameIndex": 615, "box": {"x": 0.442, "y": 0.579, "width": 0.036, "height": 0.05}, "center": {"x": 0.46, "y": 0.604}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
+        {"timestampMs": 21000, "frameIndex": 630, "box": {"x": 0.277, "y": 0.389, "width": 0.036, "height": 0.05}, "center": {"x": 0.295, "y": 0.414}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}}
+      ]
+    }
+  ]
+}

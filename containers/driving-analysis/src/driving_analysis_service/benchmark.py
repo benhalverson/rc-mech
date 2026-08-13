@@ -4,6 +4,8 @@
 # CLI replaces them with the contract's redacted public error.
 # ruff: noqa: EM101, EM102, TRY003, PLR0913
 
+import hashlib
+import json
 from dataclasses import dataclass
 from itertools import pairwise
 from statistics import mean, median
@@ -11,6 +13,8 @@ from statistics import mean, median
 from driving_analysis_service.contracts import (
     AcceptedSubjectObservations,
     BenchmarkCase,
+    BenchmarkEvidenceV2,
+    BenchmarkObservationSetV2,
     BenchmarkProvenance,
     BenchmarkReport,
     CornerGates,
@@ -26,6 +30,9 @@ from driving_analysis_service.contracts import (
     IdentityMetrics,
     NormalizedBox,
     NormalizedPoint,
+    RepresentativeBenchmarkReportV2,
+    RepresentativeCorpusManifestV2,
+    RepresentativeGroundTruthV2,
     SubjectObservation,
     SubjectProvenance,
     TrackingGap,
@@ -326,6 +333,8 @@ def _case_result(
     tolerance_ms: int,
     recording: CorpusRecording,
     frame_timestamp_tolerance_ms: int,
+    *,
+    coverage_before_reidentification: bool = False,
 ) -> CaseResult:
     passes_by_corner = {
         corner_id: _candidate_passes(
@@ -340,9 +349,15 @@ def _case_result(
         corner_id: set() for corner_id in truth.gates
     }
     next_candidate_by_corner = dict.fromkeys(truth.gates, 0)
+    coverage_passes = truth.passes
+    if coverage_before_reidentification and truth.ambiguous_spans:
+        cutoff = truth.ambiguous_spans[0].start_timestamp_ms
+        coverage_passes = tuple(
+            item for item in truth.passes if item.exit_timestamp_ms <= cutoff
+        )
     timing_errors: list[float] = []
     eligible = 0
-    for expected in truth.passes:
+    for expected in coverage_passes:
         matched = _matching_pass(
             expected,
             passes_by_corner[expected.corner_id],
@@ -368,7 +383,7 @@ def _case_result(
         provenance.ambiguity_gap_coverage_tolerance_ms,
     )
     return CaseResult(
-        ground_truth_passes=len(truth.passes),
+        ground_truth_passes=len(coverage_passes),
         eligible_passes=eligible,
         unflagged_switches=_unflagged_switches(
             truth,
@@ -530,12 +545,13 @@ def _validate_case_inputs(
         raise ValueError("observation provenance differs from benchmark")
 
 
-def evaluate_benchmark(
+def _evaluate_benchmark(
     manifest: CorpusManifest,
     ground_truth: GroundTruth,
     observations: dict[str, AcceptedSubjectObservations],
+    *,
+    coverage_before_reidentification: bool,
 ) -> BenchmarkReport:
-    """Evaluate stored observations without invoking inference or external services."""
     if manifest.corpus_id != ground_truth.corpus_id:
         raise ValueError("manifest and ground truth corpus IDs differ")
     truth_by_case = {case.case_id: case for case in ground_truth.cases}
@@ -567,6 +583,7 @@ def evaluate_benchmark(
                 manifest.pass_match_tolerance_ms,
                 recordings[case.recording_id],
                 manifest.frame_timestamp_tolerance_ms,
+                coverage_before_reidentification=coverage_before_reidentification,
             )
         )
     ground_truth_passes = sum(item.ground_truth_passes for item in results)
@@ -609,4 +626,85 @@ def evaluate_benchmark(
             medianMs=median(errors) if errors else None,
             maxAbsoluteMs=max((abs(error) for error in errors), default=None),
         ),
+    )
+
+
+def evaluate_benchmark(
+    manifest: CorpusManifest,
+    ground_truth: GroundTruth,
+    observations: dict[str, AcceptedSubjectObservations],
+) -> BenchmarkReport:
+    """Evaluate stored v1 observations without inference or external services."""
+    return _evaluate_benchmark(
+        manifest,
+        ground_truth,
+        observations,
+        coverage_before_reidentification=False,
+    )
+
+
+def benchmark_contract_digest(
+    value: RepresentativeCorpusManifestV2
+    | RepresentativeGroundTruthV2
+    | BenchmarkObservationSetV2,
+) -> str:
+    encoded = json.dumps(
+        value.model_dump(by_alias=True, mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def evaluate_representative_benchmark(
+    manifest: RepresentativeCorpusManifestV2,
+    ground_truth: RepresentativeGroundTruthV2,
+    observation_set: BenchmarkObservationSetV2,
+) -> RepresentativeBenchmarkReportV2:
+    """Evaluate a digest-bound representative corpus from stored observations."""
+    manifest_digest = benchmark_contract_digest(manifest)
+    ground_truth_digest = benchmark_contract_digest(ground_truth)
+    if (
+        observation_set.corpus_id != manifest.corpus_id
+        or observation_set.manifest_digest != manifest_digest
+        or observation_set.ground_truth_digest != ground_truth_digest
+    ):
+        raise ValueError("representative observation evidence differs")
+    recordings = {
+        recording.recording_id: recording for recording in manifest.recordings
+    }
+    manifest_cases = {case.case_id: case for case in manifest.cases}
+    for truth in ground_truth.cases:
+        case = manifest_cases.get(truth.case_id)
+        if case is None:
+            continue
+        recording = recordings[case.recording_id]
+        if (
+            truth.annotation_provenance.source_checksum_sha256
+            != recording.checksum_sha256
+        ):
+            raise ValueError("annotation source checksum differs")
+        reasons = {span.reason for span in truth.ambiguous_spans}
+        challenges = set(case.representative_facts.identity_challenges)
+        if ("occlusion" in challenges and "occluded" not in reasons) or (
+            "identity-ambiguity" in challenges and "ambiguous-identity" not in reasons
+        ):
+            raise ValueError("representative challenge evidence differs")
+    observations = {case.case_id: case for case in observation_set.cases}
+    report = _evaluate_benchmark(
+        manifest,
+        ground_truth,
+        observations,
+        coverage_before_reidentification=True,
+    )
+    return RepresentativeBenchmarkReportV2.model_validate(
+        {
+            **report.model_dump(by_alias=True, mode="json"),
+            "contractVersion": "subject-benchmark.v2",
+            "evidence": BenchmarkEvidenceV2(
+                manifestDigest=manifest_digest,
+                groundTruthDigest=ground_truth_digest,
+                observationsDigest=benchmark_contract_digest(observation_set),
+            ).model_dump(by_alias=True),
+        }
     )

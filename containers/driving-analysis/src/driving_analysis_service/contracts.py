@@ -29,6 +29,8 @@ MAX_DECLARED_BYTES = 50 * 1024 * 1024 * 1024
 MAX_BENCHMARK_TIMESTAMP_MS = 86_400_000
 MAX_BENCHMARK_FRAME_COUNT = 10_000_000
 MAX_SUBJECT_OBSERVATIONS = 100_000
+MIN_REPRESENTATIVE_RECORDINGS = 3
+MIN_REPRESENTATIVE_FIELD_COUNTS = 2
 # This is deliberately much larger than ordinary normalized detections, but it
 # prevents IEEE-754 subnormal dimensions from producing a zero-area box.
 MIN_NORMALIZED_BOX_AREA = 1e-12
@@ -207,6 +209,9 @@ ValidationResponse = Annotated[
 # calculations live in ``benchmark.py``.
 SUBJECT_CONTRACT_VERSION: Literal["subject-observation.v1"] = "subject-observation.v1"
 BENCHMARK_CONTRACT_VERSION: Literal["subject-benchmark.v1"] = "subject-benchmark.v1"
+REPRESENTATIVE_BENCHMARK_CONTRACT_VERSION: Literal["subject-benchmark.v2"] = (
+    "subject-benchmark.v2"
+)
 CENTER_TOLERANCE = 1e-6
 
 
@@ -443,6 +448,61 @@ class CorpusRecording(StrictContract):
         return self
 
 
+class PermittedUseV1(StrictContract):
+    statement_version: Literal["private-benchmark-use.v1"] = Field(
+        alias="statementVersion"
+    )
+    basis: Literal["user-owned", "user-authorized", "licensed"]
+    manual_annotation: Literal["permitted"] = Field(alias="manualAnnotation")
+    candidate_generation: Literal["permitted"] = Field(alias="candidateGeneration")
+    benchmark_evaluation: Literal["permitted"] = Field(alias="benchmarkEvaluation")
+    remote_processing: Literal["prohibited", "separately-authorized"] = Field(
+        alias="remoteProcessing"
+    )
+    redistribution: Literal["prohibited"]
+    checksum_publication: Literal["permitted"] = Field(alias="checksumPublication")
+    authorization_evidence: Literal["retained-outside-repository"] = Field(
+        alias="authorizationEvidence"
+    )
+
+
+class FixedCameraFramingV1(StrictContract):
+    framing_version: Literal["fixed-16:9-main-camera.v1"] = Field(
+        alias="framingVersion"
+    )
+    camera_position: Literal["fixed"] = Field(alias="cameraPosition")
+    camera_zoom: Literal["fixed"] = Field(alias="cameraZoom")
+    track_view_x: float = Field(alias="trackViewX", strict=True)
+    track_view_y: float = Field(alias="trackViewY", strict=True)
+    track_view_width: float = Field(alias="trackViewWidth", strict=True)
+    track_view_height: float = Field(alias="trackViewHeight", strict=True)
+    coordinate_space: Literal["normalized-track-view.v1"] = Field(
+        alias="coordinateSpace"
+    )
+
+    @model_validator(mode="after")
+    def track_view_is_fixed(self) -> "FixedCameraFramingV1":
+        if (
+            self.track_view_x,
+            self.track_view_y,
+            self.track_view_width,
+            self.track_view_height,
+        ) != (0.0, 1 / 3, 1.0, 2 / 3):
+            raise ValueError("Track view must be the fixed bottom two-thirds")
+        return self
+
+
+class RepresentativeCorpusRecordingV2(CorpusRecording):
+    permitted_use: PermittedUseV1 = Field(alias="permittedUse")
+    framing: FixedCameraFramingV1
+
+    @model_validator(mode="after")
+    def dimensions_are_16_by_9(self) -> "RepresentativeCorpusRecordingV2":
+        if self.width * 9 != self.height * 16:
+            raise ValueError("representative recording must be exactly 16:9")
+        return self
+
+
 class BenchmarkCase(StrictContract):
     case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     recording_id: SafeFreeFormIdentifier = Field(alias="recordingId")
@@ -465,6 +525,29 @@ class BenchmarkCase(StrictContract):
         ):
             raise ValueError("subject seed must be inside benchmark window")
         return self
+
+
+class RepresentativeCaseFactsV1(StrictContract):
+    complete_race_window: Literal[True] = Field(alias="completeRaceWindow")
+    field_car_count: int = Field(alias="fieldCarCount", ge=2, le=100, strict=True)
+    similar_looking_competitor_count: int = Field(
+        alias="similarLookingCompetitorCount", ge=0, le=99, strict=True
+    )
+    identity_challenges: tuple[Literal["occlusion", "identity-ambiguity"], ...] = Field(
+        alias="identityChallenges", min_length=1, max_length=2, strict=False
+    )
+
+    @model_validator(mode="after")
+    def facts_are_consistent(self) -> "RepresentativeCaseFactsV1":
+        if self.similar_looking_competitor_count >= self.field_car_count:
+            raise ValueError("similar-looking competitors must be fewer than the field")
+        if len(set(self.identity_challenges)) != len(self.identity_challenges):
+            raise ValueError("identity challenges must be unique")
+        return self
+
+
+class RepresentativeBenchmarkCaseV2(BenchmarkCase):
+    representative_facts: RepresentativeCaseFactsV1 = Field(alias="representativeFacts")
 
 
 class BenchmarkProvenance(StrictContract):
@@ -554,6 +637,45 @@ class CorpusManifest(CorpusRecordingManifest):
         return self
 
 
+class RepresentativeCorpusManifestV2(CorpusManifest):
+    contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
+        alias="contractVersion"
+    )
+    recordings: tuple[RepresentativeCorpusRecordingV2, ...] = Field(
+        min_length=3, max_length=100, strict=False
+    )
+    cases: tuple[RepresentativeBenchmarkCaseV2, ...] = Field(
+        min_length=3, max_length=100, strict=False
+    )
+
+    @model_validator(mode="after")
+    def corpus_is_representative(self) -> "RepresentativeCorpusManifestV2":
+        if (
+            len({case.recording_id for case in self.cases})
+            < MIN_REPRESENTATIVE_RECORDINGS
+        ):
+            raise ValueError("representative corpus requires three recording windows")
+        identities = {case.subject_seed.identity for case in self.cases}
+        if len(identities) != len(self.cases):
+            raise ValueError("representative Subject identities must be distinct")
+        facts = tuple(case.representative_facts for case in self.cases)
+        if (
+            len({item.field_car_count for item in facts})
+            < MIN_REPRESENTATIVE_FIELD_COUNTS
+        ):
+            raise ValueError("representative field densities must differ")
+        if not any(item.similar_looking_competitor_count > 0 for item in facts):
+            raise ValueError(
+                "representative corpus requires a similar-looking competitor"
+            )
+        challenges = {
+            challenge for item in facts for challenge in item.identity_challenges
+        }
+        if challenges != {"occlusion", "identity-ambiguity"}:
+            raise ValueError("representative corpus requires both identity challenges")
+        return self
+
+
 class GroundTruthPass(StrictContract):
     pass_id: SafeFreeFormIdentifier = Field(alias="passId")
     corner_id: SafeFreeFormIdentifier = Field(alias="cornerId")
@@ -632,6 +754,32 @@ class GroundTruthCase(StrictContract):
         return self
 
 
+class AnnotationProvenanceV1(StrictContract):
+    annotation_version: SafeFreeFormIdentifier = Field(alias="annotationVersion")
+    guideline_version: SafeFreeFormIdentifier = Field(alias="guidelineVersion")
+    source_checksum_sha256: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="sourceChecksumSha256")
+    method: Literal["manual-frame-review"]
+    coordinate_space: Literal["normalized-track-view.v1"] = Field(
+        alias="coordinateSpace"
+    )
+    timestamp_convention: Literal["absolute-source-milliseconds"] = Field(
+        alias="timestampConvention"
+    )
+    frame_index_convention: Literal["zero-based-decoded-frame"] = Field(
+        alias="frameIndexConvention"
+    )
+    tool: SafeFreeFormIdentifier
+    tool_version: SafeFreeFormIdentifier = Field(alias="toolVersion")
+    reviewer_count: int = Field(alias="reviewerCount", ge=1, le=8, strict=True)
+    adjudication: Literal["single-reviewer", "consensus", "independent-adjudication"]
+
+
+class RepresentativeGroundTruthCaseV2(GroundTruthCase):
+    annotation_provenance: AnnotationProvenanceV1 = Field(alias="annotationProvenance")
+
+
 class GroundTruth(StrictContract):
     contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
     corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
@@ -644,6 +792,15 @@ class GroundTruth(StrictContract):
         if len({case.case_id for case in self.cases}) != len(self.cases):
             raise ValueError("ground-truth case IDs must be unique")
         return self
+
+
+class RepresentativeGroundTruthV2(GroundTruth):
+    contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
+        alias="contractVersion"
+    )
+    cases: tuple[RepresentativeGroundTruthCaseV2, ...] = Field(
+        min_length=3, max_length=100, strict=False
+    )
 
 
 class CoverageMetrics(StrictContract):
@@ -680,3 +837,44 @@ class BenchmarkReport(StrictContract):
     gaps: GapMetrics
     identity: IdentityMetrics
     timing: GateTimingMetrics
+
+
+class BenchmarkObservationSetV2(StrictContract):
+    contract_version: Literal["subject-benchmark-observations.v1"] = Field(
+        alias="contractVersion"
+    )
+    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
+    manifest_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="manifestDigest")
+    ground_truth_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="groundTruthDigest")
+    cases: tuple[AcceptedSubjectObservations, ...] = Field(
+        min_length=3, max_length=100, strict=False
+    )
+
+    @model_validator(mode="after")
+    def case_ids_are_unique(self) -> "BenchmarkObservationSetV2":
+        if len({case.case_id for case in self.cases}) != len(self.cases):
+            raise ValueError("observation set case IDs must be unique")
+        return self
+
+
+class BenchmarkEvidenceV2(StrictContract):
+    manifest_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="manifestDigest")
+    ground_truth_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="groundTruthDigest")
+    observations_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="observationsDigest")
+
+
+class RepresentativeBenchmarkReportV2(BenchmarkReport):
+    contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
+        alias="contractVersion"
+    )
+    evidence: BenchmarkEvidenceV2

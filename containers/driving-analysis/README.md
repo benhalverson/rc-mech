@@ -99,4 +99,27 @@ inconsistent centers, invalid timestamp/frame ordering, and unsafe errors.
 The fixture corpus tests serialization, ordering, geometry, gap classification,
 identity integrity, crossing interpolation, coverage, and timing mechanics
 only. Synthetic fixtures do not qualify an inference provider; representative
-footage qualification remains out of scope here and belongs to #231.
+footage evidence is stored separately under
+`tests/fixtures/subject-benchmark/representative-v1`. Its strict
+`subject-benchmark.v2` manifest records three complete private Race windows,
+permission and framing facts, representative conditions, and manual annotation
+provenance without recording bytes, frames, source names, or private paths.
+
+The representative v2 observation-set envelope cryptographically binds stored
+provider-neutral cases to canonical manifest and ground-truth digests. The
+report adds the observation-set digest, counts coverage only for reviewed
+Corner passes ending before the first known ambiguity requiring User
+Re-identification, and retains the v1 rule that any unflagged identity switch or
+missed known gap fails qualification. The committed manual reference report
+passes with zero switches and 100 percent pre-Re-identification Corner-pass
+coverage; it validates evidence and mechanics, not a production provider.
+
+Private candidate generation and hermetic evaluation are separate operations.
+The generator runs outside the Git worktree, verifies the authorized source
+checksum, processes only the declared Race window and fixed Track view, invokes
+the selected provider under the manifest's local/remote permission, and emits a
+digest-bound `subject-benchmark-observations.v1` JSON artifact. The existing
+`subject-benchmark` command consumes only that JSON plus the manifest and ground
+truth. It never fetches media, invokes a provider, reads a model endpoint, or
+loads credentials. See the representative fixture README for the exact command
+and evidence-handling checklist.

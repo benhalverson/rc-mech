@@ -1,0 +1,48 @@
+{
+  "contractVersion": "subject-benchmark.v2",
+  "corpusId": "representative-private-races.v1",
+  "cases": [
+    {
+      "caseId": "race-window-a",
+      "subjectIdentity": "subject-a",
+      "ambiguousSpans": [{"startTimestampMs": 30700, "endTimestampMs": 31200, "reason": "occluded"}],
+      "identityAnnotations": [
+        {"timestampMs": 12000, "frameIndex": 360, "box": {"x": 0.830354, "y": 0.3525, "width": 0.032, "height": 0.045}},
+        {"timestampMs": 12500, "frameIndex": 375, "box": {"x": 0.915771, "y": 0.506667, "width": 0.032, "height": 0.045}},
+        {"timestampMs": 13000, "frameIndex": 390, "box": {"x": 0.963688, "y": 0.701111, "width": 0.032, "height": 0.045}}
+      ],
+      "gates": {"lower-right": {"entry": {"entry": {"x": 0.9, "y": 0.3}, "exit": {"x": 0.9, "y": 0.65}, "direction": "negative"}, "exit": {"entry": {"x": 0.9, "y": 0.65}, "exit": {"x": 0.995, "y": 0.65}, "direction": "positive"}}},
+      "passes": [{"passId": "a-pass-1", "cornerId": "lower-right", "entryTimestampMs": 12300, "exitTimestampMs": 12800}],
+      "annotationProvenance": {"annotationVersion": "representative-private-races.v1", "guidelineVersion": "manual-frame-review.v1", "sourceChecksumSha256": "84782c11a7c921d7e39ace37eb7260c8e85457936ac29b5ed561b342f1f9d203", "method": "manual-frame-review", "coordinateSpace": "normalized-track-view.v1", "timestampConvention": "absolute-source-milliseconds", "frameIndexConvention": "zero-based-decoded-frame", "tool": "ffmpeg-frame-review", "toolVersion": "4.4.2", "reviewerCount": 1, "adjudication": "single-reviewer"}
+    },
+    {
+      "caseId": "race-window-b",
+      "subjectIdentity": "subject-b",
+      "ambiguousSpans": [{"startTimestampMs": 14000, "endTimestampMs": 14500, "reason": "ambiguous-identity"}],
+      "identityAnnotations": [
+        {"timestampMs": 12500, "frameIndex": 375, "box": {"x": 0.55, "y": 0.5495, "width": 0.036, "height": 0.045}},
+        {"timestampMs": 13000, "frameIndex": 390, "box": {"x": 0.8945, "y": 0.7585, "width": 0.036, "height": 0.045}},
+        {"timestampMs": 13500, "frameIndex": 405, "box": {"x": 0.771, "y": 0.5625, "width": 0.036, "height": 0.045}}
+      ],
+      "gates": {"lower-right": {"entry": {"entry": {"x": 0.75, "y": 0.5}, "exit": {"x": 0.75, "y": 0.85}, "direction": "negative"}, "exit": {"entry": {"x": 0.7, "y": 0.65}, "exit": {"x": 0.95, "y": 0.65}, "direction": "negative"}}},
+      "passes": [{"passId": "b-pass-1", "cornerId": "lower-right", "entryTimestampMs": 12767, "exitTimestampMs": 13333}],
+      "annotationProvenance": {"annotationVersion": "representative-private-races.v1", "guidelineVersion": "manual-frame-review.v1", "sourceChecksumSha256": "3287ece4e47287896d94dab17f699eb74a8b004ca061da8c5d089fce819d64c0", "method": "manual-frame-review", "coordinateSpace": "normalized-track-view.v1", "timestampConvention": "absolute-source-milliseconds", "frameIndexConvention": "zero-based-decoded-frame", "tool": "ffmpeg-frame-review", "toolVersion": "4.4.2", "reviewerCount": 1, "adjudication": "single-reviewer"}
+    },
+    {
+      "caseId": "race-window-c",
+      "subjectIdentity": "subject-c",
+      "ambiguousSpans": [
+        {"startTimestampMs": 21500, "endTimestampMs": 22000, "reason": "ambiguous-identity"},
+        {"startTimestampMs": 30000, "endTimestampMs": 30500, "reason": "occluded"}
+      ],
+      "identityAnnotations": [
+        {"timestampMs": 20000, "frameIndex": 600, "box": {"x": 0.387, "y": 0.244, "width": 0.036, "height": 0.05}},
+        {"timestampMs": 20500, "frameIndex": 615, "box": {"x": 0.442, "y": 0.579, "width": 0.036, "height": 0.05}},
+        {"timestampMs": 21000, "frameIndex": 630, "box": {"x": 0.277, "y": 0.389, "width": 0.036, "height": 0.05}}
+      ],
+      "gates": {"technical-center": {"entry": {"entry": {"x": 0.35, "y": 0.4}, "exit": {"x": 0.55, "y": 0.4}, "direction": "positive"}, "exit": {"entry": {"x": 0.35, "y": 0.35}, "exit": {"x": 0.35, "y": 0.65}, "direction": "positive"}}},
+      "passes": [{"passId": "c-pass-1", "cornerId": "technical-center", "entryTimestampMs": 20200, "exitTimestampMs": 20833}],
+      "annotationProvenance": {"annotationVersion": "representative-private-races.v1", "guidelineVersion": "manual-frame-review.v1", "sourceChecksumSha256": "0c410c137eddff0fd72c812a0726600324c69ecfe58ed3bc7c96e6e2483bbd33", "method": "manual-frame-review", "coordinateSpace": "normalized-track-view.v1", "timestampConvention": "absolute-source-milliseconds", "frameIndexConvention": "zero-based-decoded-frame", "tool": "ffmpeg-frame-review", "toolVersion": "4.4.2", "reviewerCount": 1, "adjudication": "single-reviewer"}
+    }
+  ]
+}
