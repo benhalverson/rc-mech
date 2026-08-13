@@ -8,6 +8,16 @@ from driving_analysis_service.contracts import (
     RejectedValidationResponse,
     SafeError,
 )
+from driving_analysis_service.rendering_contracts import (
+    RENDER_CONTRACT_VERSION,
+    RenderSafeError,
+    RenderStageRejected,
+)
+from driving_analysis_service.tracking_contracts import (
+    PROCESSING_CONTRACT_VERSION,
+    ProcessingRejected,
+    ProcessingSafeError,
+)
 
 AsgiApplication = Callable[[Scope, Receive, Send], Awaitable[None]]
 
@@ -67,7 +77,41 @@ def _declared_body_is_too_large(scope: Scope, max_bytes: int) -> bool:
 
 
 async def _send_too_large(scope: Scope, receive: Receive, send: Send) -> None:
-    response = RejectedValidationResponse(
+    await JSONResponse(
+        status_code=413,
+        content=_too_large_content(scope),
+    )(scope, receive, send)
+
+
+def _too_large_content(scope: Scope) -> dict[str, object]:
+    path = scope.get("path", "")
+    if path == "/v1/stages/render":
+        response = RenderStageRejected(
+            contractVersion=RENDER_CONTRACT_VERSION,
+            correlationId=None,
+            outcome="rejected",
+            caseId=None,
+            error=RenderSafeError(
+                code="INVALID_REQUEST",
+                stage="request",
+                message="render request rejected",
+            ),
+        )
+        return response.model_dump(mode="json", by_alias=True)
+    if path.startswith("/v1/stages/"):
+        processing_response = ProcessingRejected(
+            contractVersion=PROCESSING_CONTRACT_VERSION,
+            correlationId=None,
+            outcome="rejected",
+            caseId=None,
+            error=ProcessingSafeError(
+                code="INVALID_REQUEST",
+                stage="request",
+                message="processing request rejected",
+            ),
+        )
+        return processing_response.model_dump(mode="json", by_alias=True)
+    validation_response = RejectedValidationResponse(
         contractVersion=CONTRACT_VERSION,
         correlationId=None,
         outcome="rejected",
@@ -77,7 +121,4 @@ async def _send_too_large(scope: Scope, receive: Receive, send: Send) -> None:
             message="The request body exceeds the configured limit.",
         ),
     )
-    await JSONResponse(
-        status_code=413,
-        content=response.model_dump(mode="json", by_alias=True),
-    )(scope, receive, send)
+    return validation_response.model_dump(mode="json", by_alias=True)

@@ -393,6 +393,12 @@ def _copy_and_consume(
                     stage="claim",
                     safe_message="The media exceeds the byte limit.",
                 )
+            if copied_bytes > expected_bytes:
+                raise MediaValidationError(
+                    code="STAGED_MEDIA_MISMATCH",
+                    stage="claim",
+                    safe_message="The staged media byte count does not match.",
+                )
             _write_all(destination_descriptor, chunk)
         # The claimed copy is ephemeral request scratch. Durability belongs to
         # immutable artifact publication, not this soon-to-be-deleted file.

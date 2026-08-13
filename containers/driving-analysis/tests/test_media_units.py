@@ -580,9 +580,15 @@ def test_cross_filesystem_copy_rejects_underdeclared_size_before_writing(
     assert not destination.exists()
 
 
+@pytest.mark.parametrize(
+    ("max_bytes", "expected_code"),
+    [(1, "MEDIA_OVER_LIMIT"), (100, "STAGED_MEDIA_MISMATCH")],
+)
 def test_cross_filesystem_copy_stops_a_source_that_grows_after_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    max_bytes: int,
+    expected_code: str,
 ) -> None:
     source = tmp_path / "source.media"
     destination = tmp_path / "destination.media"
@@ -601,9 +607,9 @@ def test_cross_filesystem_copy_stops_a_source_that_grows_after_admission(
             source,
             destination,
             expected_bytes=1,
-            max_bytes=1,
+            max_bytes=max_bytes,
         ),
-        "MEDIA_OVER_LIMIT",
+        expected_code,
     )
     assert not source.exists()
     assert destination.read_bytes() == b""

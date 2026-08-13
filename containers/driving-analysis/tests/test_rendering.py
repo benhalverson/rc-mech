@@ -425,7 +425,7 @@ def test_render_enforces_output_limit_during_real_ffmpeg_run(
                 byte_count,
                 checksum,
                 render_id="a0000000-0000-4000-8000-000000000000",
-                max_output_bytes=1024,
+                max_output_bytes=1,
             ),
         )
     assert response.json()["outcome"] == "rejected"
@@ -835,6 +835,21 @@ def test_render_validation_clamps_padding_at_source_boundaries() -> None:
         )
 
 
+def test_render_validation_rejects_a_gate_collapsed_by_pixel_mapping() -> None:
+    body = _body(1, SHA)
+    specification = cast("dict[str, object]", body["specification"])
+    overlay = cast("dict[str, object]", specification["overlay"])
+    overlay["entryGate"] = {
+        "entry": {"x": 0.3, "y": 0.4},
+        "exit": {"x": 0.3000001, "y": 0.4000001},
+        "direction": "positive",
+    }
+    request = RenderStageRequest.model_validate(body)
+
+    with pytest.raises(rendering.RenderInvalidMediaError):
+        rendering._validate_specification(request.specification, 1, _metadata())
+
+
 def test_render_validates_actual_duration_with_one_frame_tolerance() -> None:
     request = RenderStageRequest.model_validate(_body(1, SHA))
     metadata = _metadata(duration_ms=2000)
@@ -853,6 +868,20 @@ def test_render_validates_actual_duration_with_one_frame_tolerance() -> None:
     )
     boundary = RenderStageRequest.model_validate(boundary_body)
     rendering._validate_output_duration(boundary.specification, metadata, 1000)
+
+
+def test_invalid_max_sized_output_is_classified_as_an_output_limit(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def invalid_duration(*_args: object) -> int:
+        raise rendering.RenderInvalidMediaError
+
+    monkeypatch.setattr(rendering, "_output_duration", invalid_duration)
+    with pytest.raises(ProcessOutputLimitError):
+        rendering._bounded_output_duration(Path("artifact"), settings, 1.0, 1, 1)
+    with pytest.raises(rendering.RenderInvalidMediaError):
+        rendering._bounded_output_duration(Path("artifact"), settings, 1.0, 1, 2)
 
 
 def test_gate_overlay_supports_diagonal_and_axis_aligned_gates() -> None:
@@ -960,6 +989,19 @@ def test_render_recovery_rejects_tampered_completion_or_media(
     )
     with pytest.raises(ArtifactConflictError):
         rendering._recover(request, settings, time.monotonic() + 10)
+
+    oversized = artifact.model_copy(
+        update={
+            "case_id": request.case_id,
+            "byte_count": request.specification.max_output_bytes + 1,
+        }
+    )
+    (bundle / f"{RENDER_ID}.corner.json").write_bytes(
+        canonical_json(oversized.model_dump(mode="json", by_alias=True))
+    )
+    with pytest.raises(ArtifactConflictError):
+        rendering._recover(request, settings, time.monotonic() + 10)
+
     artifact = artifact.model_copy(update={"case_id": request.case_id})
     (bundle / f"{RENDER_ID}.corner.json").write_bytes(
         canonical_json(artifact.model_dump(mode="json", by_alias=True))
@@ -1101,6 +1143,7 @@ def test_render_rejects_failed_ffmpeg_process(
     with pytest.raises(ProcessOutputLimitError):
         rendering._validate_render_output(0, oversized, 1)
     oversized.write_bytes(b"x")
+    rendering._validate_render_output(0, oversized, 1)
     with pytest.raises(ProcessOutputLimitError):
         rendering._validate_render_output(1, oversized, 1)
 

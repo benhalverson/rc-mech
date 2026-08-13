@@ -1,3 +1,4 @@
+import json
 from typing import cast
 
 import pytest
@@ -18,6 +19,7 @@ def anyio_backend() -> str:
 def _scope(
     scope_type: str = "http",
     headers: list[tuple[bytes, bytes]] | None = None,
+    path: str = "/v1/media/probe",
 ) -> Scope:
     return cast(
         "Scope",
@@ -27,8 +29,8 @@ def _scope(
             "http_version": "1.1",
             "method": "POST",
             "scheme": "http",
-            "path": "/v1/media/probe",
-            "raw_path": b"/v1/media/probe",
+            "path": path,
+            "raw_path": path.encode(),
             "query_string": b"",
             "root_path": "",
             "server": ("test", 80),
@@ -81,21 +83,68 @@ def test_declared_body_limit_handles_missing_and_malformed_values() -> None:
     )
 
 
+def _json_body(messages: list[Message]) -> dict[str, object]:
+    return cast("dict[str, object]", json.loads(cast("bytes", messages[-1]["body"])))
+
+
 @pytest.mark.anyio
-async def test_middleware_limits_streamed_body_without_content_length() -> None:
+@pytest.mark.parametrize(
+    ("path", "contract_version"),
+    [
+        ("/v1/media/probe", "race-video-validation.v1"),
+        ("/v1/stages/prepare", "subject-tracking.v1"),
+        ("/v1/stages/render", "corner-render.v1"),
+    ],
+)
+async def test_middleware_limits_streamed_body_without_content_length(
+    path: str,
+    contract_version: str,
+) -> None:
     async def app(_scope: Scope, receive: Receive, _send: Send) -> None:
         await receive()
 
     messages: list[Message] = []
     middleware = RequestBodyLimitMiddleware(app, max_bytes=1)
     await middleware(
-        _scope(),
+        _scope(path=path),
         _receive({"type": "http.request", "body": b"too large"}),
         _send_collector(messages),
     )
 
     assert messages[0]["type"] == "http.response.start"
     assert messages[0]["status"] == 413
+    assert _json_body(messages)["contractVersion"] == contract_version
+
+
+@pytest.mark.anyio
+async def test_middleware_uses_render_contract_for_declared_oversized_body() -> None:
+    async def unexpected_app(_scope: Scope, _receive: Receive, _send: Send) -> None:
+        msg = "oversized request reached the application"
+        raise AssertionError(msg)
+
+    messages: list[Message] = []
+    middleware = RequestBodyLimitMiddleware(unexpected_app, max_bytes=1)
+    await middleware(
+        _scope(
+            headers=[(b"content-length", b"2")],
+            path="/v1/stages/render",
+        ),
+        _receive({"type": "http.request", "body": b"{}"}),
+        _send_collector(messages),
+    )
+
+    assert messages[0]["status"] == 413
+    assert _json_body(messages) == {
+        "contractVersion": "corner-render.v1",
+        "correlationId": None,
+        "outcome": "rejected",
+        "caseId": None,
+        "error": {
+            "code": "INVALID_REQUEST",
+            "stage": "request",
+            "message": "render request rejected",
+        },
+    }
 
 
 @pytest.mark.anyio

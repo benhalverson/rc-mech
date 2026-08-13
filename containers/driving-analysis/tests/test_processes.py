@@ -2,13 +2,17 @@ import os
 import selectors
 import subprocess
 import sys
+import threading
 import time
 from contextlib import AbstractContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import Self, cast
+from typing import TYPE_CHECKING, Self, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import driving_analysis_service.processes as process_module
 from driving_analysis_service.processes import (
@@ -370,6 +374,100 @@ def test_terminate_process_group_tolerates_finished_and_missing_processes(
     process_module._terminate_process_group(running)
     running.kill()
     running.wait()
+
+
+class _NonReapingProcess:
+    pid = 123
+
+    def poll(self) -> None:
+        return None
+
+    def wait(self, timeout: float | None = None) -> int:
+        del timeout
+        msg = "foreground wait must not run"
+        raise AssertionError(msg)
+
+
+def test_terminate_process_group_schedules_reaping_without_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = cast("subprocess.Popen[bytes]", _NonReapingProcess())
+    scheduled: list[subprocess.Popen[bytes]] = []
+    monkeypatch.setattr(os, "killpg", lambda _pid, _signal: None)
+    monkeypatch.setattr(process_module, "_schedule_process_reap", scheduled.append)
+
+    process_module._terminate_process_group(process)
+
+    assert scheduled == [process]
+
+
+def test_background_process_reaper_releases_its_single_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = cast("subprocess.Popen[bytes]", _NonReapingProcess())
+    released = threading.Event()
+
+    class _Slot:
+        def acquire(self, *, blocking: bool) -> bool:
+            assert blocking is False
+            return True
+
+        def release(self) -> None:
+            released.set()
+
+    class _Worker:
+        def __init__(
+            self,
+            *,
+            target: object,
+            daemon: bool,
+            name: str,
+        ) -> None:
+            assert daemon is True
+            assert name == "bounded-process-reaper"
+            self.target = cast("Callable[[], None]", target)
+
+        def start(self) -> None:
+            with pytest.raises(AssertionError, match="foreground wait"):
+                self.target()
+
+    monkeypatch.setattr(process_module, "_PROCESS_REAP_SLOTS", _Slot())
+    monkeypatch.setattr(process_module, "Thread", _Worker)
+
+    process_module._schedule_process_reap(process)
+
+    assert released.is_set()
+
+
+def test_background_process_reaper_releases_slot_when_start_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = cast("subprocess.Popen[bytes]", _NonReapingProcess())
+    released = threading.Event()
+
+    class _Slot:
+        def acquire(self, *, blocking: bool) -> bool:
+            assert blocking is False
+            return True
+
+        def release(self) -> None:
+            released.set()
+
+    class _Worker:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            msg = "thread unavailable"
+            raise RuntimeError(msg)
+
+    monkeypatch.setattr(process_module, "_PROCESS_REAP_SLOTS", _Slot())
+    monkeypatch.setattr(process_module, "Thread", _Worker)
+
+    with pytest.raises(RuntimeError, match="thread unavailable"):
+        process_module._schedule_process_reap(process)
+
+    assert released.is_set()
 
 
 class _ProcessWithoutPipes:

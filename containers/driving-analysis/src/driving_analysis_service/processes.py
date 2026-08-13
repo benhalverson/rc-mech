@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import BoundedSemaphore, Thread
 from types import TracebackType
 from typing import IO, cast
 
@@ -26,6 +27,7 @@ _FILE_LIMIT_WRAPPER = (
     "resource.setrlimit(resource.RLIMIT_FSIZE,(limit,limit));"
     "os.execv(sys.argv[2],sys.argv[2:])"
 )
+_PROCESS_REAP_SLOTS = BoundedSemaphore(1)
 
 
 @dataclass(frozen=True)
@@ -285,4 +287,27 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     except ProcessLookupError:
         return
     if process.poll() is None:
-        process.wait()
+        _schedule_process_reap(process)
+
+
+def _schedule_process_reap(process: subprocess.Popen[bytes]) -> None:
+    """Reap a killed child without allowing a stuck wait to hold the request."""
+    slot = _PROCESS_REAP_SLOTS
+    if not slot.acquire(blocking=False):
+        return
+
+    started = False
+    try:
+
+        def reap() -> None:
+            try:
+                process.wait()
+            finally:
+                slot.release()
+
+        worker = Thread(target=reap, daemon=True, name="bounded-process-reaper")
+        worker.start()
+        started = True
+    finally:
+        if not started:
+            slot.release()

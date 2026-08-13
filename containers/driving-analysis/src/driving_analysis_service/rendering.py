@@ -179,7 +179,13 @@ class CornerRenderService:
                     max_bytes=specification.max_output_bytes,
                     deadline=deadline,
                 )
-                duration_ms = _output_duration(work_path, self.settings, deadline)
+                duration_ms = _bounded_output_duration(
+                    work_path,
+                    self.settings,
+                    deadline,
+                    output_bytes,
+                    specification.max_output_bytes,
+                )
                 _validate_output_duration(specification, metadata, duration_ms)
                 artifact = RenderArtifact(
                     renderId=request.render_id,
@@ -272,6 +278,7 @@ def _recover(
         or completion.case_id != request.case_id
         or completion.source_checksum_sha256
         != request.specification.source_checksum_sha256
+        or completion.byte_count > request.specification.max_output_bytes
         or completion.render_input_digest
         != _render_input_digest(request, completion.ffmpeg_version)
     ):
@@ -308,7 +315,9 @@ def _validate_specification(
 ) -> None:
     if source_bytes <= 0 or specification.exit_timestamp_ms > metadata.duration_ms:
         raise RenderInvalidMediaError
-    _pixel_crop(specification, metadata)
+    crop = _pixel_crop(specification, metadata)
+    _pixel_gate(specification.overlay.entry_gate, metadata, crop)
+    _pixel_gate(specification.overlay.exit_gate, metadata, crop)
     padded_start = specification.entry_timestamp_ms - specification.padding.before_ms
     padded_end = specification.exit_timestamp_ms + specification.padding.after_ms
     if padded_start < 0 or padded_end > metadata.duration_ms:
@@ -396,8 +405,6 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     "+bitexact",
                     "-movflags",
                     "+frag_keyframe+empty_moov+default_base_moof",
-                    "-fs",
-                    str(specification.max_output_bytes),
                     "-f",
                     "mp4",
                     "pipe:1",
@@ -448,10 +455,27 @@ def _validate_render_output(
     return_code: int, destination: Path, max_output_bytes: int
 ) -> None:
     byte_count = destination.stat().st_size
-    if byte_count >= max_output_bytes:
+    if byte_count > max_output_bytes or (
+        return_code != 0 and byte_count >= max_output_bytes
+    ):
         raise ProcessOutputLimitError
     if return_code != 0 or byte_count == 0:
         raise RenderProcessError
+
+
+def _bounded_output_duration(
+    destination: Path,
+    settings: ServiceSettings,
+    deadline: float,
+    output_bytes: int,
+    max_output_bytes: int,
+) -> int:
+    try:
+        return _output_duration(destination, settings, deadline)
+    except RenderInvalidMediaError:
+        if output_bytes >= max_output_bytes:
+            raise ProcessOutputLimitError from None
+        raise
 
 
 def _validate_output_duration(
@@ -574,10 +598,13 @@ def _pixel_point(
 def _pixel_gate(
     gate: DirectedGate, metadata: ProbeMetadata, crop: _PixelCrop
 ) -> tuple[tuple[int, int], tuple[int, int]]:
-    return (
+    result = (
         _pixel_point(gate.entry, metadata, crop),
         _pixel_point(gate.exit, metadata, crop),
     )
+    if result[0] == result[1]:
+        raise RenderInvalidMediaError
+    return result
 
 
 def _escape_filter_value(value: str) -> str:
