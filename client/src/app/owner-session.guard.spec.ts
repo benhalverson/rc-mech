@@ -31,6 +31,8 @@ class RouterHost {}
 const privateFeatureLoader = () =>
 	vi.fn(async (): Promise<typeof PrivatePhotos> => PrivatePhotos);
 
+const sessionExpiresAt = '2099-08-12T12:00:00.000Z';
+
 describe('ownerSessionCanMatch', () => {
 	let router: Router;
 	let loadPrivateFeature: ReturnType<typeof privateFeatureLoader>;
@@ -92,7 +94,7 @@ describe('ownerSessionCanMatch', () => {
 		sessionStore.resolved.mockResolvedValue({
 			session: {
 				id: 'session-1',
-				expiresAt: '2026-08-12T12:00:00.000Z',
+				expiresAt: sessionExpiresAt,
 			},
 			user: { id: 'user-1', email: 'owner@example.test' },
 		});
@@ -105,7 +107,7 @@ describe('ownerSessionCanMatch', () => {
 				key: 'user-1',
 				email: 'owner@example.test',
 				sessionKey: 'session-1',
-				offlineUntil: '2026-08-12T12:00:00.000Z',
+				offlineUntil: sessionExpiresAt,
 			},
 		});
 		expect(router.url).toBe('/garage/car-1/photos');
@@ -115,7 +117,7 @@ describe('ownerSessionCanMatch', () => {
 		sessionStore.resolved.mockResolvedValue({
 			session: {
 				id: 'session-1',
-				expiresAt: '2026-08-12T12:00:00.000Z',
+				expiresAt: sessionExpiresAt,
 			},
 			user: { id: 'user-1', email: 'owner@example.test' },
 		});
@@ -129,7 +131,7 @@ describe('ownerSessionCanMatch', () => {
 			key: 'user-1',
 			email: 'owner@example.test',
 			sessionKey: 'session-1',
-			offlineUntil: '2026-08-12T12:00:00.000Z',
+			offlineUntil: sessionExpiresAt,
 		});
 	});
 
@@ -137,7 +139,7 @@ describe('ownerSessionCanMatch', () => {
 		const snapshot = {
 			ownerKey: 'user-1',
 			ownerEmail: 'owner@example.test',
-			offlineUntil: '2026-08-12T12:00:00.000Z',
+			offlineUntil: sessionExpiresAt,
 			preparedAt: '2026-08-11T12:00:00.000Z',
 			cars: [{ id: 'car-1', name: 'Offline buggy' }],
 		};

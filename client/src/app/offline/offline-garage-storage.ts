@@ -670,7 +670,7 @@ export class OfflineGarageStorage {
 	}
 
 	async restoreCurrent(
-		now = new Date(),
+		now = new Date(this.now()),
 	): Promise<OfflineGarageSnapshot | null> {
 		const snapshot = await this.currentSnapshot(now);
 		if (!snapshot) return null;
