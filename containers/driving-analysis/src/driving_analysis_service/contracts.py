@@ -433,6 +433,9 @@ class BenchmarkProvenance(StrictContract):
     identity_annotation_tolerance_ms: int = Field(
         alias="identityAnnotationToleranceMs", ge=0, le=1_000, strict=True
     )
+    maximum_observation_interval_ms: int = Field(
+        alias="maximumObservationIntervalMs", gt=0, le=10_000, strict=True
+    )
 
 
 class CorpusRecordingManifest(StrictContract):

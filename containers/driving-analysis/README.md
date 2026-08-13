@@ -47,6 +47,9 @@ identity-switch and missed-pass scenarios; its bytes match
 recording checksums and FFprobe facts without recording names or annotations.
 The manifest pins the Docker image, lockfile, FFmpeg, provider, model, confidence
 calibration, configuration, and pipeline provenance copied into the report.
+Crossing brackets wider than the manifest's maximum observation interval are
+ineligible. Coverage stops at the first Tracking gap because this synthetic
+harness contains no User Re-identification evidence.
 Inputs are size-bounded and output is atomically replaced with owner-only
 permissions. The committed executable corpus covers trusted tracking, flagged
 ambiguity, an independently annotated unflagged switch, a missed pass, and

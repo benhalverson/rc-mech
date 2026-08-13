@@ -68,6 +68,7 @@ BENCHMARK_PROVENANCE = BenchmarkProvenance(
     confidenceCalibration="synthetic-linear-v1",
     identityMatchIouThreshold=0.5,
     identityAnnotationToleranceMs=50,
+    maximumObservationIntervalMs=250,
 )
 
 
@@ -440,7 +441,7 @@ def test_crossing_geometry_direction_and_pairing() -> None:
         caseId="x",
         observations=(observation(0, 0.2), observation(100, 0.5)),
     )
-    assert _candidate_passes(candidate, gates(), 0.5) == ()
+    assert _candidate_passes(candidate, gates(), 0.5, 250) == ()
     exit_before_entry = candidate.model_copy(
         update={
             "observations": (
@@ -451,19 +452,26 @@ def test_crossing_geometry_direction_and_pairing() -> None:
             )
         }
     )
-    assert _candidate_passes(exit_before_entry, gates(), 0.5) == ()
-    stale_gap = AcceptedSubjectObservations(
+    assert _candidate_passes(exit_before_entry, gates(), 0.5, 250) == ()
+    later_gap = AcceptedSubjectObservations(
         contractVersion="subject-observation.v1",
         outcome="accepted",
         caseId="x",
         observations=(
-            observation(100, 0.2),
-            observation(300, 0.5),
-            observation(500, 0.8),
+            observation(0, 0.2),
+            observation(100, 0.5),
+            observation(200, 0.8),
         ),
-        gaps=(TrackingGap(startTimestampMs=0, endTimestampMs=50, reason="missing"),),
+        gaps=(TrackingGap(startTimestampMs=300, endTimestampMs=350, reason="missing"),),
     )
-    assert len(_candidate_passes(stale_gap, gates(), 0.5)) == 1
+    assert len(_candidate_passes(later_gap, gates(), 0.5, 250)) == 1
+    discontinuous = AcceptedSubjectObservations(
+        contractVersion="subject-observation.v1",
+        outcome="accepted",
+        caseId="x",
+        observations=(observation(0, 0.2), observation(400, 0.8)),
+    )
+    assert _candidate_passes(discontinuous, gates(), 0.5, 250) == ()
 
 
 def test_iou_and_identity_switches_use_independent_annotations() -> None:
@@ -566,6 +574,28 @@ def test_pass_overlapping_an_interior_gap_is_ineligible() -> None:
     assert report.passed is False
 
 
+def test_passes_after_first_gap_are_excluded_without_reidentification() -> None:
+    candidate = AcceptedSubjectObservations(
+        contractVersion="subject-observation.v1",
+        outcome="accepted",
+        caseId="case-a",
+        observations=(
+            observation(0, 0.2),
+            observation(50, 0.2),
+            observation(200, 0.5),
+            observation(400, 0.8),
+        ),
+        gaps=(
+            TrackingGap(
+                startTimestampMs=10,
+                endTimestampMs=20,
+                reason="ambiguous-identity",
+            ),
+        ),
+    )
+    assert _candidate_passes(candidate, gates(), 0.5, 250) == ()
+
+
 def test_missed_known_ambiguity_fails_qualification() -> None:
     manifest, truth, candidates = corpus()
     truth = truth.model_copy(
@@ -595,10 +625,10 @@ def test_benchmark_passes_and_reports_timing_distribution() -> None:
     report = evaluate_benchmark(manifest, truth, candidates)
     assert report.passed is True
     assert report.coverage.ratio == 1.0
-    assert report.timing.count == 1
-    assert report.timing.mean_ms == pytest.approx(-66.6666666667)
+    assert report.timing.count == 2
+    assert report.timing.mean_ms == pytest.approx(0)
     assert report.timing.median_ms == report.timing.mean_ms
-    assert report.timing.max_absolute_ms == pytest.approx(66.6666666667)
+    assert report.timing.max_absolute_ms == pytest.approx(33.3333333333)
 
 
 def test_pass_matching_uses_timing_window_and_never_reuses_a_crossing() -> None:

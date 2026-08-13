@@ -98,6 +98,7 @@ def _crossings(
     candidate: AcceptedSubjectObservations,
     gate: DirectedGate,
     threshold: float,
+    maximum_interval_ms: int,
 ) -> tuple[float, ...]:
     crossings: list[float] = []
     gap_index = 0
@@ -115,6 +116,7 @@ def _crossings(
         if (
             not _is_trusted(first, threshold)
             or not _is_trusted(second, threshold)
+            or second.timestamp_ms - first.timestamp_ms > maximum_interval_ms
             or overlaps_gap
         ):
             continue
@@ -128,28 +130,26 @@ def _candidate_passes(
     candidate: AcceptedSubjectObservations,
     gates: CornerGates,
     threshold: float,
+    maximum_interval_ms: int,
 ) -> tuple[CandidatePass, ...]:
-    entries = _crossings(candidate, gates.entry, threshold)
-    exits = _crossings(candidate, gates.exit, threshold)
+    entries = _crossings(candidate, gates.entry, threshold, maximum_interval_ms)
+    exits = _crossings(candidate, gates.exit, threshold, maximum_interval_ms)
     passes: list[CandidatePass] = []
     next_exit = 0
-    gap_index = 0
+    coverage_cutoff = candidate.gaps[0].start_timestamp_ms if candidate.gaps else None
     for entry in entries:
+        if coverage_cutoff is not None and entry >= coverage_cutoff:
+            break
         while next_exit < len(exits) and exits[next_exit] <= entry:
             next_exit += 1
         if next_exit == len(exits):
             break
         exit_ms = exits[next_exit]
         next_exit += 1
-        while (
-            gap_index < len(candidate.gaps)
-            and candidate.gaps[gap_index].end_timestamp_ms < entry
-        ):
-            gap_index += 1
         if (
-            gap_index < len(candidate.gaps)
-            and entry <= candidate.gaps[gap_index].end_timestamp_ms
-            and exit_ms >= candidate.gaps[gap_index].start_timestamp_ms
+            candidate.gaps
+            and entry <= candidate.gaps[0].end_timestamp_ms
+            and exit_ms >= candidate.gaps[0].start_timestamp_ms
         ):
             continue
         passes.append(CandidatePass(entry_ms=entry, exit_ms=exit_ms))
@@ -307,7 +307,10 @@ def _case_result(
 ) -> CaseResult:
     passes_by_corner = {
         corner_id: _candidate_passes(
-            candidate, gates, provenance.identity_confidence_threshold
+            candidate,
+            gates,
+            provenance.identity_confidence_threshold,
+            provenance.maximum_observation_interval_ms,
         )
         for corner_id, gates in truth.gates.items()
     }
@@ -328,9 +331,11 @@ def _case_result(
         index, candidate_pass = matched
         used_by_corner[expected.corner_id].add(index)
         eligible += 1
-        timing_errors.append(
-            (candidate_pass.exit_ms - candidate_pass.entry_ms)
-            - (expected.exit_timestamp_ms - expected.entry_timestamp_ms)
+        timing_errors.extend(
+            (
+                candidate_pass.entry_ms - expected.entry_timestamp_ms,
+                candidate_pass.exit_ms - expected.exit_timestamp_ms,
+            )
         )
     timely, missed, premature = _gap_counts(truth.ambiguous_spans, candidate.gaps)
     return CaseResult(
