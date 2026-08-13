@@ -1,0 +1,11 @@
+{
+  "contractVersion": "subject-tracking.v1",
+  "correlationId": "c3d1ea64-7c62-4a1e-a41f-43fe101b7f41",
+  "outcome": "rejected",
+  "caseId": "fixture-race",
+  "error": {
+    "code": "INFERENCE_UNAVAILABLE",
+    "stage": "initialize",
+    "message": "inference provider unavailable"
+  }
+}

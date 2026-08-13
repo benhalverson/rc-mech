@@ -443,7 +443,7 @@ def test_claim_maps_non_missing_os_errors_and_cleanup_is_idempotent(
     settings.prepare_roots()
     (settings.staging_root / f"{STAGED_MEDIA_ID}.media").write_bytes(b"x")
     request = MediaValidationRequest.model_validate(request_body(1))
-    claim = media_module._claimed_media(request, settings)
+    claim = media_module.claim_staged_media(request, settings)
 
     def deny_copy(*_args: object, **_kwargs: object) -> None:
         raise PermissionError
@@ -451,6 +451,24 @@ def test_claim_maps_non_missing_os_errors_and_cleanup_is_idempotent(
     monkeypatch.setattr(media_module, "_copy_and_consume", deny_copy)
     _error_code(claim.__enter__, "INTERNAL_ERROR")
     claim._cleanup()
+    assert list(settings.work_root.iterdir()) == []
+
+
+def test_claim_cleans_up_when_its_processing_deadline_expires(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    (settings.staging_root / f"{STAGED_MEDIA_ID}.media").write_bytes(b"x")
+    request = MediaValidationRequest.model_validate(request_body(1))
+    claim = media_module.claim_staged_media(request, settings)
+
+    def expire_copy(*_args: object, **_kwargs: object) -> None:
+        raise ProcessTimeoutError
+
+    monkeypatch.setattr(media_module, "_copy_and_consume", expire_copy)
+    with pytest.raises(ProcessTimeoutError):
+        claim.__enter__()
     assert list(settings.work_root.iterdir()) == []
 
 
@@ -470,7 +488,7 @@ def test_claim_cleans_staging_when_work_directory_creation_fails(
     monkeypatch.setattr(tempfile, "mkdtemp", deny_work_directory)
 
     _error_code(
-        media_module._claimed_media(request, settings).__enter__,
+        media_module.claim_staged_media(request, settings).__enter__,
         "INTERNAL_ERROR",
     )
     assert list(settings.staging_root.iterdir()) == []
@@ -486,7 +504,7 @@ def test_claim_creates_a_private_snapshot_before_validation(
     retained_link = settings.staging_root / "retained-link.media"
     retained_link.hardlink_to(source)
     request = MediaValidationRequest.model_validate(request_body(5))
-    claim = media_module._claimed_media(request, settings)
+    claim = media_module.claim_staged_media(request, settings)
 
     with claim as claimed_path:
         assert claimed_path.read_bytes() == b"media"
@@ -573,7 +591,7 @@ def test_claim_reports_cleanup_failure_for_nonempty_invalid_input(
     request = MediaValidationRequest.model_validate(request_body(1))
 
     _error_code(
-        media_module._claimed_media(request, settings).__enter__,
+        media_module.claim_staged_media(request, settings).__enter__,
         "INTERNAL_ERROR",
     )
 
@@ -588,7 +606,7 @@ def test_claim_cleans_workspace_when_cross_filesystem_copy_is_over_limit(
     request = MediaValidationRequest.model_validate(request_body(5))
 
     _error_code(
-        media_module._claimed_media(request, limited_settings).__enter__,
+        media_module.claim_staged_media(request, limited_settings).__enter__,
         "MEDIA_OVER_LIMIT",
     )
     assert list(limited_settings.work_root.iterdir()) == []
@@ -607,7 +625,7 @@ def test_claim_maps_cross_filesystem_copy_failure(
 
     monkeypatch.setattr(media_module, "_copy_and_consume", copy_failure)
     _error_code(
-        media_module._claimed_media(request, settings).__enter__,
+        media_module.claim_staged_media(request, settings).__enter__,
         "INTERNAL_ERROR",
     )
 

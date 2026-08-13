@@ -1,0 +1,32 @@
+{
+  "contractVersion": "subject-tracking.v1",
+  "correlationId": "c3d1ea64-7c62-4a1e-a41f-43fe101b7f41",
+  "outcome": "accepted",
+  "caseId": "fixture-race",
+  "segment": {
+    "observationSegmentId": "edb9d9c2-1ca8-48c3-ae7d-69222aab25f2",
+    "caseId": "fixture-race",
+    "byteCount": 800,
+    "checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "contentEncoding": "gzip",
+    "mediaType": "application/vnd.rc-mech.subject-observations+json",
+    "observationCount": 2,
+    "completed": false,
+    "gap": {"startTimestampMs": 300, "reason": "ambiguous-identity"},
+    "provenance": {
+      "provider": "local-http",
+      "model": "llava:13b",
+      "modelVersion": "13b-q4_0",
+      "pipelineVersion": "subject-tracking.v1",
+      "configurationDigest": "6666666666666666666666666666666666666666666666666666666666666666",
+      "modelDigest": "0d0eb4d7f485d7d0a21fd9b0c1d5b04da481d2150a097e81b64acb59758fdef6",
+      "identityConfidenceThreshold": 0.8,
+      "confidenceCalibration": "llava-13b-manual-v1"
+    },
+    "ffmpegVersion": "5.1.9",
+    "sourceChecksumSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "preparedChecksumSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "preparationConfigurationDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "trackingInputDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+  }
+}

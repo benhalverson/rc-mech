@@ -1,0 +1,26 @@
+{
+  "contractVersion": "subject-tracking.v1",
+  "correlationId": "c3d1ea64-7c62-4a1e-a41f-43fe101b7f41",
+  "outcome": "accepted",
+  "caseId": "fixture-race",
+  "prepared": {
+    "preparedMediaId": "bde7ec63-86b9-4c86-a5e8-dbcf4a61f820",
+    "caseId": "fixture-race",
+    "byteCount": 1000,
+    "checksumSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "frameManifestByteCount": 500,
+    "frameManifestChecksumSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "sourceByteCount": 2000,
+    "sourceChecksumSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "window": {"startTimestampMs": 100, "endTimestampMs": 400},
+    "trackView": {"x": 0.0, "y": 0.3333333333333333, "width": 1.0, "height": 0.6666666666666666},
+    "width": 160,
+    "height": 60,
+    "decodedFrameCount": 3,
+    "averageFrameRate": {"numerator": 10, "denominator": 1},
+    "ffmpegVersion": "5.1.9",
+    "pipelineVersion": "subject-tracking.v1",
+    "preparationInputDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "preparationConfigurationDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+  }
+}

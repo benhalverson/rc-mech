@@ -28,6 +28,7 @@ MAX_DECLARED_BYTES = 50 * 1024 * 1024 * 1024
 # below the limit.
 MAX_BENCHMARK_TIMESTAMP_MS = 86_400_000
 MAX_BENCHMARK_FRAME_COUNT = 10_000_000
+MAX_SUBJECT_OBSERVATIONS = 100_000
 # This is deliberately much larger than ordinary normalized detections, but it
 # prevents IEEE-754 subnormal dimensions from producing a zero-area box.
 MIN_NORMALIZED_BOX_AREA = 1e-12
@@ -297,9 +298,11 @@ class AcceptedSubjectObservations(StrictContract):
     outcome: Literal["accepted"]
     case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     observations: tuple[SubjectObservation, ...] = Field(
-        min_length=1, max_length=100_000, strict=False
+        min_length=1, max_length=MAX_SUBJECT_OBSERVATIONS, strict=False
     )
-    gaps: tuple[TrackingGap, ...] = Field(default=(), max_length=100_000, strict=False)
+    gaps: tuple[TrackingGap, ...] = Field(
+        default=(), max_length=MAX_SUBJECT_OBSERVATIONS, strict=False
+    )
 
     @model_validator(mode="after")
     def observations_are_ordered(self) -> "AcceptedSubjectObservations":
