@@ -384,12 +384,17 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     "yuv420p",
                     "-movflags",
                     "+frag_keyframe+empty_moov+default_base_moof",
+                    "-fs",
+                    str(specification.max_output_bytes),
                     "-f",
                     "mp4",
                     "pipe:1",
                 ),
                 timeout_seconds=remaining_seconds(deadline),
-                max_output_bytes=specification.max_output_bytes,
+                max_output_bytes=min(
+                    specification.max_output_bytes,
+                    settings.limits.max_process_output_bytes,
+                ),
                 streams=ProcessStreams(
                     standard_output=output,
                     standard_error_observer=StderrLineObserver(
@@ -398,7 +403,11 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     ),
                 ),
             )
-        _validate_render_output(result.return_code, destination)
+        _validate_render_output(
+            result.return_code,
+            destination,
+            specification.max_output_bytes,
+        )
     except Exception:
         destination.unlink(missing_ok=True)
         raise
@@ -422,8 +431,15 @@ def _pixel_crop(
     )
 
 
-def _validate_render_output(return_code: int, destination: Path) -> None:
-    if return_code != 0 or destination.stat().st_size == 0:
+def _validate_render_output(
+    return_code: int, destination: Path, max_output_bytes: int
+) -> None:
+    byte_count = destination.stat().st_size
+    if byte_count > max_output_bytes or (
+        return_code != 0 and byte_count >= max_output_bytes
+    ):
+        raise ProcessOutputLimitError
+    if return_code != 0 or byte_count == 0:
         raise RenderProcessError
 
 

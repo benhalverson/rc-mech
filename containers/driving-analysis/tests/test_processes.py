@@ -6,7 +6,7 @@ import time
 from contextlib import AbstractContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Self, cast
+from typing import Self, cast
 
 import pytest
 
@@ -18,9 +18,6 @@ from driving_analysis_service.processes import (
     StderrLineObserver,
     run_bounded_process,
 )
-
-if TYPE_CHECKING:
-    from typing import IO
 
 PYTHON = Path(sys.executable).resolve()
 
@@ -52,23 +49,6 @@ def test_bounded_process_streams_stdout_without_retaining_it(tmp_path: Path) -> 
 
     assert result.stdout == b""
     assert destination.read_bytes() == b"output"
-
-
-def test_bounded_process_rejects_short_stdout_sink() -> None:
-    class ShortSink:
-        def write(self, chunk: bytes) -> int:
-            return len(chunk) - 1
-
-    with pytest.raises(OSError, match="stream bounded process output"):
-        run_bounded_process(
-            PYTHON,
-            ("-c", "print('output')"),
-            timeout_seconds=5,
-            max_output_bytes=1024,
-            streams=ProcessStreams(
-                standard_output=cast("IO[bytes]", cast("object", ShortSink()))
-            ),
-        )
 
 
 def test_bounded_process_consumes_selected_bounded_stderr_lines() -> None:

@@ -48,7 +48,6 @@ class ProcessResult:
 class _ProcessCapture:
     max_output_bytes: int
     stderr_line_observer: StderrLineObserver | None
-    stdout_sink: IO[bytes] | None = None
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
     pending_stderr: bytearray = field(default_factory=bytearray)
@@ -94,7 +93,7 @@ class _ProcessCapture:
 
     def _append(self, destination: bytearray, chunk: bytes) -> None:
         self._account(chunk)
-        self._store(destination, chunk)
+        destination.extend(chunk)
 
     def _account(self, chunk: bytes) -> None:
         if self.output_bytes + len(chunk) > self.max_output_bytes:
@@ -102,11 +101,6 @@ class _ProcessCapture:
         self.output_bytes += len(chunk)
 
     def _store(self, destination: bytearray, chunk: bytes) -> None:
-        if destination is self.stdout and self.stdout_sink is not None:
-            if self.stdout_sink.write(chunk) != len(chunk):
-                msg = "Unable to stream bounded process output"
-                raise OSError(msg)
-            return
         destination.extend(chunk)
 
 
@@ -154,7 +148,11 @@ def run_bounded_process(
             if resolved_streams.standard_input is None
             else resolved_streams.standard_input
         ),
-        stdout=subprocess.PIPE,
+        stdout=(
+            subprocess.PIPE
+            if resolved_streams.standard_output is None
+            else resolved_streams.standard_output
+        ),
         stderr=subprocess.PIPE,
         shell=False,
         close_fds=True,
@@ -164,7 +162,6 @@ def run_bounded_process(
     capture = _ProcessCapture(
         max_output_bytes=max_output_bytes,
         stderr_line_observer=resolved_streams.standard_error_observer,
-        stdout_sink=resolved_streams.standard_output,
     )
     with _ProcessScope(process):
         _read_process_output(
@@ -194,12 +191,13 @@ def _read_process_output(
     *,
     deadline: float,
 ) -> None:
-    if process.stdout is None or process.stderr is None:
+    if process.stderr is None:
         msg = "Media process pipes were not created"
         raise RuntimeError(msg)
 
     with selectors.DefaultSelector() as selector:
-        selector.register(process.stdout, selectors.EVENT_READ, capture.stdout)
+        if process.stdout is not None:
+            selector.register(process.stdout, selectors.EVENT_READ, capture.stdout)
         selector.register(process.stderr, selectors.EVENT_READ, capture.stderr)
 
         while selector.get_map():
