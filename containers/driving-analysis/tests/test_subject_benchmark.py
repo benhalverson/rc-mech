@@ -69,6 +69,8 @@ BENCHMARK_PROVENANCE = BenchmarkProvenance(
     identityMatchIouThreshold=0.5,
     identityAnnotationToleranceMs=50,
     maximumObservationIntervalMs=250,
+    passMatchToleranceMs=100,
+    ambiguityGapCoverageToleranceMs=0,
 )
 
 
@@ -95,7 +97,9 @@ def observation(  # noqa: PLR0913
     return SubjectObservation.model_validate(
         {
             "timestampMs": timestamp,
-            "frameIndex": timestamp if frame_index is None else frame_index,
+            "frameIndex": (
+                round(timestamp * 30 / 1_000) if frame_index is None else frame_index
+            ),
             "box": box.model_dump(),
             "center": {"x": center_x, "y": center_y},
             "visibility": visibility,
@@ -109,7 +113,7 @@ def observation(  # noqa: PLR0913
 def annotation(timestamp: int, center_x: float) -> SubjectIdentityAnnotation:
     return SubjectIdentityAnnotation(
         timestampMs=timestamp,
-        frameIndex=timestamp,
+        frameIndex=round(timestamp * 30 / 1_000),
         box=box_at(center_x),
     )
 
@@ -177,6 +181,7 @@ def corpus() -> tuple[
                 checksumSha256="5" * 64,
                 byteCount=1_000,
                 durationMs=1_000,
+                decodedFrameCount=30,
                 width=1_920,
                 height=1_080,
                 videoCodec="h264",
@@ -186,6 +191,7 @@ def corpus() -> tuple[
         ),
         cases=(case,),
         passMatchToleranceMs=100,
+        frameTimestampToleranceMs=1,
         provenance=BENCHMARK_PROVENANCE,
     )
     candidates = {
@@ -494,7 +500,7 @@ def test_iou_and_identity_switches_use_independent_annotations() -> None:
         update={
             "observations": (
                 observation(0, 0.2),
-                observation(200, 0.7, frame_index=201),
+                observation(200, 0.7, frame_index=6),
                 observation(400, 0.8),
             )
         }
@@ -624,6 +630,7 @@ def test_benchmark_passes_and_reports_timing_distribution() -> None:
     manifest, truth, candidates = corpus()
     report = evaluate_benchmark(manifest, truth, candidates)
     assert report.passed is True
+    assert report.provenance.pass_match_tolerance_ms == 100
     assert report.coverage.ratio == 1.0
     assert report.timing.count == 2
     assert report.timing.mean_ms == pytest.approx(0)
@@ -654,10 +661,12 @@ def test_gap_metrics_distinguish_timely_missed_and_premature() -> None:
         TrackingGap(startTimestampMs=400, endTimestampMs=500, reason="missing"),
     )
     candidate_gaps = (
-        TrackingGap(startTimestampMs=90, endTimestampMs=150, reason="occluded"),
+        TrackingGap(startTimestampMs=90, endTimestampMs=200, reason="occluded"),
         TrackingGap(startTimestampMs=600, endTimestampMs=700, reason="missing"),
     )
-    assert _gap_counts(truth_gaps, candidate_gaps) == (1, 1, 1)
+    assert _gap_counts(truth_gaps, candidate_gaps, 0) == (1, 1, 1)
+    partial = (TrackingGap(startTimestampMs=90, endTimestampMs=150, reason="occluded"),)
+    assert _gap_counts((truth_gaps[0],), partial, 0) == (0, 1, 0)
 
 
 def test_empty_ground_truth_passes_produce_null_timing() -> None:
@@ -716,6 +725,156 @@ def test_evaluator_rejects_mismatched_or_out_of_window_inputs() -> None:
     )
     with pytest.raises(ValueError, match="provenance"):
         evaluate_benchmark(manifest, truth, {"case-a": wrong_provenance})
+
+
+def test_chronology_rejects_bad_frames_rate_and_tolerance() -> None:
+    manifest, truth, candidates = corpus()
+    out_of_range = candidates["case-a"].model_copy(
+        update={"observations": (observation(1_000, 0.2, frame_index=30),)}
+    )
+    with pytest.raises(ValueError, match="frame index"):
+        evaluate_benchmark(manifest, truth, {"case-a": out_of_range})
+
+    inconsistent = candidates["case-a"].model_copy(
+        update={
+            "observations": (
+                observation(0, 0.2),
+                observation(202, 0.5, frame_index=6),
+                observation(400, 0.8),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="inconsistent"):
+        evaluate_benchmark(manifest, truth, {"case-a": inconsistent})
+
+    at_tolerance = candidates["case-a"].model_copy(
+        update={
+            "observations": (
+                observation(0, 0.2),
+                observation(201, 0.5, frame_index=6),
+                observation(400, 0.8),
+            )
+        }
+    )
+    assert evaluate_benchmark(manifest, truth, {"case-a": at_tolerance}).passed
+
+    changed_rate = manifest.model_copy(
+        update={
+            "recordings": (
+                manifest.recordings[0].model_copy(
+                    update={
+                        "average_frame_rate": RationalValue(numerator=25, denominator=1)
+                    }
+                ),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="inconsistent"):
+        evaluate_benchmark(changed_rate, truth, candidates)
+
+
+def test_chronology_checks_seed_annotations_and_intervals() -> None:
+    manifest, truth, candidates = corpus()
+    bad_seed = manifest.cases[0].model_copy(
+        update={
+            "subject_seed": manifest.cases[0].subject_seed.model_copy(
+                update={"frame_index": 30}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="frame index"):
+        evaluate_benchmark(
+            manifest.model_copy(update={"cases": (bad_seed,)}), truth, candidates
+        )
+
+    bad_annotation = truth.cases[0].model_copy(
+        update={
+            "identity_annotations": (
+                *truth.cases[0].identity_annotations[:2],
+                truth.cases[0]
+                .identity_annotations[2]
+                .model_copy(update={"frame_index": 30}),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="frame index"):
+        evaluate_benchmark(
+            manifest, truth.model_copy(update={"cases": (bad_annotation,)}), candidates
+        )
+
+    end_gap = TrackingGap(startTimestampMs=900, endTimestampMs=1_000, reason="missing")
+    truth_at_end = truth.cases[0].model_copy(update={"ambiguous_spans": (end_gap,)})
+    candidate_at_end = candidates["case-a"].model_copy(update={"gaps": (end_gap,)})
+    assert (
+        evaluate_benchmark(
+            manifest,
+            truth.model_copy(update={"cases": (truth_at_end,)}),
+            {"case-a": candidate_at_end},
+        ).gaps.timely
+        == 1
+    )
+
+    manifest_long_case = manifest.model_copy(
+        update={
+            "cases": (manifest.cases[0].model_copy(update={"window_end_ms": 1_001}),)
+        }
+    )
+    outside_gap = TrackingGap(
+        startTimestampMs=900, endTimestampMs=1_001, reason="missing"
+    )
+    with pytest.raises(ValueError, match="recording duration"):
+        evaluate_benchmark(
+            manifest_long_case,
+            truth.model_copy(
+                update={
+                    "cases": (
+                        truth.cases[0].model_copy(
+                            update={"ambiguous_spans": (outside_gap,)}
+                        ),
+                    )
+                }
+            ),
+            {
+                "case-a": candidates["case-a"].model_copy(
+                    update={"gaps": (outside_gap,)}
+                )
+            },
+        )
+
+    outside_pass = GroundTruthPass(
+        passId="outside-recording",
+        cornerId="corner-1",
+        entryTimestampMs=900,
+        exitTimestampMs=1_001,
+    )
+    with pytest.raises(ValueError, match="pass is outside recording"):
+        evaluate_benchmark(
+            manifest_long_case,
+            truth.model_copy(
+                update={
+                    "cases": (
+                        truth.cases[0].model_copy(update={"passes": (outside_pass,)}),
+                    )
+                }
+            ),
+            candidates,
+        )
+
+
+def test_chronology_contract_requires_positive_rate_and_in_bounds_windows() -> None:
+    manifest, _, _ = corpus()
+    for numerator in (0, -1):
+        with pytest.raises(ValidationError, match="frame rate"):
+            CorpusRecording.model_validate(
+                {
+                    **manifest.recordings[0].model_dump(by_alias=True),
+                    "averageFrameRate": {"numerator": numerator, "denominator": 1},
+                }
+            )
+    raw = manifest.model_dump(by_alias=True)
+    raw["cases"][0]["windowEndMs"] = 1_001
+    with pytest.raises(ValidationError, match="duration"):
+        CorpusManifest.model_validate(raw)
 
 
 def _write_cli_inputs(

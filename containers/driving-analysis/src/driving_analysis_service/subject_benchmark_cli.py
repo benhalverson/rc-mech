@@ -23,6 +23,15 @@ from driving_analysis_service.contracts import (
 MAX_BENCHMARK_INPUT_BYTES = 16 * 1024 * 1024
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("benchmark JSON contains duplicate object keys")
+        result[key] = value
+    return result
+
+
 def _read(path: Path) -> object:
     descriptor = os.open(
         path,
@@ -42,7 +51,17 @@ def _read(path: Path) -> object:
             os.close(descriptor)
     if len(content) > MAX_BENCHMARK_INPUT_BYTES:
         raise ValueError("benchmark input exceeds size limit")
-    return json.loads(content.decode("utf-8"))
+    return json.loads(content.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys)
+
+
+def _reject_output_aliases(output: Path, inputs: tuple[Path, ...]) -> None:
+    try:
+        output_facts = output.stat()
+    except FileNotFoundError:
+        return
+    for input_path in inputs:
+        if os.path.samestat(output_facts, input_path.stat(follow_symlinks=False)):
+            raise ValueError("benchmark output aliases an input")
 
 
 def _write(path: Path, report: str) -> None:
@@ -89,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
         manifest = CorpusManifest.model_validate(_read(args.manifest))
         truth = GroundTruth.model_validate(_read(args.ground_truth))
         observations = _observations(_read(args.observations))
+        _reject_output_aliases(
+            args.output, (args.manifest, args.ground_truth, args.observations)
+        )
         report = evaluate_benchmark(manifest, truth, observations)
         _write(
             args.output,

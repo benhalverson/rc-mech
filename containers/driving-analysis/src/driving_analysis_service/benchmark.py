@@ -1,5 +1,9 @@
 """Deterministic, provider-neutral Subject-observation benchmark mechanics."""
 
+# These messages are intentionally descriptive internal validation context; the
+# CLI replaces them with the contract's redacted public error.
+# ruff: noqa: EM101, EM102, TRY003, PLR0913
+
 from dataclasses import dataclass
 from itertools import pairwise
 from statistics import mean, median
@@ -11,6 +15,7 @@ from driving_analysis_service.contracts import (
     BenchmarkReport,
     CornerGates,
     CorpusManifest,
+    CorpusRecording,
     CoverageMetrics,
     DirectedGate,
     GapMetrics,
@@ -121,7 +126,7 @@ def _crossings(
         ):
             continue
         crossing = _crossing(first, second, gate)
-        if crossing is not None:
+        if crossing is not None and (not crossings or crossing != crossings[-1]):
             crossings.append(crossing)
     return tuple(crossings)
 
@@ -173,6 +178,8 @@ def _unflagged_switches(
     truth: GroundTruthCase,
     candidate: AcceptedSubjectObservations,
     provenance: BenchmarkProvenance,
+    recording: CorpusRecording,
+    frame_timestamp_tolerance_ms: int,
 ) -> int:
     switches = 0
     switch_active = False
@@ -186,18 +193,26 @@ def _unflagged_switches(
             <= annotation.timestamp_ms
         ):
             observation_index += 1
-        nearby = candidate.observations[observation_index : observation_index + 2]
         observation = min(
-            nearby,
-            key=lambda item: abs(item.timestamp_ms - annotation.timestamp_ms),
+            (
+                item
+                for item in candidate.observations
+                if abs(item.timestamp_ms - annotation.timestamp_ms)
+                <= provenance.identity_annotation_tolerance_ms
+                and _identity_frame_match(
+                    annotation.frame_index,
+                    item.frame_index,
+                    recording,
+                    provenance.identity_annotation_tolerance_ms,
+                    frame_timestamp_tolerance_ms,
+                )
+            ),
+            key=lambda item: (
+                abs(item.timestamp_ms - annotation.timestamp_ms),
+                abs(item.frame_index - annotation.frame_index),
+            ),
             default=None,
         )
-        if (
-            observation is not None
-            and abs(observation.timestamp_ms - annotation.timestamp_ms)
-            > provenance.identity_annotation_tolerance_ms
-        ):
-            observation = None
         while (
             candidate_gap_index < len(candidate.gaps)
             and candidate.gaps[candidate_gap_index].end_timestamp_ms
@@ -242,11 +257,13 @@ def _matching_pass(
     candidates: tuple[CandidatePass, ...],
     used: set[int],
     tolerance_ms: int,
+    minimum_index: int = 0,
 ) -> tuple[int, CandidatePass] | None:
     possible = (
         (index, candidate)
         for index, candidate in enumerate(candidates)
         if index not in used
+        and index >= minimum_index
         and abs(candidate.entry_ms - expected.entry_timestamp_ms) <= tolerance_ms
         and abs(candidate.exit_ms - expected.exit_timestamp_ms) <= tolerance_ms
     )
@@ -262,7 +279,9 @@ def _matching_pass(
 
 
 def _gap_counts(
-    truth_gaps: tuple[TrackingGap, ...], candidate_gaps: tuple[TrackingGap, ...]
+    truth_gaps: tuple[TrackingGap, ...],
+    candidate_gaps: tuple[TrackingGap, ...],
+    coverage_tolerance_ms: int,
 ) -> tuple[int, int, int]:
     timely = 0
     candidate_index = 0
@@ -276,8 +295,9 @@ def _gap_counts(
         if (
             candidate_index < len(candidate_gaps)
             and candidate_gaps[candidate_index].start_timestamp_ms
-            <= truth.start_timestamp_ms
-            <= candidate_gaps[candidate_index].end_timestamp_ms
+            <= truth.start_timestamp_ms + coverage_tolerance_ms
+            and candidate_gaps[candidate_index].end_timestamp_ms
+            >= truth.end_timestamp_ms - coverage_tolerance_ms
         ):
             timely += 1
     missed = len(truth_gaps) - timely
@@ -304,6 +324,8 @@ def _case_result(
     candidate: AcceptedSubjectObservations,
     provenance: BenchmarkProvenance,
     tolerance_ms: int,
+    recording: CorpusRecording,
+    frame_timestamp_tolerance_ms: int,
 ) -> CaseResult:
     passes_by_corner = {
         corner_id: _candidate_passes(
@@ -317,6 +339,7 @@ def _case_result(
     used_by_corner: dict[str, set[int]] = {
         corner_id: set() for corner_id in truth.gates
     }
+    next_candidate_by_corner = dict.fromkeys(truth.gates, 0)
     timing_errors: list[float] = []
     eligible = 0
     for expected in truth.passes:
@@ -324,12 +347,14 @@ def _case_result(
             expected,
             passes_by_corner[expected.corner_id],
             used_by_corner[expected.corner_id],
-            tolerance_ms,
+            min(tolerance_ms, provenance.maximum_observation_interval_ms),
+            next_candidate_by_corner[expected.corner_id],
         )
         if matched is None:
             continue
         index, candidate_pass = matched
         used_by_corner[expected.corner_id].add(index)
+        next_candidate_by_corner[expected.corner_id] = index + 1
         eligible += 1
         timing_errors.extend(
             (
@@ -337,11 +362,21 @@ def _case_result(
                 candidate_pass.exit_ms - expected.exit_timestamp_ms,
             )
         )
-    timely, missed, premature = _gap_counts(truth.ambiguous_spans, candidate.gaps)
+    timely, missed, premature = _gap_counts(
+        truth.ambiguous_spans,
+        candidate.gaps,
+        provenance.ambiguity_gap_coverage_tolerance_ms,
+    )
     return CaseResult(
         ground_truth_passes=len(truth.passes),
         eligible_passes=eligible,
-        unflagged_switches=_unflagged_switches(truth, candidate, provenance),
+        unflagged_switches=_unflagged_switches(
+            truth,
+            candidate,
+            provenance,
+            recording,
+            frame_timestamp_tolerance_ms,
+        ),
         timing_errors=tuple(timing_errors),
         timely_gaps=timely,
         missed_gaps=missed,
@@ -365,17 +400,69 @@ def _provenance_matches(
     )
 
 
+def _frame_timestamp_error_ms(
+    timestamp_ms: int, frame_index: int, recording: CorpusRecording
+) -> int:
+    rate = recording.average_frame_rate
+    return abs(timestamp_ms * rate.numerator - frame_index * 1000 * rate.denominator)
+
+
+def _identity_frame_match(
+    annotation_frame_index: int,
+    observation_frame_index: int,
+    recording: CorpusRecording,
+    identity_tolerance_ms: int,
+    frame_timestamp_tolerance_ms: int,
+) -> bool:
+    rate = recording.average_frame_rate
+    allowed_timestamp_ms = identity_tolerance_ms + 2 * frame_timestamp_tolerance_ms
+    return (
+        abs(observation_frame_index - annotation_frame_index) * 1000 * rate.denominator
+        <= allowed_timestamp_ms * rate.numerator
+    )
+
+
+def _validate_frame_reference(
+    label: str,
+    timestamp_ms: int,
+    frame_index: int,
+    recording: CorpusRecording,
+    tolerance_ms: int,
+) -> None:
+    if frame_index >= recording.decoded_frame_count:
+        raise ValueError(f"{label} frame index is outside recording")
+    if (
+        _frame_timestamp_error_ms(timestamp_ms, frame_index, recording)
+        > tolerance_ms * recording.average_frame_rate.numerator
+    ):
+        raise ValueError(f"{label} timestamp and frame index are inconsistent")
+
+
+def _interval_is_inside(
+    start_ms: int,
+    end_ms: int,
+    case: BenchmarkCase,
+    recording: CorpusRecording,
+) -> bool:
+    return (
+        case.window_start_ms <= start_ms <= end_ms <= case.window_end_ms
+        and end_ms <= recording.duration_ms
+    )
+
+
 def _validate_case_inputs(
     case: BenchmarkCase,
     truth: GroundTruthCase,
     candidate: AcceptedSubjectObservations,
     provenance: BenchmarkProvenance,
+    recording: CorpusRecording,
+    frame_timestamp_tolerance_ms: int,
 ) -> None:
     if (
         candidate.case_id != case.case_id
         or case.subject_seed.identity != truth.subject_identity
     ):
-        raise ValueError("case identity metadata differs")  # noqa: EM101, TRY003
+        raise ValueError("case identity metadata differs")
     observation_outside = any(
         item.timestamp_ms < case.window_start_ms
         or item.timestamp_ms > case.window_end_ms
@@ -392,18 +479,55 @@ def _validate_case_inputs(
         for gap in (*candidate.gaps, *truth.ambiguous_spans)
     )
     if observation_outside or annotation_outside or gap_outside:
-        raise ValueError("observation or gap is outside benchmark window")  # noqa: EM101, TRY003
+        raise ValueError("observation or gap is outside benchmark window")
+    if any(
+        not _interval_is_inside(
+            gap.start_timestamp_ms, gap.end_timestamp_ms, case, recording
+        )
+        for gap in (*candidate.gaps, *truth.ambiguous_spans)
+    ):
+        raise ValueError("observation or gap is outside recording duration")
     if any(
         item.entry_timestamp_ms < case.window_start_ms
         or item.exit_timestamp_ms > case.window_end_ms
         for item in truth.passes
     ):
-        raise ValueError("ground-truth pass is outside benchmark window")  # noqa: EM101, TRY003
+        raise ValueError("ground-truth pass is outside benchmark window")
+    if any(
+        not _interval_is_inside(
+            item.entry_timestamp_ms, item.exit_timestamp_ms, case, recording
+        )
+        for item in truth.passes
+    ):
+        raise ValueError("ground-truth pass is outside recording duration")
+    _validate_frame_reference(
+        "subject seed",
+        case.subject_seed.timestamp_ms,
+        case.subject_seed.frame_index,
+        recording,
+        frame_timestamp_tolerance_ms,
+    )
+    for item in candidate.observations:
+        _validate_frame_reference(
+            "observation",
+            item.timestamp_ms,
+            item.frame_index,
+            recording,
+            frame_timestamp_tolerance_ms,
+        )
+    for annotation in truth.identity_annotations:
+        _validate_frame_reference(
+            "identity annotation",
+            annotation.timestamp_ms,
+            annotation.frame_index,
+            recording,
+            frame_timestamp_tolerance_ms,
+        )
     if any(
         not _provenance_matches(provenance, item.provenance)
         for item in candidate.observations
     ):
-        raise ValueError("observation provenance differs from benchmark")  # noqa: EM101, TRY003
+        raise ValueError("observation provenance differs from benchmark")
 
 
 def evaluate_benchmark(
@@ -413,24 +537,36 @@ def evaluate_benchmark(
 ) -> BenchmarkReport:
     """Evaluate stored observations without invoking inference or external services."""
     if manifest.corpus_id != ground_truth.corpus_id:
-        raise ValueError("manifest and ground truth corpus IDs differ")  # noqa: EM101, TRY003
+        raise ValueError("manifest and ground truth corpus IDs differ")
     truth_by_case = {case.case_id: case for case in ground_truth.cases}
     manifest_ids = {case.case_id for case in manifest.cases}
     if set(truth_by_case) != manifest_ids or set(observations) != manifest_ids:
-        raise ValueError(  # noqa: TRY003
-            "manifest, ground truth, and observations must contain the same cases"  # noqa: EM101
+        raise ValueError(
+            "manifest, ground truth, and observations must contain the same cases"
         )
     results: list[CaseResult] = []
+    recordings = {
+        recording.recording_id: recording for recording in manifest.recordings
+    }
     for case in manifest.cases:
         truth = truth_by_case[case.case_id]
         candidate = observations[case.case_id]
-        _validate_case_inputs(case, truth, candidate, manifest.provenance)
+        _validate_case_inputs(
+            case,
+            truth,
+            candidate,
+            manifest.provenance,
+            recordings[case.recording_id],
+            manifest.frame_timestamp_tolerance_ms,
+        )
         results.append(
             _case_result(
                 truth,
                 candidate,
                 manifest.provenance,
                 manifest.pass_match_tolerance_ms,
+                recordings[case.recording_id],
+                manifest.frame_timestamp_tolerance_ms,
             )
         )
     ground_truth_passes = sum(item.ground_truth_passes for item in results)
@@ -439,10 +575,18 @@ def evaluate_benchmark(
     missed_gaps = sum(item.missed_gaps for item in results)
     errors = [error for item in results for error in item.timing_errors]
     coverage = eligible_passes / ground_truth_passes if ground_truth_passes else 0.0
+    effective_pass_match_tolerance_ms = min(
+        manifest.pass_match_tolerance_ms,
+        manifest.provenance.maximum_observation_interval_ms,
+    )
     return BenchmarkReport(
         contractVersion="subject-benchmark.v1",
         corpusId=manifest.corpus_id,
-        provenance=manifest.provenance,
+        provenance=manifest.provenance.model_copy(
+            update={
+                "pass_match_tolerance_ms": effective_pass_match_tolerance_ms,
+            }
+        ),
         passed=(
             unflagged_switches == 0
             and missed_gaps == 0

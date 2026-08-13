@@ -8,8 +8,8 @@
       "ambiguousSpans": [],
       "identityAnnotations": [
         {"timestampMs": 0, "frameIndex": 0, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 200, "frameIndex": 200, "box": {"x": 0.48, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 400, "frameIndex": 400, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
+        {"timestampMs": 200, "frameIndex": 6, "box": {"x": 0.48, "y": 0.4, "width": 0.04, "height": 0.04}},
+        {"timestampMs": 400, "frameIndex": 12, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
       ],
       "gates": {"corner-1": {"entry": {"entry": {"x": 0.4, "y": 0.2}, "exit": {"x": 0.4, "y": 0.8}, "direction": "negative"}, "exit": {"entry": {"x": 0.6, "y": 0.2}, "exit": {"x": 0.6, "y": 0.8}, "direction": "negative"}}},
       "passes": [{"passId": "trusted-pass", "cornerId": "corner-1", "entryTimestampMs": 133, "exitTimestampMs": 267}]
@@ -20,8 +20,8 @@
       "ambiguousSpans": [{"startTimestampMs": 150, "endTimestampMs": 250, "reason": "ambiguous-identity"}],
       "identityAnnotations": [
         {"timestampMs": 0, "frameIndex": 0, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 200, "frameIndex": 200, "box": {"x": 0.48, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 400, "frameIndex": 400, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
+        {"timestampMs": 200, "frameIndex": 6, "box": {"x": 0.48, "y": 0.4, "width": 0.04, "height": 0.04}},
+        {"timestampMs": 400, "frameIndex": 12, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
       ],
       "gates": {"corner-1": {"entry": {"entry": {"x": 0.4, "y": 0.2}, "exit": {"x": 0.4, "y": 0.8}, "direction": "negative"}, "exit": {"entry": {"x": 0.6, "y": 0.2}, "exit": {"x": 0.6, "y": 0.8}, "direction": "negative"}}},
       "passes": [{"passId": "gap-pass", "cornerId": "corner-1", "entryTimestampMs": 133, "exitTimestampMs": 267}]
@@ -32,8 +32,8 @@
       "ambiguousSpans": [],
       "identityAnnotations": [
         {"timestampMs": 0, "frameIndex": 0, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 200, "frameIndex": 200, "box": {"x": 0.68, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 400, "frameIndex": 400, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
+        {"timestampMs": 200, "frameIndex": 6, "box": {"x": 0.68, "y": 0.4, "width": 0.04, "height": 0.04}},
+        {"timestampMs": 400, "frameIndex": 12, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
       ],
       "gates": {"corner-1": {"entry": {"entry": {"x": 0.4, "y": 0.2}, "exit": {"x": 0.4, "y": 0.8}, "direction": "negative"}, "exit": {"entry": {"x": 0.6, "y": 0.2}, "exit": {"x": 0.6, "y": 0.8}, "direction": "negative"}}},
       "passes": [{"passId": "switch-pass", "cornerId": "corner-1", "entryTimestampMs": 133, "exitTimestampMs": 267}]
@@ -44,8 +44,8 @@
       "ambiguousSpans": [],
       "identityAnnotations": [
         {"timestampMs": 0, "frameIndex": 0, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 200, "frameIndex": 200, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 400, "frameIndex": 400, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}
+        {"timestampMs": 200, "frameIndex": 6, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}},
+        {"timestampMs": 400, "frameIndex": 12, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}
       ],
       "gates": {"corner-1": {"entry": {"entry": {"x": 0.4, "y": 0.2}, "exit": {"x": 0.4, "y": 0.8}, "direction": "negative"}, "exit": {"entry": {"x": 0.6, "y": 0.2}, "exit": {"x": 0.6, "y": 0.8}, "direction": "negative"}}},
       "passes": [{"passId": "missed-pass", "cornerId": "corner-1", "entryTimestampMs": 133, "exitTimestampMs": 267}]
@@ -56,8 +56,8 @@
       "ambiguousSpans": [],
       "identityAnnotations": [
         {"timestampMs": 0, "frameIndex": 0, "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 200, "frameIndex": 200, "box": {"x": 0.48, "y": 0.4, "width": 0.04, "height": 0.04}},
-        {"timestampMs": 400, "frameIndex": 400, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
+        {"timestampMs": 200, "frameIndex": 6, "box": {"x": 0.48, "y": 0.4, "width": 0.04, "height": 0.04}},
+        {"timestampMs": 400, "frameIndex": 12, "box": {"x": 0.78, "y": 0.4, "width": 0.04, "height": 0.04}}
       ],
       "gates": {"corner-1": {"entry": {"entry": {"x": 0.4, "y": 0.2}, "exit": {"x": 0.4, "y": 0.8}, "direction": "negative"}, "exit": {"entry": {"x": 0.6, "y": 0.2}, "exit": {"x": 0.6, "y": 0.8}, "direction": "negative"}}},
       "passes": [{"passId": "timing-pass", "cornerId": "corner-1", "entryTimestampMs": 100, "exitTimestampMs": 300}]

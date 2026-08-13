@@ -2,9 +2,17 @@
 # them as public errors.
 # ruff: noqa: EM101, TRY003
 
+import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 CONTRACT_VERSION: Literal["race-video-validation.v1"] = "race-video-validation.v1"
 SERVICE_NAME: Literal["driving-analysis-media"] = "driving-analysis-media"
@@ -14,6 +22,42 @@ UUID_V4_PATTERN = (
 )
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 MAX_DECLARED_BYTES = 50 * 1024 * 1024 * 1024
+# Benchmark timestamps are limited to one day and frame indices/counts to ten
+# million.  These finite bounds keep interpolation and report statistics away
+# from Python float conversion overflow while leaving practical race videos far
+# below the limit.
+MAX_BENCHMARK_TIMESTAMP_MS = 86_400_000
+MAX_BENCHMARK_FRAME_COUNT = 10_000_000
+# This is deliberately much larger than ordinary normalized detections, but it
+# prevents IEEE-754 subnormal dimensions from producing a zero-area box.
+MIN_NORMALIZED_BOX_AREA = 1e-12
+CONTROL_CHARACTER_LIMIT = 0x20
+DELETE_CONTROL_CHARACTER = 0x7F
+
+
+def _contains_control_character(value: str) -> bool:
+    return any(
+        ord(character) < CONTROL_CHARACTER_LIMIT
+        or ord(character) == DELETE_CONTROL_CHARACTER
+        for character in value
+    )
+
+
+def _safe_free_form_identifier(value: str) -> str:
+    if _contains_control_character(value):
+        raise ValueError("free-form identifier contains a control character")
+    if "/" in value or "\\" in value:
+        raise ValueError("free-form identifier contains a path separator")
+    if re.search(r"(?i)(?:[a-z][a-z0-9+.-]*://|www\.)", value):
+        raise ValueError("free-form identifier must not be URL-shaped")
+    return value
+
+
+SafeFreeFormIdentifier = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=128, strict=True),
+    AfterValidator(_safe_free_form_identifier),
+]
 type ErrorCode = Literal[
     "INVALID_REQUEST",
     "SERVICE_UNAVAILABLE",
@@ -126,15 +170,10 @@ class SafeError(StrictContract):
         if any(
             value in lowered
             for value in (
-                "http://",
-                "https://",
-                "password",
-                "token",
-                "secret",
-                "\n",
-                "\r",
+                "://",
+                "www.",
             )
-        ):
+        ) or _contains_control_character(self.message):
             raise ValueError("safe error contains disallowed detail")
         return self
 
@@ -185,18 +224,16 @@ class NormalizedBox(StrictContract):
     def fits_in_frame(self) -> "NormalizedBox":
         if self.x + self.width > 1.0 or self.y + self.height > 1.0:
             raise ValueError("box must fit in normalized frame")
+        if self.width * self.height < MIN_NORMALIZED_BOX_AREA:
+            raise ValueError("box area is below the normalized minimum")
         return self
 
 
 class SubjectProvenance(StrictContract):
-    provider: Annotated[str, StringConstraints(min_length=1, max_length=64)]
-    model: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    model_version: Annotated[str, StringConstraints(min_length=1, max_length=128)] = (
-        Field(alias="modelVersion")
-    )
-    pipeline_version: Annotated[str, StringConstraints(min_length=1, max_length=64)] = (
-        Field(alias="pipelineVersion")
-    )
+    provider: SafeFreeFormIdentifier
+    model: SafeFreeFormIdentifier
+    model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
+    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
     configuration_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="configurationDigest")
@@ -206,14 +243,18 @@ class SubjectProvenance(StrictContract):
     identity_confidence_threshold: float = Field(
         alias="identityConfidenceThreshold", ge=0.0, le=1.0, strict=True
     )
-    confidence_calibration: Annotated[
-        str, StringConstraints(min_length=1, max_length=128)
-    ] = Field(alias="confidenceCalibration")
+    confidence_calibration: SafeFreeFormIdentifier = Field(
+        alias="confidenceCalibration"
+    )
 
 
 class SubjectObservation(StrictContract):
-    timestamp_ms: int = Field(alias="timestampMs", ge=0, strict=True)
-    frame_index: int = Field(alias="frameIndex", ge=0, strict=True)
+    timestamp_ms: int = Field(
+        alias="timestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
+    frame_index: int = Field(
+        alias="frameIndex", ge=0, lt=MAX_BENCHMARK_FRAME_COUNT, strict=True
+    )
     box: NormalizedBox
     center: NormalizedPoint
     visibility: Literal["visible", "occluded", "uncertain"]
@@ -236,8 +277,12 @@ class SubjectObservation(StrictContract):
 
 
 class TrackingGap(StrictContract):
-    start_timestamp_ms: int = Field(alias="startTimestampMs", ge=0, strict=True)
-    end_timestamp_ms: int = Field(alias="endTimestampMs", ge=0, strict=True)
+    start_timestamp_ms: int = Field(
+        alias="startTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
+    end_timestamp_ms: int = Field(
+        alias="endTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
     reason: Literal["ambiguous-identity", "occluded", "missing"]
 
     @model_validator(mode="after")
@@ -250,9 +295,7 @@ class TrackingGap(StrictContract):
 class AcceptedSubjectObservations(StrictContract):
     contract_version: Literal["subject-observation.v1"] = Field(alias="contractVersion")
     outcome: Literal["accepted"]
-    case_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="caseId"
-    )
+    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     observations: tuple[SubjectObservation, ...] = Field(
         min_length=1, max_length=100_000, strict=False
     )
@@ -293,9 +336,7 @@ class AcceptedSubjectObservations(StrictContract):
 class RejectedSubjectObservations(StrictContract):
     contract_version: Literal["subject-observation.v1"] = Field(alias="contractVersion")
     outcome: Literal["rejected"]
-    case_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = (
-        Field(alias="caseId")
-    )
+    case_id: SafeFreeFormIdentifier | None = Field(alias="caseId")
     error: "SubjectSafeError"
 
 
@@ -318,6 +359,21 @@ class SubjectSafeError(StrictContract):
     code: SubjectErrorCode
     stage: SubjectErrorStage
     message: SubjectErrorMessage
+
+    @model_validator(mode="after")
+    def fields_are_canonical(self) -> "SubjectSafeError":
+        expected = {
+            "INVALID_OBSERVATION": ("request", "observation contract rejected"),
+            "INFERENCE_UNAVAILABLE": (
+                "initialize",
+                "inference provider unavailable",
+            ),
+            "INFERENCE_FAILED": ("track", "inference failed safely"),
+            "RESOURCE_LIMIT": ("serialize", "inference resource limit exceeded"),
+        }[self.code]
+        if (self.stage, self.message) != expected:
+            raise ValueError("subject error fields must be canonical")
+        return self
 
 
 SubjectObservationEnvelope = Annotated[
@@ -347,41 +403,52 @@ class CornerGates(StrictContract):
 
 
 class SubjectSeed(StrictContract):
-    timestamp_ms: int = Field(alias="timestampMs", ge=0, strict=True)
-    frame_index: int = Field(alias="frameIndex", ge=0, strict=True)
-    identity: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+    timestamp_ms: int = Field(
+        alias="timestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
+    frame_index: int = Field(
+        alias="frameIndex", ge=0, lt=MAX_BENCHMARK_FRAME_COUNT, strict=True
+    )
+    identity: SafeFreeFormIdentifier
     box: NormalizedBox
 
 
 class CorpusRecording(StrictContract):
-    recording_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = (
-        Field(alias="recordingId")
-    )
+    recording_id: SafeFreeFormIdentifier = Field(alias="recordingId")
     checksum_sha256: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="checksumSha256")
     byte_count: int = Field(alias="byteCount", gt=0, strict=True)
-    duration_ms: int = Field(alias="durationMs", gt=0, strict=True)
+    duration_ms: int = Field(
+        alias="durationMs", gt=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
+    decoded_frame_count: int = Field(
+        alias="decodedFrameCount", gt=0, le=MAX_BENCHMARK_FRAME_COUNT, strict=True
+    )
     width: int = Field(gt=0, strict=True)
     height: int = Field(gt=0, strict=True)
-    video_codec: Annotated[
-        str, StringConstraints(min_length=1, max_length=32, strict=True)
-    ] = Field(alias="videoCodec")
-    container_formats: tuple[
-        Annotated[str, StringConstraints(min_length=1, max_length=32)], ...
-    ] = Field(alias="containerFormats", min_length=1, max_length=8, strict=False)
+    video_codec: SafeFreeFormIdentifier = Field(alias="videoCodec")
+    container_formats: tuple[SafeFreeFormIdentifier, ...] = Field(
+        alias="containerFormats", min_length=1, max_length=8, strict=False
+    )
     average_frame_rate: RationalValue = Field(alias="averageFrameRate")
+
+    @model_validator(mode="after")
+    def average_frame_rate_is_positive(self) -> "CorpusRecording":
+        if self.average_frame_rate.numerator <= 0:
+            raise ValueError("average frame rate must be positive")
+        return self
 
 
 class BenchmarkCase(StrictContract):
-    case_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="caseId"
+    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
+    recording_id: SafeFreeFormIdentifier = Field(alias="recordingId")
+    window_start_ms: int = Field(
+        alias="windowStartMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
     )
-    recording_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = (
-        Field(alias="recordingId")
+    window_end_ms: int = Field(
+        alias="windowEndMs", gt=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
     )
-    window_start_ms: int = Field(alias="windowStartMs", ge=0, strict=True)
-    window_end_ms: int = Field(alias="windowEndMs", gt=0, strict=True)
     subject_seed: SubjectSeed = Field(alias="subjectSeed")
 
     @model_validator(mode="after")
@@ -404,29 +471,23 @@ class BenchmarkProvenance(StrictContract):
     python_lockfile_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="pythonLockfileDigest")
-    ffmpeg_version: Annotated[str, StringConstraints(min_length=1, max_length=64)] = (
-        Field(alias="ffmpegVersion")
-    )
+    ffmpeg_version: SafeFreeFormIdentifier = Field(alias="ffmpegVersion")
     model_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="modelDigest")
-    provider: Annotated[str, StringConstraints(min_length=1, max_length=64)]
-    model: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    model_version: Annotated[str, StringConstraints(min_length=1, max_length=128)] = (
-        Field(alias="modelVersion")
-    )
-    pipeline_version: Annotated[str, StringConstraints(min_length=1, max_length=64)] = (
-        Field(alias="pipelineVersion")
-    )
+    provider: SafeFreeFormIdentifier
+    model: SafeFreeFormIdentifier
+    model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
+    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
     configuration_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="configurationDigest")
     identity_confidence_threshold: float = Field(
         alias="identityConfidenceThreshold", ge=0.0, le=1.0, strict=True
     )
-    confidence_calibration: Annotated[
-        str, StringConstraints(min_length=1, max_length=128)
-    ] = Field(alias="confidenceCalibration")
+    confidence_calibration: SafeFreeFormIdentifier = Field(
+        alias="confidenceCalibration"
+    )
     identity_match_iou_threshold: float = Field(
         alias="identityMatchIouThreshold", gt=0.0, le=1.0, strict=True
     )
@@ -436,13 +497,17 @@ class BenchmarkProvenance(StrictContract):
     maximum_observation_interval_ms: int = Field(
         alias="maximumObservationIntervalMs", gt=0, le=10_000, strict=True
     )
+    pass_match_tolerance_ms: int = Field(
+        alias="passMatchToleranceMs", ge=0, le=10_000, strict=True
+    )
+    ambiguity_gap_coverage_tolerance_ms: int = Field(
+        alias="ambiguityGapCoverageToleranceMs", ge=0, le=10_000, strict=True
+    )
 
 
 class CorpusRecordingManifest(StrictContract):
     contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
-    corpus_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="corpusId"
-    )
+    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
     recordings: tuple[CorpusRecording, ...] = Field(
         min_length=1, max_length=100, strict=False
     )
@@ -460,7 +525,10 @@ class CorpusManifest(CorpusRecordingManifest):
         default=0.8, alias="requiredCoverage", ge=0.8, le=1.0, strict=True
     )
     pass_match_tolerance_ms: int = Field(
-        default=500, alias="passMatchToleranceMs", ge=0, le=60_000, strict=True
+        default=500, alias="passMatchToleranceMs", ge=0, le=10_000, strict=True
+    )
+    frame_timestamp_tolerance_ms: int = Field(
+        alias="frameTimestampToleranceMs", ge=0, strict=True
     )
     provenance: BenchmarkProvenance
 
@@ -469,20 +537,29 @@ class CorpusManifest(CorpusRecordingManifest):
         if len({case.case_id for case in self.cases}) != len(self.cases):
             raise ValueError("benchmark case IDs must be unique")
         recording_ids = {recording.recording_id for recording in self.recordings}
+        recordings = {
+            recording.recording_id: recording for recording in self.recordings
+        }
         if any(case.recording_id not in recording_ids for case in self.cases):
             raise ValueError("benchmark case references an unknown recording")
+        if any(
+            case.window_end_ms > recordings[case.recording_id].duration_ms
+            for case in self.cases
+            if case.recording_id in recordings
+        ):
+            raise ValueError("benchmark case window exceeds recording duration")
         return self
 
 
 class GroundTruthPass(StrictContract):
-    pass_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="passId"
+    pass_id: SafeFreeFormIdentifier = Field(alias="passId")
+    corner_id: SafeFreeFormIdentifier = Field(alias="cornerId")
+    entry_timestamp_ms: int = Field(
+        alias="entryTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
     )
-    corner_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="cornerId"
+    exit_timestamp_ms: int = Field(
+        alias="exitTimestampMs", gt=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
     )
-    entry_timestamp_ms: int = Field(alias="entryTimestampMs", ge=0, strict=True)
-    exit_timestamp_ms: int = Field(alias="exitTimestampMs", gt=0, strict=True)
 
     @model_validator(mode="after")
     def ordered(self) -> "GroundTruthPass":
@@ -492,18 +569,18 @@ class GroundTruthPass(StrictContract):
 
 
 class SubjectIdentityAnnotation(StrictContract):
-    timestamp_ms: int = Field(alias="timestampMs", ge=0, strict=True)
-    frame_index: int = Field(alias="frameIndex", ge=0, strict=True)
+    timestamp_ms: int = Field(
+        alias="timestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
+    frame_index: int = Field(
+        alias="frameIndex", ge=0, lt=MAX_BENCHMARK_FRAME_COUNT, strict=True
+    )
     box: NormalizedBox
 
 
 class GroundTruthCase(StrictContract):
-    case_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="caseId"
-    )
-    subject_identity: Annotated[str, StringConstraints(min_length=1, max_length=64)] = (
-        Field(alias="subjectIdentity")
-    )
+    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
+    subject_identity: SafeFreeFormIdentifier = Field(alias="subjectIdentity")
     ambiguous_spans: tuple[TrackingGap, ...] = Field(
         default=(), alias="ambiguousSpans", max_length=100_000, strict=False
     )
@@ -512,7 +589,7 @@ class GroundTruthCase(StrictContract):
     )
     gates: Annotated[
         dict[
-            Annotated[str, StringConstraints(min_length=1, max_length=64)],
+            SafeFreeFormIdentifier,
             CornerGates,
         ],
         Field(min_length=1, max_length=256),
@@ -554,9 +631,7 @@ class GroundTruthCase(StrictContract):
 
 class GroundTruth(StrictContract):
     contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
-    corpus_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="corpusId"
-    )
+    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
     cases: tuple[GroundTruthCase, ...] = Field(
         min_length=1, max_length=100, strict=False
     )
@@ -586,16 +661,16 @@ class IdentityMetrics(StrictContract):
 
 class GateTimingMetrics(StrictContract):
     count: int = Field(ge=0, strict=True)
-    mean_ms: float | None = Field(alias="meanMs")
-    median_ms: float | None = Field(alias="medianMs")
-    max_absolute_ms: float | None = Field(alias="maxAbsoluteMs", ge=0.0)
+    mean_ms: float | None = Field(alias="meanMs", strict=True, allow_inf_nan=False)
+    median_ms: float | None = Field(alias="medianMs", strict=True, allow_inf_nan=False)
+    max_absolute_ms: float | None = Field(
+        alias="maxAbsoluteMs", ge=0.0, strict=True, allow_inf_nan=False
+    )
 
 
 class BenchmarkReport(StrictContract):
     contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
-    corpus_id: Annotated[str, StringConstraints(min_length=1, max_length=64)] = Field(
-        alias="corpusId"
-    )
+    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
     provenance: BenchmarkProvenance
     passed: bool
     coverage: CoverageMetrics

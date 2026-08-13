@@ -44,9 +44,16 @@ contains no paths, runner timestamps, media bytes, or model error details. The
 committed aggregate intentionally exits `1` because it includes the negative
 identity-switch and missed-pass scenarios; its bytes match
 `expected-report.json`. A pathless `CorpusRecordingManifest` validates private
-recording checksums and FFprobe facts without recording names or annotations.
+checksums and FFprobe facts without source names or annotations.
 The manifest pins the Docker image, lockfile, FFmpeg, provider, model, confidence
 calibration, configuration, and pipeline provenance copied into the report.
+Each recording also pins its decoded frame count and positive average FPS. Cases
+must fit their recording duration, and every seed, observation, and annotation
+must agree with its zero-based frame index within the manifest's required
+`frameTimestampToleranceMs` (the synthetic corpus uses `1` ms). Candidate and
+ground-truth intervals are checked against both the case window and recording
+duration before evaluation. Candidate gaps must fully cover known ambiguity
+spans, subject to the versioned `ambiguityGapCoverageToleranceMs` policy.
 Crossing brackets wider than the manifest's maximum observation interval are
 ineligible. Coverage stops at the first Tracking gap because this synthetic
 harness contains no User Re-identification evidence.
@@ -58,6 +65,4 @@ inconsistent centers, invalid timestamp/frame ordering, and unsafe errors.
 The fixture corpus tests serialization, ordering, geometry, gap classification,
 identity integrity, crossing interpolation, coverage, and timing mechanics
 only. Synthetic fixtures do not qualify an inference provider; representative
-private-footage qualification remains out of scope here and belongs to #231.
-The private Main1--Main4 recordings are ignored, read-only verification inputs
-for that later work and are never copied into this image.
+footage qualification remains out of scope here and belongs to #231.
