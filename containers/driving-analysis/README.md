@@ -24,3 +24,45 @@ uv run --frozen uvicorn driving_analysis_service.api:app --host 127.0.0.1 --port
 ```
 
 `GET /health` checks the fixed media executables and local scratch roots. The service is internal-only; a later Worker integration owns authentication, storage mediation, and public routes.
+
+## Subject benchmark
+
+The provider-neutral Subject-observation contracts and synthetic benchmark are
+available without a model or network service:
+
+```console
+uv run --frozen subject-benchmark \
+  --manifest tests/fixtures/subject-benchmark/manifest.json \
+  --ground-truth tests/fixtures/subject-benchmark/ground-truth.json \
+  --observations tests/fixtures/subject-benchmark/accepted-observations.json \
+  --output /tmp/subject-benchmark-report.json
+```
+
+Exit status `0` means the report passes, `1` is a valid benchmark failure, and
+`2` means an input contract or file was invalid. Output is canonical JSON and
+contains no paths, runner timestamps, media bytes, or model error details. The
+committed aggregate intentionally exits `1` because it includes the negative
+identity-switch and missed-pass scenarios; its bytes match
+`expected-report.json`. A pathless `CorpusRecordingManifest` validates private
+checksums and FFprobe facts without source names or annotations.
+The manifest pins the Docker image, lockfile, FFmpeg, provider, model, confidence
+calibration, configuration, and pipeline provenance copied into the report.
+Each recording also pins its decoded frame count and positive average FPS. Cases
+must fit their recording duration, and every seed, observation, and annotation
+must agree with its zero-based frame index within the manifest's required
+`frameTimestampToleranceMs` (the synthetic corpus uses `1` ms). Candidate and
+ground-truth intervals are checked against both the case window and recording
+duration before evaluation. Candidate gaps must fully cover known ambiguity
+spans, subject to the versioned `ambiguityGapCoverageToleranceMs` policy.
+Crossing brackets wider than the manifest's maximum observation interval are
+ineligible. Coverage stops at the first Tracking gap because this synthetic
+harness contains no User Re-identification evidence.
+Inputs are size-bounded and output is atomically replaced with owner-only
+permissions. The committed executable corpus covers trusted tracking, flagged
+ambiguity, an independently annotated unflagged switch, a missed pass, and
+gate-timing error. Rejected fixtures cover unknown fields, invalid geometry,
+inconsistent centers, invalid timestamp/frame ordering, and unsafe errors.
+The fixture corpus tests serialization, ordering, geometry, gap classification,
+identity integrity, crossing interpolation, coverage, and timing mechanics
+only. Synthetic fixtures do not qualify an inference provider; representative
+footage qualification remains out of scope here and belongs to #231.

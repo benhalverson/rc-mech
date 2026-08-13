@@ -1,0 +1,6 @@
+{
+  "contractVersion": "subject-observation.v1",
+  "outcome": "rejected",
+  "caseId": null,
+  "error": {"code": "INVALID_OBSERVATION", "stage": "request", "message": "observation contract rejected"}
+}

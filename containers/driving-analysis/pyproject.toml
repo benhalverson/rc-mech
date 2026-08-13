@@ -14,6 +14,9 @@ dependencies = [
   "uvicorn==0.52.1",
 ]
 
+[project.scripts]
+subject-benchmark = "driving_analysis_service.subject_benchmark_cli:main"
+
 [dependency-groups]
 dev = [
   "httpx2==2.10.0",

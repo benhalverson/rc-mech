@@ -1,0 +1,46 @@
+{
+  "contractVersion": "subject-benchmark.v1",
+  "corpusId": "synthetic-mechanics-v1",
+  "requiredCoverage": 0.8,
+  "passMatchToleranceMs": 100,
+  "frameTimestampToleranceMs": 1,
+  "recordings": [
+    {
+      "recordingId": "synthetic-recording",
+      "checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "byteCount": 1000,
+      "durationMs": 1000,
+      "decodedFrameCount": 30,
+      "width": 1920,
+      "height": 1080,
+      "videoCodec": "h264",
+      "containerFormats": ["mov"],
+      "averageFrameRate": {"numerator": 30, "denominator": 1}
+    }
+  ],
+  "provenance": {
+    "dockerImageDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "pythonLockfileDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "ffmpegVersion": "7.1",
+    "provider": "synthetic",
+    "model": "fixture",
+    "modelVersion": "1",
+    "modelDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "pipelineVersion": "subject-benchmark.v1",
+    "configurationDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "identityConfidenceThreshold": 0.5,
+    "confidenceCalibration": "synthetic-linear-v1",
+    "identityMatchIouThreshold": 0.5,
+    "identityAnnotationToleranceMs": 50,
+    "maximumObservationIntervalMs": 250,
+    "passMatchToleranceMs": 100,
+    "ambiguityGapCoverageToleranceMs": 0
+  },
+  "cases": [
+    {"caseId": "trusted-tracking", "recordingId": "synthetic-recording", "windowStartMs": 0, "windowEndMs": 1000, "subjectSeed": {"timestampMs": 0, "frameIndex": 0, "identity": "subject", "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}},
+    {"caseId": "flagged-ambiguity-gap", "recordingId": "synthetic-recording", "windowStartMs": 0, "windowEndMs": 1000, "subjectSeed": {"timestampMs": 0, "frameIndex": 0, "identity": "subject", "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}},
+    {"caseId": "unflagged-identity-switch", "recordingId": "synthetic-recording", "windowStartMs": 0, "windowEndMs": 1000, "subjectSeed": {"timestampMs": 0, "frameIndex": 0, "identity": "subject", "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}},
+    {"caseId": "missed-corner-pass", "recordingId": "synthetic-recording", "windowStartMs": 0, "windowEndMs": 1000, "subjectSeed": {"timestampMs": 0, "frameIndex": 0, "identity": "subject", "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}},
+    {"caseId": "gate-timing-error", "recordingId": "synthetic-recording", "windowStartMs": 0, "windowEndMs": 1000, "subjectSeed": {"timestampMs": 0, "frameIndex": 0, "identity": "subject", "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}}
+  ]
+}

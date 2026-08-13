@@ -1,0 +1,1 @@
+{"contractVersion":"subject-observation.v1","outcome":"rejected","caseId":null,"error":{"code":"INFERENCE_FAILED","stage":"track","message":"https://private.example/token"}}
