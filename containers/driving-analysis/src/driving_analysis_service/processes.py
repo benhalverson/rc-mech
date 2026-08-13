@@ -89,9 +89,9 @@ class _ProcessCapture:
             self._append(self.stderr, line + suffix)
 
     def _append(self, destination: bytearray, chunk: bytes) -> None:
-        destination.extend(chunk)
-        if len(self.stdout) + len(self.stderr) > self.max_output_bytes:
+        if len(self.stdout) + len(self.stderr) + len(chunk) > self.max_output_bytes:
             raise ProcessOutputLimitError
+        destination.extend(chunk)
 
 
 class _ProcessScope:
