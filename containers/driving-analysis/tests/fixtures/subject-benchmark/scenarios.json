@@ -1,0 +1,10 @@
+{
+  "contractVersion": "subject-benchmark.v1",
+  "scenarios": [
+    {"id": "trusted-tracking", "expected": "pass", "source": "accepted-observations.json"},
+    {"id": "flagged-ambiguity-gap", "expected": "ineligible", "source": "accepted-observations.json"},
+    {"id": "unflagged-identity-switch", "expected": "fail-identity", "source": "accepted-observations.json"},
+    {"id": "missed-corner-pass", "expected": "fail-coverage", "source": "accepted-observations.json"},
+    {"id": "gate-timing-error", "expected": "pass-with-timing-error", "source": "accepted-observations.json"}
+  ]
+}

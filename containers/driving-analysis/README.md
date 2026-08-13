@@ -24,3 +24,30 @@ uv run --frozen uvicorn driving_analysis_service.api:app --host 127.0.0.1 --port
 ```
 
 `GET /health` checks the fixed media executables and local scratch roots. The service is internal-only; a later Worker integration owns authentication, storage mediation, and public routes.
+
+## Subject benchmark
+
+The provider-neutral Subject-observation contracts and synthetic benchmark are
+available without a model or network service:
+
+```console
+uv run --frozen subject-benchmark \
+  --manifest tests/fixtures/subject-benchmark/manifest.json \
+  --ground-truth tests/fixtures/subject-benchmark/ground-truth.json \
+  --observations tests/fixtures/subject-benchmark/accepted-observations.json \
+  --output /tmp/subject-benchmark-report.json
+```
+
+Exit status `0` means the report passes, `1` is a valid benchmark failure, and
+`2` means an input contract or file was invalid. Output is canonical JSON and
+contains no paths, runner timestamps, media bytes, or model error details. The
+manifest pins the Docker image, lockfile, FFmpeg, model, and pipeline
+provenance copied into the report. The committed scenario index covers trusted
+tracking, flagged ambiguity, unflagged switching, missed passes, and timing
+error; the focused tests exercise each case against the same evaluator.
+fixture corpus tests serialization, ordering, geometry, gap classification,
+identity integrity, crossing interpolation, coverage, and timing mechanics
+only. Synthetic fixtures do not qualify an inference provider; representative
+private-footage qualification remains out of scope here and belongs to #231.
+The private Main1--Main4 recordings are ignored, read-only verification inputs
+for that later work and are never copied into this image.

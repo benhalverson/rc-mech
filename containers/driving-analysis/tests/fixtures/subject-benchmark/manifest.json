@@ -1,0 +1,24 @@
+{
+  "contractVersion": "subject-benchmark.v1",
+  "corpusId": "fixture-corpus",
+  "requiredCoverage": 0.8,
+  "provenance": {
+    "dockerImageDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "pythonLockfileDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "ffmpegVersion": "7.1",
+    "modelDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "pipelineVersion": "subject-benchmark.v1"
+  },
+  "cases": [
+    {
+      "caseId": "case-a",
+      "windowStartMs": 0,
+      "windowEndMs": 1000,
+      "subjectSeed": {
+        "timestampMs": 0,
+        "identity": "subject",
+        "box": {"x": 0.08, "y": 0.4, "width": 0.04, "height": 0.04}
+      }
+    }
+  ]
+}
