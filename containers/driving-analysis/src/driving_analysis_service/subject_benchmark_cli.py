@@ -5,9 +5,10 @@
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
-from typing import TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -18,11 +19,35 @@ from driving_analysis_service.contracts import (
     GroundTruth,
 )
 
-T = TypeVar("T")
+MAX_BENCHMARK_INPUT_BYTES = 16 * 1024 * 1024
 
 
 def _read(path: Path) -> object:
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.stat().st_size > MAX_BENCHMARK_INPUT_BYTES:
+        raise ValueError("benchmark input exceeds size limit")
+    return json.loads(path.read_bytes().decode("utf-8"))
+
+
+def _write(path: Path, report: str) -> None:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(report)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        temporary_path.chmod(0o600)
+        temporary_path.replace(path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _observations(value: object) -> dict[str, AcceptedSubjectObservations]:
@@ -48,18 +73,20 @@ def main(argv: list[str] | None = None) -> int:
         truth = GroundTruth.model_validate(_read(args.ground_truth))
         observations = _observations(_read(args.observations))
         report = evaluate_benchmark(manifest, truth, observations)
-        args.output.write_text(
+        _write(
+            args.output,
             json.dumps(
                 report.model_dump(by_alias=True, mode="json"),
                 sort_keys=True,
                 separators=(",", ":"),
             )
             + "\n",
-            encoding="utf-8",
         )
     except (
         OSError,
+        RecursionError,
         TypeError,
+        UnicodeDecodeError,
         json.JSONDecodeError,
         ValidationError,
         ValueError,
