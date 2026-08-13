@@ -269,9 +269,9 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     )
     assert '"codec_name": "h264"' in probe.stdout
     assert '"width": 80' in probe.stdout
-    # yuv420p requires even dimensions, so the 45px normalized height is
-    # rounded down by FFmpeg's crop filter.
-    assert '"height": 44' in probe.stdout
+    # Corner geometry is normalized inside the fixed bottom-two-thirds Track
+    # view, so this half-height Corner occupies 30 full-frame source pixels.
+    assert '"height": 30' in probe.stdout
     assert '"codec_type": "audio"' not in probe.stdout
     frame = subprocess.run(
         (
@@ -306,9 +306,9 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
             for candidate_y in range(y_start, y_end)
         )
 
-    entry_gate = region(4, 13, 8, 36)
-    exit_gate = region(67, 76, 8, 36)
-    subject = region(32, 49, 13, 31)
+    entry_gate = region(4, 13, 4, 27)
+    exit_gate = region(67, 76, 4, 27)
+    subject = region(32, 49, 8, 25)
     assert any(
         red > 120 and green > 120 and blue < 120 for red, green, blue in entry_gate
     )
@@ -779,13 +779,41 @@ def test_overlay_coordinates_follow_even_pixel_crop_rounding() -> None:
     request = RenderStageRequest.model_validate(_body(1, SHA))
     metadata = _metadata(duration_ms=2000)
     crop = rendering._pixel_crop(request.specification, metadata)
-    assert crop == rendering._PixelCrop(width=80, height=44, x=40, y=22)
+    assert crop == rendering._PixelCrop(width=80, height=30, x=40, y=44)
     assert rendering._pixel_gate(
         request.specification.overlay.entry_gate, metadata, crop
-    ) == ((8, 14), (8, 32))
+    ) == ((8, 10), (8, 22))
     assert rendering._pixel_point(
         request.specification.overlay.subject_center, metadata, crop
-    ) == (40, 23)
+    ) == (40, 16)
+
+    full_track_body = _body(1, SHA)
+    full_track_specification = cast(
+        "dict[str, object]", full_track_body["specification"]
+    )
+    full_track_specification["cornerView"] = {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1.0,
+        "height": 1.0,
+    }
+    full_track_specification["overlay"] = {
+        "subjectCenter": {"x": 0.5, "y": 0.5},
+        "entryGate": {
+            "entry": {"x": 0.0, "y": 0.0},
+            "exit": {"x": 0.0, "y": 1.0},
+            "direction": "positive",
+        },
+        "exitGate": {
+            "entry": {"x": 1.0, "y": 0.0},
+            "exit": {"x": 1.0, "y": 1.0},
+            "direction": "positive",
+        },
+    }
+    full_track = RenderStageRequest.model_validate(full_track_body)
+    assert rendering._pixel_crop(full_track.specification, metadata) == (
+        rendering._PixelCrop(width=160, height=60, x=0, y=30)
+    )
 
 
 def test_render_removes_partial_overlay_when_script_write_fails(

@@ -61,6 +61,10 @@ from driving_analysis_service.tracking_artifacts import (
     publish_bundle,
     read_completion,
 )
+from driving_analysis_service.tracking_contracts import (
+    TRACK_VIEW_HEIGHT,
+    TRACK_VIEW_Y,
+)
 
 RENDER_BUNDLE_SUFFIX = ".corner"
 RENDER_MEDIA_SUFFIX = ".corner.mp4"
@@ -407,14 +411,14 @@ def _pixel_crop(
 ) -> _PixelCrop:
     view = specification.corner_view
     crop_width = int(metadata.width * view.width) // 2 * 2
-    crop_height = int(metadata.height * view.height) // 2 * 2
+    crop_height = int(metadata.height * view.height * TRACK_VIEW_HEIGHT) // 2 * 2
     if crop_width < MIN_OUTPUT_DIMENSION or crop_height < MIN_OUTPUT_DIMENSION:
         raise RenderInvalidMediaError
     return _PixelCrop(
         width=crop_width,
         height=crop_height,
         x=int(metadata.width * view.x) // 2 * 2,
-        y=int(metadata.height * view.y) // 2 * 2,
+        y=int(metadata.height * (TRACK_VIEW_Y + view.y * TRACK_VIEW_HEIGHT)) // 2 * 2,
     )
 
 
@@ -525,9 +529,10 @@ def _write_overlay_script(
 def _pixel_point(
     point: NormalizedPoint, metadata: ProbeMetadata, crop: _PixelCrop
 ) -> tuple[int, int]:
+    frame_y = TRACK_VIEW_Y + point.y * TRACK_VIEW_HEIGHT
     return (
         min(max(round(point.x * metadata.width) - crop.x, 0), crop.width - 1),
-        min(max(round(point.y * metadata.height) - crop.y, 0), crop.height - 1),
+        min(max(round(frame_y * metadata.height) - crop.y, 0), crop.height - 1),
     )
 
 
