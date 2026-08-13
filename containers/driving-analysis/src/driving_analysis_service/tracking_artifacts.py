@@ -135,6 +135,14 @@ def publish_file(
         return _publish_stream(source_file, destination, deadline=deadline)
 
 
+def ensure_bundle_durable(destination: Path, *, deadline: float | None = None) -> None:
+    identity = destination.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(identity.st_mode):
+        raise InvalidArtifactError
+    _fsync_directory(destination, deadline=deadline)
+    _fsync_directory(destination.parent, deadline=deadline)
+
+
 def _fsync_directory(directory: Path, *, deadline: float | None = None) -> None:
     descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:

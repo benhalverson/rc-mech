@@ -37,7 +37,6 @@ from driving_analysis_service.processes import (
 )
 from driving_analysis_service.processing_deadline import (
     check_deadline,
-    fsync_with_deadline,
     remaining_seconds,
 )
 from driving_analysis_service.safe_logging import log_stage
@@ -374,7 +373,9 @@ def _copy_and_consume(
                     safe_message="The media exceeds the byte limit.",
                 )
             _write_all(destination_descriptor, chunk)
-        fsync_with_deadline(destination_descriptor, deadline)
+        # The claimed copy is ephemeral request scratch. Durability belongs to
+        # immutable artifact publication, not this soon-to-be-deleted file.
+        check_deadline(deadline)
     finally:
         os.close(source_descriptor)
         if destination_descriptor is not None:

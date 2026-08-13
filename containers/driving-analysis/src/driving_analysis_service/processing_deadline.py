@@ -4,7 +4,7 @@ from threading import BoundedSemaphore, Event, Thread
 
 from driving_analysis_service.processes import ProcessTimeoutError
 
-MAX_CONCURRENT_SYNCS = 8
+MAX_CONCURRENT_SYNCS = 1
 _SYNC_SLOTS = BoundedSemaphore(MAX_CONCURRENT_SYNCS)
 
 
@@ -32,7 +32,7 @@ def fsync_with_deadline(descriptor: int, deadline: float | None) -> None:
 
     check_deadline(deadline)
     slot = _SYNC_SLOTS
-    if not slot.acquire(blocking=False):
+    if not slot.acquire(timeout=remaining_seconds(deadline)):
         raise ProcessTimeoutError
 
     duplicate = -1

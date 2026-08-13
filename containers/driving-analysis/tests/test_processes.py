@@ -6,7 +6,7 @@ import time
 from contextlib import AbstractContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import Self, cast
+from typing import IO, Self, cast
 
 import pytest
 
@@ -44,11 +44,61 @@ def test_bounded_process_streams_stdout_without_retaining_it(tmp_path: Path) -> 
             ("-c", "import sys; sys.stdout.buffer.write(b'output')"),
             timeout_seconds=5,
             max_output_bytes=1024,
-            streams=ProcessStreams(standard_output=output),
+            streams=ProcessStreams(
+                standard_output=output,
+                standard_output_max_bytes=1024,
+            ),
         )
 
     assert result.stdout == b""
     assert destination.read_bytes() == b"output"
+
+
+def test_bounded_process_hard_limits_streamed_stdout(tmp_path: Path) -> None:
+    destination = tmp_path / "stdout.bin"
+    with (
+        destination.open("xb", buffering=0) as output,
+        pytest.raises(ProcessOutputLimitError),
+    ):
+        run_bounded_process(
+            PYTHON,
+            ("-c", "import sys; sys.stdout.buffer.write(b'x' * 100)"),
+            timeout_seconds=5,
+            max_output_bytes=1024,
+            streams=ProcessStreams(
+                standard_output=output,
+                standard_output_max_bytes=32,
+            ),
+        )
+    assert destination.stat().st_size <= 32
+
+
+@pytest.mark.parametrize("write_result", [None, 0])
+def test_streamed_process_output_rejects_failed_writes(
+    write_result: int | None,
+) -> None:
+    class RefusingOutput:
+        def write(self, _value: object) -> int | None:
+            return write_result
+
+    target = process_module._StreamTarget(
+        cast("IO[bytes]", RefusingOutput()),
+        max_bytes=10,
+    )
+    with pytest.raises(OSError, match="Unable to write"):
+        target.write(b"value")
+
+
+def test_streamed_process_output_requires_a_matching_positive_bound() -> None:
+    with pytest.raises(ValueError, match="requires a byte bound"):
+        ProcessStreams(standard_output=sys.stdout.buffer)
+    with pytest.raises(ValueError, match="requires a byte bound"):
+        ProcessStreams(standard_output_max_bytes=1)
+    with pytest.raises(ValueError, match="bounds must be positive"):
+        ProcessStreams(
+            standard_output=sys.stdout.buffer,
+            standard_output_max_bytes=0,
+        )
 
 
 def test_bounded_process_consumes_selected_bounded_stderr_lines() -> None:
@@ -232,6 +282,24 @@ def test_read_process_output_requires_both_pipes() -> None:
             process_module._ProcessCapture(1, None),
             deadline=time.monotonic() + 1,
         )
+
+
+def test_read_process_output_allows_stdout_to_be_absent() -> None:
+    process = subprocess.Popen(  # noqa: S603
+        (str(PYTHON), "-c", "import sys; sys.stderr.write('ready')"),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    capture = process_module._ProcessCapture(1024, None)
+    process_module._read_process_output(
+        process,
+        capture,
+        deadline=time.monotonic() + 1,
+    )
+    process.wait()
+    assert capture.stderr == b"ready"
 
 
 def test_read_process_output_rejects_an_expired_deadline() -> None:

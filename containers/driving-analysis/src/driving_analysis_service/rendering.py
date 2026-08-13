@@ -57,6 +57,7 @@ from driving_analysis_service.tracking_artifacts import (
     bundle_path,
     canonical_json,
     copy_verified_artifact,
+    ensure_bundle_durable,
     file_digest,
     publish_bundle,
     read_completion,
@@ -281,6 +282,7 @@ def _recover(
     with tempfile.TemporaryDirectory(
         prefix="recovery-", dir=settings.work_root
     ) as recovery_directory:
+        _validate_recovery_capacity(settings, completion.byte_count)
         recovery_media = Path(recovery_directory) / "artifact.mp4"
         copy_verified_artifact(
             media,
@@ -295,6 +297,7 @@ def _recover(
             != completion.duration_ms
         ):
             raise ArtifactConflictError
+    ensure_bundle_durable(bundle, deadline=deadline)
     return completion
 
 
@@ -336,14 +339,12 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
         _write_overlay_script(overlay_path, overlay, metadata, crop)
         filters = ",".join(
             (
-                f"trim=start={(metadata.start_time_ms + start_ms) / 1000:.3f}:"
-                f"end={(metadata.start_time_ms + end_ms) / 1000:.3f}",
                 f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}",
                 "setpts=PTS-STARTPTS",
                 f"ass=filename={_escape_filter_value(str(overlay_path))}",
             )
         )
-        with destination.open("xb") as output:
+        with destination.open("xb", buffering=0) as output:
             result = run_bounded_process(
                 settings.ffmpeg_executable,
                 (
@@ -358,7 +359,8 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     "1",
                     "-filter_threads",
                     "1",
-                    "-copyts",
+                    "-ss",
+                    f"{start_ms / 1000:.3f}",
                     "-protocol_whitelist",
                     "file",
                     "-format_whitelist",
@@ -373,6 +375,8 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     "-1",
                     "-vf",
                     filters,
+                    "-t",
+                    f"{(end_ms - start_ms) / 1000:.3f}",
                     "-an",
                     "-sn",
                     "-dn",
@@ -405,6 +409,7 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                 ),
                 streams=ProcessStreams(
                     standard_output=output,
+                    standard_output_max_bytes=specification.max_output_bytes,
                     standard_error_observer=StderrLineObserver(
                         _discard_process_error,
                         MAX_FFMPEG_ERROR_LINE_BYTES,
@@ -490,6 +495,14 @@ def _validate_storage_capacity(
     work_required = expected_input_bytes + max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
     artifact_required = max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
     if work_available < work_required or artifact_available < artifact_required:
+        raise ProcessOutputLimitError
+
+
+def _validate_recovery_capacity(
+    settings: ServiceSettings, expected_output_bytes: int
+) -> None:
+    required = expected_output_bytes + MIN_STORAGE_HEADROOM_BYTES
+    if _available_bytes(settings.work_root) < required:
         raise ProcessOutputLimitError
 
 

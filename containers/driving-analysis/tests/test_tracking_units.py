@@ -1154,6 +1154,45 @@ def test_bundle_and_completion_validation_defenses(
         )
 
 
+def test_bundle_durability_is_retried_after_post_rename_failure(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    destination = settings.artifact_root / "durable.bundle"
+    original_sync = artifact_module._fsync_directory
+
+    def fail_post_rename_sync(
+        directory: Path, *, deadline: float | None = None
+    ) -> None:
+        if directory == destination.parent and destination.exists():
+            raise ProcessTimeoutError
+        original_sync(directory, deadline=deadline)
+
+    monkeypatch.setattr(
+        artifact_module,
+        "_fsync_directory",
+        fail_post_rename_sync,
+    )
+    with pytest.raises(ProcessTimeoutError):
+        artifact_module.publish_bundle(
+            destination,
+            {"member": b"value"},
+            deadline=time.monotonic() + 1,
+        )
+    assert (destination / "member").read_bytes() == b"value"
+
+    monkeypatch.setattr(artifact_module, "_fsync_directory", original_sync)
+    artifact_module.ensure_bundle_durable(
+        destination,
+        deadline=time.monotonic() + 1,
+    )
+    not_directory = settings.artifact_root / "not-a-bundle"
+    not_directory.write_bytes(b"value")
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.ensure_bundle_durable(not_directory)
+
+
 def test_stage_deadlines_reject_expired_work() -> None:
     expired = time.monotonic() - 1
     with pytest.raises(ProcessTimeoutError):
@@ -1227,7 +1266,7 @@ def test_fsync_deadline_bounds_worker_resources_and_setup_failures(
     try:
         assert slot.acquire(blocking=False)
         with pytest.raises(ProcessTimeoutError):
-            fsync_with_deadline(descriptor, time.monotonic() + 1)
+            fsync_with_deadline(descriptor, time.monotonic() + 0.01)
         slot.release()
 
         def deny_duplicate(_descriptor: int) -> int:

@@ -39,6 +39,9 @@ from driving_analysis_service.tracking_artifacts import (
     InvalidArtifactError,
     canonical_json,
 )
+from driving_analysis_service.tracking_artifacts import (
+    ensure_bundle_durable as ensure_artifact_bundle_durable,
+)
 from tests.conftest import stage_media
 
 # Commands use fixed absolute test executables and generated temporary paths.
@@ -85,6 +88,37 @@ def _video(
             *audio_output_arguments,
             "-movflags",
             "+faststart",
+            "-y",
+            str(output),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    return output
+
+
+def _late_seek_video(tmp_path: Path) -> Path:
+    output = tmp_path / "late-seek-source.mp4"
+    subprocess.run(
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=160x90:r=10:d=5",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=160x90:r=10:d=1",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
             "-y",
             str(output),
         ),
@@ -167,43 +201,26 @@ def _metadata(*, duration_ms: int = 1000) -> ProbeMetadata:
 
 
 def test_render_contract_requires_fixed_padding_and_ordered_timestamps() -> None:
-    try:
-        RenderSpecification.model_validate(
-            {
-                "sourceChecksumSha256": SHA,
-                "runId": "run-1",
-                "trackMapVersion": "map-1",
-                "cornerId": "corner-1",
-                "cornerView": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
-                "entryTimestampMs": 1000,
-                "exitTimestampMs": 500,
-                "padding": {"beforeMs": 250, "afterMs": 500},
-                "overlay": {
-                    "subjectCenter": {"x": 0.5, "y": 0.5},
-                    "entryGate": {
-                        "entry": {"x": 0.1, "y": 0.1},
-                        "exit": {"x": 0.2, "y": 0.2},
-                        "direction": "positive",
-                    },
-                    "exitGate": {
-                        "entry": {"x": 0.3, "y": 0.3},
-                        "exit": {"x": 0.4, "y": 0.4},
-                        "direction": "positive",
-                    },
-                },
-                "maxOutputBytes": 1000,
-                "pipelineVersion": "corner-render.v1",
-            }
-        )
-    except ValidationError:
-        pass
-    else:
-        raise AssertionError("invalid render specification was accepted")
+    base = cast("dict[str, object]", _body(1, SHA)["specification"])
+    reverse = dict(base)
+    reverse["entryTimestampMs"] = 1000
+    reverse["exitTimestampMs"] = 500
+    with pytest.raises(ValidationError):
+        RenderSpecification.model_validate(reverse)
+
+    for field in ("beforeMs", "afterMs"):
+        invalid_padding = dict(base)
+        padding = {"beforeMs": 500, "afterMs": 500}
+        padding[field] = 250
+        invalid_padding["padding"] = padding
+        with pytest.raises(ValidationError):
+            RenderSpecification.model_validate(invalid_padding)
 
 
 def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     settings: ServiceSettings,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _video(tmp_path)
     source_probe = subprocess.run(
@@ -224,6 +241,15 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     assert source_probe.stdout.splitlines() == ["video", "audio"]
     checksum = hashlib.sha256(source.read_bytes()).hexdigest()
     byte_count = stage_media(settings, source)
+    durable_recoveries: list[Path] = []
+
+    def ensure_bundle_durable(
+        destination: Path, *, deadline: float | None = None
+    ) -> None:
+        durable_recoveries.append(destination)
+        ensure_artifact_bundle_durable(destination, deadline=deadline)
+
+    monkeypatch.setattr(rendering, "ensure_bundle_durable", ensure_bundle_durable)
 
     with _client(settings) as client:
         first = client.post("/v1/stages/render", json=_body(byte_count, checksum))
@@ -240,6 +266,7 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
         )
 
     assert first.status_code == 200
+    assert durable_recoveries == [settings.artifact_root / f"{RENDER_ID}.corner"]
     assert first.json()["artifact"] == second.json()["artifact"]
     assert second.json()["correlationId"] != first.json()["correlationId"]
     response = first.json()
@@ -484,6 +511,19 @@ def test_render_requires_capacity_on_separate_work_and_artifact_filesystems(
         )
     )
     rendering._validate_storage_capacity(settings, 1, 1)
+    monkeypatch.setattr(
+        rendering,
+        "_available_bytes",
+        lambda _path: rendering.MIN_STORAGE_HEADROOM_BYTES,
+    )
+    with pytest.raises(ProcessOutputLimitError):
+        rendering._validate_recovery_capacity(settings, 1)
+    monkeypatch.setattr(
+        rendering,
+        "_available_bytes",
+        lambda _path: rendering.MIN_STORAGE_HEADROOM_BYTES + 1,
+    )
+    rendering._validate_recovery_capacity(settings, 1)
     assert rendering._discard_process_error(b"discarded") is True
 
 
@@ -571,7 +611,54 @@ def test_render_handles_real_non_zero_source_timestamps(
             ),
         )
     assert response.json()["outcome"] == "accepted", response.text
-    assert response.json()["artifact"]["durationMs"] == 1500
+
+
+def test_render_accurately_selects_content_after_input_level_seek(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    source = _late_seek_video(tmp_path)
+    specification = RenderSpecification.model_validate(
+        _body(
+            source.stat().st_size,
+            SHA,
+            entry_timestamp_ms=5500,
+            exit_timestamp_ms=5600,
+        )["specification"]
+    )
+    artifact = tmp_path / "late-seek-artifact.mp4"
+    rendering._render_clip(
+        source,
+        artifact,
+        specification,
+        _metadata(duration_ms=6000),
+        settings,
+        time.monotonic() + 10,
+    )
+    assert rendering._output_duration(artifact, settings, time.monotonic() + 10) == 1000
+    first_pixel = subprocess.run(
+        (
+            "/usr/bin/ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(artifact),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ),
+        check=True,
+        capture_output=True,
+    ).stdout[:3]
+    red, green, blue = first_pixel
+    assert blue > 200
+    assert red < 50
+    assert green < 50
 
 
 def test_real_ffmpeg_reencoding_is_byte_deterministic(
@@ -1001,10 +1088,21 @@ def test_render_rejects_failed_ffmpeg_process(
             time.monotonic() + 10,
         )
     arguments = captured_arguments[0]
+    assert arguments.index("-ss") < arguments.index("-i")
+    assert arguments[arguments.index("-ss") + 1] == "0.000"
+    assert arguments[arguments.index("-t") + 1] == "1.000"
     for option in ("-map_metadata", "-map_chapters"):
         assert arguments[arguments.index(option) + 1] == "-1"
     for option in ("-flags:v", "-fflags"):
         assert arguments[arguments.index(option) + 1] == "+bitexact"
+
+    oversized = tmp_path / "oversized.mp4"
+    oversized.write_bytes(b"xx")
+    with pytest.raises(ProcessOutputLimitError):
+        rendering._validate_render_output(0, oversized, 1)
+    oversized.write_bytes(b"x")
+    with pytest.raises(ProcessOutputLimitError):
+        rendering._validate_render_output(1, oversized, 1)
 
 
 def test_render_rejects_subpixel_corner_view_before_ffmpeg(

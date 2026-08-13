@@ -33,7 +33,19 @@ class StderrLineObserver:
 class ProcessStreams:
     standard_input: IO[bytes] | None = None
     standard_output: IO[bytes] | None = None
+    standard_output_max_bytes: int | None = None
     standard_error_observer: StderrLineObserver | None = None
+
+    def __post_init__(self) -> None:
+        if (self.standard_output is None) != (self.standard_output_max_bytes is None):
+            msg = "A streamed process output requires a byte bound"
+            raise ValueError(msg)
+        if (
+            self.standard_output_max_bytes is not None
+            and self.standard_output_max_bytes <= 0
+        ):
+            msg = "Streamed process output bounds must be positive"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -45,15 +57,38 @@ class ProcessResult:
 
 
 @dataclass
+class _StreamTarget:
+    stream: IO[bytes]
+    max_bytes: int
+    byte_count: int = 0
+
+    def write(self, chunk: bytes) -> None:
+        if self.byte_count + len(chunk) > self.max_bytes:
+            raise ProcessOutputLimitError
+        remaining = memoryview(chunk)
+        while remaining:
+            written = self.stream.write(remaining)
+            if written is None or written <= 0:
+                msg = "Unable to write streamed process output"
+                raise OSError(msg)
+            self.byte_count += written
+            remaining = remaining[written:]
+
+
+@dataclass
 class _ProcessCapture:
     max_output_bytes: int
     stderr_line_observer: StderrLineObserver | None
+    stdout_target: _StreamTarget | None = None
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
     pending_stderr: bytearray = field(default_factory=bytearray)
     output_bytes: int = 0
 
     def consume(self, destination: object, chunk: bytes) -> None:
+        if isinstance(destination, _StreamTarget):
+            destination.write(chunk)
+            return
         if not isinstance(destination, bytearray):
             msg = "Unexpected process output target"
             raise TypeError(msg)
@@ -148,11 +183,7 @@ def run_bounded_process(
             if resolved_streams.standard_input is None
             else resolved_streams.standard_input
         ),
-        stdout=(
-            subprocess.PIPE
-            if resolved_streams.standard_output is None
-            else resolved_streams.standard_output
-        ),
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=False,
         close_fds=True,
@@ -162,6 +193,14 @@ def run_bounded_process(
     capture = _ProcessCapture(
         max_output_bytes=max_output_bytes,
         stderr_line_observer=resolved_streams.standard_error_observer,
+        stdout_target=(
+            None
+            if resolved_streams.standard_output is None
+            else _StreamTarget(
+                resolved_streams.standard_output,
+                cast("int", resolved_streams.standard_output_max_bytes),
+            )
+        ),
     )
     with _ProcessScope(process):
         _read_process_output(
@@ -197,7 +236,11 @@ def _read_process_output(
 
     with selectors.DefaultSelector() as selector:
         if process.stdout is not None:
-            selector.register(process.stdout, selectors.EVENT_READ, capture.stdout)
+            selector.register(
+                process.stdout,
+                selectors.EVENT_READ,
+                capture.stdout_target or capture.stdout,
+            )
         selector.register(process.stderr, selectors.EVENT_READ, capture.stderr)
 
         while selector.get_map():
