@@ -18,6 +18,7 @@ def settings(tmp_path: Path) -> ServiceSettings:
     return ServiceSettings(
         staging_root=tmp_path / "staged",
         work_root=tmp_path / "work",
+        artifact_root=tmp_path / "artifacts",
         limits=MediaLimits(
             max_bytes=2 * 1024 * 1024,
             max_duration_ms=2_000,
@@ -104,3 +105,13 @@ def request_body(
 def no_leftover_default_roots(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RC_MECH_MEDIA_STAGING_ROOT", raising=False)
     monkeypatch.delenv("RC_MECH_MEDIA_WORK_ROOT", raising=False)
+    monkeypatch.delenv("RC_MECH_ANALYSIS_ARTIFACT_ROOT", raising=False)
+    monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
+    monkeypatch.delenv("INFERENCE_MODEL", raising=False)
+    monkeypatch.delenv("INFERENCE_MODEL_VERSION", raising=False)
+    monkeypatch.delenv("INFERENCE_MODEL_DIGEST", raising=False)
+    monkeypatch.delenv("INFERENCE_CONFIDENCE_CALIBRATION", raising=False)
+    monkeypatch.delenv("INFERENCE_IDENTITY_CONFIDENCE_THRESHOLD", raising=False)
+    monkeypatch.delenv("INFERENCE_PROVIDER_URL", raising=False)
+    monkeypatch.delenv("INFERENCE_FIXTURE_PATH", raising=False)
+    monkeypatch.delenv("INFERENCE_REQUEST_TIMEOUT_SECONDS", raising=False)

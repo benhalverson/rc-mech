@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from fractions import Fraction
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from driving_analysis_service.contracts import (
     CONTRACT_VERSION,
@@ -24,6 +24,7 @@ from driving_analysis_service.contracts import (
     RationalValue,
     RejectedValidationResponse,
     SafeError,
+    StagedMediaInput,
     ValidationResponse,
 )
 from driving_analysis_service.errors import MediaValidationError
@@ -149,16 +150,13 @@ class MediaValidationService:
         stage: ErrorStage = "claim"
         try:
             self.settings.prepare_roots()
-            with _claimed_media(request, self.settings) as claimed_path:
+            with claim_staged_media(request, self.settings) as claimed_path:
                 stage = "inspect"
-                byte_count, checksum = _inspect_file(
+                byte_count, checksum, metadata = inspect_and_probe_media(
                     claimed_path,
                     expected_byte_count=request.input.expected_byte_count,
-                    max_bytes=self.settings.limits.max_bytes,
+                    settings=self.settings,
                 )
-                _reject_indirect_media(claimed_path)
-                stage = "probe"
-                metadata = _probe_media(claimed_path, self.settings)
                 stage = "decode"
                 decoded_frame_count = _decode_media(
                     claimed_path,
@@ -217,10 +215,15 @@ class MediaValidationService:
             )
 
 
+class _StagedMediaRequest(Protocol):
+    @property
+    def input(self) -> StagedMediaInput: ...
+
+
 class _ClaimedMedia:
     def __init__(
         self,
-        request: MediaValidationRequest,
+        request: _StagedMediaRequest,
         settings: ServiceSettings,
     ) -> None:
         self.source_path = settings.staging_root / (
@@ -292,10 +295,32 @@ class _ClaimedMedia:
 
 
 def _claimed_media(
-    request: MediaValidationRequest,
+    request: _StagedMediaRequest,
     settings: ServiceSettings,
 ) -> _ClaimedMedia:
     return _ClaimedMedia(request, settings)
+
+
+def claim_staged_media(
+    request: _StagedMediaRequest,
+    settings: ServiceSettings,
+) -> _ClaimedMedia:
+    return _ClaimedMedia(request, settings)
+
+
+def inspect_and_probe_media(
+    path: Path,
+    *,
+    expected_byte_count: int,
+    settings: ServiceSettings,
+) -> tuple[int, str, ProbeMetadata]:
+    byte_count, checksum = _inspect_file(
+        path,
+        expected_byte_count=expected_byte_count,
+        max_bytes=settings.limits.max_bytes,
+    )
+    _reject_indirect_media(path)
+    return byte_count, checksum, _probe_media(path, settings)
 
 
 def _discard_staged_input(path: Path) -> None:

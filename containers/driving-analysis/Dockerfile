@@ -20,13 +20,14 @@ ENV PATH="/service/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     RC_MECH_MEDIA_STAGING_ROOT=/var/lib/rc-mech/staged \
-    RC_MECH_MEDIA_WORK_ROOT=/tmp/rc-mech-media
+    RC_MECH_MEDIA_WORK_ROOT=/tmp/rc-mech-media \
+    RC_MECH_ANALYSIS_ARTIFACT_ROOT=/var/lib/rc-mech/artifacts
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -m 0700 -o 10001 -g 10001 \
-        /var/lib/rc-mech/staged /tmp/rc-mech-media
+        /var/lib/rc-mech/staged /var/lib/rc-mech/artifacts /tmp/rc-mech-media
 
 WORKDIR /service
 
