@@ -299,10 +299,11 @@ def _recover(
             max_bytes=completion.byte_count,
             deadline=deadline,
         )
-        if (
-            _output_duration(recovery_media, settings, deadline)
-            != completion.duration_ms
-        ):
+        try:
+            recovered_duration = _output_duration(recovery_media, settings, deadline)
+        except RenderInvalidMediaError as error:
+            raise InvalidArtifactError from error
+        if recovered_duration != completion.duration_ms:
             raise ArtifactConflictError
     ensure_bundle_durable(bundle, deadline=deadline)
     return completion
@@ -475,7 +476,7 @@ def _bounded_output_duration(
     except RenderInvalidMediaError:
         if output_bytes >= max_output_bytes:
             raise ProcessOutputLimitError from None
-        raise
+        raise RenderProcessError from None
 
 
 def _validate_output_duration(

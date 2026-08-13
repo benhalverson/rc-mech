@@ -306,7 +306,10 @@ def _schedule_process_reap(process: subprocess.Popen[bytes]) -> None:
                 slot.release()
 
         worker = Thread(target=reap, daemon=True, name="bounded-process-reaper")
-        worker.start()
+        try:
+            worker.start()
+        except RuntimeError:
+            return
         started = True
     finally:
         if not started:

@@ -464,8 +464,7 @@ def test_background_process_reaper_releases_slot_when_start_fails(
     monkeypatch.setattr(process_module, "_PROCESS_REAP_SLOTS", _Slot())
     monkeypatch.setattr(process_module, "Thread", _Worker)
 
-    with pytest.raises(RuntimeError, match="thread unavailable"):
-        process_module._schedule_process_reap(process)
+    process_module._schedule_process_reap(process)
 
     assert released.is_set()
 

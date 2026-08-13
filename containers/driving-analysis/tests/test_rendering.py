@@ -880,7 +880,7 @@ def test_invalid_max_sized_output_is_classified_as_an_output_limit(
     monkeypatch.setattr(rendering, "_output_duration", invalid_duration)
     with pytest.raises(ProcessOutputLimitError):
         rendering._bounded_output_duration(Path("artifact"), settings, 1.0, 1, 1)
-    with pytest.raises(rendering.RenderInvalidMediaError):
+    with pytest.raises(rendering.RenderProcessError):
         rendering._bounded_output_duration(Path("artifact"), settings, 1.0, 1, 2)
 
 
@@ -1001,6 +1001,21 @@ def test_render_recovery_rejects_tampered_completion_or_media(
     )
     with pytest.raises(ArtifactConflictError):
         rendering._recover(request, settings, time.monotonic() + 10)
+
+    artifact = artifact.model_copy(
+        update={"case_id": request.case_id, "duration_ms": 1000}
+    )
+    (bundle / f"{RENDER_ID}.corner.json").write_bytes(
+        canonical_json(artifact.model_dump(mode="json", by_alias=True))
+    )
+
+    def invalid_duration(*_args: object) -> int:
+        raise rendering.RenderInvalidMediaError
+
+    monkeypatch.setattr(rendering, "_output_duration", invalid_duration)
+    with pytest.raises(InvalidArtifactError):
+        rendering._recover(request, settings, time.monotonic() + 10)
+    monkeypatch.setattr(rendering, "_output_duration", lambda *_args: 1000)
 
     artifact = artifact.model_copy(update={"case_id": request.case_id})
     (bundle / f"{RENDER_ID}.corner.json").write_bytes(
