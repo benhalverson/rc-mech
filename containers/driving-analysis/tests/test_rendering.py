@@ -968,11 +968,15 @@ def test_render_rejects_failed_ffmpeg_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = RenderStageRequest.model_validate(_body(1, SHA))
-    monkeypatch.setattr(
-        rendering,
-        "run_bounded_process",
-        lambda *_args, **_kwargs: SimpleNamespace(return_code=1, stdout=b""),
-    )
+    captured_arguments: list[tuple[str, ...]] = []
+
+    def fail_process(
+        _executable: Path, arguments: tuple[str, ...], **_kwargs: object
+    ) -> SimpleNamespace:
+        captured_arguments.append(arguments)
+        return SimpleNamespace(return_code=1, stdout=b"")
+
+    monkeypatch.setattr(rendering, "run_bounded_process", fail_process)
     metadata = ProbeMetadata(
         duration_ms=1000,
         width=160,
@@ -996,6 +1000,11 @@ def test_render_rejects_failed_ffmpeg_process(
             settings,
             time.monotonic() + 10,
         )
+    arguments = captured_arguments[0]
+    for option in ("-map_metadata", "-map_chapters"):
+        assert arguments[arguments.index(option) + 1] == "-1"
+    for option in ("-flags:v", "-fflags"):
+        assert arguments[arguments.index(option) + 1] == "+bitexact"
 
 
 def test_render_rejects_subpixel_corner_view_before_ffmpeg(

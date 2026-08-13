@@ -13,6 +13,7 @@ from typing import Literal
 import pytest
 
 import driving_analysis_service.preparation as preparation_module
+import driving_analysis_service.processing_deadline as deadline_module
 import driving_analysis_service.tracking as tracking_module
 import driving_analysis_service.tracking_artifacts as artifact_module
 from driving_analysis_service.contracts import SubjectProvenance
@@ -30,7 +31,10 @@ from driving_analysis_service.processes import (
     ProcessResult,
     ProcessTimeoutError,
 )
-from driving_analysis_service.processing_deadline import remaining_seconds
+from driving_analysis_service.processing_deadline import (
+    fsync_with_deadline,
+    remaining_seconds,
+)
 from driving_analysis_service.processing_errors import InvalidProcessingRequestError
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
 from driving_analysis_service.tracking import SubjectTrackingService
@@ -1156,6 +1160,109 @@ def test_stage_deadlines_reject_expired_work() -> None:
         remaining_seconds(expired)
     with pytest.raises(ProcessTimeoutError):
         remaining_seconds(expired)
+
+
+def test_fsync_without_deadline_runs_in_calling_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "sync"
+    target.write_bytes(b"value")
+    descriptor = os.open(target, os.O_RDONLY)
+    calls: list[int] = []
+    monkeypatch.setattr(os, "fsync", calls.append)
+    try:
+        fsync_with_deadline(descriptor, None)
+    finally:
+        os.close(descriptor)
+    assert calls == [descriptor]
+
+
+def test_fsync_deadline_bounds_success_failure_and_stall(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "sync"
+    target.write_bytes(b"value")
+    descriptor = os.open(target, os.O_RDONLY)
+    try:
+        fsync_with_deadline(descriptor, time.monotonic() + 1)
+
+        def fail_sync(_descriptor: int) -> None:
+            raise OSError("sync failed")  # noqa: EM101, TRY003
+
+        monkeypatch.setattr(os, "fsync", fail_sync)
+        with pytest.raises(OSError, match="sync failed"):
+            fsync_with_deadline(descriptor, time.monotonic() + 1)
+
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def stall_sync(_descriptor: int) -> None:
+            entered.set()
+            release.wait(1)
+            finished.set()
+
+        monkeypatch.setattr(os, "fsync", stall_sync)
+        with pytest.raises(ProcessTimeoutError):
+            fsync_with_deadline(descriptor, time.monotonic() + 0.01)
+        assert entered.is_set()
+        release.set()
+        assert finished.wait(1)
+    finally:
+        os.close(descriptor)
+
+
+def test_fsync_deadline_bounds_worker_resources_and_setup_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "sync"
+    target.write_bytes(b"value")
+    descriptor = os.open(target, os.O_RDONLY)
+    slot = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(deadline_module, "_SYNC_SLOTS", slot)
+    real_duplicate = os.dup
+    try:
+        assert slot.acquire(blocking=False)
+        with pytest.raises(ProcessTimeoutError):
+            fsync_with_deadline(descriptor, time.monotonic() + 1)
+        slot.release()
+
+        def deny_duplicate(_descriptor: int) -> int:
+            raise OSError("dup failed")  # noqa: EM101, TRY003
+
+        monkeypatch.setattr(os, "dup", deny_duplicate)
+        with pytest.raises(OSError, match="dup failed"):
+            fsync_with_deadline(descriptor, time.monotonic() + 1)
+        assert slot.acquire(blocking=False)
+        slot.release()
+
+        duplicated: list[int] = []
+
+        def record_duplicate(source: int) -> int:
+            result = real_duplicate(source)
+            duplicated.append(result)
+            return result
+
+        class RefusingThread:
+            def __init__(self, **_kwargs: object) -> None:
+                pass
+
+            def start(self) -> None:
+                raise RuntimeError("thread failed")  # noqa: EM101, TRY003
+
+        monkeypatch.setattr(os, "dup", record_duplicate)
+        monkeypatch.setattr(deadline_module, "Thread", RefusingThread)
+        with pytest.raises(RuntimeError, match="thread failed"):
+            fsync_with_deadline(descriptor, time.monotonic() + 1)
+        assert slot.acquire(blocking=False)
+        slot.release()
+        with pytest.raises(OSError):  # noqa: PT011
+            os.fstat(duplicated[0])
+    finally:
+        os.close(descriptor)
 
 
 def test_write_all_rejects_zero_byte_write(
