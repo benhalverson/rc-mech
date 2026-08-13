@@ -28,7 +28,8 @@
     "configurationDigest": "0000000000000000000000000000000000000000000000000000000000000000",
     "identityConfidenceThreshold": 0.5,
     "confidenceCalibration": "synthetic-linear-v1",
-    "identityMatchIouThreshold": 0.5
+    "identityMatchIouThreshold": 0.5,
+    "identityAnnotationToleranceMs": 50
   },
   "cases": [
     {"caseId": "trusted-tracking", "recordingId": "synthetic-recording", "windowStartMs": 0, "windowEndMs": 1000, "subjectSeed": {"timestampMs": 0, "frameIndex": 0, "identity": "subject", "box": {"x": 0.18, "y": 0.4, "width": 0.04, "height": 0.04}}},

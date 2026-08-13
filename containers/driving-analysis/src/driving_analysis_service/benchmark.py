@@ -1,6 +1,5 @@
 """Deterministic, provider-neutral Subject-observation benchmark mechanics."""
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import pairwise
 from statistics import mean, median
@@ -67,7 +66,11 @@ def _crossing(
 ) -> float | None:
     first_side = _side(gate, first.center)
     second_side = _side(gate, second.center)
-    if first_side == second_side:
+    if (
+        first_side == second_side
+        or (first_side < 0 and second_side < 0)
+        or (first_side > 0 and second_side > 0)
+    ):
         return None
     fraction = abs(first_side) / (abs(first_side) + abs(second_side))
     crossing = NormalizedPoint(
@@ -84,18 +87,6 @@ def _crossing(
     return first.timestamp_ms + fraction * (second.timestamp_ms - first.timestamp_ms)
 
 
-def _overlaps_gap(start: float, end: float, gaps: Iterable[TrackingGap]) -> bool:
-    return any(
-        start <= gap.end_timestamp_ms and end >= gap.start_timestamp_ms for gap in gaps
-    )
-
-
-def _covers(timestamp_ms: int, gaps: Iterable[TrackingGap]) -> bool:
-    return any(
-        gap.start_timestamp_ms <= timestamp_ms <= gap.end_timestamp_ms for gap in gaps
-    )
-
-
 def _is_trusted(observation: SubjectObservation, threshold: float) -> bool:
     return (
         observation.visibility == "visible"
@@ -109,11 +100,22 @@ def _crossings(
     threshold: float,
 ) -> tuple[float, ...]:
     crossings: list[float] = []
+    gap_index = 0
     for first, second in pairwise(candidate.observations):
+        while (
+            gap_index < len(candidate.gaps)
+            and candidate.gaps[gap_index].end_timestamp_ms < first.timestamp_ms
+        ):
+            gap_index += 1
+        overlaps_gap = (
+            gap_index < len(candidate.gaps)
+            and first.timestamp_ms <= candidate.gaps[gap_index].end_timestamp_ms
+            and second.timestamp_ms >= candidate.gaps[gap_index].start_timestamp_ms
+        )
         if (
             not _is_trusted(first, threshold)
             or not _is_trusted(second, threshold)
-            or _overlaps_gap(first.timestamp_ms, second.timestamp_ms, candidate.gaps)
+            or overlaps_gap
         ):
             continue
         crossing = _crossing(first, second, gate)
@@ -131,13 +133,26 @@ def _candidate_passes(
     exits = _crossings(candidate, gates.exit, threshold)
     passes: list[CandidatePass] = []
     next_exit = 0
+    gap_index = 0
     for entry in entries:
         while next_exit < len(exits) and exits[next_exit] <= entry:
             next_exit += 1
         if next_exit == len(exits):
             break
-        passes.append(CandidatePass(entry_ms=entry, exit_ms=exits[next_exit]))
+        exit_ms = exits[next_exit]
         next_exit += 1
+        while (
+            gap_index < len(candidate.gaps)
+            and candidate.gaps[gap_index].end_timestamp_ms < entry
+        ):
+            gap_index += 1
+        if (
+            gap_index < len(candidate.gaps)
+            and entry <= candidate.gaps[gap_index].end_timestamp_ms
+            and exit_ms >= candidate.gaps[gap_index].start_timestamp_ms
+        ):
+            continue
+        passes.append(CandidatePass(entry_ms=entry, exit_ms=exit_ms))
     return tuple(passes)
 
 
@@ -159,20 +174,62 @@ def _unflagged_switches(
     candidate: AcceptedSubjectObservations,
     provenance: BenchmarkProvenance,
 ) -> int:
-    by_frame = {item.frame_index: item for item in candidate.observations}
     switches = 0
     switch_active = False
+    observation_index = 0
+    candidate_gap_index = 0
+    truth_gap_index = 0
     for annotation in truth.identity_annotations:
-        observation = by_frame.get(annotation.frame_index)
-        excluded = _covers(annotation.timestamp_ms, truth.ambiguous_spans) or _covers(
-            annotation.timestamp_ms, candidate.gaps
+        while (
+            observation_index + 1 < len(candidate.observations)
+            and candidate.observations[observation_index + 1].timestamp_ms
+            <= annotation.timestamp_ms
+        ):
+            observation_index += 1
+        nearby = candidate.observations[observation_index : observation_index + 2]
+        observation = min(
+            nearby,
+            key=lambda item: abs(item.timestamp_ms - annotation.timestamp_ms),
+            default=None,
         )
-        mismatch = observation is not None and (
-            not _is_trusted(observation, provenance.identity_confidence_threshold)
+        if (
+            observation is not None
+            and abs(observation.timestamp_ms - annotation.timestamp_ms)
+            > provenance.identity_annotation_tolerance_ms
+        ):
+            observation = None
+        while (
+            candidate_gap_index < len(candidate.gaps)
+            and candidate.gaps[candidate_gap_index].end_timestamp_ms
+            < annotation.timestamp_ms
+        ):
+            candidate_gap_index += 1
+        while (
+            truth_gap_index < len(truth.ambiguous_spans)
+            and truth.ambiguous_spans[truth_gap_index].end_timestamp_ms
+            < annotation.timestamp_ms
+        ):
+            truth_gap_index += 1
+        candidate_gap_covers = (
+            candidate_gap_index < len(candidate.gaps)
+            and candidate.gaps[candidate_gap_index].start_timestamp_ms
+            <= annotation.timestamp_ms
+            <= candidate.gaps[candidate_gap_index].end_timestamp_ms
+        )
+        known_ambiguity = (
+            truth_gap_index < len(truth.ambiguous_spans)
+            and truth.ambiguous_spans[truth_gap_index].start_timestamp_ms
+            <= annotation.timestamp_ms
+            <= truth.ambiguous_spans[truth_gap_index].end_timestamp_ms
+        )
+        mismatch = (
+            observation is None
+            or known_ambiguity
+            or not _is_trusted(observation, provenance.identity_confidence_threshold)
             or _intersection_over_union(observation.box, annotation.box)
             < provenance.identity_match_iou_threshold
         )
-        if excluded or observation is None or not mismatch:
+        if candidate_gap_covers or not mismatch:
             switch_active = False
         elif not switch_active:
             switches += 1
@@ -207,22 +264,38 @@ def _matching_pass(
 def _gap_counts(
     truth_gaps: tuple[TrackingGap, ...], candidate_gaps: tuple[TrackingGap, ...]
 ) -> tuple[int, int, int]:
-    timely = sum(
-        any(
-            candidate.start_timestamp_ms
+    timely = 0
+    candidate_index = 0
+    for truth in truth_gaps:
+        while (
+            candidate_index < len(candidate_gaps)
+            and candidate_gaps[candidate_index].end_timestamp_ms
+            < truth.start_timestamp_ms
+        ):
+            candidate_index += 1
+        if (
+            candidate_index < len(candidate_gaps)
+            and candidate_gaps[candidate_index].start_timestamp_ms
             <= truth.start_timestamp_ms
-            <= candidate.end_timestamp_ms
-            for candidate in candidate_gaps
-        )
-        for truth in truth_gaps
-    )
+            <= candidate_gaps[candidate_index].end_timestamp_ms
+        ):
+            timely += 1
     missed = len(truth_gaps) - timely
-    premature = sum(
-        not _overlaps_gap(
-            candidate.start_timestamp_ms, candidate.end_timestamp_ms, truth_gaps
+    premature = 0
+    truth_index = 0
+    for candidate in candidate_gaps:
+        while (
+            truth_index < len(truth_gaps)
+            and truth_gaps[truth_index].end_timestamp_ms < candidate.start_timestamp_ms
+        ):
+            truth_index += 1
+        overlaps = (
+            truth_index < len(truth_gaps)
+            and candidate.start_timestamp_ms <= truth_gaps[truth_index].end_timestamp_ms
+            and candidate.end_timestamp_ms >= truth_gaps[truth_index].start_timestamp_ms
         )
-        for candidate in candidate_gaps
-    )
+        if not overlaps:
+            premature += 1
     return timely, missed, premature
 
 
@@ -358,13 +431,18 @@ def evaluate_benchmark(
     ground_truth_passes = sum(item.ground_truth_passes for item in results)
     eligible_passes = sum(item.eligible_passes for item in results)
     unflagged_switches = sum(item.unflagged_switches for item in results)
+    missed_gaps = sum(item.missed_gaps for item in results)
     errors = [error for item in results for error in item.timing_errors]
     coverage = eligible_passes / ground_truth_passes if ground_truth_passes else 0.0
     return BenchmarkReport(
         contractVersion="subject-benchmark.v1",
         corpusId=manifest.corpus_id,
         provenance=manifest.provenance,
-        passed=(unflagged_switches == 0 and coverage >= manifest.required_coverage),
+        passed=(
+            unflagged_switches == 0
+            and missed_gaps == 0
+            and coverage >= manifest.required_coverage
+        ),
         coverage=CoverageMetrics(
             eligiblePasses=eligible_passes,
             groundTruthPasses=ground_truth_passes,
@@ -372,7 +450,7 @@ def evaluate_benchmark(
         ),
         gaps=GapMetrics(
             timely=sum(item.timely_gaps for item in results),
-            missed=sum(item.missed_gaps for item in results),
+            missed=missed_gaps,
             premature=sum(item.premature_gaps for item in results),
         ),
         identity=IdentityMetrics(unflaggedSwitches=unflagged_switches),

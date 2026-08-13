@@ -273,6 +273,20 @@ class AcceptedSubjectObservations(StrictContract):
             for previous, current in zip(self.gaps, self.gaps[1:], strict=False)
         ):
             raise ValueError("tracking gaps must be ordered and non-overlapping")
+        gap_index = 0
+        for observation in self.observations:
+            while (
+                gap_index < len(self.gaps)
+                and self.gaps[gap_index].end_timestamp_ms < observation.timestamp_ms
+            ):
+                gap_index += 1
+            if (
+                gap_index < len(self.gaps)
+                and self.gaps[gap_index].start_timestamp_ms
+                <= observation.timestamp_ms
+                <= self.gaps[gap_index].end_timestamp_ms
+            ):
+                raise ValueError("tracking gaps must not contain observations")
         return self
 
 
@@ -415,6 +429,9 @@ class BenchmarkProvenance(StrictContract):
     ] = Field(alias="confidenceCalibration")
     identity_match_iou_threshold: float = Field(
         alias="identityMatchIouThreshold", gt=0.0, le=1.0, strict=True
+    )
+    identity_annotation_tolerance_ms: int = Field(
+        alias="identityAnnotationToleranceMs", ge=0, le=1_000, strict=True
     )
 
 

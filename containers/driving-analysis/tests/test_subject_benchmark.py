@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -37,7 +39,7 @@ from driving_analysis_service.contracts import (
     SubjectSeed,
     TrackingGap,
 )
-from driving_analysis_service.subject_benchmark_cli import _write, main
+from driving_analysis_service.subject_benchmark_cli import _read, _write, main
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "subject-benchmark"
 
@@ -65,6 +67,7 @@ BENCHMARK_PROVENANCE = BenchmarkProvenance(
     identityConfidenceThreshold=0.5,
     confidenceCalibration="synthetic-linear-v1",
     identityMatchIouThreshold=0.5,
+    identityAnnotationToleranceMs=50,
 )
 
 
@@ -267,6 +270,14 @@ def test_center_and_observation_ordering_are_strict() -> None:
                 TrackingGap(startTimestampMs=19, endTimestampMs=30, reason="missing"),
             ),
         )
+    with pytest.raises(ValidationError, match="must not contain observations"):
+        AcceptedSubjectObservations(
+            contractVersion="subject-observation.v1",
+            outcome="accepted",
+            caseId="x",
+            observations=(first,),
+            gaps=(TrackingGap(startTimestampMs=0, endTimestampMs=2, reason="missing"),),
+        )
 
 
 def test_ground_truth_and_manifest_reject_inconsistent_structure() -> None:
@@ -409,6 +420,19 @@ def test_crossing_geometry_direction_and_pairing() -> None:
     assert _crossing(
         observation(0, 0.6), observation(100, 0.2), positive_gate
     ) == pytest.approx(50)
+    diagonal = DirectedGate(
+        entry=NormalizedPoint(x=0.2, y=0.2),
+        exit=NormalizedPoint(x=0.8, y=0.8),
+        direction="positive",
+    )
+    assert (
+        _crossing(
+            observation(0, 0.2, center_y=0.3),
+            observation(100, 0.6, center_y=0.8),
+            diagonal,
+        )
+        is None
+    )
 
     candidate = AcceptedSubjectObservations(
         contractVersion="subject-observation.v1",
@@ -428,6 +452,18 @@ def test_crossing_geometry_direction_and_pairing() -> None:
         }
     )
     assert _candidate_passes(exit_before_entry, gates(), 0.5) == ()
+    stale_gap = AcceptedSubjectObservations(
+        contractVersion="subject-observation.v1",
+        outcome="accepted",
+        caseId="x",
+        observations=(
+            observation(100, 0.2),
+            observation(300, 0.5),
+            observation(500, 0.8),
+        ),
+        gaps=(TrackingGap(startTimestampMs=0, endTimestampMs=50, reason="missing"),),
+    )
+    assert len(_candidate_passes(stale_gap, gates(), 0.5)) == 1
 
 
 def test_iou_and_identity_switches_use_independent_annotations() -> None:
@@ -446,19 +482,39 @@ def test_iou_and_identity_switches_use_independent_annotations() -> None:
     assert report.identity.unflagged_switches == 1
     assert report.passed is False
 
-    candidates["case-a"] = candidates["case-a"].model_copy(
+    shifted = candidates["case-a"].model_copy(
         update={
-            "gaps": (
-                TrackingGap(
-                    startTimestampMs=150,
-                    endTimestampMs=450,
-                    reason="ambiguous-identity",
-                ),
+            "observations": (
+                observation(0, 0.2),
+                observation(200, 0.7, frame_index=201),
+                observation(400, 0.8),
             )
         }
     )
     assert (
-        evaluate_benchmark(manifest, truth, candidates).identity.unflagged_switches == 0
+        evaluate_benchmark(
+            manifest, truth, {"case-a": shifted}
+        ).identity.unflagged_switches
+        == 1
+    )
+    missing = AcceptedSubjectObservations(
+        contractVersion="subject-observation.v1",
+        outcome="accepted",
+        caseId="case-a",
+        observations=(observation(0, 0.2), observation(400, 0.8)),
+        gaps=(
+            TrackingGap(
+                startTimestampMs=150,
+                endTimestampMs=250,
+                reason="ambiguous-identity",
+            ),
+        ),
+    )
+    assert (
+        evaluate_benchmark(
+            manifest, truth, {"case-a": missing}
+        ).identity.unflagged_switches
+        == 0
     )
 
 
@@ -477,6 +533,61 @@ def test_untrusted_observation_is_not_bridged_into_an_eligible_pass() -> None:
     report = evaluate_benchmark(manifest, truth, candidates)
     assert report.coverage.eligible_passes == 0
     assert report.identity.unflagged_switches == 1
+
+
+def test_pass_overlapping_an_interior_gap_is_ineligible() -> None:
+    manifest, truth, _ = corpus()
+    gap = TrackingGap(
+        startTimestampMs=150,
+        endTimestampMs=250,
+        reason="ambiguous-identity",
+    )
+    candidate = AcceptedSubjectObservations(
+        contractVersion="subject-observation.v1",
+        outcome="accepted",
+        caseId="case-a",
+        observations=(
+            observation(0, 0.2),
+            observation(100, 0.5),
+            observation(300, 0.5),
+            observation(400, 0.8),
+        ),
+        gaps=(gap,),
+    )
+    truth = truth.model_copy(
+        update={
+            "cases": (truth.cases[0].model_copy(update={"ambiguous_spans": (gap,)}),)
+        }
+    )
+    report = evaluate_benchmark(manifest, truth, {"case-a": candidate})
+    assert report.coverage.eligible_passes == 0
+    assert report.gaps.timely == 1
+    assert report.identity.unflagged_switches == 0
+    assert report.passed is False
+
+
+def test_missed_known_ambiguity_fails_qualification() -> None:
+    manifest, truth, candidates = corpus()
+    truth = truth.model_copy(
+        update={
+            "cases": (
+                truth.cases[0].model_copy(
+                    update={
+                        "ambiguous_spans": (
+                            TrackingGap(
+                                startTimestampMs=500,
+                                endTimestampMs=600,
+                                reason="ambiguous-identity",
+                            ),
+                        )
+                    }
+                ),
+            )
+        }
+    )
+    report = evaluate_benchmark(manifest, truth, candidates)
+    assert report.gaps.missed == 1
+    assert report.passed is False
 
 
 def test_benchmark_passes_and_reports_timing_distribution() -> None:
@@ -658,6 +769,31 @@ def test_cli_bounds_input_and_redacts_parser_failures(
         lambda _path: (_ for _ in ()).throw(RecursionError()),
     )
     assert main([*args, "--output", str(tmp_path / "report.json")]) == 2
+
+
+def test_cli_read_rejects_special_files_symlinks_and_actual_overflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(ValueError, match="regular file"):
+        _read(Path(os.devnull))
+
+    target = tmp_path / "target.json"
+    target.write_text("{}", encoding="utf-8")
+    link = tmp_path / "link.json"
+    link.symlink_to(target)
+    with pytest.raises(OSError, match="symbolic links"):
+        _read(link)
+
+    oversized = tmp_path / "oversized.json"
+    oversized.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(subject_benchmark_cli, "MAX_BENCHMARK_INPUT_BYTES", 1)
+    monkeypatch.setattr(
+        os,
+        "fstat",
+        lambda _descriptor: SimpleNamespace(st_mode=0o100600, st_size=0),
+    )
+    with pytest.raises(ValueError, match="size limit"):
+        _read(oversized)
 
 
 def test_atomic_output_replaces_symlinks_without_touching_their_target(

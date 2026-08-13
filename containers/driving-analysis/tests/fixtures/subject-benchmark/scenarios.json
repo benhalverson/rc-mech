@@ -5,7 +5,7 @@
   "observations": "accepted-observations.json",
   "scenarios": [
     {"id": "trusted-tracking", "caseId": "trusted-tracking", "expected": {"passed": true, "eligiblePasses": 1, "unflaggedSwitches": 0, "timelyGaps": 0}},
-    {"id": "flagged-ambiguity-gap", "caseId": "flagged-ambiguity-gap", "expected": {"passed": true, "eligiblePasses": 1, "unflaggedSwitches": 0, "timelyGaps": 1}},
+    {"id": "flagged-ambiguity-gap", "caseId": "flagged-ambiguity-gap", "expected": {"passed": false, "eligiblePasses": 0, "unflaggedSwitches": 0, "timelyGaps": 1}},
     {"id": "unflagged-identity-switch", "caseId": "unflagged-identity-switch", "expected": {"passed": false, "eligiblePasses": 1, "unflaggedSwitches": 1, "timelyGaps": 0}},
     {"id": "missed-corner-pass", "caseId": "missed-corner-pass", "expected": {"passed": false, "eligiblePasses": 0, "unflaggedSwitches": 0, "timelyGaps": 0}},
     {"id": "gate-timing-error", "caseId": "gate-timing-error", "expected": {"passed": true, "eligiblePasses": 1, "unflaggedSwitches": 0, "timelyGaps": 0}}

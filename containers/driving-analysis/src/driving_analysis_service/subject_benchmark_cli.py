@@ -6,6 +6,7 @@
 import argparse
 import json
 import os
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -23,9 +24,25 @@ MAX_BENCHMARK_INPUT_BYTES = 16 * 1024 * 1024
 
 
 def _read(path: Path) -> object:
-    if path.stat().st_size > MAX_BENCHMARK_INPUT_BYTES:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+    )
+    try:
+        facts = os.fstat(descriptor)
+        if not stat.S_ISREG(facts.st_mode):
+            raise ValueError("benchmark input must be a regular file")
+        if facts.st_size > MAX_BENCHMARK_INPUT_BYTES:
+            raise ValueError("benchmark input exceeds size limit")
+        with os.fdopen(descriptor, "rb") as input_file:
+            descriptor = -1
+            content = input_file.read(MAX_BENCHMARK_INPUT_BYTES + 1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(content) > MAX_BENCHMARK_INPUT_BYTES:
         raise ValueError("benchmark input exceeds size limit")
-    return json.loads(path.read_bytes().decode("utf-8"))
+    return json.loads(content.decode("utf-8"))
 
 
 def _write(path: Path, report: str) -> None:
