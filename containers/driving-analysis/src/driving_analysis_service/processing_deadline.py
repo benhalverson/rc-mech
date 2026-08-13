@@ -55,7 +55,11 @@ def fsync_with_deadline(descriptor: int, deadline: float | None) -> None:
                     completed.set()
 
         worker = Thread(target=sync, daemon=True, name="bounded-fsync")
-        worker.start()
+        try:
+            worker.start()
+        except RuntimeError as error:
+            msg = "Unable to start bounded fsync worker"
+            raise OSError(msg) from error
         started = True
     finally:
         if not started:

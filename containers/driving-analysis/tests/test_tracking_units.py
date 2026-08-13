@@ -1349,7 +1349,7 @@ def test_fsync_deadline_bounds_worker_resources_and_setup_failures(
 
         monkeypatch.setattr(os, "dup", record_duplicate)
         monkeypatch.setattr(deadline_module, "Thread", RefusingThread)
-        with pytest.raises(RuntimeError, match="thread failed"):
+        with pytest.raises(OSError, match="Unable to start bounded fsync worker"):
             fsync_with_deadline(descriptor, time.monotonic() + 1)
         assert slot.acquire(blocking=False)
         slot.release()

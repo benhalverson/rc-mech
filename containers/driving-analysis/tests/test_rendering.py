@@ -766,6 +766,7 @@ def test_render_rejects_overlay_outside_corner_view_at_endpoint(
         ProcessTimeoutError,
         ProcessOutputLimitError,
         rendering.RenderProcessError,
+        OSError,
         ValueError,
     ],
 )
@@ -789,6 +790,7 @@ def test_render_maps_processing_failures_to_safe_errors(
         ProcessTimeoutError: "PROCESS_TIMEOUT",
         ProcessOutputLimitError: "RESOURCE_LIMIT",
         rendering.RenderProcessError: "RENDER_FAILED",
+        OSError: "RENDER_FAILED",
         ValueError: "RENDER_FAILED",
     }[failure]
     assert response.error.code == expected
