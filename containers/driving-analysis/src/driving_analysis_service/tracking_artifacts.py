@@ -214,9 +214,9 @@ def read_artifact(
     try:
         while chunk := os.read(descriptor, 1024 * 1024):
             check_deadline(deadline)
-            result.extend(chunk)
-            if len(result) > max_bytes:
+            if len(result) + len(chunk) > max_bytes:
                 raise InvalidArtifactError
+            result.extend(chunk)
     finally:
         os.close(descriptor)
     return bytes(result)
@@ -256,21 +256,24 @@ def copy_verified_artifact(  # noqa: PLR0913
     )
     digest = hashlib.sha256()
     byte_count = 0
+    verified = False
     try:
         while chunk := os.read(descriptor, 1024 * 1024):
             check_deadline(deadline)
-            byte_count += len(chunk)
-            if byte_count > max_bytes:
+            if byte_count + len(chunk) > max_bytes:
                 raise InvalidArtifactError
+            byte_count += len(chunk)
             digest.update(chunk)
             _write_all(destination_descriptor, chunk)
         os.fsync(destination_descriptor)
+        if byte_count != expected_bytes or digest.hexdigest() != expected_checksum:
+            raise InvalidArtifactError
+        verified = True
     finally:
         os.close(descriptor)
         os.close(destination_descriptor)
-    if byte_count != expected_bytes or digest.hexdigest() != expected_checksum:
-        destination.unlink(missing_ok=True)
-        raise InvalidArtifactError
+        if not verified:
+            destination.unlink(missing_ok=True)
 
 
 def file_digest(

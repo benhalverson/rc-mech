@@ -870,7 +870,10 @@ def _parse_frame_rate(video: JsonMapping) -> Fraction:
 
 
 def _duration_ms(video: JsonMapping, raw_format: JsonMapping) -> int:
-    for value in (raw_format.get("duration"), video.get("duration")):
+    # Container duration can be the absolute timeline end when streams have a
+    # non-zero start timestamp. Prefer the selected video stream's content
+    # duration so source-relative render bounds remain stable.
+    for value in (video.get("duration"), raw_format.get("duration")):
         try:
             duration_ms = _milliseconds(value)
         except MediaValidationError:

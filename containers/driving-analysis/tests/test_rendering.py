@@ -2,7 +2,6 @@ import hashlib
 import subprocess
 import threading
 import time
-from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from driving_analysis_service import processes as process_module
 from driving_analysis_service import rendering
 from driving_analysis_service.api import create_app
 from driving_analysis_service.errors import MediaValidationError
@@ -46,8 +46,9 @@ STAGED_ID = "09e32fc7-6bdd-4bc2-852c-fc29329e58d6"
 SHA = "a" * 64
 
 
-def _video(tmp_path: Path) -> Path:
+def _video(tmp_path: Path, *, non_zero_start: bool = False) -> Path:
     output = tmp_path / "render-source.mp4"
+    timestamp_arguments = ("-output_ts_offset", "2") if non_zero_start else ()
     subprocess.run(
         (
             "/usr/bin/ffmpeg",
@@ -58,6 +59,7 @@ def _video(tmp_path: Path) -> Path:
             "lavfi",
             "-i",
             "color=c=blue:s=160x90:r=10:d=2",
+            *timestamp_arguments,
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -191,7 +193,10 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     response = first.json()
     assert response["outcome"] == "accepted"
     assert response["artifact"]["contentType"] == "video/mp4"
-    assert response["artifact"]["durationMs"] == 1500
+    gate_to_gate_duration_ms = 1000 - 500
+    expected_clip_duration_ms = 500 + gate_to_gate_duration_ms + 500
+    assert response["artifact"]["durationMs"] == expected_clip_duration_ms
+    assert response["artifact"]["durationMs"] - 1000 == gate_to_gate_duration_ms
     artifact = (
         settings.artifact_root / f"{RENDER_ID}.corner" / f"{RENDER_ID}.corner.mp4"
     )
@@ -239,17 +244,25 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     def pixel(x: int, y: int) -> tuple[int, int, int]:
         return pixels[y * 80 + x]
 
-    def overlay_in_region(x_start: int, x_end: int, y_start: int, y_end: int) -> bool:
-        return any(
-            pixel(candidate_x, candidate_y) != background
+    def region(
+        x_start: int, x_end: int, y_start: int, y_end: int
+    ) -> tuple[tuple[int, int, int], ...]:
+        return tuple(
+            pixel(candidate_x, candidate_y)
             for candidate_x in range(x_start, x_end)
             for candidate_y in range(y_start, y_end)
         )
 
-    assert any(red > 80 or green > 80 or blue < 180 for red, green, blue in pixels)
-    background = pixel(0, 0)
-    assert overlay_in_region(0, 20, 0, 44)
-    assert overlay_in_region(60, 80, 0, 44)
+    entry_gate = region(4, 13, 8, 36)
+    exit_gate = region(67, 76, 8, 36)
+    subject = region(32, 49, 13, 31)
+    assert any(
+        red > 120 and green > 120 and blue < 120 for red, green, blue in entry_gate
+    )
+    assert any(
+        red < 120 and green > 120 and blue > 120 for red, green, blue in exit_gate
+    )
+    assert any(red > 160 and green > 160 and blue > 160 for red, green, blue in subject)
 
 
 def test_render_rejects_source_checksum_mismatch(
@@ -288,22 +301,29 @@ def test_render_rejects_corrupt_staged_media(
     assert response.json()["error"]["code"] == "MEDIA_UNAVAILABLE"
 
 
-def test_render_clamps_padding_at_real_source_boundary(
+@pytest.mark.parametrize(
+    ("render_id", "entry_timestamp_ms", "exit_timestamp_ms"),
+    [
+        ("ffffffff-4444-4aaa-8bbb-cccccccccccc", 0, 500),
+        ("eeeeeeee-4444-4aaa-8bbb-cccccccccccc", 1500, 2000),
+    ],
+)
+def test_render_clamps_padding_at_real_source_boundaries(
     settings: ServiceSettings,
     tmp_path: Path,
+    render_id: str,
+    entry_timestamp_ms: int,
+    exit_timestamp_ms: int,
 ) -> None:
     source = _video(tmp_path)
     checksum = hashlib.sha256(source.read_bytes()).hexdigest()
     byte_count = stage_media(settings, source)
-    render_id = (
-        "f" * 8 + "-" + "4" * 4 + "-4" + "a" * 3 + "-8" + "b" * 3 + "-" + "c" * 12
-    )
     body = _body(
         byte_count,
         checksum,
         render_id=render_id,
-        entry_timestamp_ms=0,
-        exit_timestamp_ms=500,
+        entry_timestamp_ms=entry_timestamp_ms,
+        exit_timestamp_ms=exit_timestamp_ms,
     )
     with _client(settings) as client:
         response = client.post("/v1/stages/render", json=body)
@@ -335,18 +355,78 @@ def test_render_enforces_output_limit_during_real_ffmpeg_run(
     ).exists()
 
 
-def test_render_maps_real_stage_deadline_to_timeout(
+def test_real_ffmpeg_render_process_honors_deadline(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _video(tmp_path)
+    request = RenderStageRequest.model_validate(_body(source.stat().st_size, SHA))
+    metadata = ProbeMetadata(
+        duration_ms=2000,
+        width=160,
+        height=90,
+        video_stream_index=0,
+        video_codec="h264",
+        audio_codecs=(),
+        container_formats=("mp4",),
+        average_frame_rate=Fraction(10, 1),
+        time_base=Fraction(1, 10240),
+        sample_aspect_ratio=Fraction(1, 1),
+        display_aspect_ratio=Fraction(16, 9),
+        start_time_ms=0,
+    )
+    process_started = False
+    original_enter = process_module._ProcessScope.__enter__
+
+    def observe_process_start(
+        scope: process_module._ProcessScope,
+    ) -> subprocess.Popen[bytes]:
+        nonlocal process_started
+        process_started = True
+        return original_enter(scope)
+
+    monkeypatch.setattr(
+        process_module._ProcessScope, "__enter__", observe_process_start
+    )
+    destination = tmp_path / "timed-out.mp4"
+    with pytest.raises(ProcessTimeoutError):
+        rendering._render_clip(
+            source,
+            destination,
+            request.specification,
+            metadata,
+            settings,
+            time.monotonic() + 0.01,
+        )
+    assert process_started is True
+    assert not destination.exists()
+
+
+def test_render_handles_real_non_zero_source_timestamps(
     settings: ServiceSettings,
     tmp_path: Path,
 ) -> None:
-    source = _video(tmp_path)
+    source = _video(tmp_path, non_zero_start=True)
+    source_probe = subprocess.run(
+        (
+            "/usr/bin/ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=start_time",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(source),
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert source_probe.stdout.strip() == "2.000000"
     checksum = hashlib.sha256(source.read_bytes()).hexdigest()
     byte_count = stage_media(settings, source)
-    short_settings = replace(
-        settings,
-        limits=replace(settings.limits, process_timeout_seconds=0.000001),
-    )
-    with _client(short_settings) as client:
+    with _client(settings) as client:
         response = client.post(
             "/v1/stages/render",
             json=_body(
@@ -355,7 +435,8 @@ def test_render_maps_real_stage_deadline_to_timeout(
                 render_id="b0000000-0000-4000-8000-000000000000",
             ),
         )
-    assert response.json()["error"]["code"] == "PROCESS_TIMEOUT"
+    assert response.json()["outcome"] == "accepted", response.text
+    assert response.json()["artifact"]["durationMs"] == 1500
 
 
 def test_render_request_validation_uses_render_contract(

@@ -51,10 +51,10 @@ from driving_analysis_service.tracking_artifacts import (
     bundle_member_path,
     bundle_path,
     canonical_json,
+    copy_verified_artifact,
     file_digest,
     publish_bundle,
     read_completion,
-    read_verified_artifact,
 )
 
 RENDER_BUNDLE_SUFFIX = ".corner"
@@ -249,20 +249,20 @@ def _recover(
     media = bundle_member_path(
         settings, request.render_id, RENDER_BUNDLE_SUFFIX, RENDER_MEDIA_SUFFIX
     )
-    media_bytes = read_verified_artifact(
-        media,
-        expected_bytes=completion.byte_count,
-        expected_checksum=completion.checksum_sha256,
-        max_bytes=request.specification.max_output_bytes,
-        deadline=deadline,
-    )
-    with tempfile.NamedTemporaryFile(
-        mode="wb", prefix="recovery-", suffix=".mp4", dir=settings.work_root
-    ) as recovery_media:
-        recovery_media.write(media_bytes)
-        recovery_media.flush()
+    with tempfile.TemporaryDirectory(
+        prefix="recovery-", dir=settings.work_root
+    ) as recovery_directory:
+        recovery_media = Path(recovery_directory) / "artifact.mp4"
+        copy_verified_artifact(
+            media,
+            recovery_media,
+            expected_bytes=completion.byte_count,
+            expected_checksum=completion.checksum_sha256,
+            max_bytes=request.specification.max_output_bytes,
+            deadline=deadline,
+        )
         if (
-            _output_duration(Path(recovery_media.name), settings, deadline)
+            _output_duration(recovery_media, settings, deadline)
             != completion.duration_ms
         ):
             raise ArtifactConflictError
@@ -373,11 +373,17 @@ def _write_overlay_script(
     entry = _pixel_gate(overlay.entry_gate, view, width, height)
     exit_gate = _pixel_gate(overlay.exit_gate, view, width, height)
     subject_x, subject_y = subject
-    subject_box = _ass_rectangle(subject_x, subject_y, 6, 6)
     lines = (
         _ass_line(entry, "&H00FFFF&"),
         _ass_line(exit_gate, "&HFFFF00&"),
-        _ass_path(subject_box, "&HFFFFFF&"),
+        _ass_line(
+            ((subject_x - 6, subject_y), (subject_x + 6, subject_y)),
+            "&HFFFFFF&",
+        ),
+        _ass_line(
+            ((subject_x, subject_y - 6), (subject_x, subject_y + 6)),
+            "&HFFFFFF&",
+        ),
     )
     destination.write_text(
         "[Script Info]\n"
@@ -395,8 +401,8 @@ def _write_overlay_script(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
         "Effect, Text\n"
         + "\n".join(
-            f"Dialogue: 0,0:00:00.00,9:59:59.00,Default,,0,0,0,,{line}"
-            for line in lines
+            f"Dialogue: {layer},0:00:00.00,9:59:59.00,Default,,0,0,0,,{line}"
+            for layer, line in enumerate(lines)
         )
         + "\n",
         encoding="utf-8",
@@ -423,26 +429,9 @@ def _pixel_gate(
 
 def _ass_line(line: tuple[tuple[int, int], tuple[int, int]], color: str) -> str:
     return (
-        "{\\p1\\bord2\\1c"
+        "{\\p1\\bord2\\3c"
         f"{color}}}m {line[0][0]} {line[0][1]} l {line[1][0]} {line[1][1]}{{\\p0}}"
     )
-
-
-def _ass_rectangle(
-    x: int, y: int, width: int, height: int
-) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]:
-    return (
-        (x - width, y - height),
-        (x + width, y - height),
-        (x + width, y + height),
-        (x - width, y + height),
-    )
-
-
-def _ass_path(points: tuple[tuple[int, int], ...], color: str) -> str:
-    start = points[0]
-    segments = " ".join(f"l {x} {y}" for x, y in (*points[1:], start))
-    return f"{{\\p1\\bord2\\1c{color}}}m {start[0]} {start[1]} {segments}{{\\p0}}"
 
 
 def _ffmpeg_version(settings: ServiceSettings, deadline: float) -> str:
