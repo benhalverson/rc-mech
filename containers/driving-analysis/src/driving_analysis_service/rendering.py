@@ -168,7 +168,7 @@ class CornerRenderService:
             ffmpeg_version = _ffmpeg_version(self.settings, deadline)
             render_input_digest = _render_input_digest(request, ffmpeg_version)
             with tempfile.TemporaryDirectory(
-                prefix=f"render-{request.render_id}-", dir=self.settings.work_root
+                prefix="render-", dir=self.settings.work_root
             ) as work_directory:
                 work_path = Path(work_directory) / "artifact.mp4"
                 _render_clip(
