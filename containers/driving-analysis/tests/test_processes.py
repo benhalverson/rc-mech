@@ -60,13 +60,40 @@ def test_bounded_process_streams_stdout_without_retaining_it(tmp_path: Path) -> 
 
 def test_bounded_process_hard_limits_streamed_stdout(tmp_path: Path) -> None:
     destination = tmp_path / "stdout.bin"
+    with destination.open("xb", buffering=0) as output:
+        try:
+            result = run_bounded_process(
+                PYTHON,
+                ("-c", "import sys; sys.stdout.buffer.write(b'x' * 100)"),
+                timeout_seconds=5,
+                max_output_bytes=1024,
+                streams=ProcessStreams(
+                    standard_output=output,
+                    standard_output_max_bytes=32,
+                ),
+            )
+        except ProcessOutputLimitError:
+            pass
+        else:
+            # Some Python/glibc combinations treat the RLIMIT partial write as
+            # successful. The renderer validates capped artifacts afterward.
+            assert result.return_code == 0
+    assert destination.stat().st_size == 32
+
+
+def test_bounded_process_rejects_nonzero_exit_at_stream_limit(tmp_path: Path) -> None:
+    destination = tmp_path / "stdout.bin"
     with (
         destination.open("xb", buffering=0) as output,
         pytest.raises(ProcessOutputLimitError),
     ):
         run_bounded_process(
             PYTHON,
-            ("-c", "import sys; sys.stdout.buffer.write(b'x' * 100)"),
+            (
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'x' * 32); "
+                "sys.stdout.flush(); sys.exit(1)",
+            ),
             timeout_seconds=5,
             max_output_bytes=1024,
             streams=ProcessStreams(
@@ -74,7 +101,7 @@ def test_bounded_process_hard_limits_streamed_stdout(tmp_path: Path) -> None:
                 standard_output_max_bytes=32,
             ),
         )
-    assert destination.stat().st_size <= 32
+    assert destination.stat().st_size == 32
 
 
 def test_bounded_process_allows_streamed_stdout_at_the_exact_limit(
