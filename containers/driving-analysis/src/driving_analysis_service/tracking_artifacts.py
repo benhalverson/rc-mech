@@ -106,17 +106,14 @@ def publish_bundle(
             else:
                 publish_bytes(value, target, deadline=deadline)
         check_deadline(deadline)
-        directory_descriptor = os.open(pending, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
+        _fsync_directory(pending)
         try:
             pending.rename(destination)
         except OSError as error:
             if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
                 raise
             return False
+        _fsync_directory(destination.parent)
         return True
     finally:
         if pending.exists():
@@ -133,6 +130,14 @@ def publish_file(
 ) -> PublishedArtifact:
     with source.open("rb") as source_file:
         return _publish_stream(source_file, destination, deadline=deadline)
+
+
+def _fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def publish_bytes(

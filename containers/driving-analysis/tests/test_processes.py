@@ -93,6 +93,19 @@ def test_bounded_process_consumes_selected_bounded_stderr_lines() -> None:
     assert result.stderr == b"keep"
 
 
+def test_discarded_stderr_still_counts_toward_combined_output_limit() -> None:
+    with pytest.raises(ProcessOutputLimitError):
+        run_bounded_process(
+            PYTHON,
+            ("-c", "import sys; sys.stderr.write('x\\n' * 100)"),
+            timeout_seconds=5,
+            max_output_bytes=32,
+            streams=ProcessStreams(
+                standard_error_observer=StderrLineObserver(lambda _line: True, 16)
+            ),
+        )
+
+
 def test_stderr_line_observer_requires_a_positive_bound() -> None:
     with pytest.raises(ValueError, match="positive byte bound"):
         StderrLineObserver(lambda _line: True, 0)

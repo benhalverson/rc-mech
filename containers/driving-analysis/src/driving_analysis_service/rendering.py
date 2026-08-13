@@ -1,6 +1,7 @@
 # Bounded, deterministic FFmpeg Corner-clip rendering.
 
 import hashlib
+import math
 import os
 import tempfile
 import threading
@@ -142,6 +143,12 @@ class CornerRenderService:
         if recovered is not None:
             return _accepted(request, recovered)
 
+        _validate_storage_capacity(
+            self.settings,
+            request.input.expected_byte_count,
+            request.specification.max_output_bytes,
+        )
+
         with claim_staged_media(request, self.settings, deadline=deadline) as source:
             source_bytes, source_checksum, metadata = inspect_and_probe_media(
                 source,
@@ -153,7 +160,6 @@ class CornerRenderService:
             if source_checksum != specification.source_checksum_sha256:
                 raise RenderInvalidMediaError
             _validate_specification(specification, source_bytes, metadata)
-            _validate_storage_capacity(self.settings, specification.max_output_bytes)
             ffmpeg_version = _ffmpeg_version(self.settings, deadline)
             render_input_digest = _render_input_digest(request, ffmpeg_version)
             with tempfile.TemporaryDirectory(
@@ -169,6 +175,7 @@ class CornerRenderService:
                     deadline=deadline,
                 )
                 duration_ms = _output_duration(work_path, self.settings, deadline)
+                _validate_output_duration(specification, metadata, duration_ms)
                 artifact = RenderArtifact(
                     renderId=request.render_id,
                     caseId=request.case_id,
@@ -416,22 +423,45 @@ def _validate_render_output(return_code: int, destination: Path) -> None:
         raise RenderProcessError
 
 
+def _validate_output_duration(
+    specification: RenderSpecification,
+    metadata: ProbeMetadata,
+    actual_duration_ms: int,
+) -> None:
+    expected_start_ms = max(
+        0, specification.entry_timestamp_ms - specification.padding.before_ms
+    )
+    expected_end_ms = min(
+        metadata.duration_ms,
+        specification.exit_timestamp_ms + specification.padding.after_ms,
+    )
+    expected_duration_ms = expected_end_ms - expected_start_ms
+    frame_duration_ms = math.ceil(1000 / metadata.average_frame_rate)
+    if abs(actual_duration_ms - expected_duration_ms) > frame_duration_ms:
+        raise RenderProcessError
+
+
 def _discard_process_error(_line: bytes) -> bool:
     return True
 
 
 def _validate_storage_capacity(
-    settings: ServiceSettings, max_output_bytes: int
+    settings: ServiceSettings,
+    expected_input_bytes: int,
+    max_output_bytes: int,
 ) -> None:
     work_available = _available_bytes(settings.work_root)
     artifact_available = _available_bytes(settings.artifact_root)
     if settings.work_root.stat().st_dev == settings.artifact_root.stat().st_dev:
-        required = 2 * max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
+        required = (
+            expected_input_bytes + 2 * max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
+        )
         if min(work_available, artifact_available) < required:
             raise ProcessOutputLimitError
         return
-    required = max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
-    if work_available < required or artifact_available < required:
+    work_required = expected_input_bytes + max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
+    artifact_required = max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
+    if work_available < work_required or artifact_available < artifact_required:
         raise ProcessOutputLimitError
 
 

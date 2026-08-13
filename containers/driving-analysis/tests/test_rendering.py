@@ -468,7 +468,7 @@ def test_render_requires_capacity_on_separate_work_and_artifact_filesystems(
         lambda _path: next(available),
     )
     with pytest.raises(ProcessOutputLimitError):
-        rendering._validate_storage_capacity(settings, 1)
+        rendering._validate_storage_capacity(settings, 1, 1)
     available = iter(
         (
             rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
@@ -476,14 +476,14 @@ def test_render_requires_capacity_on_separate_work_and_artifact_filesystems(
         )
     )
     with pytest.raises(ProcessOutputLimitError):
-        rendering._validate_storage_capacity(settings, 1)
+        rendering._validate_storage_capacity(settings, 1, 1)
     available = iter(
         (
             rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
             rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
         )
     )
-    rendering._validate_storage_capacity(settings, 1)
+    rendering._validate_storage_capacity(settings, 1, 1)
     assert rendering._discard_process_error(b"discarded") is True
 
 
@@ -746,6 +746,26 @@ def test_render_validation_clamps_padding_at_source_boundaries() -> None:
         rendering._validate_specification(
             request.specification, 1, _metadata(duration_ms=900)
         )
+
+
+def test_render_validates_actual_duration_with_one_frame_tolerance() -> None:
+    request = RenderStageRequest.model_validate(_body(1, SHA))
+    metadata = _metadata(duration_ms=2000)
+    rendering._validate_output_duration(request.specification, metadata, 1400)
+    rendering._validate_output_duration(request.specification, metadata, 1600)
+    with pytest.raises(rendering.RenderProcessError):
+        rendering._validate_output_duration(request.specification, metadata, 1399)
+    with pytest.raises(rendering.RenderProcessError):
+        rendering._validate_output_duration(request.specification, metadata, 1601)
+
+    boundary_body = _body(
+        1,
+        SHA,
+        entry_timestamp_ms=0,
+        exit_timestamp_ms=500,
+    )
+    boundary = RenderStageRequest.model_validate(boundary_body)
+    rendering._validate_output_duration(boundary.specification, metadata, 1000)
 
 
 def test_gate_overlay_supports_diagonal_and_axis_aligned_gates() -> None:

@@ -59,6 +59,7 @@ class _ProcessCapture:
             msg = "Unexpected process output target"
             raise TypeError(msg)
         if destination is self.stderr and self.stderr_line_observer is not None:
+            self._account(chunk)
             self._consume_stderr(chunk, final=False)
             return
         self._append(destination, chunk)
@@ -89,12 +90,18 @@ class _ProcessCapture:
         if len(line) > observer.max_line_bytes:
             raise ProcessOutputLimitError
         if not observer.consume(line):
-            self._append(self.stderr, line + suffix)
+            self._store(self.stderr, line + suffix)
 
     def _append(self, destination: bytearray, chunk: bytes) -> None:
+        self._account(chunk)
+        self._store(destination, chunk)
+
+    def _account(self, chunk: bytes) -> None:
         if self.output_bytes + len(chunk) > self.max_output_bytes:
             raise ProcessOutputLimitError
         self.output_bytes += len(chunk)
+
+    def _store(self, destination: bytearray, chunk: bytes) -> None:
         if destination is self.stdout and self.stdout_sink is not None:
             if self.stdout_sink.write(chunk) != len(chunk):
                 msg = "Unable to stream bounded process output"
