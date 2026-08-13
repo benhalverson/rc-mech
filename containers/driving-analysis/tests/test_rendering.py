@@ -408,6 +408,85 @@ def test_render_enforces_output_limit_during_real_ffmpeg_run(
     ).exists()
 
 
+def test_render_rejects_insufficient_storage_before_ffmpeg(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _video(tmp_path)
+    checksum = hashlib.sha256(source.read_bytes()).hexdigest()
+    byte_count = stage_media(settings, source)
+    filesystem = SimpleNamespace(f_bavail=1, f_frsize=1)
+    monkeypatch.setattr(os, "statvfs", lambda _path: filesystem)
+
+    def unexpected_ffmpeg(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("FFmpeg was invoked without storage capacity")
+
+    monkeypatch.setattr(rendering, "_ffmpeg_version", unexpected_ffmpeg)
+    with _client(settings) as client:
+        response = client.post(
+            "/v1/stages/render",
+            json=_body(
+                byte_count,
+                checksum,
+                render_id="a1000000-0000-4000-8000-000000000000",
+            ),
+        )
+    assert response.json()["outcome"] == "rejected"
+    assert response.json()["error"]["code"] == "RESOURCE_LIMIT"
+
+
+def test_render_requires_capacity_on_separate_work_and_artifact_filesystems(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RootIdentity:
+        def __init__(self, device: int) -> None:
+            self.st_dev = device
+
+    original_stat = Path.stat
+    monkeypatch.setattr(
+        Path,
+        "stat",
+        lambda path: (
+            RootIdentity(1)
+            if path == settings.work_root
+            else RootIdentity(2)
+            if path == settings.artifact_root
+            else original_stat(path)
+        ),
+    )
+    available = iter(
+        (
+            rendering.MIN_STORAGE_HEADROOM_BYTES,
+            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
+        )
+    )
+    monkeypatch.setattr(
+        rendering,
+        "_available_bytes",
+        lambda _path: next(available),
+    )
+    with pytest.raises(ProcessOutputLimitError):
+        rendering._validate_storage_capacity(settings, 1)
+    available = iter(
+        (
+            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
+            rendering.MIN_STORAGE_HEADROOM_BYTES,
+        )
+    )
+    with pytest.raises(ProcessOutputLimitError):
+        rendering._validate_storage_capacity(settings, 1)
+    available = iter(
+        (
+            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
+            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
+        )
+    )
+    rendering._validate_storage_capacity(settings, 1)
+    assert rendering._discard_process_error(b"discarded") is True
+
+
 def test_real_ffmpeg_render_process_honors_deadline(
     settings: ServiceSettings,
     tmp_path: Path,
@@ -545,6 +624,14 @@ def test_render_supports_filter_special_characters_in_work_root(
             ),
         )
     assert response.json()["outcome"] == "accepted", response.text
+
+
+def test_filter_path_escaping_covers_both_ffmpeg_parser_layers() -> None:
+    path = "root/work:comma,[bracket];quote'backslash\\ space/a.ass"
+    assert rendering._escape_filter_value(path) == (
+        "root/work\\\\:comma\\,\\[bracket\\]\\;"
+        "quote\\\\\\'backslash\\\\\\\\ space/a.ass"
+    )
 
 
 def test_render_request_validation_uses_render_contract(
@@ -814,6 +901,13 @@ def test_ffmpeg_and_probe_metadata_failures_are_safe(
         rendering,
         "run_bounded_process",
         lambda *_args, **_kwargs: SimpleNamespace(return_code=0, stdout=b"0"),
+    )
+    with pytest.raises(rendering.RenderInvalidMediaError):
+        rendering._output_duration(Path("missing"), settings, time.monotonic() + 10)
+    monkeypatch.setattr(
+        rendering,
+        "run_bounded_process",
+        lambda *_args, **_kwargs: SimpleNamespace(return_code=0, stdout=b"Infinity"),
     )
     with pytest.raises(rendering.RenderInvalidMediaError):
         rendering._output_duration(Path("missing"), settings, time.monotonic() + 10)

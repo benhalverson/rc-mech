@@ -1,10 +1,12 @@
 # Bounded, deterministic FFmpeg Corner-clip rendering.
 
 import hashlib
+import os
 import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -23,6 +25,7 @@ from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessStreams,
     ProcessTimeoutError,
+    StderrLineObserver,
     run_bounded_process,
 )
 from driving_analysis_service.processing_deadline import (
@@ -62,6 +65,9 @@ RENDER_BUNDLE_SUFFIX = ".corner"
 RENDER_MEDIA_SUFFIX = ".corner.mp4"
 RENDER_COMPLETION_SUFFIX = ".corner.json"
 MAX_FFMPEG_VERSION_BYTES = 16 * 1024
+MAX_FFMPEG_ERROR_LINE_BYTES = 16 * 1024
+MAX_FFMPEG_ALLOCATION_BYTES = 64 * 1024 * 1024
+MIN_STORAGE_HEADROOM_BYTES = 256 * 1024 * 1024
 MIN_OUTPUT_DIMENSION = 2
 
 
@@ -147,6 +153,7 @@ class CornerRenderService:
             if source_checksum != specification.source_checksum_sha256:
                 raise RenderInvalidMediaError
             _validate_specification(specification, source_bytes, metadata)
+            _validate_storage_capacity(self.settings, specification.max_output_bytes)
             ffmpeg_version = _ffmpeg_version(self.settings, deadline)
             render_input_digest = _render_input_digest(request, ffmpeg_version)
             with tempfile.TemporaryDirectory(
@@ -334,6 +341,12 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     "error",
                     "-nostdin",
                     "-xerror",
+                    "-max_alloc",
+                    str(MAX_FFMPEG_ALLOCATION_BYTES),
+                    "-threads",
+                    "1",
+                    "-filter_threads",
+                    "1",
                     "-copyts",
                     "-protocol_whitelist",
                     "file",
@@ -350,6 +363,8 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     "-dn",
                     "-c:v",
                     "libx264",
+                    "-threads",
+                    "1",
                     "-preset",
                     "veryfast",
                     "-crf",
@@ -364,7 +379,13 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                 ),
                 timeout_seconds=remaining_seconds(deadline),
                 max_output_bytes=specification.max_output_bytes,
-                streams=ProcessStreams(standard_output=output),
+                streams=ProcessStreams(
+                    standard_output=output,
+                    standard_error_observer=StderrLineObserver(
+                        _discard_process_error,
+                        MAX_FFMPEG_ERROR_LINE_BYTES,
+                    ),
+                ),
             )
         _validate_render_output(result.return_code, destination)
     except Exception:
@@ -393,6 +414,30 @@ def _pixel_crop(
 def _validate_render_output(return_code: int, destination: Path) -> None:
     if return_code != 0 or destination.stat().st_size == 0:
         raise RenderProcessError
+
+
+def _discard_process_error(_line: bytes) -> bool:
+    return True
+
+
+def _validate_storage_capacity(
+    settings: ServiceSettings, max_output_bytes: int
+) -> None:
+    work_available = _available_bytes(settings.work_root)
+    artifact_available = _available_bytes(settings.artifact_root)
+    if settings.work_root.stat().st_dev == settings.artifact_root.stat().st_dev:
+        required = 2 * max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
+        if min(work_available, artifact_available) < required:
+            raise ProcessOutputLimitError
+        return
+    required = max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
+    if work_available < required or artifact_available < required:
+        raise ProcessOutputLimitError
+
+
+def _available_bytes(path: Path) -> int:
+    filesystem = os.statvfs(path)
+    return filesystem.f_bavail * filesystem.f_frsize
 
 
 def _same_render_result(first: RenderArtifact, second: RenderArtifact) -> bool:
@@ -466,6 +511,9 @@ def _pixel_gate(
 
 
 def _escape_filter_value(value: str) -> str:
+    # FFmpeg parses an option value and then its enclosing filtergraph. Escape
+    # once for the option layer, then escape the resulting string for the
+    # filtergraph layer (there is no shell layer because argv is passed directly).
     option_escaped = _escape_characters(value, "\\':")
     return _escape_characters(option_escaped, "\\'[],;")
 
@@ -523,10 +571,11 @@ def _output_duration(path: Path, settings: ServiceSettings, deadline: float) -> 
     if result.return_code != 0:
         raise RenderInvalidMediaError
     try:
-        duration_ms = round(
-            float(result.stdout.decode("ascii", errors="strict").strip()) * 1000
-        )
-    except (UnicodeDecodeError, ValueError) as error:
+        seconds = Decimal(result.stdout.decode("ascii", errors="strict").strip())
+        if not seconds.is_finite():
+            raise RenderInvalidMediaError
+        duration_ms = int((seconds * 1000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, UnicodeDecodeError, ValueError) as error:
         raise RenderInvalidMediaError from error
     if duration_ms <= 0:
         raise RenderInvalidMediaError
