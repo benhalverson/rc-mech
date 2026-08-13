@@ -394,6 +394,17 @@ def test_preparation_recovers_a_concurrent_identical_publication(
 ) -> None:
     configured, prepared = _real_prepared(settings, accepted_video)
     original_recover = preparation_module._recover_completed_preparation
+    durable: list[Path] = []
+
+    def ensure_durable(bundle: Path, *, deadline: float | None = None) -> None:
+        del deadline
+        durable.append(bundle)
+
+    monkeypatch.setattr(
+        preparation_module,
+        "ensure_bundle_durable",
+        ensure_durable,
+    )
     calls = 0
 
     def recover(
@@ -414,6 +425,13 @@ def test_preparation_recovers_a_concurrent_identical_publication(
     )
     assert isinstance(duplicate, PrepareStageAccepted)
     assert duplicate.prepared == prepared.prepared
+    assert durable == [
+        artifact_module.bundle_path(
+            configured,
+            PREPARED_MEDIA_ID,
+            PREPARED_BUNDLE_SUFFIX,
+        )
+    ]
 
 
 def test_tracking_recovers_a_concurrent_identical_publication(
@@ -427,6 +445,17 @@ def test_tracking_recovers_a_concurrent_identical_publication(
     first = SubjectTrackingService(configured, provider).track(request)
     assert isinstance(first, TrackStageAccepted)
     original_recover = tracking_module._recover_completed_segment
+    durable: list[Path] = []
+
+    def ensure_durable(bundle: Path, *, deadline: float | None = None) -> None:
+        del deadline
+        durable.append(bundle)
+
+    monkeypatch.setattr(
+        tracking_module,
+        "ensure_bundle_durable",
+        ensure_durable,
+    )
     calls = 0
 
     def recover(
@@ -450,6 +479,13 @@ def test_tracking_recovers_a_concurrent_identical_publication(
     duplicate = SubjectTrackingService(configured, provider).track(request)
     assert isinstance(duplicate, TrackStageAccepted)
     assert duplicate.segment == first.segment
+    assert durable == [
+        artifact_module.bundle_path(
+            configured,
+            SEGMENT_ID,
+            artifact_module.OBSERVATION_BUNDLE_SUFFIX,
+        )
+    ]
 
     class OfflineProvider(FakeInferenceProvider):
         def ready(self, *, timeout_seconds: float | None = None) -> bool:
@@ -1111,6 +1147,25 @@ def test_publish_cleanup_and_artifact_verification_defenses(
     destination.mkdir()
     with pytest.raises(ArtifactConflictError):
         artifact_module.publish_bytes(b"value", destination)
+
+
+def test_copy_verified_artifact_removes_a_checksum_mismatch(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.write_bytes(b"value")
+    destination = tmp_path / "destination"
+
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.copy_verified_artifact(
+            source,
+            destination,
+            expected_bytes=5,
+            expected_checksum="0" * 64,
+            max_bytes=10,
+        )
+
+    assert not destination.exists()
 
 
 def test_bundle_and_completion_validation_defenses(

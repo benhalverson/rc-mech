@@ -6,7 +6,7 @@ import time
 from contextlib import AbstractContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import IO, Self, cast
+from typing import Self, cast
 
 import pytest
 
@@ -73,20 +73,24 @@ def test_bounded_process_hard_limits_streamed_stdout(tmp_path: Path) -> None:
     assert destination.stat().st_size <= 32
 
 
-@pytest.mark.parametrize("write_result", [None, 0])
-def test_streamed_process_output_rejects_failed_writes(
-    write_result: int | None,
+def test_bounded_process_allows_streamed_stdout_at_the_exact_limit(
+    tmp_path: Path,
 ) -> None:
-    class RefusingOutput:
-        def write(self, _value: object) -> int | None:
-            return write_result
+    destination = tmp_path / "stdout.bin"
+    with destination.open("xb", buffering=0) as output:
+        result = run_bounded_process(
+            PYTHON,
+            ("-c", "import sys; sys.stdout.buffer.write(b'x' * 32)"),
+            timeout_seconds=5,
+            max_output_bytes=1024,
+            streams=ProcessStreams(
+                standard_output=output,
+                standard_output_max_bytes=32,
+            ),
+        )
 
-    target = process_module._StreamTarget(
-        cast("IO[bytes]", RefusingOutput()),
-        max_bytes=10,
-    )
-    with pytest.raises(OSError, match="Unable to write"):
-        target.write(b"value")
+    assert result.return_code == 0
+    assert destination.read_bytes() == b"x" * 32
 
 
 def test_streamed_process_output_requires_a_matching_positive_bound() -> None:
@@ -99,6 +103,28 @@ def test_streamed_process_output_requires_a_matching_positive_bound() -> None:
             standard_output=sys.stdout.buffer,
             standard_output_max_bytes=0,
         )
+
+
+def test_streamed_process_output_requires_a_regular_file() -> None:
+    read_descriptor, write_descriptor = os.pipe()
+    try:
+        with (
+            os.fdopen(write_descriptor, "wb", closefd=False) as output,
+            pytest.raises(ValueError, match="regular file"),
+        ):
+            run_bounded_process(
+                PYTHON,
+                ("-c", "pass"),
+                timeout_seconds=1,
+                max_output_bytes=1,
+                streams=ProcessStreams(
+                    standard_output=output,
+                    standard_output_max_bytes=1,
+                ),
+            )
+    finally:
+        os.close(read_descriptor)
+        os.close(write_descriptor)
 
 
 def test_bounded_process_consumes_selected_bounded_stderr_lines() -> None:

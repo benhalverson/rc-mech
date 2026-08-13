@@ -48,6 +48,7 @@ from driving_analysis_service.tracking_artifacts import (
     bundle_path,
     canonical_json,
     compressed_contract,
+    ensure_bundle_durable,
     file_digest,
     publish_bundle,
     read_completion,
@@ -304,6 +305,7 @@ def _recover_completed_preparation(
         max_bytes=MAX_COMPRESSED_MANIFEST_BYTES,
         deadline=deadline,
     )
+    ensure_bundle_durable(bundle, deadline=deadline)
     return completed
 
 

@@ -289,7 +289,7 @@ def _recover(
             recovery_media,
             expected_bytes=completion.byte_count,
             expected_checksum=completion.checksum_sha256,
-            max_bytes=request.specification.max_output_bytes,
+            max_bytes=completion.byte_count,
             deadline=deadline,
         )
         if (
@@ -448,9 +448,7 @@ def _validate_render_output(
     return_code: int, destination: Path, max_output_bytes: int
 ) -> None:
     byte_count = destination.stat().st_size
-    if byte_count > max_output_bytes or (
-        return_code != 0 and byte_count >= max_output_bytes
-    ):
+    if byte_count >= max_output_bytes:
         raise ProcessOutputLimitError
     if return_code != 0 or byte_count == 0:
         raise RenderProcessError

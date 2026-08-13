@@ -1,7 +1,9 @@
 import os
 import selectors
 import signal
+import stat
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -15,7 +17,15 @@ class ProcessTimeoutError(RuntimeError):
 
 
 class ProcessOutputLimitError(RuntimeError):
-    """A media process exceeded its combined output budget."""
+    """A media process exceeded a configured output budget."""
+
+
+_FILE_LIMIT_WRAPPER = (
+    "import os,resource,sys;"
+    "limit=int(sys.argv[1]);"
+    "resource.setrlimit(resource.RLIMIT_FSIZE,(limit,limit));"
+    "os.execv(sys.argv[2],sys.argv[2:])"
+)
 
 
 @dataclass(frozen=True)
@@ -57,38 +67,15 @@ class ProcessResult:
 
 
 @dataclass
-class _StreamTarget:
-    stream: IO[bytes]
-    max_bytes: int
-    byte_count: int = 0
-
-    def write(self, chunk: bytes) -> None:
-        if self.byte_count + len(chunk) > self.max_bytes:
-            raise ProcessOutputLimitError
-        remaining = memoryview(chunk)
-        while remaining:
-            written = self.stream.write(remaining)
-            if written is None or written <= 0:
-                msg = "Unable to write streamed process output"
-                raise OSError(msg)
-            self.byte_count += written
-            remaining = remaining[written:]
-
-
-@dataclass
 class _ProcessCapture:
     max_output_bytes: int
     stderr_line_observer: StderrLineObserver | None
-    stdout_target: _StreamTarget | None = None
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
     pending_stderr: bytearray = field(default_factory=bytearray)
     output_bytes: int = 0
 
     def consume(self, destination: object, chunk: bytes) -> None:
-        if isinstance(destination, _StreamTarget):
-            destination.write(chunk)
-            return
         if not isinstance(destination, bytearray):
             msg = "Unexpected process output target"
             raise TypeError(msg)
@@ -176,14 +163,19 @@ def run_bounded_process(
     started_at = time.monotonic()
     deadline = started_at + timeout_seconds
     resolved_streams = streams or ProcessStreams()
+    command = _process_command(executable, arguments, resolved_streams)
     process = subprocess.Popen(  # noqa: S603 - executable and arguments are internal
-        (str(executable), *arguments),
+        command,
         stdin=(
             subprocess.DEVNULL
             if resolved_streams.standard_input is None
             else resolved_streams.standard_input
         ),
-        stdout=subprocess.PIPE,
+        stdout=(
+            subprocess.PIPE
+            if resolved_streams.standard_output is None
+            else resolved_streams.standard_output
+        ),
         stderr=subprocess.PIPE,
         shell=False,
         close_fds=True,
@@ -193,14 +185,6 @@ def run_bounded_process(
     capture = _ProcessCapture(
         max_output_bytes=max_output_bytes,
         stderr_line_observer=resolved_streams.standard_error_observer,
-        stdout_target=(
-            None
-            if resolved_streams.standard_output is None
-            else _StreamTarget(
-                resolved_streams.standard_output,
-                cast("int", resolved_streams.standard_output_max_bytes),
-            )
-        ),
     )
     with _ProcessScope(process):
         _read_process_output(
@@ -215,12 +199,46 @@ def run_bounded_process(
             _terminate_process_group(process)
             raise ProcessTimeoutError from error
 
+    if _streamed_output_hit_limit(resolved_streams, return_code):
+        raise ProcessOutputLimitError
+
     elapsed_ms = max(0, round((time.monotonic() - started_at) * 1000))
     return ProcessResult(
         return_code=return_code,
         stdout=bytes(capture.stdout),
         stderr=bytes(capture.stderr),
         elapsed_ms=elapsed_ms,
+    )
+
+
+def _process_command(
+    executable: Path,
+    arguments: tuple[str, ...],
+    streams: ProcessStreams,
+) -> tuple[str, ...]:
+    if streams.standard_output is None:
+        return (str(executable), *arguments)
+    output_identity = os.fstat(streams.standard_output.fileno())
+    if not stat.S_ISREG(output_identity.st_mode):
+        msg = "Streamed process output must be a regular file"
+        raise ValueError(msg)
+    return (
+        str(Path(sys.executable).resolve()),
+        "-I",
+        "-c",
+        _FILE_LIMIT_WRAPPER,
+        str(cast("int", streams.standard_output_max_bytes)),
+        str(executable),
+        *arguments,
+    )
+
+
+def _streamed_output_hit_limit(streams: ProcessStreams, return_code: int) -> bool:
+    if streams.standard_output is None:
+        return False
+    byte_count = os.fstat(streams.standard_output.fileno()).st_size
+    return return_code != 0 and byte_count >= cast(
+        "int", streams.standard_output_max_bytes
     )
 
 
@@ -236,11 +254,7 @@ def _read_process_output(
 
     with selectors.DefaultSelector() as selector:
         if process.stdout is not None:
-            selector.register(
-                process.stdout,
-                selectors.EVENT_READ,
-                capture.stdout_target or capture.stdout,
-            )
+            selector.register(process.stdout, selectors.EVENT_READ, capture.stdout)
         selector.register(process.stderr, selectors.EVENT_READ, capture.stderr)
 
         while selector.get_map():

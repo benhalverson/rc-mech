@@ -54,6 +54,7 @@ from driving_analysis_service.tracking_artifacts import (
     canonical_json,
     compressed_contract,
     copy_verified_artifact,
+    ensure_bundle_durable,
     file_digest,
     publish_bundle,
     read_completion,
@@ -345,6 +346,7 @@ def _recover_completed_segment(
     )
     if (byte_count, checksum) != (completed.byte_count, completed.checksum_sha256):
         raise InvalidArtifactError
+    ensure_bundle_durable(bundle, deadline=deadline)
     return completed
 
 

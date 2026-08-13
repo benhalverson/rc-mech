@@ -273,10 +273,11 @@ def copy_verified_artifact(  # noqa: PLR0913
     digest = hashlib.sha256()
     byte_count = 0
     verified = False
+    write_limit = min(max_bytes, expected_bytes)
     try:
         while chunk := os.read(descriptor, 1024 * 1024):
             check_deadline(deadline)
-            if byte_count + len(chunk) > max_bytes:
+            if byte_count + len(chunk) > write_limit:
                 raise InvalidArtifactError
             byte_count += len(chunk)
             digest.update(chunk)
