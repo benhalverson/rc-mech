@@ -4,13 +4,13 @@ import hashlib
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from driving_analysis_service.contracts import (
     DirectedGate,
-    NormalizedBox,
     NormalizedPoint,
 )
 from driving_analysis_service.errors import MediaValidationError
@@ -21,6 +21,7 @@ from driving_analysis_service.media import (
 )
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
+    ProcessStreams,
     ProcessTimeoutError,
     run_bounded_process,
 )
@@ -70,6 +71,14 @@ class RenderInvalidMediaError(ValueError):
 
 class RenderProcessError(RuntimeError):
     """FFmpeg could not produce the requested clip."""
+
+
+@dataclass(frozen=True)
+class _PixelCrop:
+    width: int
+    height: int
+    x: int
+    y: int
 
 
 class CornerRenderService:
@@ -137,11 +146,13 @@ class CornerRenderService:
             specification = request.specification
             if source_checksum != specification.source_checksum_sha256:
                 raise RenderInvalidMediaError
-            _validate_specification(specification, source_bytes, metadata.duration_ms)
+            _validate_specification(specification, source_bytes, metadata)
             ffmpeg_version = _ffmpeg_version(self.settings, deadline)
             render_input_digest = _render_input_digest(request, ffmpeg_version)
-            work_path = self.settings.work_root / f"{request.render_id}.corner.mp4"
-            try:
+            with tempfile.TemporaryDirectory(
+                prefix=f"render-{request.render_id}-", dir=self.settings.work_root
+            ) as work_directory:
+                work_path = Path(work_directory) / "artifact.mp4"
                 _render_clip(
                     source, work_path, specification, metadata, self.settings, deadline
                 )
@@ -177,12 +188,12 @@ class CornerRenderService:
                 )
                 if not created:
                     recovered = _recover(request, self.settings, deadline)
-                    if recovered is None or recovered != artifact:
+                    if recovered is None or not _same_render_result(
+                        recovered, artifact
+                    ):
                         raise ArtifactConflictError
                     artifact = recovered
                 return _accepted(request, artifact)
-            finally:
-                work_path.unlink(missing_ok=True)
 
 
 def _accepted(
@@ -270,13 +281,16 @@ def _recover(
 
 
 def _validate_specification(
-    specification: RenderSpecification, source_bytes: int, duration_ms: int
+    specification: RenderSpecification,
+    source_bytes: int,
+    metadata: ProbeMetadata,
 ) -> None:
-    if source_bytes <= 0 or specification.exit_timestamp_ms > duration_ms:
+    if source_bytes <= 0 or specification.exit_timestamp_ms > metadata.duration_ms:
         raise RenderInvalidMediaError
+    _pixel_crop(specification, metadata)
     padded_start = specification.entry_timestamp_ms - specification.padding.before_ms
     padded_end = specification.exit_timestamp_ms + specification.padding.after_ms
-    if padded_start < 0 or padded_end > duration_ms:
+    if padded_start < 0 or padded_end > metadata.duration_ms:
         # The clip is clamped at the source boundary, preserving the requested
         # gate-to-gate interval while avoiding synthetic frames.
         return
@@ -297,81 +311,105 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
     end_ms = min(
         duration_ms, specification.exit_timestamp_ms + specification.padding.after_ms
     )
-    view = specification.corner_view
+    crop = _pixel_crop(specification, metadata)
     overlay = specification.overlay
+    overlay_path = destination.with_suffix(".ass")
+    try:
+        _write_overlay_script(overlay_path, overlay, metadata, crop)
+        filters = ",".join(
+            (
+                f"trim=start={(metadata.start_time_ms + start_ms) / 1000:.3f}:"
+                f"end={(metadata.start_time_ms + end_ms) / 1000:.3f}",
+                f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}",
+                "setpts=PTS-STARTPTS",
+                f"ass=filename={_escape_filter_value(str(overlay_path))}",
+            )
+        )
+        with destination.open("xb") as output:
+            result = run_bounded_process(
+                settings.ffmpeg_executable,
+                (
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-nostdin",
+                    "-xerror",
+                    "-copyts",
+                    "-protocol_whitelist",
+                    "file",
+                    "-format_whitelist",
+                    ",".join(settings.limits.supported_demuxers),
+                    "-i",
+                    str(source),
+                    "-map",
+                    f"0:{metadata.video_stream_index}",
+                    "-vf",
+                    filters,
+                    "-an",
+                    "-sn",
+                    "-dn",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "20",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+frag_keyframe+empty_moov+default_base_moof",
+                    "-f",
+                    "mp4",
+                    "pipe:1",
+                ),
+                timeout_seconds=remaining_seconds(deadline),
+                max_output_bytes=specification.max_output_bytes,
+                streams=ProcessStreams(standard_output=output),
+            )
+        _validate_render_output(result.return_code, destination)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        overlay_path.unlink(missing_ok=True)
+
+
+def _pixel_crop(
+    specification: RenderSpecification, metadata: ProbeMetadata
+) -> _PixelCrop:
+    view = specification.corner_view
     crop_width = int(metadata.width * view.width) // 2 * 2
     crop_height = int(metadata.height * view.height) // 2 * 2
     if crop_width < MIN_OUTPUT_DIMENSION or crop_height < MIN_OUTPUT_DIMENSION:
         raise RenderInvalidMediaError
-    overlay_path = destination.with_suffix(".ass")
-    _write_overlay_script(overlay_path, overlay, view, crop_width, crop_height)
-    filters = ",".join(
-        (
-            f"trim=start={(metadata.start_time_ms + start_ms) / 1000:.3f}:"
-            f"end={(metadata.start_time_ms + end_ms) / 1000:.3f}",
-            f"crop={crop_width}:{crop_height}:"
-            f"trunc(iw*{view.x:.9f}/2)*2:trunc(ih*{view.y:.9f}/2)*2",
-            "setpts=PTS-STARTPTS",
-            f"ass=filename={overlay_path}",
-        )
+    return _PixelCrop(
+        width=crop_width,
+        height=crop_height,
+        x=int(metadata.width * view.x) // 2 * 2,
+        y=int(metadata.height * view.y) // 2 * 2,
     )
-    try:
-        result = run_bounded_process(
-            settings.ffmpeg_executable,
-            (
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-nostdin",
-                "-xerror",
-                "-copyts",
-                "-protocol_whitelist",
-                "file",
-                "-format_whitelist",
-                ",".join(settings.limits.supported_demuxers),
-                "-i",
-                str(source),
-                "-map",
-                f"0:{metadata.video_stream_index}",
-                "-vf",
-                filters,
-                "-an",
-                "-sn",
-                "-dn",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "20",
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+frag_keyframe+empty_moov+default_base_moof",
-                "-f",
-                "mp4",
-                "pipe:1",
-            ),
-            timeout_seconds=remaining_seconds(deadline),
-            max_output_bytes=specification.max_output_bytes,
-        )
-    finally:
-        overlay_path.unlink(missing_ok=True)
-    if result.return_code != 0 or not result.stdout:
+
+
+def _validate_render_output(return_code: int, destination: Path) -> None:
+    if return_code != 0 or destination.stat().st_size == 0:
         raise RenderProcessError
-    destination.write_bytes(result.stdout)
+
+
+def _same_render_result(first: RenderArtifact, second: RenderArtifact) -> bool:
+    return first.model_dump(exclude={"elapsed_ms"}) == second.model_dump(
+        exclude={"elapsed_ms"}
+    )
 
 
 def _write_overlay_script(
     destination: Path,
     overlay: RenderOverlay,
-    view: NormalizedBox,
-    width: int,
-    height: int,
+    metadata: ProbeMetadata,
+    crop: _PixelCrop,
 ) -> None:
-    subject = _pixel_point(overlay.subject_center, view, width, height)
-    entry = _pixel_gate(overlay.entry_gate, view, width, height)
-    exit_gate = _pixel_gate(overlay.exit_gate, view, width, height)
+    subject = _pixel_point(overlay.subject_center, metadata, crop)
+    entry = _pixel_gate(overlay.entry_gate, metadata, crop)
+    exit_gate = _pixel_gate(overlay.exit_gate, metadata, crop)
     subject_x, subject_y = subject
     lines = (
         _ass_line(entry, "&H00FFFF&"),
@@ -388,8 +426,8 @@ def _write_overlay_script(
     destination.write_text(
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
-        f"PlayResX: {width}\n"
-        f"PlayResY: {height}\n"
+        f"PlayResX: {crop.width}\n"
+        f"PlayResY: {crop.height}\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
@@ -410,20 +448,31 @@ def _write_overlay_script(
 
 
 def _pixel_point(
-    point: NormalizedPoint, view: NormalizedBox, width: int, height: int
+    point: NormalizedPoint, metadata: ProbeMetadata, crop: _PixelCrop
 ) -> tuple[int, int]:
     return (
-        round((point.x - view.x) / view.width * width),
-        round((point.y - view.y) / view.height * height),
+        min(max(round(point.x * metadata.width) - crop.x, 0), crop.width - 1),
+        min(max(round(point.y * metadata.height) - crop.y, 0), crop.height - 1),
     )
 
 
 def _pixel_gate(
-    gate: DirectedGate, view: NormalizedBox, width: int, height: int
+    gate: DirectedGate, metadata: ProbeMetadata, crop: _PixelCrop
 ) -> tuple[tuple[int, int], tuple[int, int]]:
     return (
-        _pixel_point(gate.entry, view, width, height),
-        _pixel_point(gate.exit, view, width, height),
+        _pixel_point(gate.entry, metadata, crop),
+        _pixel_point(gate.exit, metadata, crop),
+    )
+
+
+def _escape_filter_value(value: str) -> str:
+    option_escaped = _escape_characters(value, "\\':")
+    return _escape_characters(option_escaped, "\\'[],;")
+
+
+def _escape_characters(value: str, special: str) -> str:
+    return "".join(
+        f"\\{character}" if character in special else character for character in value
     )
 
 

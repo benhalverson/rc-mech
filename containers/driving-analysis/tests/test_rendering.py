@@ -1,7 +1,10 @@
 import hashlib
+import os
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +30,7 @@ from driving_analysis_service.processes import (
 from driving_analysis_service.rendering_contracts import (
     RenderArtifact,
     RenderSpecification,
+    RenderStageAccepted,
     RenderStageRequest,
 )
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
@@ -46,9 +50,22 @@ STAGED_ID = "09e32fc7-6bdd-4bc2-852c-fc29329e58d6"
 SHA = "a" * 64
 
 
-def _video(tmp_path: Path, *, non_zero_start: bool = False) -> Path:
+def _video(
+    tmp_path: Path, *, non_zero_start: bool = False, with_audio: bool = True
+) -> Path:
     output = tmp_path / "render-source.mp4"
     timestamp_arguments = ("-output_ts_offset", "2") if non_zero_start else ()
+    audio_input_arguments = (
+        (
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=2",
+        )
+        if with_audio
+        else ()
+    )
+    audio_output_arguments = ("-shortest", "-c:a", "aac") if with_audio else ()
     subprocess.run(
         (
             "/usr/bin/ffmpeg",
@@ -59,11 +76,13 @@ def _video(tmp_path: Path, *, non_zero_start: bool = False) -> Path:
             "lavfi",
             "-i",
             "color=c=blue:s=160x90:r=10:d=2",
+            *audio_input_arguments,
             *timestamp_arguments,
             "-c:v",
             "libx264",
             "-pix_fmt",
             "yuv420p",
+            *audio_output_arguments,
             "-movflags",
             "+faststart",
             "-y",
@@ -130,6 +149,23 @@ def _client(settings: ServiceSettings) -> TestClient:
     return TestClient(create_app(settings, provider))
 
 
+def _metadata(*, duration_ms: int = 1000) -> ProbeMetadata:
+    return ProbeMetadata(
+        duration_ms=duration_ms,
+        width=160,
+        height=90,
+        video_stream_index=0,
+        video_codec="h264",
+        audio_codecs=(),
+        container_formats=("mp4",),
+        average_frame_rate=Fraction(10, 1),
+        time_base=Fraction(1, 10),
+        sample_aspect_ratio=Fraction(1, 1),
+        display_aspect_ratio=Fraction(16, 9),
+        start_time_ms=0,
+    )
+
+
 def test_render_contract_requires_fixed_padding_and_ordered_timestamps() -> None:
     try:
         RenderSpecification.model_validate(
@@ -170,6 +206,22 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     tmp_path: Path,
 ) -> None:
     source = _video(tmp_path)
+    source_probe = subprocess.run(
+        (
+            "/usr/bin/ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(source),
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert source_probe.stdout.splitlines() == ["video", "audio"]
     checksum = hashlib.sha256(source.read_bytes()).hexdigest()
     byte_count = stage_media(settings, source)
 
@@ -206,7 +258,7 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
             "-v",
             "error",
             "-show_entries",
-            "stream=codec_name,width,height",
+            "stream=codec_type,codec_name,width,height",
             "-of",
             "json",
             str(artifact),
@@ -220,6 +272,7 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     # yuv420p requires even dimensions, so the 45px normalized height is
     # rounded down by FFmpeg's crop filter.
     assert '"height": 44' in probe.stdout
+    assert '"codec_type": "audio"' not in probe.stdout
     frame = subprocess.run(
         (
             "/usr/bin/ffmpeg",
@@ -360,8 +413,9 @@ def test_real_ffmpeg_render_process_honors_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _video(tmp_path)
-    request = RenderStageRequest.model_validate(_body(source.stat().st_size, SHA))
+    source = tmp_path / "blocking.mp4"
+    os.mkfifo(source)
+    request = RenderStageRequest.model_validate(_body(1, SHA))
     metadata = ProbeMetadata(
         duration_ms=2000,
         width=160,
@@ -371,7 +425,7 @@ def test_real_ffmpeg_render_process_honors_deadline(
         audio_codecs=(),
         container_formats=("mp4",),
         average_frame_rate=Fraction(10, 1),
-        time_base=Fraction(1, 10240),
+        time_base=Fraction(1, 10),
         sample_aspect_ratio=Fraction(1, 1),
         display_aspect_ratio=Fraction(16, 9),
         start_time_ms=0,
@@ -397,7 +451,7 @@ def test_real_ffmpeg_render_process_honors_deadline(
             request.specification,
             metadata,
             settings,
-            time.monotonic() + 0.01,
+            time.monotonic() + 0.05,
         )
     assert process_started is True
     assert not destination.exists()
@@ -415,6 +469,8 @@ def test_render_handles_real_non_zero_source_timestamps(
             "error",
             "-show_entries",
             "stream=start_time",
+            "-select_streams",
+            "v:0",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
             str(source),
@@ -437,6 +493,58 @@ def test_render_handles_real_non_zero_source_timestamps(
         )
     assert response.json()["outcome"] == "accepted", response.text
     assert response.json()["artifact"]["durationMs"] == 1500
+
+
+def test_real_ffmpeg_reencoding_is_byte_deterministic(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    source = _video(tmp_path)
+    request = RenderStageRequest.model_validate(_body(source.stat().st_size, SHA))
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+
+    rendering._render_clip(
+        source,
+        first,
+        request.specification,
+        _metadata(duration_ms=2000),
+        settings,
+        time.monotonic() + 10,
+    )
+    rendering._render_clip(
+        source,
+        second,
+        request.specification,
+        _metadata(duration_ms=2000),
+        settings,
+        time.monotonic() + 10,
+    )
+
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_render_supports_filter_special_characters_in_work_root(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    special_settings = replace(
+        settings,
+        work_root=tmp_path / "work:comma,[bracket];quote'backslash\\ space",
+    )
+    source = _video(tmp_path)
+    checksum = hashlib.sha256(source.read_bytes()).hexdigest()
+    byte_count = stage_media(special_settings, source)
+    with _client(special_settings) as client:
+        response = client.post(
+            "/v1/stages/render",
+            json=_body(
+                byte_count,
+                checksum,
+                render_id="d0000000-0000-4000-8000-000000000000",
+            ),
+        )
+    assert response.json()["outcome"] == "accepted", response.text
 
 
 def test_render_request_validation_uses_render_contract(
@@ -544,11 +652,13 @@ def test_render_maps_media_timeout_to_timeout_error(
 
 def test_render_validation_clamps_padding_at_source_boundaries() -> None:
     request = RenderStageRequest.model_validate(_body(1, SHA))
-    rendering._validate_specification(request.specification, 1, 1_000)
+    rendering._validate_specification(request.specification, 1, _metadata())
     with pytest.raises(rendering.RenderInvalidMediaError):
-        rendering._validate_specification(request.specification, 0, 1_000)
+        rendering._validate_specification(request.specification, 0, _metadata())
     with pytest.raises(rendering.RenderInvalidMediaError):
-        rendering._validate_specification(request.specification, 1, 900)
+        rendering._validate_specification(
+            request.specification, 1, _metadata(duration_ms=900)
+        )
 
 
 def test_gate_overlay_supports_diagonal_and_axis_aligned_gates() -> None:
@@ -556,6 +666,47 @@ def test_gate_overlay_supports_diagonal_and_axis_aligned_gates() -> None:
     vertical = rendering._ass_line(((8, 4), (8, 20)), "&HFFFF00&")
     assert "m 8 4 l 32 20" in diagonal
     assert "m 8 4 l 8 20" in vertical
+
+
+def test_overlay_coordinates_follow_even_pixel_crop_rounding() -> None:
+    request = RenderStageRequest.model_validate(_body(1, SHA))
+    metadata = _metadata(duration_ms=2000)
+    crop = rendering._pixel_crop(request.specification, metadata)
+    assert crop == rendering._PixelCrop(width=80, height=44, x=40, y=22)
+    assert rendering._pixel_gate(
+        request.specification.overlay.entry_gate, metadata, crop
+    ) == ((8, 14), (8, 32))
+    assert rendering._pixel_point(
+        request.specification.overlay.subject_center, metadata, crop
+    ) == (40, 23)
+
+
+def test_render_removes_partial_overlay_when_script_write_fails(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = RenderStageRequest.model_validate(_body(1, SHA))
+    destination = tmp_path / "output.mp4"
+    overlay = destination.with_suffix(".ass")
+    original_write_text = Path.write_text
+
+    def fail_after_partial_write(path: Path, *_args: object, **_kwargs: object) -> int:
+        original_write_text(path, "partial", encoding="utf-8")
+        raise OSError("fixture write failure")
+
+    monkeypatch.setattr(Path, "write_text", fail_after_partial_write)
+    with pytest.raises(OSError, match="fixture write failure"):
+        rendering._render_clip(
+            tmp_path / "source.mp4",
+            destination,
+            request.specification,
+            _metadata(),
+            settings,
+            time.monotonic() + 10,
+        )
+    assert not overlay.exists()
+    assert not destination.exists()
 
 
 def test_render_recovery_rejects_tampered_completion_or_media(
@@ -708,8 +859,12 @@ def test_render_rejects_failed_ffmpeg_process(
 def test_render_rejects_subpixel_corner_view_before_ffmpeg(
     settings: ServiceSettings,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    body = _body(1, SHA)
+    source = _video(tmp_path)
+    checksum = hashlib.sha256(source.read_bytes()).hexdigest()
+    byte_count = stage_media(settings, source)
+    body = _body(byte_count, checksum)
     specification = cast("dict[str, object]", body["specification"])
     specification["cornerView"] = {
         "x": 0.0,
@@ -730,29 +885,15 @@ def test_render_rejects_subpixel_corner_view_before_ffmpeg(
             "direction": "positive",
         },
     }
-    request = RenderStageRequest.model_validate(body)
-    with pytest.raises(rendering.RenderInvalidMediaError):
-        rendering._render_clip(
-            tmp_path / "input.mp4",
-            tmp_path / "output.mp4",
-            request.specification,
-            ProbeMetadata(
-                duration_ms=1000,
-                width=160,
-                height=90,
-                video_stream_index=0,
-                video_codec="h264",
-                audio_codecs=(),
-                container_formats=("mp4",),
-                average_frame_rate=Fraction(10, 1),
-                time_base=Fraction(1, 10),
-                sample_aspect_ratio=Fraction(1, 1),
-                display_aspect_ratio=Fraction(16, 9),
-                start_time_ms=0,
-            ),
-            settings,
-            time.monotonic() + 10,
-        )
+
+    def unexpected_ffmpeg(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("FFmpeg was invoked before crop validation")
+
+    monkeypatch.setattr(rendering, "_ffmpeg_version", unexpected_ffmpeg)
+    with _client(settings) as client:
+        response = client.post("/v1/stages/render", json=body)
+    assert response.json()["outcome"] == "rejected"
+    assert response.json()["error"]["code"] == "MEDIA_UNAVAILABLE"
 
 
 def test_render_publish_race_recovers_verified_artifact(
@@ -777,7 +918,10 @@ def test_render_publish_race_recovers_verified_artifact(
         if recover_mode == "none":
             return None
         members = captured["members"]
-        return RenderArtifact.model_validate_json(members[f"{RENDER_ID}.corner.json"])
+        artifact = RenderArtifact.model_validate_json(
+            members[f"{RENDER_ID}.corner.json"]
+        )
+        return artifact.model_copy(update={"elapsed_ms": artifact.elapsed_ms + 1})
 
     def publish(
         _destination: Path, members: dict[str, Path | bytes], **_kwargs: object
@@ -792,11 +936,80 @@ def test_render_publish_race_recovers_verified_artifact(
     monkeypatch.setattr(rendering, "publish_bundle", publish)
     response = rendering.CornerRenderService(settings).render(request)
     assert response.outcome == "accepted"
+    published = RenderArtifact.model_validate_json(
+        captured["members"][f"{RENDER_ID}.corner.json"]
+    )
+    assert response.artifact.elapsed_ms == published.elapsed_ms + 1
     recover_mode = "none"
     stage_media(settings, source)
     rejected = rendering.CornerRenderService(settings).render(request)
     assert rejected.outcome == "rejected"
     assert rejected.error.code == "ARTIFACT_CONFLICT"
+
+
+def test_concurrent_identical_renders_use_isolated_scratch_and_one_artifact(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    concurrent_settings = replace(
+        settings,
+        limits=replace(settings.limits, max_concurrent_processing=2),
+    )
+    source = _video(tmp_path)
+    checksum = hashlib.sha256(source.read_bytes()).hexdigest()
+    byte_count = stage_media(concurrent_settings, source)
+    second_staged_id = "19e32fc7-6bdd-4bc2-852c-fc29329e58d6"
+    stage_media(
+        concurrent_settings,
+        source,
+        staged_media_id=second_staged_id,
+    )
+    requests = (
+        RenderStageRequest.model_validate(_body(byte_count, checksum)),
+        RenderStageRequest.model_validate(
+            _body(
+                byte_count,
+                checksum,
+                correlation_id="a3d1ea64-7c62-4a1e-a41f-43fe101b7f41",
+                staged_media_id=second_staged_id,
+            )
+        ),
+    )
+    barrier = threading.Barrier(2)
+    destinations: list[Path] = []
+    destination_lock = threading.Lock()
+    original_render_clip = rendering._render_clip
+
+    def synchronized_render_clip(  # noqa: PLR0913 - mirrors render seam
+        source_path: Path,
+        destination: Path,
+        specification: RenderSpecification,
+        metadata: ProbeMetadata,
+        service_settings: ServiceSettings,
+        deadline: float,
+    ) -> None:
+        with destination_lock:
+            destinations.append(destination)
+        barrier.wait(timeout=5)
+        original_render_clip(
+            source_path,
+            destination,
+            specification,
+            metadata,
+            service_settings,
+            deadline,
+        )
+
+    monkeypatch.setattr(rendering, "_render_clip", synchronized_render_clip)
+    service = rendering.CornerRenderService(concurrent_settings)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = tuple(executor.map(service.render, requests))
+
+    assert all(response.outcome == "accepted" for response in responses)
+    accepted = [cast("RenderStageAccepted", response) for response in responses]
+    assert accepted[0].artifact == accepted[1].artifact
+    assert len({destination.parent for destination in destinations}) == 2
 
 
 def test_render_contract_rejects_reverse_and_overlong_intervals() -> None:

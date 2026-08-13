@@ -32,6 +32,7 @@ class StderrLineObserver:
 @dataclass(frozen=True)
 class ProcessStreams:
     standard_input: IO[bytes] | None = None
+    standard_output: IO[bytes] | None = None
     standard_error_observer: StderrLineObserver | None = None
 
 
@@ -47,9 +48,11 @@ class ProcessResult:
 class _ProcessCapture:
     max_output_bytes: int
     stderr_line_observer: StderrLineObserver | None
+    stdout_sink: IO[bytes] | None = None
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
     pending_stderr: bytearray = field(default_factory=bytearray)
+    output_bytes: int = 0
 
     def consume(self, destination: object, chunk: bytes) -> None:
         if not isinstance(destination, bytearray):
@@ -89,8 +92,14 @@ class _ProcessCapture:
             self._append(self.stderr, line + suffix)
 
     def _append(self, destination: bytearray, chunk: bytes) -> None:
-        if len(self.stdout) + len(self.stderr) + len(chunk) > self.max_output_bytes:
+        if self.output_bytes + len(chunk) > self.max_output_bytes:
             raise ProcessOutputLimitError
+        self.output_bytes += len(chunk)
+        if destination is self.stdout and self.stdout_sink is not None:
+            if self.stdout_sink.write(chunk) != len(chunk):
+                msg = "Unable to stream bounded process output"
+                raise OSError(msg)
+            return
         destination.extend(chunk)
 
 
@@ -146,8 +155,9 @@ def run_bounded_process(
     )
 
     capture = _ProcessCapture(
-        max_output_bytes,
-        resolved_streams.standard_error_observer,
+        max_output_bytes=max_output_bytes,
+        stderr_line_observer=resolved_streams.standard_error_observer,
+        stdout_sink=resolved_streams.standard_output,
     )
     with _ProcessScope(process):
         _read_process_output(
