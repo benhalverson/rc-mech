@@ -32,6 +32,12 @@ uv run --frozen uvicorn driving_analysis_service.api:app --host 127.0.0.1 --port
 
 `POST /v1/stages/track` starts from the supplied User-equivalent Subject seed and runs one continuous trusted segment. Each observation uses the strict `subject-observation.v1` contract. A non-visible box, provider-specific confidence below the immutable run threshold, or uncertain identity opens a Tracking gap at that frame and stops provider calls immediately, even when the first candidate is untrusted. The gap remains explicitly open until later User Re-identification supplies its end; the Python stage never invents a Race-window end for it. The endpoint writes deterministic gzip JSON plus a descriptor containing the compressed checksum and size and immutable source, prepared-media, FFmpeg, provider, model, pipeline, calibration, threshold, and configuration provenance. Its end-to-end deadline includes both provider-readiness checks, and completed-segment recovery is bound to a digest of the full prepared descriptor, Subject seed, and provider configuration.
 
+### Corner rendering
+
+`POST /v1/stages/render` accepts a strict `corner-render.v1` specification containing the immutable source checksum, run/map/corner identity, normalized Corner view, gate timestamps, fixed 500 ms padding, and normalized overlay geometry. The service crops the Corner view, draws bounded Subject-center and gate markers, and emits an audio-free H.264 MP4 using a fixed internal FFmpeg argument array. Source timestamps are preserved when the media has a nonzero start time, and padding clamps at source boundaries without changing the gate-to-gate measurements.
+
+Rendered clips are published as owner-only immutable artifact bundles beneath `RC_MECH_ANALYSIS_ARTIFACT_ROOT`. The completion descriptor records content type, size, checksum, measured output duration, render-input digest, FFmpeg version, pipeline version, and elapsed time. Identical retries recover only after verifying the descriptor and media checksum; conflicting render IDs, malformed outputs, process timeouts, and output limits return canonical safe errors.
+
 Saturated stage admission returns `SERVICE_BUSY`; an invalid Race-window limit returns `INVALID_REQUEST`; serialization limits remain `RESOURCE_LIMIT`. Reusing an immutable output ID with different staged input, prepared descriptor, seed, or provider configuration returns `ARTIFACT_CONFLICT`.
 
 ### Ollama local adapter

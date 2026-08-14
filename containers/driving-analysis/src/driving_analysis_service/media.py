@@ -237,6 +237,7 @@ class _ClaimedMedia:
         self.staging_root = settings.staging_root
         self.work_root = settings.work_root
         self.max_bytes = settings.limits.max_bytes
+        self.expected_bytes = request.input.expected_byte_count
         self.deadline = deadline
         self.claim_directory: Path | None = None
         self.request_directory: Path | None = None
@@ -265,6 +266,7 @@ class _ClaimedMedia:
             _copy_and_consume(
                 staged_claim_path,
                 self.claimed_path,
+                expected_bytes=self.expected_bytes,
                 max_bytes=self.max_bytes,
                 deadline=self.deadline,
             )
@@ -344,6 +346,7 @@ def _copy_and_consume(
     source: Path,
     destination: Path,
     *,
+    expected_bytes: int,
     max_bytes: int,
     deadline: float | None = None,
 ) -> None:
@@ -356,6 +359,24 @@ def _copy_and_consume(
                 code="UNSUPPORTED_MEDIA",
                 stage="claim",
                 safe_message="The staged input is not a supported media file.",
+            )
+        if source_identity.st_size > max_bytes:
+            raise MediaValidationError(
+                code="MEDIA_OVER_LIMIT",
+                stage="claim",
+                safe_message="The media exceeds the byte limit.",
+            )
+        if source_identity.st_size <= 0:
+            raise MediaValidationError(
+                code="CORRUPT_MEDIA",
+                stage="inspect",
+                safe_message="The media is empty or corrupt.",
+            )
+        if source_identity.st_size != expected_bytes:
+            raise MediaValidationError(
+                code="STAGED_MEDIA_MISMATCH",
+                stage="claim",
+                safe_message="The staged media byte count does not match.",
             )
         destination_descriptor = os.open(
             destination,
@@ -372,8 +393,16 @@ def _copy_and_consume(
                     stage="claim",
                     safe_message="The media exceeds the byte limit.",
                 )
+            if copied_bytes > expected_bytes:
+                raise MediaValidationError(
+                    code="STAGED_MEDIA_MISMATCH",
+                    stage="claim",
+                    safe_message="The staged media byte count does not match.",
+                )
             _write_all(destination_descriptor, chunk)
-        os.fsync(destination_descriptor)
+        # The claimed copy is ephemeral request scratch. Durability belongs to
+        # immutable artifact publication, not this soon-to-be-deleted file.
+        check_deadline(deadline)
     finally:
         os.close(source_descriptor)
         if destination_descriptor is not None:
@@ -870,7 +899,10 @@ def _parse_frame_rate(video: JsonMapping) -> Fraction:
 
 
 def _duration_ms(video: JsonMapping, raw_format: JsonMapping) -> int:
-    for value in (raw_format.get("duration"), video.get("duration")):
+    # Container duration can be the absolute timeline end when streams have a
+    # non-zero start timestamp. Prefer the selected video stream's content
+    # duration so source-relative render bounds remain stable.
+    for value in (video.get("duration"), raw_format.get("duration")):
         try:
             duration_ms = _milliseconds(value)
         except MediaValidationError:

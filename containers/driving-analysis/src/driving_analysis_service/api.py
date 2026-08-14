@@ -20,6 +20,13 @@ from driving_analysis_service.inference import (
 )
 from driving_analysis_service.media import MediaValidationService
 from driving_analysis_service.preparation import RaceWindowPreparationService
+from driving_analysis_service.rendering import CornerRenderService
+from driving_analysis_service.rendering_contracts import (
+    RenderSafeError,
+    RenderStageRejected,
+    RenderStageRequest,
+    RenderStageResponse,
+)
 from driving_analysis_service.request_limits import RequestBodyLimitMiddleware
 from driving_analysis_service.settings import ServiceSettings
 from driving_analysis_service.tracking import SubjectTrackingService
@@ -55,6 +62,7 @@ def create_app(
         provider,
         processing_admission,
     )
+    rendering_service = CornerRenderService(resolved_settings, processing_admission)
 
     application = FastAPI(
         title="RC Mech driving-analysis media service",
@@ -73,6 +81,22 @@ def create_app(
         request: Request,
         _error: RequestValidationError,
     ) -> JSONResponse:
+        if request.url.path == "/v1/stages/render":
+            render_response = RenderStageRejected(
+                contractVersion="corner-render.v1",
+                correlationId=None,
+                outcome="rejected",
+                caseId=None,
+                error=RenderSafeError(
+                    code="INVALID_REQUEST",
+                    stage="request",
+                    message="render request rejected",
+                ),
+            )
+            return JSONResponse(
+                status_code=422,
+                content=render_response.model_dump(mode="json", by_alias=True),
+            )
         if request.url.path.startswith("/v1/stages/"):
             processing_response = ProcessingRejected(
                 contractVersion=PROCESSING_CONTRACT_VERSION,
@@ -151,6 +175,13 @@ def create_app(
     )
     def track_subject(request: TrackStageRequest) -> TrackStageResponse:
         return tracking_service.track(request)
+
+    @application.post(
+        "/v1/stages/render",
+        responses={422: {"model": RenderStageRejected}},
+    )
+    def render_corner(request: RenderStageRequest) -> RenderStageResponse:
+        return rendering_service.render(request)
 
     return application
 

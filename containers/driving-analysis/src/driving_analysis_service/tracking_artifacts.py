@@ -18,7 +18,10 @@ from typing import BinaryIO
 from pydantic import BaseModel, ValidationError
 
 from driving_analysis_service.processes import ProcessOutputLimitError
-from driving_analysis_service.processing_deadline import check_deadline
+from driving_analysis_service.processing_deadline import (
+    check_deadline,
+    fsync_with_deadline,
+)
 from driving_analysis_service.settings import ServiceSettings
 
 PREPARED_MEDIA_SUFFIX = ".track.mp4"
@@ -106,17 +109,14 @@ def publish_bundle(
             else:
                 publish_bytes(value, target, deadline=deadline)
         check_deadline(deadline)
-        directory_descriptor = os.open(pending, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
+        _fsync_directory(pending, deadline=deadline)
         try:
             pending.rename(destination)
         except OSError as error:
             if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
                 raise
             return False
+        _fsync_directory(destination.parent, deadline=deadline)
         return True
     finally:
         if pending.exists():
@@ -133,6 +133,22 @@ def publish_file(
 ) -> PublishedArtifact:
     with source.open("rb") as source_file:
         return _publish_stream(source_file, destination, deadline=deadline)
+
+
+def ensure_bundle_durable(destination: Path, *, deadline: float | None = None) -> None:
+    identity = destination.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(identity.st_mode):
+        raise InvalidArtifactError
+    _fsync_directory(destination, deadline=deadline)
+    _fsync_directory(destination.parent, deadline=deadline)
+
+
+def _fsync_directory(directory: Path, *, deadline: float | None = None) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fsync_with_deadline(descriptor, deadline)
+    finally:
+        os.close(descriptor)
 
 
 def publish_bytes(
@@ -214,9 +230,9 @@ def read_artifact(
     try:
         while chunk := os.read(descriptor, 1024 * 1024):
             check_deadline(deadline)
-            result.extend(chunk)
-            if len(result) > max_bytes:
+            if len(result) + len(chunk) > max_bytes:
                 raise InvalidArtifactError
+            result.extend(chunk)
     finally:
         os.close(descriptor)
     return bytes(result)
@@ -256,21 +272,25 @@ def copy_verified_artifact(  # noqa: PLR0913
     )
     digest = hashlib.sha256()
     byte_count = 0
+    verified = False
+    write_limit = min(max_bytes, expected_bytes)
     try:
         while chunk := os.read(descriptor, 1024 * 1024):
             check_deadline(deadline)
-            byte_count += len(chunk)
-            if byte_count > max_bytes:
+            if byte_count + len(chunk) > write_limit:
                 raise InvalidArtifactError
+            byte_count += len(chunk)
             digest.update(chunk)
             _write_all(destination_descriptor, chunk)
-        os.fsync(destination_descriptor)
+        fsync_with_deadline(destination_descriptor, deadline)
+        if byte_count != expected_bytes or digest.hexdigest() != expected_checksum:
+            raise InvalidArtifactError
+        verified = True
     finally:
         os.close(descriptor)
         os.close(destination_descriptor)
-    if byte_count != expected_bytes or digest.hexdigest() != expected_checksum:
-        destination.unlink(missing_ok=True)
-        raise InvalidArtifactError
+        if not verified:
+            destination.unlink(missing_ok=True)
 
 
 def file_digest(
@@ -312,7 +332,7 @@ def _publish_stream(
             byte_count += len(chunk)
             digest.update(chunk)
             _write_all(descriptor, chunk)
-        os.fsync(descriptor)
+        fsync_with_deadline(descriptor, deadline)
         os.close(descriptor)
         descriptor = -1
         published = PublishedArtifact(

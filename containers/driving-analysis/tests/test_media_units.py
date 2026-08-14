@@ -418,6 +418,32 @@ def test_inspection_rejects_a_file_over_the_byte_limit(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("contents", "expected_byte_count", "expected_code"),
+    [
+        (b"", 1, "CORRUPT_MEDIA"),
+        (b"media", 4, "STAGED_MEDIA_MISMATCH"),
+    ],
+)
+def test_inspection_rejects_empty_or_mismatched_files(
+    tmp_path: Path,
+    contents: bytes,
+    expected_byte_count: int,
+    expected_code: str,
+) -> None:
+    media_path = tmp_path / "input.media"
+    media_path.write_bytes(contents)
+
+    _error_code(
+        lambda: media_module._inspect_file(
+            media_path,
+            expected_byte_count=expected_byte_count,
+            max_bytes=100,
+        ),
+        expected_code,
+    )
+
+
 def test_service_redacts_unexpected_internal_errors(
     settings: ServiceSettings,
     monkeypatch: pytest.MonkeyPatch,
@@ -523,10 +549,70 @@ def test_cross_filesystem_copy_consumes_over_limit_source(
     source.write_bytes(b"too large")
 
     _error_code(
-        lambda: media_module._copy_and_consume(source, destination, max_bytes=1),
+        lambda: media_module._copy_and_consume(
+            source,
+            destination,
+            expected_bytes=9,
+            max_bytes=1,
+        ),
         "MEDIA_OVER_LIMIT",
     )
     assert not source.exists()
+
+
+def test_cross_filesystem_copy_rejects_underdeclared_size_before_writing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.media"
+    destination = tmp_path / "destination.media"
+    source.write_bytes(b"larger")
+
+    _error_code(
+        lambda: media_module._copy_and_consume(
+            source,
+            destination,
+            expected_bytes=1,
+            max_bytes=100,
+        ),
+        "STAGED_MEDIA_MISMATCH",
+    )
+    assert not source.exists()
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize(
+    ("max_bytes", "expected_code"),
+    [(1, "MEDIA_OVER_LIMIT"), (100, "STAGED_MEDIA_MISMATCH")],
+)
+def test_cross_filesystem_copy_stops_a_source_that_grows_after_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    max_bytes: int,
+    expected_code: str,
+) -> None:
+    source = tmp_path / "source.media"
+    destination = tmp_path / "destination.media"
+    source.write_bytes(b"larger")
+    real_fstat = os.fstat
+
+    def admitted_as_one_byte(file_descriptor: int) -> os.stat_result:
+        identity = real_fstat(file_descriptor)
+        values = list(identity)
+        values[6] = 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(os, "fstat", admitted_as_one_byte)
+    _error_code(
+        lambda: media_module._copy_and_consume(
+            source,
+            destination,
+            expected_bytes=1,
+            max_bytes=max_bytes,
+        ),
+        expected_code,
+    )
+    assert not source.exists()
+    assert destination.read_bytes() == b""
 
 
 def test_cross_filesystem_copy_detects_source_identity_change(
@@ -546,7 +632,12 @@ def test_cross_filesystem_copy_detects_source_identity_change(
 
     monkeypatch.setattr(Path, "lstat", changed_identity)
     with pytest.raises(OSError, match="identity changed"):
-        media_module._copy_and_consume(source, destination, max_bytes=100)
+        media_module._copy_and_consume(
+            source,
+            destination,
+            expected_bytes=5,
+            max_bytes=100,
+        )
 
 
 def test_open_staged_source_preserves_a_regular_file_when_open_fails(
@@ -636,7 +727,12 @@ def test_cross_filesystem_copy_rejects_a_nonregular_source(tmp_path: Path) -> No
     source.mkdir()
 
     _error_code(
-        lambda: media_module._copy_and_consume(source, destination, max_bytes=100),
+        lambda: media_module._copy_and_consume(
+            source,
+            destination,
+            expected_bytes=5,
+            max_bytes=100,
+        ),
         "UNSUPPORTED_MEDIA",
     )
     assert not source.exists()
