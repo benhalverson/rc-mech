@@ -105,14 +105,16 @@ footage evidence is stored separately under
 permission and framing facts, representative conditions, and manual annotation
 provenance without recording bytes, frames, source names, or private paths.
 
-The representative v2 observation-set envelope cryptographically binds stored
-provider-neutral cases to canonical manifest and ground-truth digests. The
-report adds the observation-set digest, counts coverage only for reviewed
-Corner passes ending before the first known ambiguity requiring User
-Re-identification, and retains the v1 rule that any unflagged identity switch or
-missed known gap fails qualification. The committed manual reference report
-passes with zero switches and 100 percent pre-Re-identification Corner-pass
-coverage; it validates evidence and mechanics, not a production provider.
+The representative v2 corpus manifest is provider-neutral: it fixes evaluation
+policy, permissions, framing, and source evidence without pinning one candidate
+provider. Each observation-set envelope carries its own immutable generation
+provenance and digest, then binds those candidate-specific cases to canonical
+manifest and ground-truth digests. The report retains every reviewed Corner pass
+in the denominator, supports observations resuming after finite User
+Re-identification gaps, and retains the v1 rule that any unflagged identity
+switch or missed known gap fails qualification. The committed manual reference
+report passes with zero switches and 100 percent Corner-pass coverage; it
+validates evidence and mechanics, not a production provider.
 
 Private candidate generation and hermetic evaluation are separate operations.
 The generator runs outside the Git worktree, verifies the authorized source

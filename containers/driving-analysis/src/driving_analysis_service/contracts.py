@@ -591,6 +591,38 @@ class BenchmarkProvenance(StrictContract):
     )
 
 
+class BenchmarkEvaluationPolicyV1(StrictContract):
+    identity_match_iou_threshold: float = Field(
+        alias="identityMatchIouThreshold", gt=0.0, le=1.0, strict=True
+    )
+    identity_annotation_tolerance_ms: int = Field(
+        alias="identityAnnotationToleranceMs", ge=0, le=1_000, strict=True
+    )
+    maximum_observation_interval_ms: int = Field(
+        alias="maximumObservationIntervalMs", gt=0, le=10_000, strict=True
+    )
+    pass_match_tolerance_ms: int = Field(
+        alias="passMatchToleranceMs", ge=0, le=10_000, strict=True
+    )
+    ambiguity_gap_coverage_tolerance_ms: int = Field(
+        alias="ambiguityGapCoverageToleranceMs", ge=0, le=10_000, strict=True
+    )
+
+    @classmethod
+    def from_provenance(
+        cls, provenance: BenchmarkProvenance
+    ) -> "BenchmarkEvaluationPolicyV1":
+        return cls(
+            identityMatchIouThreshold=provenance.identity_match_iou_threshold,
+            identityAnnotationToleranceMs=provenance.identity_annotation_tolerance_ms,
+            maximumObservationIntervalMs=provenance.maximum_observation_interval_ms,
+            passMatchToleranceMs=provenance.pass_match_tolerance_ms,
+            ambiguityGapCoverageToleranceMs=(
+                provenance.ambiguity_gap_coverage_tolerance_ms
+            ),
+        )
+
+
 class CorpusRecordingManifest(StrictContract):
     contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
     corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
@@ -637,7 +669,7 @@ class CorpusManifest(CorpusRecordingManifest):
         return self
 
 
-class RepresentativeCorpusManifestV2(CorpusManifest):
+class RepresentativeCorpusManifestV2(CorpusRecordingManifest):
     contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
         alias="contractVersion"
     )
@@ -647,9 +679,32 @@ class RepresentativeCorpusManifestV2(CorpusManifest):
     cases: tuple[RepresentativeBenchmarkCaseV2, ...] = Field(
         min_length=3, max_length=100, strict=False
     )
+    required_coverage: float = Field(
+        default=0.8, alias="requiredCoverage", ge=0.8, le=1.0, strict=True
+    )
+    frame_timestamp_tolerance_ms: int = Field(
+        alias="frameTimestampToleranceMs",
+        ge=0,
+        le=1_000,
+        strict=True,
+    )
+    evaluation_policy: BenchmarkEvaluationPolicyV1 = Field(alias="evaluationPolicy")
 
     @model_validator(mode="after")
     def corpus_is_representative(self) -> "RepresentativeCorpusManifestV2":
+        if len({case.case_id for case in self.cases}) != len(self.cases):
+            raise ValueError("benchmark case IDs must be unique")
+        recordings = {
+            recording.recording_id: recording for recording in self.recordings
+        }
+        if any(case.recording_id not in recordings for case in self.cases):
+            raise ValueError("benchmark case references an unknown recording")
+        if any(
+            case.window_end_ms > recordings[case.recording_id].duration_ms
+            for case in self.cases
+            if case.recording_id in recordings
+        ):
+            raise ValueError("benchmark case window exceeds recording duration")
         if (
             len({case.recording_id for case in self.cases})
             < MIN_REPRESENTATIVE_RECORDINGS
@@ -673,6 +728,16 @@ class RepresentativeCorpusManifestV2(CorpusManifest):
         }
         if challenges != {"occlusion", "identity-ambiguity"}:
             raise ValueError("representative corpus requires both identity challenges")
+        if any(
+            2
+            * self.frame_timestamp_tolerance_ms
+            * recording.average_frame_rate.numerator
+            > 1_000 * recording.average_frame_rate.denominator
+            for recording in self.recordings
+        ):
+            raise ValueError(
+                "representative frame timestamp tolerance exceeds half a frame"
+            )
         return self
 
 
@@ -850,6 +915,10 @@ class BenchmarkObservationSetV2(StrictContract):
     ground_truth_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="groundTruthDigest")
+    generation_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="generationDigest")
+    provenance: BenchmarkProvenance
     cases: tuple[AcceptedSubjectObservations, ...] = Field(
         min_length=3, max_length=100, strict=False
     )
@@ -871,6 +940,9 @@ class BenchmarkEvidenceV2(StrictContract):
     observations_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="observationsDigest")
+    generation_digest: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="generationDigest")
 
 
 class RepresentativeBenchmarkReportV2(BenchmarkReport):

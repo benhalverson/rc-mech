@@ -1,11 +1,15 @@
 import json
+import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
+import driving_analysis_service.benchmark as benchmark_module
 from driving_analysis_service.benchmark import (
     benchmark_contract_digest,
+    benchmark_generation_digest,
     evaluate_representative_benchmark,
 )
 from driving_analysis_service.contracts import (
@@ -51,11 +55,14 @@ def bind(
     truth: RepresentativeGroundTruthV2,
     observations: BenchmarkObservationSetV2,
 ) -> BenchmarkObservationSetV2:
-    return observations.model_copy(
+    bound = observations.model_copy(
         update={
             "manifest_digest": benchmark_contract_digest(manifest),
             "ground_truth_digest": benchmark_contract_digest(truth),
         }
+    )
+    return bound.model_copy(
+        update={"generation_digest": benchmark_generation_digest(bound)}
     )
 
 
@@ -76,6 +83,7 @@ def test_representative_fixture_is_safe_complete_and_deterministic(
     assert report.model_dump_json() != ""
     assert report.evidence.manifest_digest == observations.manifest_digest
     assert report.evidence.ground_truth_digest == observations.ground_truth_digest
+    assert report.evidence.generation_digest == observations.generation_digest
 
     args = [
         "--manifest",
@@ -102,8 +110,16 @@ def test_representative_fixture_is_safe_complete_and_deterministic(
         assert path.suffix in {".json", ".md"}
         content = path.read_text(encoding="utf-8")
         assert "videos/" not in content
-        assert "file://" not in content
-        assert "https://" not in content
+        assert not re.search(r"(?i)\b(?:file|https?|s3|r2)://", content)
+        assert not re.search(
+            r"(?i)(?:^|[\s\"'])(?:\.\.?/|/(?:home|users|mnt|media|tmp|var/tmp)/|[a-z]:\\)",
+            content,
+        )
+        assert not re.search(r"(?i)\.(?:mov|mp4|mkv|avi|webm)(?:\b|\")", content)
+        assert not re.search(
+            r"(?i)\b(?:api[_-]?key|access[_-]?token|authorization|bearer|password|secret)\b\s*[:=]",
+            content,
+        )
 
 
 def test_representative_contract_rejects_incomplete_metadata() -> None:
@@ -136,6 +152,11 @@ def test_representative_contract_rejects_incomplete_metadata() -> None:
     with pytest.raises(ValidationError, match="case IDs"):
         BenchmarkObservationSetV2.model_validate(raw)
 
+    raw = manifest.model_dump(by_alias=True, mode="json")
+    raw["frameTimestampToleranceMs"] = 17
+    with pytest.raises(ValidationError, match="half a frame"):
+        RepresentativeCorpusManifestV2.model_validate(raw)
+
 
 @pytest.mark.parametrize(
     ("mutation", "message"),
@@ -145,6 +166,9 @@ def test_representative_contract_rejects_incomplete_metadata() -> None:
         ("densities", "field densities must differ"),
         ("competitors", "similar-looking competitor"),
         ("challenges", "both identity challenges"),
+        ("case_ids", "case IDs must be unique"),
+        ("unknown_recording", "unknown recording"),
+        ("window", "window exceeds recording duration"),
     ],
 )
 def test_representative_manifest_enforces_corpus_diversity(
@@ -162,9 +186,15 @@ def test_representative_manifest_enforces_corpus_diversity(
     elif mutation == "competitors":
         for case in raw["cases"]:
             case["representativeFacts"]["similarLookingCompetitorCount"] = 0
-    else:
+    elif mutation == "challenges":
         for case in raw["cases"]:
             case["representativeFacts"]["identityChallenges"] = ["occlusion"]
+    elif mutation == "case_ids":
+        raw["cases"][1]["caseId"] = raw["cases"][0]["caseId"]
+    elif mutation == "unknown_recording":
+        raw["cases"][0]["recordingId"] = "missing-recording"
+    else:
+        raw["cases"][0]["windowEndMs"] = raw["recordings"][0]["durationMs"] + 1
     with pytest.raises(ValidationError, match=message):
         RepresentativeCorpusManifestV2.model_validate(raw)
 
@@ -177,6 +207,94 @@ def test_representative_evidence_must_match(field: str) -> None:
     changed = observations.model_copy(update={field: "0" * 64})
     with pytest.raises(ValueError, match="evidence differs"):
         evaluate_representative_benchmark(manifest, truth, changed)
+
+
+def test_generation_digest_rejects_relabelled_provenance() -> None:
+    manifest, truth, observations = corpus()
+    relabelled = observations.model_copy(
+        update={
+            "provenance": observations.provenance.model_copy(
+                update={"model": "relabelled-model"}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="evidence differs"):
+        evaluate_representative_benchmark(manifest, truth, relabelled)
+
+
+def test_candidate_provider_uses_same_corpus_evidence() -> None:
+    manifest, truth, observations = corpus()
+    candidate_provenance = observations.provenance.model_copy(
+        update={"provider": "candidate-provider", "model": "candidate-model"}
+    )
+    candidate_cases = tuple(
+        case.model_copy(
+            update={
+                "observations": tuple(
+                    item.model_copy(
+                        update={
+                            "provenance": item.provenance.model_copy(
+                                update={
+                                    "provider": "candidate-provider",
+                                    "model": "candidate-model",
+                                }
+                            )
+                        }
+                    )
+                    for item in case.observations
+                )
+            }
+        )
+        for case in observations.cases
+    )
+    candidate = bind(
+        manifest,
+        truth,
+        observations.model_copy(
+            update={"provenance": candidate_provenance, "cases": candidate_cases}
+        ),
+    )
+
+    report = evaluate_representative_benchmark(manifest, truth, candidate)
+
+    assert report.passed
+    assert report.provenance.provider == "candidate-provider"
+    assert report.provenance.model == "candidate-model"
+    assert report.evidence.manifest_digest == observations.manifest_digest
+    assert report.evidence.ground_truth_digest == observations.ground_truth_digest
+
+
+def test_candidate_cannot_weaken_corpus_evaluation_policy() -> None:
+    manifest, truth, observations = corpus()
+    weakened = observations.provenance.model_copy(
+        update={"identity_match_iou_threshold": 0.000_001}
+    )
+    changed_cases = tuple(
+        case.model_copy(
+            update={
+                "observations": tuple(
+                    item.model_copy(
+                        update={
+                            "provenance": item.provenance.model_copy(
+                                update={"identity_match_iou_threshold": 0.000_001}
+                            )
+                        }
+                    )
+                    for item in case.observations
+                )
+            }
+        )
+        for case in observations.cases
+    )
+    candidate = bind(
+        manifest,
+        truth,
+        observations.model_copy(
+            update={"provenance": weakened, "cases": changed_cases}
+        ),
+    )
+    with pytest.raises(ValueError, match="evaluation policy differs"):
+        evaluate_representative_benchmark(manifest, truth, candidate)
 
 
 def test_representative_cross_document_evidence_is_validated() -> None:
@@ -214,6 +332,22 @@ def test_representative_cross_document_evidence_is_validated() -> None:
                 manifest, changed_truth, bind(manifest, changed_truth, observations)
             )
 
+    changed_seed = manifest.cases[0].subject_seed.model_copy(
+        update={"box": manifest.cases[0].subject_seed.box.model_copy(update={"x": 0.1})}
+    )
+    changed_manifest_case = manifest.cases[0].model_copy(
+        update={"subject_seed": changed_seed}
+    )
+    changed_manifest = manifest.model_copy(
+        update={"cases": (changed_manifest_case, *manifest.cases[1:])}
+    )
+    with pytest.raises(ValueError, match="seed differs"):
+        evaluate_representative_benchmark(
+            changed_manifest,
+            truth,
+            bind(changed_manifest, truth, observations),
+        )
+
 
 def test_representative_report_fails_switches_and_missed_gaps() -> None:
     manifest, truth, observations = corpus()
@@ -235,20 +369,28 @@ def test_representative_report_fails_switches_and_missed_gaps() -> None:
     switched_set = observations.model_copy(
         update={"cases": (switched_case, *observations.cases[1:])}
     )
-    report = evaluate_representative_benchmark(manifest, truth, switched_set)
+    report = evaluate_representative_benchmark(
+        manifest, truth, bind(manifest, truth, switched_set)
+    )
     assert report.coverage.ratio == 1.0
     assert report.identity.unflagged_switches == 1
     assert not report.passed
 
     no_gaps = tuple(case.model_copy(update={"gaps": ()}) for case in observations.cases)
     report = evaluate_representative_benchmark(
-        manifest, truth, observations.model_copy(update={"cases": no_gaps})
+        manifest,
+        truth,
+        bind(
+            manifest,
+            truth,
+            observations.model_copy(update={"cases": no_gaps}),
+        ),
     )
     assert report.gaps.missed == 4
     assert not report.passed
 
 
-def test_representative_coverage_counts_only_passes_before_reidentification() -> None:
+def test_representative_coverage_does_not_treat_ambiguity_as_reidentification() -> None:
     manifest, truth, observations = corpus()
     first = truth.cases[0]
     post_gap = GroundTruthPass(
@@ -264,9 +406,96 @@ def test_representative_coverage_counts_only_passes_before_reidentification() ->
         changed_truth,
         bind(manifest, changed_truth, observations),
     )
-    assert report.coverage.ground_truth_passes == 3
+    assert report.coverage.ground_truth_passes == 4
     assert report.coverage.eligible_passes == 3
-    assert report.passed
+    assert report.coverage.ratio == 0.75
+    assert not report.passed
+
+
+def test_one_candidate_gap_cannot_satisfy_two_truth_gaps() -> None:
+    manifest, truth, observations = corpus()
+    first_truth = truth.cases[0]
+    second_gap = first_truth.ambiguous_spans[0].model_copy(
+        update={"start_timestamp_ms": 32_000, "end_timestamp_ms": 32_500}
+    )
+    changed_truth_case = first_truth.model_copy(
+        update={"ambiguous_spans": (*first_truth.ambiguous_spans, second_gap)}
+    )
+    changed_truth = truth.model_copy(
+        update={"cases": (changed_truth_case, *truth.cases[1:])}
+    )
+    first_candidate = observations.cases[0]
+    overlong_gap = first_candidate.gaps[0].model_copy(
+        update={"end_timestamp_ms": second_gap.end_timestamp_ms}
+    )
+    changed_candidate = first_candidate.model_copy(update={"gaps": (overlong_gap,)})
+    changed_observations = bind(
+        manifest,
+        changed_truth,
+        observations.model_copy(
+            update={"cases": (changed_candidate, *observations.cases[1:])}
+        ),
+    )
+
+    report = evaluate_representative_benchmark(
+        manifest, changed_truth, changed_observations
+    )
+
+    assert report.gaps.missed == 1
+    assert not report.passed
+
+
+def test_gap_matching_skips_earlier_candidate_gap() -> None:
+    _, truth, observations = corpus()
+    expected = truth.cases[0].ambiguous_spans[0]
+    earlier = expected.model_copy(
+        update={"start_timestamp_ms": 29_000, "end_timestamp_ms": 29_500}
+    )
+
+    assert benchmark_module._gap_counts(
+        (expected,), (earlier, observations.cases[0].gaps[0]), 0
+    ) == (1, 0, 1)
+
+
+def test_identity_matching_work_is_linear_in_observation_count() -> None:
+    manifest, truth, observations = corpus()
+    count = 2_000
+    base_annotation = truth.cases[0].identity_annotations[0]
+    base_observation = observations.cases[0].observations[0]
+    annotations = tuple(
+        base_annotation.model_copy(
+            update={"timestamp_ms": 12_000 + index * 33, "frame_index": 360 + index}
+        )
+        for index in range(count)
+    )
+    candidate_observations = tuple(
+        base_observation.model_copy(
+            update={"timestamp_ms": 12_000 + index * 33, "frame_index": 360 + index}
+        )
+        for index in range(count)
+    )
+    truth_case = truth.cases[0].model_copy(
+        update={"identity_annotations": annotations, "ambiguous_spans": ()}
+    )
+    candidate_case = observations.cases[0].model_copy(
+        update={"observations": candidate_observations, "gaps": ()}
+    )
+
+    with patch.object(
+        benchmark_module,
+        "_identity_frame_match",
+        wraps=benchmark_module._identity_frame_match,
+    ) as matcher:
+        switches = benchmark_module._unflagged_switches(
+            truth_case,
+            candidate_case,
+            observations.provenance,
+            manifest.recordings[0],
+            manifest.frame_timestamp_tolerance_ms,
+        )
+
+    assert switches == 0
+    assert matcher.call_count <= count * 3
 
 
 def test_cli_rejects_mixed_benchmark_versions(

@@ -1,14 +1,33 @@
 {
   "contractVersion": "subject-benchmark-observations.v1",
   "corpusId": "representative-private-races.v1",
-  "manifestDigest": "e31c3d7273a81a503507f48c33620d60abd28ac63e9a1ecfd9f1d2df9baec8aa",
-  "groundTruthDigest": "af43025a06c2cc061915a4cce65cde37a4ad30436515bf440e5987053d77e6dc",
+  "manifestDigest": "489800defbfcdfe5f9e557f95fac85b6cb55e42d18873eecb2029c0c1cb4f19e",
+  "groundTruthDigest": "c0cb13bceab623fc92e5a65deec922fbfae6a1bb45ea56923258526e161774d9",
+  "generationDigest": "7cf3db6ba3c4dd39c342cf36a6e632cab8b45bc9b5212cffd29f2dd554c7ae0e",
+  "provenance": {
+    "dockerImageDigest": "fb17b9e13b5411021cd155a177a72eca277943baaa46936276f495678c4eaff5",
+    "pythonLockfileDigest": "7c625d76c7188102f723914670df73d381d285844cff13ac49cfa63970533dff",
+    "ffmpegVersion": "4.4.2-0ubuntu0.22.04.1",
+    "provider": "manual-reference",
+    "model": "frame-review",
+    "modelVersion": "1",
+    "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca",
+    "pipelineVersion": "subject-benchmark.v2",
+    "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705",
+    "identityConfidenceThreshold": 0.9,
+    "confidenceCalibration": "manual-binary-v1",
+    "identityMatchIouThreshold": 0.5,
+    "identityAnnotationToleranceMs": 17,
+    "maximumObservationIntervalMs": 500,
+    "passMatchToleranceMs": 100,
+    "ambiguityGapCoverageToleranceMs": 0
+  },
   "cases": [
     {
       "contractVersion": "subject-observation.v1",
       "outcome": "accepted",
       "caseId": "race-window-a",
-      "gaps": [{"startTimestampMs": 30700, "endTimestampMs": 369000, "reason": "occluded"}],
+      "gaps": [{"startTimestampMs": 30700, "endTimestampMs": 31200, "reason": "occluded"}],
       "observations": [
         {"timestampMs": 12000, "frameIndex": 360, "box": {"x": 0.830354, "y": 0.3525, "width": 0.032, "height": 0.045}, "center": {"x": 0.846354, "y": 0.375}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
         {"timestampMs": 12500, "frameIndex": 375, "box": {"x": 0.915771, "y": 0.506667, "width": 0.032, "height": 0.045}, "center": {"x": 0.931771, "y": 0.529167}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
@@ -19,7 +38,7 @@
       "contractVersion": "subject-observation.v1",
       "outcome": "accepted",
       "caseId": "race-window-b",
-      "gaps": [{"startTimestampMs": 14000, "endTimestampMs": 371000, "reason": "ambiguous-identity"}],
+      "gaps": [{"startTimestampMs": 14000, "endTimestampMs": 14500, "reason": "ambiguous-identity"}],
       "observations": [
         {"timestampMs": 12500, "frameIndex": 375, "box": {"x": 0.55, "y": 0.5495, "width": 0.036, "height": 0.045}, "center": {"x": 0.568, "y": 0.572}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
         {"timestampMs": 13000, "frameIndex": 390, "box": {"x": 0.8945, "y": 0.7585, "width": 0.036, "height": 0.045}, "center": {"x": 0.9125, "y": 0.781}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
@@ -30,7 +49,10 @@
       "contractVersion": "subject-observation.v1",
       "outcome": "accepted",
       "caseId": "race-window-c",
-      "gaps": [{"startTimestampMs": 21500, "endTimestampMs": 375000, "reason": "ambiguous-identity"}],
+      "gaps": [
+        {"startTimestampMs": 21500, "endTimestampMs": 22000, "reason": "ambiguous-identity"},
+        {"startTimestampMs": 30000, "endTimestampMs": 30500, "reason": "occluded"}
+      ],
       "observations": [
         {"timestampMs": 20000, "frameIndex": 600, "box": {"x": 0.387, "y": 0.244, "width": 0.036, "height": 0.05}, "center": {"x": 0.405, "y": 0.269}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},
         {"timestampMs": 20500, "frameIndex": 615, "box": {"x": 0.442, "y": 0.579, "width": 0.036, "height": 0.05}, "center": {"x": 0.46, "y": 0.604}, "visibility": "visible", "identityConfidence": 1.0, "origin": "detected", "provenance": {"provider": "manual-reference", "model": "frame-review", "modelVersion": "1", "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca", "pipelineVersion": "subject-benchmark.v2", "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705", "identityConfidenceThreshold": 0.9, "confidenceCalibration": "manual-binary-v1"}},

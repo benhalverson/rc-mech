@@ -129,20 +129,8 @@
     }
   ],
   "requiredCoverage": 0.8,
-  "passMatchToleranceMs": 100,
   "frameTimestampToleranceMs": 1,
-  "provenance": {
-    "dockerImageDigest": "fb17b9e13b5411021cd155a177a72eca277943baaa46936276f495678c4eaff5",
-    "pythonLockfileDigest": "7c625d76c7188102f723914670df73d381d285844cff13ac49cfa63970533dff",
-    "ffmpegVersion": "4.4.2-0ubuntu0.22.04.1",
-    "provider": "manual-reference",
-    "model": "frame-review",
-    "modelVersion": "1",
-    "modelDigest": "bc91b5727f403ca4341c05b84419cf4097ca9599b97a8aa4cafdd710b0bf26ca",
-    "pipelineVersion": "subject-benchmark.v2",
-    "configurationDigest": "6b48bb5b12d0f0f1d2e9c42986d013e63fffd25d85b8e0b40f03433f0bc4b705",
-    "identityConfidenceThreshold": 0.9,
-    "confidenceCalibration": "manual-binary-v1",
+  "evaluationPolicy": {
     "identityMatchIouThreshold": 0.5,
     "identityAnnotationToleranceMs": 17,
     "maximumObservationIntervalMs": 500,

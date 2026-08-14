@@ -186,4 +186,3 @@ playwright-report/
 .wrangler/
 
 videos
-/containers/driving-analysis/.private-benchmark/
