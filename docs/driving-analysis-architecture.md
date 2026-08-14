@@ -340,7 +340,7 @@ Accessibility requirements include keyboard-operable start/end marking and box a
 - `wrangler dev` runs the container through local Docker and supports the same outbound-handler shape.
 - `INFERENCE_PROVIDER=local-http` points the Python adapter at the developer's local model; production uses `container-model`. Both must pass the same contract fixtures.
 - Automated tests upload a tiny licensed/synthetic fixture through the multipart API and use fake inference observations plus local R2 doubles. They never contact Workers AI, production D1/R2, or the deployed Worker.
-- A manual benchmark command resolves private benchmark objects, runs the selected provider, and writes a report without committing race recordings to Git.
+- A private candidate-generation operation resolves authorized benchmark objects and runs the selected provider outside the Git worktree. The separate hermetic benchmark command consumes only reviewed manifests, annotations, and stored provider-neutral observations; it never fetches media, invokes a provider, or reads credentials.
 - Record Docker image digest, Python lockfile hash, FFmpeg version, model hash, and pipeline version in every benchmark report.
 
 ## Observability

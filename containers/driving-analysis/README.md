@@ -99,4 +99,34 @@ inconsistent centers, invalid timestamp/frame ordering, and unsafe errors.
 The fixture corpus tests serialization, ordering, geometry, gap classification,
 identity integrity, crossing interpolation, coverage, and timing mechanics
 only. Synthetic fixtures do not qualify an inference provider; representative
-footage qualification remains out of scope here and belongs to #231.
+footage evidence is stored separately under
+`tests/fixtures/subject-benchmark/representative-v1`. Its strict
+`subject-benchmark.v2` manifest records three complete private Race windows,
+permission and framing facts, representative conditions, and manual annotation
+provenance without recording bytes, frames, source names, or private paths.
+
+The representative v2 corpus manifest is provider-neutral: it fixes evaluation
+policy, permissions, framing, and source evidence without pinning one candidate
+provider. Each observation-set envelope carries its own immutable generation
+provenance and digest, then binds those candidate-specific cases to canonical
+manifest and ground-truth digests. The report retains every reviewed Corner pass
+in the denominator and reports initial-seed coverage separately from automatic
+coverage across all User-seeded segments. The first observation after a finite
+Tracking gap must record whether the User reselected by point or box; ordinary
+detections cannot impersonate a reselection, and the reselected observation
+cannot make a Corner pass eligible by itself. Any unflagged identity switch,
+missed known gap, or automatic segment coverage below 80 percent fails
+qualification. The committed manual reference shows 20 percent initial-seed
+coverage, zero switches, all known gaps covered, and 100 percent automatic
+coverage across resumed segments; it validates evidence and mechanics, not a
+production provider.
+
+Private candidate generation and hermetic evaluation are separate operations.
+The generator runs outside the Git worktree, verifies the authorized source
+checksum, processes only the declared Race window and fixed Track view, invokes
+the selected provider under the manifest's local/remote permission, and emits a
+digest-bound `subject-benchmark-observations.v1` JSON artifact. The existing
+`subject-benchmark` command consumes only that JSON plus the manifest and ground
+truth. It never fetches media, invokes a provider, reads a model endpoint, or
+loads credentials. See the representative fixture README for the exact command
+and evidence-handling checklist.

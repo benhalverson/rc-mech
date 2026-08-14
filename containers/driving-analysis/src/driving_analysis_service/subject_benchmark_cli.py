@@ -1,4 +1,4 @@
-"""Command-line entry point for the hermetic synthetic benchmark."""
+"""Command-line entry point for hermetic stored-observation benchmarks."""
 
 # Error text is intentionally short and local; the CLI never exposes details.
 # ruff: noqa: EM101, TRY003
@@ -13,11 +13,19 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
-from driving_analysis_service.benchmark import evaluate_benchmark
+from driving_analysis_service.benchmark import (
+    evaluate_benchmark,
+    evaluate_representative_benchmark,
+)
 from driving_analysis_service.contracts import (
     AcceptedSubjectObservations,
+    BenchmarkObservationSetV2,
+    BenchmarkReport,
     CorpusManifest,
     GroundTruth,
+    RepresentativeBenchmarkReportV2,
+    RepresentativeCorpusManifestV2,
+    RepresentativeGroundTruthV2,
 )
 
 MAX_BENCHMARK_INPUT_BYTES = 16 * 1024 * 1024
@@ -97,6 +105,13 @@ def _observations(value: object) -> dict[str, AcceptedSubjectObservations]:
     return result
 
 
+def _is_representative(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("contractVersion") == "subject-benchmark.v2"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="subject-benchmark")
     parser.add_argument("--manifest", required=True, type=Path)
@@ -105,13 +120,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        manifest = CorpusManifest.model_validate(_read(args.manifest))
-        truth = GroundTruth.model_validate(_read(args.ground_truth))
-        observations = _observations(_read(args.observations))
+        manifest_value = _read(args.manifest)
+        truth_value = _read(args.ground_truth)
+        observations_value = _read(args.observations)
+        representative = _is_representative(manifest_value)
+        report: BenchmarkReport | RepresentativeBenchmarkReportV2
         _reject_output_aliases(
             args.output, (args.manifest, args.ground_truth, args.observations)
         )
-        report = evaluate_benchmark(manifest, truth, observations)
+        if representative:
+            representative_manifest = RepresentativeCorpusManifestV2.model_validate(
+                manifest_value
+            )
+            representative_truth = RepresentativeGroundTruthV2.model_validate(
+                truth_value
+            )
+            observation_set = BenchmarkObservationSetV2.model_validate(
+                observations_value
+            )
+            report = evaluate_representative_benchmark(
+                representative_manifest,
+                representative_truth,
+                observation_set,
+            )
+        else:
+            manifest = CorpusManifest.model_validate(manifest_value)
+            truth = GroundTruth.model_validate(truth_value)
+            observations = _observations(observations_value)
+            report = evaluate_benchmark(manifest, truth, observations)
         _write(
             args.output,
             json.dumps(

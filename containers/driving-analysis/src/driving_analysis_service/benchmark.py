@@ -4,13 +4,19 @@
 # CLI replaces them with the contract's redacted public error.
 # ruff: noqa: EM101, EM102, TRY003, PLR0913
 
+import hashlib
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
+from enum import Enum
 from itertools import pairwise
 from statistics import mean, median
 
 from driving_analysis_service.contracts import (
     AcceptedSubjectObservations,
     BenchmarkCase,
+    BenchmarkEvaluationPolicyV1,
+    BenchmarkEvidenceV2,
+    BenchmarkObservationSetV2,
     BenchmarkProvenance,
     BenchmarkReport,
     CornerGates,
@@ -26,10 +32,14 @@ from driving_analysis_service.contracts import (
     IdentityMetrics,
     NormalizedBox,
     NormalizedPoint,
+    RepresentativeBenchmarkReportV2,
+    RepresentativeCorpusManifestV2,
+    RepresentativeGroundTruthV2,
     SubjectObservation,
     SubjectProvenance,
     TrackingGap,
 )
+from driving_analysis_service.tracking_artifacts import canonical_json
 
 
 @dataclass(frozen=True)
@@ -47,6 +57,11 @@ class CaseResult:
     timely_gaps: int
     missed_gaps: int
     premature_gaps: int
+
+
+class TrackingContinuation(Enum):
+    STOP_AT_FIRST_GAP = "stop-at-first-gap"
+    RESUME_AFTER_GAPS = "resume-after-gaps"
 
 
 def _side(gate: DirectedGate, point: NormalizedPoint) -> float:
@@ -121,6 +136,8 @@ def _crossings(
         if (
             not _is_trusted(first, threshold)
             or not _is_trusted(second, threshold)
+            or first.origin != "detected"
+            or second.origin != "detected"
             or second.timestamp_ms - first.timestamp_ms > maximum_interval_ms
             or overlaps_gap
         ):
@@ -136,12 +153,17 @@ def _candidate_passes(
     gates: CornerGates,
     threshold: float,
     maximum_interval_ms: int,
+    continuation: TrackingContinuation = TrackingContinuation.STOP_AT_FIRST_GAP,
 ) -> tuple[CandidatePass, ...]:
     entries = _crossings(candidate, gates.entry, threshold, maximum_interval_ms)
     exits = _crossings(candidate, gates.exit, threshold, maximum_interval_ms)
     passes: list[CandidatePass] = []
     next_exit = 0
-    coverage_cutoff = candidate.gaps[0].start_timestamp_ms if candidate.gaps else None
+    coverage_cutoff = (
+        candidate.gaps[0].start_timestamp_ms
+        if candidate.gaps and continuation is TrackingContinuation.STOP_AT_FIRST_GAP
+        else None
+    )
     for entry in entries:
         if coverage_cutoff is not None and entry >= coverage_cutoff:
             break
@@ -151,10 +173,9 @@ def _candidate_passes(
             break
         exit_ms = exits[next_exit]
         next_exit += 1
-        if (
-            candidate.gaps
-            and entry <= candidate.gaps[0].end_timestamp_ms
-            and exit_ms >= candidate.gaps[0].start_timestamp_ms
+        if any(
+            entry <= gap.end_timestamp_ms and exit_ms >= gap.start_timestamp_ms
+            for gap in candidate.gaps
         ):
             continue
         passes.append(CandidatePass(entry_ms=entry, exit_ms=exit_ms))
@@ -183,23 +204,37 @@ def _unflagged_switches(
 ) -> int:
     switches = 0
     switch_active = False
-    observation_index = 0
+    observation_timestamps = tuple(item.timestamp_ms for item in candidate.observations)
+    observation_frames = tuple(item.frame_index for item in candidate.observations)
     candidate_gap_index = 0
     truth_gap_index = 0
     for annotation in truth.identity_annotations:
-        while (
-            observation_index + 1 < len(candidate.observations)
-            and candidate.observations[observation_index + 1].timestamp_ms
-            <= annotation.timestamp_ms
-        ):
-            observation_index += 1
+        timestamp_start = bisect_left(
+            observation_timestamps,
+            annotation.timestamp_ms - provenance.identity_annotation_tolerance_ms,
+        )
+        timestamp_end = bisect_right(
+            observation_timestamps,
+            annotation.timestamp_ms + provenance.identity_annotation_tolerance_ms,
+        )
+        rate = recording.average_frame_rate
+        allowed_frame_delta = (
+            provenance.identity_annotation_tolerance_ms
+            + 2 * frame_timestamp_tolerance_ms
+        ) * rate.numerator // (1_000 * rate.denominator) + 1
+        frame_start = bisect_left(
+            observation_frames, annotation.frame_index - allowed_frame_delta
+        )
+        frame_end = bisect_right(
+            observation_frames, annotation.frame_index + allowed_frame_delta
+        )
+        start = max(timestamp_start, frame_start)
+        end = min(timestamp_end, frame_end)
         observation = min(
             (
                 item
-                for item in candidate.observations
-                if abs(item.timestamp_ms - annotation.timestamp_ms)
-                <= provenance.identity_annotation_tolerance_ms
-                and _identity_frame_match(
+                for item in candidate.observations[start:end]
+                if _identity_frame_match(
                     annotation.frame_index,
                     item.frame_index,
                     recording,
@@ -300,6 +335,7 @@ def _gap_counts(
             >= truth.end_timestamp_ms - coverage_tolerance_ms
         ):
             timely += 1
+            candidate_index += 1
     missed = len(truth_gaps) - timely
     premature = 0
     truth_index = 0
@@ -326,6 +362,7 @@ def _case_result(
     tolerance_ms: int,
     recording: CorpusRecording,
     frame_timestamp_tolerance_ms: int,
+    continuation: TrackingContinuation,
 ) -> CaseResult:
     passes_by_corner = {
         corner_id: _candidate_passes(
@@ -333,6 +370,7 @@ def _case_result(
             gates,
             provenance.identity_confidence_threshold,
             provenance.maximum_observation_interval_ms,
+            continuation,
         )
         for corner_id, gates in truth.gates.items()
     }
@@ -450,6 +488,20 @@ def _interval_is_inside(
     )
 
 
+def _validate_seed_evidence(case: BenchmarkCase, truth: GroundTruthCase) -> None:
+    annotation = next(
+        (
+            item
+            for item in truth.identity_annotations
+            if item.timestamp_ms == case.subject_seed.timestamp_ms
+            and item.frame_index == case.subject_seed.frame_index
+        ),
+        None,
+    )
+    if annotation is None or annotation.box != case.subject_seed.box:
+        raise ValueError("subject seed differs from ground truth")
+
+
 def _validate_case_inputs(
     case: BenchmarkCase,
     truth: GroundTruthCase,
@@ -507,6 +559,7 @@ def _validate_case_inputs(
         recording,
         frame_timestamp_tolerance_ms,
     )
+    _validate_seed_evidence(case, truth)
     for item in candidate.observations:
         _validate_frame_reference(
             "observation",
@@ -530,12 +583,13 @@ def _validate_case_inputs(
         raise ValueError("observation provenance differs from benchmark")
 
 
-def evaluate_benchmark(
-    manifest: CorpusManifest,
+def _evaluate_benchmark(
+    manifest: CorpusManifest | RepresentativeCorpusManifestV2,
     ground_truth: GroundTruth,
     observations: dict[str, AcceptedSubjectObservations],
+    provenance: BenchmarkProvenance,
+    continuation: TrackingContinuation,
 ) -> BenchmarkReport:
-    """Evaluate stored observations without invoking inference or external services."""
     if manifest.corpus_id != ground_truth.corpus_id:
         raise ValueError("manifest and ground truth corpus IDs differ")
     truth_by_case = {case.case_id: case for case in ground_truth.cases}
@@ -555,7 +609,7 @@ def evaluate_benchmark(
             case,
             truth,
             candidate,
-            manifest.provenance,
+            provenance,
             recordings[case.recording_id],
             manifest.frame_timestamp_tolerance_ms,
         )
@@ -563,10 +617,11 @@ def evaluate_benchmark(
             _case_result(
                 truth,
                 candidate,
-                manifest.provenance,
-                manifest.pass_match_tolerance_ms,
+                provenance,
+                provenance.pass_match_tolerance_ms,
                 recordings[case.recording_id],
                 manifest.frame_timestamp_tolerance_ms,
+                continuation,
             )
         )
     ground_truth_passes = sum(item.ground_truth_passes for item in results)
@@ -576,13 +631,13 @@ def evaluate_benchmark(
     errors = [error for item in results for error in item.timing_errors]
     coverage = eligible_passes / ground_truth_passes if ground_truth_passes else 0.0
     effective_pass_match_tolerance_ms = min(
-        manifest.pass_match_tolerance_ms,
-        manifest.provenance.maximum_observation_interval_ms,
+        provenance.pass_match_tolerance_ms,
+        provenance.maximum_observation_interval_ms,
     )
     return BenchmarkReport(
         contractVersion="subject-benchmark.v1",
         corpusId=manifest.corpus_id,
-        provenance=manifest.provenance.model_copy(
+        provenance=provenance.model_copy(
             update={
                 "pass_match_tolerance_ms": effective_pass_match_tolerance_ms,
             }
@@ -609,4 +664,135 @@ def evaluate_benchmark(
             medianMs=median(errors) if errors else None,
             maxAbsoluteMs=max((abs(error) for error in errors), default=None),
         ),
+    )
+
+
+def evaluate_benchmark(
+    manifest: CorpusManifest,
+    ground_truth: GroundTruth,
+    observations: dict[str, AcceptedSubjectObservations],
+) -> BenchmarkReport:
+    """Evaluate stored v1 observations without inference or external services."""
+    return _evaluate_benchmark(
+        manifest,
+        ground_truth,
+        observations,
+        manifest.provenance,
+        TrackingContinuation.STOP_AT_FIRST_GAP,
+    )
+
+
+def benchmark_contract_digest(
+    value: RepresentativeCorpusManifestV2
+    | RepresentativeGroundTruthV2
+    | BenchmarkObservationSetV2,
+) -> str:
+    return hashlib.sha256(
+        canonical_json(value.model_dump(by_alias=True, mode="json"))
+    ).hexdigest()
+
+
+def benchmark_generation_digest(observation_set: BenchmarkObservationSetV2) -> str:
+    return hashlib.sha256(
+        canonical_json(
+            {
+                "provenance": observation_set.provenance.model_dump(
+                    by_alias=True, mode="json"
+                ),
+                "cases": [
+                    case.model_dump(by_alias=True, mode="json")
+                    for case in observation_set.cases
+                ],
+            }
+        )
+    ).hexdigest()
+
+
+def _validate_user_reidentification_evidence(
+    candidate: AcceptedSubjectObservations,
+) -> None:
+    for previous, current in pairwise(candidate.observations):
+        resumed_after_gap = any(
+            previous.timestamp_ms < gap.start_timestamp_ms
+            and gap.end_timestamp_ms < current.timestamp_ms
+            for gap in candidate.gaps
+        )
+        if resumed_after_gap and current.origin == "detected":
+            raise ValueError(
+                "representative resumed observations lack user re-identification"
+            )
+
+
+def evaluate_representative_benchmark(
+    manifest: RepresentativeCorpusManifestV2,
+    ground_truth: RepresentativeGroundTruthV2,
+    observation_set: BenchmarkObservationSetV2,
+) -> RepresentativeBenchmarkReportV2:
+    """Evaluate a digest-bound representative corpus from stored observations."""
+    manifest_digest = benchmark_contract_digest(manifest)
+    ground_truth_digest = benchmark_contract_digest(ground_truth)
+    if (
+        observation_set.corpus_id != manifest.corpus_id
+        or observation_set.manifest_digest != manifest_digest
+        or observation_set.ground_truth_digest != ground_truth_digest
+        or observation_set.generation_digest
+        != benchmark_generation_digest(observation_set)
+    ):
+        raise ValueError("representative observation evidence differs")
+    if (
+        BenchmarkEvaluationPolicyV1.from_provenance(observation_set.provenance)
+        != manifest.evaluation_policy
+    ):
+        raise ValueError("candidate evaluation policy differs from benchmark")
+    recordings = {
+        recording.recording_id: recording for recording in manifest.recordings
+    }
+    manifest_cases = {case.case_id: case for case in manifest.cases}
+    for truth in ground_truth.cases:
+        case = manifest_cases.get(truth.case_id)
+        if case is None:
+            continue
+        recording = recordings[case.recording_id]
+        if (
+            truth.annotation_provenance.source_checksum_sha256
+            != recording.checksum_sha256
+        ):
+            raise ValueError("annotation source checksum differs")
+        reasons = {span.reason for span in truth.ambiguous_spans}
+        challenges = set(case.representative_facts.identity_challenges)
+        if ("occlusion" in challenges and "occluded" not in reasons) or (
+            "identity-ambiguity" in challenges and "ambiguous-identity" not in reasons
+        ):
+            raise ValueError("representative challenge evidence differs")
+    observations = {case.case_id: case for case in observation_set.cases}
+    for candidate in observations.values():
+        _validate_user_reidentification_evidence(candidate)
+    pre_reidentification_report = _evaluate_benchmark(
+        manifest,
+        ground_truth,
+        observations,
+        observation_set.provenance,
+        TrackingContinuation.STOP_AT_FIRST_GAP,
+    )
+    resumed_report = _evaluate_benchmark(
+        manifest,
+        ground_truth,
+        observations,
+        observation_set.provenance,
+        TrackingContinuation.RESUME_AFTER_GAPS,
+    )
+    return RepresentativeBenchmarkReportV2.model_validate(
+        {
+            **resumed_report.model_dump(by_alias=True, mode="json"),
+            "contractVersion": "subject-benchmark.v2",
+            "initialSeedCoverage": pre_reidentification_report.coverage.model_dump(
+                by_alias=True, mode="json"
+            ),
+            "evidence": BenchmarkEvidenceV2(
+                manifestDigest=manifest_digest,
+                groundTruthDigest=ground_truth_digest,
+                observationsDigest=benchmark_contract_digest(observation_set),
+                generationDigest=observation_set.generation_digest,
+            ).model_dump(by_alias=True),
+        }
     )

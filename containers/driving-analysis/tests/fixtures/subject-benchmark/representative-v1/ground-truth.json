@@ -1,0 +1,1073 @@
+{
+  "contractVersion": "subject-benchmark.v2",
+  "corpusId": "representative-private-races.v1",
+  "cases": [
+    {
+      "caseId": "race-window-a",
+      "subjectIdentity": "subject-a",
+      "ambiguousSpans": [
+        {
+          "startTimestampMs": 30700,
+          "endTimestampMs": 31200,
+          "reason": "occluded"
+        },
+        {
+          "startTimestampMs": 31201,
+          "endTimestampMs": 369000,
+          "reason": "missing"
+        }
+      ],
+      "identityAnnotations": [
+        {
+          "timestampMs": 12000,
+          "frameIndex": 360,
+          "box": {
+            "x": 0.830354,
+            "y": 0.3525,
+            "width": 0.032,
+            "height": 0.045
+          }
+        },
+        {
+          "timestampMs": 12500,
+          "frameIndex": 375,
+          "box": {
+            "x": 0.915771,
+            "y": 0.506667,
+            "width": 0.032,
+            "height": 0.045
+          }
+        },
+        {
+          "timestampMs": 13000,
+          "frameIndex": 390,
+          "box": {
+            "x": 0.963688,
+            "y": 0.701111,
+            "width": 0.032,
+            "height": 0.045
+          }
+        }
+      ],
+      "gates": {
+        "lower-right": {
+          "entry": {
+            "entry": {
+              "x": 0.9,
+              "y": 0.3
+            },
+            "exit": {
+              "x": 0.9,
+              "y": 0.65
+            },
+            "direction": "negative"
+          },
+          "exit": {
+            "entry": {
+              "x": 0.9,
+              "y": 0.65
+            },
+            "exit": {
+              "x": 0.995,
+              "y": 0.65
+            },
+            "direction": "positive"
+          }
+        }
+      },
+      "passes": [
+        {
+          "passId": "a-pass-1",
+          "cornerId": "lower-right",
+          "entryTimestampMs": 12300,
+          "exitTimestampMs": 12800
+        }
+      ],
+      "annotationProvenance": {
+        "annotationVersion": "representative-private-races.v1",
+        "guidelineVersion": "manual-frame-review.v1",
+        "sourceChecksumSha256": "84782c11a7c921d7e39ace37eb7260c8e85457936ac29b5ed561b342f1f9d203",
+        "method": "manual-frame-review",
+        "coordinateSpace": "normalized-track-view.v1",
+        "timestampConvention": "absolute-source-milliseconds",
+        "frameIndexConvention": "zero-based-decoded-frame",
+        "tool": "ffmpeg-frame-review",
+        "toolVersion": "4.4.2",
+        "reviewerCount": 1,
+        "adjudication": "single-reviewer"
+      }
+    },
+    {
+      "caseId": "race-window-b",
+      "subjectIdentity": "subject-b",
+      "ambiguousSpans": [
+        {
+          "startTimestampMs": 20001,
+          "endTimestampMs": 20500,
+          "reason": "ambiguous-identity"
+        },
+        {
+          "startTimestampMs": 20501,
+          "endTimestampMs": 30599,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 34801,
+          "endTimestampMs": 40399,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 44601,
+          "endTimestampMs": 76799,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 78401,
+          "endTimestampMs": 92399,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 96801,
+          "endTimestampMs": 122599,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 126601,
+          "endTimestampMs": 136799,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 140801,
+          "endTimestampMs": 224599,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 229001,
+          "endTimestampMs": 234999,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 236601,
+          "endTimestampMs": 245599,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 249801,
+          "endTimestampMs": 258799,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 263401,
+          "endTimestampMs": 371000,
+          "reason": "missing"
+        }
+      ],
+      "identityAnnotations": [
+        {
+          "timestampMs": 11000,
+          "frameIndex": 330,
+          "box": {
+            "x": 0.625,
+            "y": 0.180556,
+            "width": 0.046875,
+            "height": 0.066667
+          }
+        },
+        {
+          "timestampMs": 16400,
+          "frameIndex": 492,
+          "box": {
+            "x": 0.360417,
+            "y": 0.275,
+            "width": 0.013542,
+            "height": 0.016667
+          }
+        },
+        {
+          "timestampMs": 16600,
+          "frameIndex": 498,
+          "box": {
+            "x": 0.329167,
+            "y": 0.3,
+            "width": 0.015625,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 19800,
+          "frameIndex": 594,
+          "box": {
+            "x": 0.136458,
+            "y": 0.5,
+            "width": 0.016667,
+            "height": 0.044444
+          }
+        },
+        {
+          "timestampMs": 20000,
+          "frameIndex": 600,
+          "box": {
+            "x": 0.147917,
+            "y": 0.430556,
+            "width": 0.019792,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 30600,
+          "frameIndex": 918,
+          "box": {
+            "x": 0.448958,
+            "y": 0.280556,
+            "width": 0.015625,
+            "height": 0.022222
+          }
+        },
+        {
+          "timestampMs": 31000,
+          "frameIndex": 930,
+          "box": {
+            "x": 0.361458,
+            "y": 0.277778,
+            "width": 0.013542,
+            "height": 0.019444
+          }
+        },
+        {
+          "timestampMs": 31200,
+          "frameIndex": 936,
+          "box": {
+            "x": 0.319792,
+            "y": 0.3,
+            "width": 0.016667,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 34600,
+          "frameIndex": 1038,
+          "box": {
+            "x": 0.1375,
+            "y": 0.461111,
+            "width": 0.015625,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 34800,
+          "frameIndex": 1044,
+          "box": {
+            "x": 0.159375,
+            "y": 0.394444,
+            "width": 0.015625,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 40400,
+          "frameIndex": 1212,
+          "box": {
+            "x": 0.420833,
+            "y": 0.272222,
+            "width": 0.013542,
+            "height": 0.019444
+          }
+        },
+        {
+          "timestampMs": 40800,
+          "frameIndex": 1224,
+          "box": {
+            "x": 0.3625,
+            "y": 0.263889,
+            "width": 0.014583,
+            "height": 0.016667
+          }
+        },
+        {
+          "timestampMs": 41000,
+          "frameIndex": 1230,
+          "box": {
+            "x": 0.333333,
+            "y": 0.280556,
+            "width": 0.013542,
+            "height": 0.022222
+          }
+        },
+        {
+          "timestampMs": 44400,
+          "frameIndex": 1332,
+          "box": {
+            "x": 0.127083,
+            "y": 0.469444,
+            "width": 0.015625,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 44600,
+          "frameIndex": 1338,
+          "box": {
+            "x": 0.145833,
+            "y": 0.388889,
+            "width": 0.016667,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 76800,
+          "frameIndex": 2304,
+          "box": {
+            "x": 0.232292,
+            "y": 0.208333,
+            "width": 0.005208,
+            "height": 0.008333
+          }
+        },
+        {
+          "timestampMs": 77200,
+          "frameIndex": 2316,
+          "box": {
+            "x": 0.345833,
+            "y": 0.272222,
+            "width": 0.019792,
+            "height": 0.019444
+          }
+        },
+        {
+          "timestampMs": 77400,
+          "frameIndex": 2322,
+          "box": {
+            "x": 0.294792,
+            "y": 0.294444,
+            "width": 0.016667,
+            "height": 0.041667
+          }
+        },
+        {
+          "timestampMs": 78200,
+          "frameIndex": 2346,
+          "box": {
+            "x": 0.270833,
+            "y": 0.455556,
+            "width": 0.025,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 78400,
+          "frameIndex": 2352,
+          "box": {
+            "x": 0.295833,
+            "y": 0.338889,
+            "width": 0.015625,
+            "height": 0.025
+          }
+        },
+        {
+          "timestampMs": 92400,
+          "frameIndex": 2772,
+          "box": {
+            "x": 0.517708,
+            "y": 0.263889,
+            "width": 0.015625,
+            "height": 0.019444
+          }
+        },
+        {
+          "timestampMs": 92800,
+          "frameIndex": 2784,
+          "box": {
+            "x": 0.440625,
+            "y": 0.247222,
+            "width": 0.015625,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 93000,
+          "frameIndex": 2790,
+          "box": {
+            "x": 0.322917,
+            "y": 0.302778,
+            "width": 0.015625,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 96600,
+          "frameIndex": 2898,
+          "box": {
+            "x": 0.120833,
+            "y": 0.477778,
+            "width": 0.0125,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 96800,
+          "frameIndex": 2904,
+          "box": {
+            "x": 0.127083,
+            "y": 0.408333,
+            "width": 0.015625,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 122600,
+          "frameIndex": 3678,
+          "box": {
+            "x": 0.433333,
+            "y": 0.25,
+            "width": 0.014583,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 123000,
+          "frameIndex": 3690,
+          "box": {
+            "x": 0.355208,
+            "y": 0.269444,
+            "width": 0.015625,
+            "height": 0.025
+          }
+        },
+        {
+          "timestampMs": 123200,
+          "frameIndex": 3696,
+          "box": {
+            "x": 0.314583,
+            "y": 0.294444,
+            "width": 0.016667,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 126400,
+          "frameIndex": 3792,
+          "box": {
+            "x": 0.129167,
+            "y": 0.494444,
+            "width": 0.015625,
+            "height": 0.041667
+          }
+        },
+        {
+          "timestampMs": 126600,
+          "frameIndex": 3798,
+          "box": {
+            "x": 0.141667,
+            "y": 0.411111,
+            "width": 0.017708,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 136800,
+          "frameIndex": 4104,
+          "box": {
+            "x": 0.434375,
+            "y": 0.233333,
+            "width": 0.017708,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 137200,
+          "frameIndex": 4116,
+          "box": {
+            "x": 0.361458,
+            "y": 0.263889,
+            "width": 0.013542,
+            "height": 0.019444
+          }
+        },
+        {
+          "timestampMs": 137400,
+          "frameIndex": 4122,
+          "box": {
+            "x": 0.329167,
+            "y": 0.275,
+            "width": 0.014583,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 140600,
+          "frameIndex": 4218,
+          "box": {
+            "x": 0.145833,
+            "y": 0.5,
+            "width": 0.015625,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 140800,
+          "frameIndex": 4224,
+          "box": {
+            "x": 0.1375,
+            "y": 0.422222,
+            "width": 0.014583,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 224600,
+          "frameIndex": 6738,
+          "box": {
+            "x": 0.434375,
+            "y": 0.291667,
+            "width": 0.017708,
+            "height": 0.016667
+          }
+        },
+        {
+          "timestampMs": 225000,
+          "frameIndex": 6750,
+          "box": {
+            "x": 0.363542,
+            "y": 0.269444,
+            "width": 0.016667,
+            "height": 0.019444
+          }
+        },
+        {
+          "timestampMs": 225200,
+          "frameIndex": 6756,
+          "box": {
+            "x": 0.335417,
+            "y": 0.261111,
+            "width": 0.013542,
+            "height": 0.025
+          }
+        },
+        {
+          "timestampMs": 228800,
+          "frameIndex": 6864,
+          "box": {
+            "x": 0.153125,
+            "y": 0.447222,
+            "width": 0.016667,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 229000,
+          "frameIndex": 6870,
+          "box": {
+            "x": 0.160417,
+            "y": 0.375,
+            "width": 0.015625,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 235000,
+          "frameIndex": 7050,
+          "box": {
+            "x": 0.432292,
+            "y": 0.233333,
+            "width": 0.014583,
+            "height": 0.016667
+          }
+        },
+        {
+          "timestampMs": 235400,
+          "frameIndex": 7062,
+          "box": {
+            "x": 0.3625,
+            "y": 0.263889,
+            "width": 0.0125,
+            "height": 0.022222
+          }
+        },
+        {
+          "timestampMs": 235600,
+          "frameIndex": 7068,
+          "box": {
+            "x": 0.33125,
+            "y": 0.286111,
+            "width": 0.015625,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 236400,
+          "frameIndex": 7092,
+          "box": {
+            "x": 0.308333,
+            "y": 0.452778,
+            "width": 0.025,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 236600,
+          "frameIndex": 7098,
+          "box": {
+            "x": 0.36875,
+            "y": 0.427778,
+            "width": 0.026042,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 245600,
+          "frameIndex": 7368,
+          "box": {
+            "x": 0.463542,
+            "y": 0.25,
+            "width": 0.016667,
+            "height": 0.025
+          }
+        },
+        {
+          "timestampMs": 246000,
+          "frameIndex": 7380,
+          "box": {
+            "x": 0.376042,
+            "y": 0.280556,
+            "width": 0.014583,
+            "height": 0.022222
+          }
+        },
+        {
+          "timestampMs": 246200,
+          "frameIndex": 7386,
+          "box": {
+            "x": 0.326042,
+            "y": 0.288889,
+            "width": 0.015625,
+            "height": 0.030556
+          }
+        },
+        {
+          "timestampMs": 249600,
+          "frameIndex": 7488,
+          "box": {
+            "x": 0.134375,
+            "y": 0.463889,
+            "width": 0.017708,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 249800,
+          "frameIndex": 7494,
+          "box": {
+            "x": 0.151042,
+            "y": 0.391667,
+            "width": 0.017708,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 258800,
+          "frameIndex": 7764,
+          "box": {
+            "x": 0.421875,
+            "y": 0.244444,
+            "width": 0.013542,
+            "height": 0.022222
+          }
+        },
+        {
+          "timestampMs": 259200,
+          "frameIndex": 7776,
+          "box": {
+            "x": 0.347917,
+            "y": 0.255556,
+            "width": 0.016667,
+            "height": 0.025
+          }
+        },
+        {
+          "timestampMs": 259400,
+          "frameIndex": 7782,
+          "box": {
+            "x": 0.316667,
+            "y": 0.280556,
+            "width": 0.014583,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 263200,
+          "frameIndex": 7896,
+          "box": {
+            "x": 0.138542,
+            "y": 0.45,
+            "width": 0.014583,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 263400,
+          "frameIndex": 7902,
+          "box": {
+            "x": 0.153125,
+            "y": 0.375,
+            "width": 0.016667,
+            "height": 0.027778
+          }
+        }
+      ],
+      "gates": {
+        "left-sweeper": {
+          "entry": {
+            "entry": {
+              "x": 0.35,
+              "y": 0.15
+            },
+            "exit": {
+              "x": 0.35,
+              "y": 0.7
+            },
+            "direction": "positive"
+          },
+          "exit": {
+            "entry": {
+              "x": 0.1,
+              "y": 0.45
+            },
+            "exit": {
+              "x": 0.4,
+              "y": 0.45
+            },
+            "direction": "negative"
+          }
+        }
+      },
+      "passes": [
+        {
+          "passId": "b-pass-1",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 16514,
+          "exitTimestampMs": 19993
+        },
+        {
+          "passId": "b-pass-2",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 31091,
+          "exitTimestampMs": 34684
+        },
+        {
+          "passId": "b-pass-3",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 40933,
+          "exitTimestampMs": 44489
+        },
+        {
+          "passId": "b-pass-4",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 77222,
+          "exitTimestampMs": 78233
+        },
+        {
+          "passId": "b-pass-5",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 92967,
+          "exitTimestampMs": 96725
+        },
+        {
+          "passId": "b-pass-6",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 123065,
+          "exitTimestampMs": 126545
+        },
+        {
+          "passId": "b-pass-7",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 137315,
+          "exitTimestampMs": 140768
+        },
+        {
+          "passId": "b-pass-8",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 225147,
+          "exitTimestampMs": 228841
+        },
+        {
+          "passId": "b-pass-9",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 235526,
+          "exitTimestampMs": 236556
+        },
+        {
+          "passId": "b-pass-10",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 246135,
+          "exitTimestampMs": 249684
+        },
+        {
+          "passId": "b-pass-11",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 259239,
+          "exitTimestampMs": 263243
+        }
+      ],
+      "annotationProvenance": {
+        "annotationVersion": "representative-private-races.v2",
+        "guidelineVersion": "manual-frame-review.v2",
+        "sourceChecksumSha256": "3287ece4e47287896d94dab17f699eb74a8b004ca061da8c5d089fce819d64c0",
+        "method": "manual-frame-review",
+        "coordinateSpace": "normalized-track-view.v1",
+        "timestampConvention": "absolute-source-milliseconds",
+        "frameIndexConvention": "zero-based-decoded-frame",
+        "tool": "opencv-contact-sheet-review",
+        "toolVersion": "4.12.0.88",
+        "reviewerCount": 1,
+        "adjudication": "single-reviewer"
+      }
+    },
+    {
+      "caseId": "race-window-c",
+      "subjectIdentity": "subject-c",
+      "ambiguousSpans": [
+        {
+          "startTimestampMs": 25201,
+          "endTimestampMs": 26000,
+          "reason": "ambiguous-identity"
+        },
+        {
+          "startTimestampMs": 26001,
+          "endTimestampMs": 29999,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 30000,
+          "endTimestampMs": 30500,
+          "reason": "occluded"
+        },
+        {
+          "startTimestampMs": 30501,
+          "endTimestampMs": 287199,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 291201,
+          "endTimestampMs": 358799,
+          "reason": "missing"
+        },
+        {
+          "startTimestampMs": 360401,
+          "endTimestampMs": 375000,
+          "reason": "missing"
+        }
+      ],
+      "identityAnnotations": [
+        {
+          "timestampMs": 20000,
+          "frameIndex": 600,
+          "box": {
+            "x": 0.383333,
+            "y": 0.233333,
+            "width": 0.04375,
+            "height": 0.097222
+          }
+        },
+        {
+          "timestampMs": 20600,
+          "frameIndex": 618,
+          "box": {
+            "x": 0.373958,
+            "y": 0.227778,
+            "width": 0.059375,
+            "height": 0.080556
+          }
+        },
+        {
+          "timestampMs": 20800,
+          "frameIndex": 624,
+          "box": {
+            "x": 0.282292,
+            "y": 0.366667,
+            "width": 0.017708,
+            "height": 0.036111
+          }
+        },
+        {
+          "timestampMs": 25000,
+          "frameIndex": 750,
+          "box": {
+            "x": 0.146875,
+            "y": 0.469444,
+            "width": 0.015625,
+            "height": 0.038889
+          }
+        },
+        {
+          "timestampMs": 25200,
+          "frameIndex": 756,
+          "box": {
+            "x": 0.158333,
+            "y": 0.4,
+            "width": 0.015625,
+            "height": 0.025
+          }
+        },
+        {
+          "timestampMs": 287200,
+          "frameIndex": 8616,
+          "box": {
+            "x": 0.189583,
+            "y": 0.508333,
+            "width": 0.021875,
+            "height": 0.025
+          }
+        },
+        {
+          "timestampMs": 287600,
+          "frameIndex": 8628,
+          "box": {
+            "x": 0.347917,
+            "y": 0.430556,
+            "width": 0.026042,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 287800,
+          "frameIndex": 8634,
+          "box": {
+            "x": 0.320833,
+            "y": 0.247222,
+            "width": 0.021875,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 291000,
+          "frameIndex": 8730,
+          "box": {
+            "x": 0.140625,
+            "y": 0.461111,
+            "width": 0.014583,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 291200,
+          "frameIndex": 8736,
+          "box": {
+            "x": 0.160417,
+            "y": 0.380556,
+            "width": 0.017708,
+            "height": 0.027778
+          }
+        },
+        {
+          "timestampMs": 358800,
+          "frameIndex": 10764,
+          "box": {
+            "x": 0.548958,
+            "y": 0.633333,
+            "width": 0.027083,
+            "height": 0.066667
+          }
+        },
+        {
+          "timestampMs": 359200,
+          "frameIndex": 10776,
+          "box": {
+            "x": 0.369792,
+            "y": 0.65,
+            "width": 0.032292,
+            "height": 0.05
+          }
+        },
+        {
+          "timestampMs": 359400,
+          "frameIndex": 10782,
+          "box": {
+            "x": 0.279167,
+            "y": 0.544444,
+            "width": 0.026042,
+            "height": 0.047222
+          }
+        },
+        {
+          "timestampMs": 360200,
+          "frameIndex": 10806,
+          "box": {
+            "x": 0.138542,
+            "y": 0.447222,
+            "width": 0.017708,
+            "height": 0.033333
+          }
+        },
+        {
+          "timestampMs": 360400,
+          "frameIndex": 10812,
+          "box": {
+            "x": 0.159375,
+            "y": 0.366667,
+            "width": 0.019792,
+            "height": 0.027778
+          }
+        }
+      ],
+      "gates": {
+        "left-sweeper": {
+          "entry": {
+            "entry": {
+              "x": 0.35,
+              "y": 0.15
+            },
+            "exit": {
+              "x": 0.35,
+              "y": 0.7
+            },
+            "direction": "positive"
+          },
+          "exit": {
+            "entry": {
+              "x": 0.1,
+              "y": 0.45
+            },
+            "exit": {
+              "x": 0.4,
+              "y": 0.45
+            },
+            "direction": "negative"
+          }
+        }
+      },
+      "passes": [
+        {
+          "passId": "c-pass-1",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 20695,
+          "exitTimestampMs": 25102
+        },
+        {
+          "passId": "c-pass-2",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 287675,
+          "exitTimestampMs": 291067
+        },
+        {
+          "passId": "c-pass-3",
+          "cornerId": "left-sweeper",
+          "entryTimestampMs": 359277,
+          "exitTimestampMs": 360233
+        }
+      ],
+      "annotationProvenance": {
+        "annotationVersion": "representative-private-races.v2",
+        "guidelineVersion": "manual-frame-review.v2",
+        "sourceChecksumSha256": "0c410c137eddff0fd72c812a0726600324c69ecfe58ed3bc7c96e6e2483bbd33",
+        "method": "manual-frame-review",
+        "coordinateSpace": "normalized-track-view.v1",
+        "timestampConvention": "absolute-source-milliseconds",
+        "frameIndexConvention": "zero-based-decoded-frame",
+        "tool": "opencv-contact-sheet-review",
+        "toolVersion": "4.12.0.88",
+        "reviewerCount": 1,
+        "adjudication": "single-reviewer"
+      }
+    }
+  ]
+}
