@@ -10,7 +10,7 @@ export default defineConfig({
 	test: {
 		include: ['src/driving-analysis/gpu-lease-coordinator.test.ts'],
 		coverage: {
-			provider: 'istanbul',
+			provider: 'v8',
 			include: ['src/driving-analysis/gpu-lease-coordinator.ts'],
 			thresholds: {
 				statements: 80,
