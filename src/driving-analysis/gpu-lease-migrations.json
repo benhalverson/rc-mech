@@ -1,0 +1,8 @@
+{
+	"journal": {
+		"entries": [{ "idx": 0, "when": 1786732800000, "tag": "0000_gpu_lease_coordinator", "breakpoints": true }]
+	},
+	"migrations": {
+		"m0000": "CREATE TABLE IF NOT EXISTS gpu_waiters (segment_id TEXT PRIMARY KEY, deadline_at INTEGER NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL UNIQUE);--> statement-breakpoint\nCREATE INDEX IF NOT EXISTS gpu_waiters_fifo ON gpu_waiters (ordinal);--> statement-breakpoint\nCREATE TABLE IF NOT EXISTS gpu_lease (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), segment_id TEXT NOT NULL, lease_id TEXT NOT NULL UNIQUE, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL, hold_expires_at INTEGER, deadline_at INTEGER NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL, hold_id TEXT);--> statement-breakpoint\nCREATE TABLE IF NOT EXISTS gpu_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);--> statement-breakpoint\nCREATE TABLE IF NOT EXISTS gpu_terminal (segment_id TEXT PRIMARY KEY, reason TEXT NOT NULL);--> statement-breakpoint\nINSERT OR IGNORE INTO gpu_meta (key, value) VALUES ('next_ordinal', 0), ('fence', 0);"
+	}
+}

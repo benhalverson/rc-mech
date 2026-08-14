@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
 	GPU_COMMIT_HOLD_DURATION_MS,
 	GPU_LEASE_DURATION_MS,
+	GPU_LEASE_COORDINATOR_STORAGE_KEY,
 	getGpuLeaseCoordinator,
+	type PersistedGpuLeaseState,
 } from './gpu-lease-coordinator';
 
-const now = Date.now();
+// Leave room for the local Workers runtime to boot before short test deadlines expire.
+const now = Date.now() + 5 * 60_000;
 const deadlineAt = now + 86_000_000;
 
 const coordinator = () => getGpuLeaseCoordinator(env);
@@ -15,9 +18,7 @@ const coordinator = () => getGpuLeaseCoordinator(env);
 beforeEach(async () => {
 	try {
 		await runInDurableObject(coordinator(), (_instance, state) =>
-			state.storage.sql.exec(
-				'DELETE FROM gpu_waiters; DELETE FROM gpu_lease; DELETE FROM gpu_terminal; UPDATE gpu_meta SET value = 0;',
-			),
+			state.storage.deleteAll(),
 		);
 	} catch {
 		// The fixed object is not running before the first test.
@@ -262,9 +263,22 @@ describe('GpuLeaseCoordinator', () => {
 			}),
 		).toEqual({ status: 'cancelled' });
 		await runInDurableObject(stub, async (_instance, state) => {
-			state.storage.sql.exec(
-				"INSERT INTO gpu_waiters (segment_id, deadline_at, kind, ordinal) VALUES ('expired', ?, 'initial', 1)",
-				now - 1,
+			await state.storage.put<PersistedGpuLeaseState>(
+				GPU_LEASE_COORDINATOR_STORAGE_KEY,
+				{
+					nextOrdinal: 1,
+					fence: 0,
+					waiters: [
+						{
+							segmentId: 'expired',
+							deadlineAt: now - 1,
+							kind: 'initial',
+							ordinal: 1,
+						},
+					],
+					activeLease: null,
+					terminal: {},
+				},
 			);
 		});
 		expect(await stub.acquire({ now })).toEqual({ status: 'empty' });
@@ -273,9 +287,22 @@ describe('GpuLeaseCoordinator', () => {
 	test('alarm expires persisted waiters', async () => {
 		const stub = coordinator();
 		await runInDurableObject(stub, async (_instance, state) => {
-			state.storage.sql.exec(
-				"INSERT INTO gpu_waiters (segment_id, deadline_at, kind, ordinal) VALUES ('expired', ?, 'initial', 1)",
-				now - 1,
+			await state.storage.put<PersistedGpuLeaseState>(
+				GPU_LEASE_COORDINATOR_STORAGE_KEY,
+				{
+					nextOrdinal: 1,
+					fence: 0,
+					waiters: [
+						{
+							segmentId: 'expired',
+							deadlineAt: now - 1,
+							kind: 'initial',
+							ordinal: 1,
+						},
+					],
+					activeLease: null,
+					terminal: {},
+				},
 			);
 		});
 		await runInDurableObject(stub, async (instance) => instance.alarm?.());
@@ -302,14 +329,21 @@ describe('GpuLeaseCoordinator', () => {
 		const stub = coordinator();
 		await stub.enqueue({ segmentId: 'seed', deadlineAt, kind: 'initial' });
 		await runInDurableObject(stub, async (_instance, state) => {
-			for (let index = 1; index < 10_000; index += 1) {
-				state.storage.sql.exec(
-					"INSERT INTO gpu_waiters (segment_id, deadline_at, kind, ordinal) VALUES (?, ?, 'initial', ?)",
-					`seed-${index}`,
-					deadlineAt,
-					index + 1,
-				);
-			}
+			await state.storage.put<PersistedGpuLeaseState>(
+				GPU_LEASE_COORDINATOR_STORAGE_KEY,
+				{
+					nextOrdinal: 10_000,
+					fence: 0,
+					waiters: Array.from({ length: 10_000 }, (_, index) => ({
+						segmentId: index === 0 ? 'seed' : `seed-${index}`,
+						deadlineAt,
+						kind: 'initial' as const,
+						ordinal: index + 1,
+					})),
+					activeLease: null,
+					terminal: {},
+				},
+			);
 		});
 		const rejected = await runInDurableObject(stub, async (instance) => {
 			try {

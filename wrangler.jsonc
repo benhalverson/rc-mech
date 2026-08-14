@@ -40,7 +40,7 @@
 	"migrations": [
 		{
 			"tag": "v1-gpu-lease-coordinator",
-			"new_sqlite_classes": ["GpuLeaseCoordinator"]
+			"new_classes": ["GpuLeaseCoordinator"]
 		}
 	],
 	"vars": { "ENVIRONMENT": "production" },
@@ -70,7 +70,7 @@
 			"migrations": [
 				{
 					"tag": "v1-gpu-lease-coordinator",
-					"new_sqlite_classes": ["GpuLeaseCoordinator"]
+					"new_classes": ["GpuLeaseCoordinator"]
 				}
 			],
 			"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }
