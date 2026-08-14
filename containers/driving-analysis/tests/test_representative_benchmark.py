@@ -79,7 +79,11 @@ def test_representative_fixture_is_safe_complete_and_deterministic(
     )
     assert report.passed
     assert report.identity.unflagged_switches == 0
-    assert report.coverage.ratio >= 0.8
+    assert report.coverage.eligible_passes == 15
+    assert report.coverage.ground_truth_passes == 15
+    assert report.coverage.ratio == 1.0
+    assert report.initial_seed_coverage.eligible_passes == 3
+    assert report.initial_seed_coverage.ratio == 0.2
     assert report.model_dump_json() != ""
     assert report.evidence.manifest_digest == observations.manifest_digest
     assert report.evidence.ground_truth_digest == observations.ground_truth_digest
@@ -116,9 +120,66 @@ def test_representative_fixture_is_safe_complete_and_deterministic(
             content,
         )
         assert not re.search(r"(?i)\.(?:mov|mp4|mkv|avi|webm)(?:\b|\")", content)
+        assert not re.search(r"(?i)\bmain\d+\b", content)
         assert not re.search(
             r"(?i)\b(?:api[_-]?key|access[_-]?token|authorization|bearer|password|secret)\b\s*[:=]",
             content,
+        )
+
+
+def test_representative_fixture_contains_reviewed_case_reselections() -> None:
+    manifest, truth, observations = corpus()
+    manifest_cases = {case.case_id: case for case in manifest.cases}
+    truth_cases = {case.case_id: case for case in truth.cases}
+    observation_cases = {case.case_id: case for case in observations.cases}
+
+    case_b = manifest_cases["race-window-b"]
+    assert case_b.subject_seed.timestamp_ms == 11_000
+    assert case_b.subject_seed.frame_index == 330
+    assert case_b.subject_seed.box.model_dump() == {
+        "x": 0.625,
+        "y": 0.180556,
+        "width": 0.046875,
+        "height": 0.066667,
+    }
+
+    case_c = manifest_cases["race-window-c"]
+    assert case_c.subject_seed.timestamp_ms == 20_000
+    assert case_c.subject_seed.frame_index == 600
+    assert case_c.subject_seed.box.model_dump() == {
+        "x": 0.383333,
+        "y": 0.233333,
+        "width": 0.04375,
+        "height": 0.097222,
+    }
+
+    expected_depth = {
+        "race-window-b": (40, 10, 240_000),
+        "race-window-c": (12, 3, 330_000),
+    }
+    for case_id, (
+        annotation_count,
+        pass_count,
+        reviewed_span_ms,
+    ) in expected_depth.items():
+        case_truth = truth_cases[case_id]
+        case_observations = observation_cases[case_id]
+
+        assert len(case_truth.identity_annotations) >= annotation_count
+        assert len(case_truth.passes) >= pass_count
+        assert (
+            case_truth.identity_annotations[-1].timestamp_ms
+            - case_truth.identity_annotations[0].timestamp_ms
+            >= reviewed_span_ms
+        )
+        assert "missing" in {gap.reason for gap in case_truth.ambiguous_spans}
+        assert case_observations.gaps == case_truth.ambiguous_spans
+        assert len(case_observations.observations) == len(
+            case_truth.identity_annotations
+        )
+        assert any(
+            item.origin == "user-reidentified-box"
+            for item in case_observations.observations
         )
 
 
@@ -156,6 +217,153 @@ def test_representative_contract_rejects_incomplete_metadata() -> None:
     raw["frameTimestampToleranceMs"] = 17
     with pytest.raises(ValidationError, match="half a frame"):
         RepresentativeCorpusManifestV2.model_validate(raw)
+
+    for endpoint in (
+        "private-model.internal:11434",
+        "localhost",
+        "2130706433",
+        "0x7f000001",
+        "modelserver:11434",
+        "[::1]:11434",
+        "127.0.0.1",
+        "private-model.internal",
+        "127.1",
+        "0177.0.0.1",
+        "localhost.",
+        "private-model.internal.",
+        "127。0。0。1",
+        "localhost ",
+    ):
+        raw = observations.model_dump(by_alias=True, mode="json")
+        raw["provenance"]["provider"] = endpoint
+        with pytest.raises(ValidationError, match="provider identifier"):
+            BenchmarkObservationSetV2.model_validate(raw)
+
+    for endpoint in (
+        "private-model.internal:11434",
+        "localhost",
+        "2130706433",
+        "0x7f000001",
+        "modelserver:11434",
+        "[::1]:11434",
+        "127.0.0.1",
+        "private-model.internal",
+        "127.1",
+        "0177.0.0.1",
+        "localhost.",
+        "private-model.internal.",
+        "127。0。0。1",
+        "localhost ",
+        "localhost:http",
+        "127.0.0.1:http",
+        "private-model.internal:ollama",
+        "modelserver:http",
+        "modelserver:x11",
+        "modelserver:kerberos4",
+    ):
+        raw = observations.model_dump(by_alias=True, mode="json")
+        raw["provenance"]["model"] = endpoint
+        with pytest.raises(ValidationError, match="model identifier"):
+            BenchmarkObservationSetV2.model_validate(raw)
+
+    for model in ("llava:13b", "llava:2.5b", "llava:latest"):
+        raw = observations.model_dump(by_alias=True, mode="json")
+        raw["provenance"]["model"] = model
+        BenchmarkObservationSetV2.model_validate(raw)
+
+    raw = observations.model_dump(by_alias=True, mode="json")
+    raw["cases"][0]["observations"][0]["provenance"]["provider"] = (
+        "private-model.internal:11434"
+    )
+    with pytest.raises(ValidationError, match="provider identifier"):
+        BenchmarkObservationSetV2.model_validate(raw)
+
+    raw = observations.model_dump(by_alias=True, mode="json")
+    raw["cases"][0]["observations"][1]["origin"] = "user-reidentified-box"
+    with pytest.raises(ValidationError, match="must follow a tracking gap"):
+        BenchmarkObservationSetV2.model_validate(raw)
+
+    raw = observations.model_dump(by_alias=True, mode="json")
+    raw["cases"][1]["observations"][5]["origin"] = "user-reidentified-point"
+    BenchmarkObservationSetV2.model_validate(raw)
+
+
+def test_representative_resumption_requires_explicit_user_reidentification() -> None:
+    manifest, truth, observations = corpus()
+    candidate = observations.cases[1]
+    resumed = candidate.observations[5]
+    assert resumed.origin == "user-reidentified-box"
+    changed = resumed.model_copy(update={"origin": "detected"})
+    changed_case = candidate.model_copy(
+        update={
+            "observations": (
+                *candidate.observations[:5],
+                changed,
+                *candidate.observations[6:],
+            )
+        }
+    )
+    changed_set = observations.model_copy(
+        update={
+            "cases": (
+                observations.cases[0],
+                changed_case,
+                observations.cases[2],
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="lack user re-identification"):
+        evaluate_representative_benchmark(
+            manifest,
+            truth,
+            bind(manifest, truth, changed_set),
+        )
+
+
+def test_user_reidentification_is_not_gate_crossing_evidence() -> None:
+    _, truth, observations = corpus()
+    candidate = observations.cases[1]
+    provenance = observations.provenance
+    gates = truth.cases[1].gates["left-sweeper"]
+    baseline = benchmark_module._candidate_passes(
+        candidate,
+        gates,
+        provenance.identity_confidence_threshold,
+        provenance.maximum_observation_interval_ms,
+        benchmark_module.TrackingContinuation.RESUME_AFTER_GAPS,
+    )
+    entry_bracket = next(
+        index
+        for index, item in enumerate(candidate.observations)
+        if item.timestamp_ms == 31_000
+    )
+    user_assisted = candidate.observations[entry_bracket].model_copy(
+        update={"origin": "user-reidentified-box"}
+    )
+    changed = candidate.model_copy(
+        update={
+            "observations": (
+                *candidate.observations[:entry_bracket],
+                user_assisted,
+                *candidate.observations[entry_bracket + 1 :],
+            )
+        }
+    )
+
+    assert len(baseline) == 11
+    assert (
+        len(
+            benchmark_module._candidate_passes(
+                changed,
+                gates,
+                provenance.identity_confidence_threshold,
+                provenance.maximum_observation_interval_ms,
+                benchmark_module.TrackingContinuation.RESUME_AFTER_GAPS,
+            )
+        )
+        == 10
+    )
 
 
 @pytest.mark.parametrize(
@@ -386,29 +594,38 @@ def test_representative_report_fails_switches_and_missed_gaps() -> None:
             observations.model_copy(update={"cases": no_gaps}),
         ),
     )
-    assert report.gaps.missed == 4
+    assert report.gaps.missed == sum(len(case.ambiguous_spans) for case in truth.cases)
     assert not report.passed
 
 
-def test_representative_coverage_does_not_treat_ambiguity_as_reidentification() -> None:
+def test_representative_reports_initial_seed_and_resumed_segment_coverage() -> None:
     manifest, truth, observations = corpus()
     first = truth.cases[0]
-    post_gap = GroundTruthPass(
-        passId="post-gap",
-        cornerId="lower-right",
-        entryTimestampMs=40_000,
-        exitTimestampMs=40_500,
+    baseline_passes = sum(len(case.passes) for case in truth.cases)
+    post_gap = tuple(
+        GroundTruthPass(
+            passId=f"post-gap-{index}",
+            cornerId="lower-right",
+            entryTimestampMs=40_000 + index * 10_000,
+            exitTimestampMs=40_500 + index * 10_000,
+        )
+        for index in range(4)
     )
-    changed_case = first.model_copy(update={"passes": (*first.passes, post_gap)})
+    changed_case = first.model_copy(update={"passes": (*first.passes, *post_gap)})
     changed_truth = truth.model_copy(update={"cases": (changed_case, *truth.cases[1:])})
     report = evaluate_representative_benchmark(
         manifest,
         changed_truth,
         bind(manifest, changed_truth, observations),
     )
-    assert report.coverage.ground_truth_passes == 4
-    assert report.coverage.eligible_passes == 3
-    assert report.coverage.ratio == 0.75
+    assert report.initial_seed_coverage.ground_truth_passes == baseline_passes + len(
+        post_gap
+    )
+    assert report.initial_seed_coverage.eligible_passes == 3
+    assert report.initial_seed_coverage.ratio == 3 / (baseline_passes + len(post_gap))
+    assert report.coverage.ground_truth_passes == baseline_passes + len(post_gap)
+    assert report.coverage.eligible_passes == baseline_passes
+    assert report.coverage.ratio == baseline_passes / (baseline_passes + len(post_gap))
     assert not report.passed
 
 
@@ -441,7 +658,7 @@ def test_one_candidate_gap_cannot_satisfy_two_truth_gaps() -> None:
         manifest, changed_truth, changed_observations
     )
 
-    assert report.gaps.missed == 1
+    assert report.gaps.missed == len(changed_truth_case.ambiguous_spans) - 1
     assert not report.passed
 
 

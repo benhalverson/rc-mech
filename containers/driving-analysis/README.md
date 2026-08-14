@@ -110,11 +110,16 @@ policy, permissions, framing, and source evidence without pinning one candidate
 provider. Each observation-set envelope carries its own immutable generation
 provenance and digest, then binds those candidate-specific cases to canonical
 manifest and ground-truth digests. The report retains every reviewed Corner pass
-in the denominator, supports observations resuming after finite User
-Re-identification gaps, and retains the v1 rule that any unflagged identity
-switch or missed known gap fails qualification. The committed manual reference
-report passes with zero switches and 100 percent Corner-pass coverage; it
-validates evidence and mechanics, not a production provider.
+in the denominator and reports initial-seed coverage separately from automatic
+coverage across all User-seeded segments. The first observation after a finite
+Tracking gap must record whether the User reselected by point or box; ordinary
+detections cannot impersonate a reselection, and the reselected observation
+cannot make a Corner pass eligible by itself. Any unflagged identity switch,
+missed known gap, or automatic segment coverage below 80 percent fails
+qualification. The committed manual reference shows 20 percent initial-seed
+coverage, zero switches, all known gaps covered, and 100 percent automatic
+coverage across resumed segments; it validates evidence and mechanics, not a
+production provider.
 
 Private candidate generation and hermetic evaluation are separate operations.
 The generator runs outside the Git worktree, verifies the authorized source

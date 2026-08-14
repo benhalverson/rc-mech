@@ -136,6 +136,8 @@ def _crossings(
         if (
             not _is_trusted(first, threshold)
             or not _is_trusted(second, threshold)
+            or first.origin != "detected"
+            or second.origin != "detected"
             or second.timestamp_ms - first.timestamp_ms > maximum_interval_ms
             or overlaps_gap
         ):
@@ -706,6 +708,21 @@ def benchmark_generation_digest(observation_set: BenchmarkObservationSetV2) -> s
     ).hexdigest()
 
 
+def _validate_user_reidentification_evidence(
+    candidate: AcceptedSubjectObservations,
+) -> None:
+    for previous, current in pairwise(candidate.observations):
+        resumed_after_gap = any(
+            previous.timestamp_ms < gap.start_timestamp_ms
+            and gap.end_timestamp_ms < current.timestamp_ms
+            for gap in candidate.gaps
+        )
+        if resumed_after_gap and current.origin == "detected":
+            raise ValueError(
+                "representative resumed observations lack user re-identification"
+            )
+
+
 def evaluate_representative_benchmark(
     manifest: RepresentativeCorpusManifestV2,
     ground_truth: RepresentativeGroundTruthV2,
@@ -748,7 +765,16 @@ def evaluate_representative_benchmark(
         ):
             raise ValueError("representative challenge evidence differs")
     observations = {case.case_id: case for case in observation_set.cases}
-    report = _evaluate_benchmark(
+    for candidate in observations.values():
+        _validate_user_reidentification_evidence(candidate)
+    pre_reidentification_report = _evaluate_benchmark(
+        manifest,
+        ground_truth,
+        observations,
+        observation_set.provenance,
+        TrackingContinuation.STOP_AT_FIRST_GAP,
+    )
+    resumed_report = _evaluate_benchmark(
         manifest,
         ground_truth,
         observations,
@@ -757,8 +783,11 @@ def evaluate_representative_benchmark(
     )
     return RepresentativeBenchmarkReportV2.model_validate(
         {
-            **report.model_dump(by_alias=True, mode="json"),
+            **resumed_report.model_dump(by_alias=True, mode="json"),
             "contractVersion": "subject-benchmark.v2",
+            "initialSeedCoverage": pre_reidentification_report.coverage.model_dump(
+                by_alias=True, mode="json"
+            ),
             "evidence": BenchmarkEvidenceV2(
                 manifestDigest=manifest_digest,
                 groundTruthDigest=ground_truth_digest,

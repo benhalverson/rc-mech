@@ -61,6 +61,67 @@ SafeFreeFormIdentifier = Annotated[
     StringConstraints(min_length=1, max_length=128, strict=True),
     AfterValidator(_safe_free_form_identifier),
 ]
+
+
+def _provider_identifier(value: str) -> str:
+    if (
+        re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,127}", value) is None
+        or value.casefold() == "localhost"
+    ):
+        raise ValueError("provider identifier must be endpoint-free")
+    return value
+
+
+ProviderIdentifier = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=128, strict=True),
+    AfterValidator(_provider_identifier),
+]
+
+
+def _model_identifier(value: str) -> str:
+    if re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value
+    ) is None or value.endswith("."):
+        raise ValueError("model identifier must be endpoint-free")
+    endpoint = re.fullmatch(
+        r"(?i)(?:"
+        r"[a-z0-9.-]+:\d+|"
+        r"\[[0-9a-f:]+\](?::\d+)?|"
+        r"(?:\d{1,3}\.){3}\d{1,3}|"
+        r"(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*"
+        r")",
+        value,
+    )
+    legacy_ipv4 = (
+        "." in value and re.fullmatch(r"(?i)[0-9][0-9a-fx.]*", value) is not None
+    )
+    tagged_endpoint = False
+    if value.count(":") == 1:
+        prefix, tag = value.split(":", maxsplit=1)
+        tagged_endpoint = (
+            "." in prefix
+            or prefix.casefold().rstrip(".") == "localhost"
+            or re.fullmatch(r"(?:latest|[0-9][A-Za-z0-9_.-]*)", tag) is None
+        )
+    if (
+        endpoint is not None
+        or legacy_ipv4
+        or tagged_endpoint
+        or value.count(":") > 1
+        or value.casefold().rstrip(".") == "localhost"
+        or re.fullmatch(r"(?i)(?:\d+|0x[0-9a-f]+)", value) is not None
+    ):
+        raise ValueError("model identifier must be endpoint-free")
+    return value
+
+
+ModelIdentifier = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=128, strict=True),
+    AfterValidator(_safe_free_form_identifier),
+    AfterValidator(_model_identifier),
+]
 type ErrorCode = Literal[
     "INVALID_REQUEST",
     "SERVICE_UNAVAILABLE",
@@ -236,8 +297,8 @@ class NormalizedBox(StrictContract):
 
 
 class SubjectProvenance(StrictContract):
-    provider: SafeFreeFormIdentifier
-    model: SafeFreeFormIdentifier
+    provider: ProviderIdentifier
+    model: ModelIdentifier
     model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
     pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
     configuration_digest: Annotated[
@@ -267,7 +328,7 @@ class SubjectObservation(StrictContract):
     identity_confidence: float = Field(
         alias="identityConfidence", ge=0.0, le=1.0, strict=True
     )
-    origin: Literal["detected"]
+    origin: Literal["detected", "user-reidentified-point", "user-reidentified-box"]
     provenance: SubjectProvenance
 
     @model_validator(mode="after")
@@ -338,6 +399,15 @@ class AcceptedSubjectObservations(StrictContract):
                 <= self.gaps[gap_index].end_timestamp_ms
             ):
                 raise ValueError("tracking gaps must not contain observations")
+        for index, observation in enumerate(self.observations):
+            if observation.origin == "detected":
+                continue
+            if index == 0 or not any(
+                self.observations[index - 1].timestamp_ms < gap.start_timestamp_ms
+                and gap.end_timestamp_ms < observation.timestamp_ms
+                for gap in self.gaps
+            ):
+                raise ValueError("user re-identification must follow a tracking gap")
         return self
 
 
@@ -561,8 +631,8 @@ class BenchmarkProvenance(StrictContract):
     model_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="modelDigest")
-    provider: SafeFreeFormIdentifier
-    model: SafeFreeFormIdentifier
+    provider: ProviderIdentifier
+    model: ModelIdentifier
     model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
     pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
     configuration_digest: Annotated[
@@ -949,4 +1019,5 @@ class RepresentativeBenchmarkReportV2(BenchmarkReport):
     contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
         alias="contractVersion"
     )
+    initial_seed_coverage: CoverageMetrics = Field(alias="initialSeedCoverage")
     evidence: BenchmarkEvidenceV2

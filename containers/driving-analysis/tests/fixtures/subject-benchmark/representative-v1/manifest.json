@@ -11,8 +11,18 @@
       "width": 1920,
       "height": 1080,
       "videoCodec": "h264",
-      "containerFormats": ["mov", "mp4", "m4a", "3gp", "3g2", "mj2"],
-      "averageFrameRate": {"numerator": 30, "denominator": 1},
+      "containerFormats": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "averageFrameRate": {
+        "numerator": 30,
+        "denominator": 1
+      },
       "permittedUse": {
         "statementVersion": "private-benchmark-use.v1",
         "basis": "user-authorized",
@@ -44,8 +54,18 @@
       "width": 1920,
       "height": 1080,
       "videoCodec": "h264",
-      "containerFormats": ["mov", "mp4", "m4a", "3gp", "3g2", "mj2"],
-      "averageFrameRate": {"numerator": 30, "denominator": 1},
+      "containerFormats": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "averageFrameRate": {
+        "numerator": 30,
+        "denominator": 1
+      },
       "permittedUse": {
         "statementVersion": "private-benchmark-use.v1",
         "basis": "user-authorized",
@@ -77,8 +97,18 @@
       "width": 1920,
       "height": 1080,
       "videoCodec": "h264",
-      "containerFormats": ["mov", "mp4", "m4a", "3gp", "3g2", "mj2"],
-      "averageFrameRate": {"numerator": 30, "denominator": 1},
+      "containerFormats": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "averageFrameRate": {
+        "numerator": 30,
+        "denominator": 1
+      },
       "permittedUse": {
         "statementVersion": "private-benchmark-use.v1",
         "basis": "user-authorized",
@@ -108,24 +138,76 @@
       "recordingId": "recording-a",
       "windowStartMs": 9000,
       "windowEndMs": 369000,
-      "subjectSeed": {"timestampMs": 12000, "frameIndex": 360, "identity": "subject-a", "box": {"x": 0.830354, "y": 0.3525, "width": 0.032, "height": 0.045}},
-      "representativeFacts": {"completeRaceWindow": true, "fieldCarCount": 7, "similarLookingCompetitorCount": 1, "identityChallenges": ["occlusion"]}
+      "subjectSeed": {
+        "timestampMs": 12000,
+        "frameIndex": 360,
+        "identity": "subject-a",
+        "box": {
+          "x": 0.830354,
+          "y": 0.3525,
+          "width": 0.032,
+          "height": 0.045
+        }
+      },
+      "representativeFacts": {
+        "completeRaceWindow": true,
+        "fieldCarCount": 7,
+        "similarLookingCompetitorCount": 1,
+        "identityChallenges": [
+          "occlusion"
+        ]
+      }
     },
     {
       "caseId": "race-window-b",
       "recordingId": "recording-b",
       "windowStartMs": 11000,
       "windowEndMs": 371000,
-      "subjectSeed": {"timestampMs": 12500, "frameIndex": 375, "identity": "subject-b", "box": {"x": 0.55, "y": 0.5495, "width": 0.036, "height": 0.045}},
-      "representativeFacts": {"completeRaceWindow": true, "fieldCarCount": 8, "similarLookingCompetitorCount": 3, "identityChallenges": ["identity-ambiguity"]}
+      "subjectSeed": {
+        "timestampMs": 11000,
+        "frameIndex": 330,
+        "identity": "subject-b",
+        "box": {
+          "x": 0.625,
+          "y": 0.180556,
+          "width": 0.046875,
+          "height": 0.066667
+        }
+      },
+      "representativeFacts": {
+        "completeRaceWindow": true,
+        "fieldCarCount": 8,
+        "similarLookingCompetitorCount": 3,
+        "identityChallenges": [
+          "identity-ambiguity"
+        ]
+      }
     },
     {
       "caseId": "race-window-c",
       "recordingId": "recording-c",
       "windowStartMs": 15000,
       "windowEndMs": 375000,
-      "subjectSeed": {"timestampMs": 20000, "frameIndex": 600, "identity": "subject-c", "box": {"x": 0.387, "y": 0.244, "width": 0.036, "height": 0.05}},
-      "representativeFacts": {"completeRaceWindow": true, "fieldCarCount": 7, "similarLookingCompetitorCount": 2, "identityChallenges": ["occlusion", "identity-ambiguity"]}
+      "subjectSeed": {
+        "timestampMs": 20000,
+        "frameIndex": 600,
+        "identity": "subject-c",
+        "box": {
+          "x": 0.383333,
+          "y": 0.233333,
+          "width": 0.04375,
+          "height": 0.097222
+        }
+      },
+      "representativeFacts": {
+        "completeRaceWindow": true,
+        "fieldCarCount": 7,
+        "similarLookingCompetitorCount": 2,
+        "identityChallenges": [
+          "occlusion",
+          "identity-ambiguity"
+        ]
+      }
     }
   ],
   "requiredCoverage": 0.8,
