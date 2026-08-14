@@ -114,4 +114,5 @@ def no_leftover_default_roots(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("INFERENCE_IDENTITY_CONFIDENCE_THRESHOLD", raising=False)
     monkeypatch.delenv("INFERENCE_PROVIDER_URL", raising=False)
     monkeypatch.delenv("INFERENCE_FIXTURE_PATH", raising=False)
+    monkeypatch.delenv("SAM31_CHECKPOINT_PATH", raising=False)
     monkeypatch.delenv("INFERENCE_REQUEST_TIMEOUT_SECONDS", raising=False)

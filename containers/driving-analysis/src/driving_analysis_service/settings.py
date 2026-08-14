@@ -10,7 +10,7 @@ DEFAULT_MODEL_DIGEST = "0" * 64
 
 @dataclass(frozen=True)
 class InferenceSettings:
-    provider: Literal["disabled", "local-http", "fixture", "fake"] = "disabled"
+    provider: Literal["disabled", "local-http", "fixture", "fake", "sam31"] = "disabled"
     model: str = "disabled"
     model_version: str = "1"
     model_digest: str = DEFAULT_MODEL_DIGEST
@@ -18,14 +18,18 @@ class InferenceSettings:
     identity_confidence_threshold: float = 1.0
     endpoint: str | None = None
     fixture_path: Path | None = None
+    checkpoint_path: Path | None = None
     request_timeout_seconds: float = 30.0
     max_response_bytes: int = 64 * 1024
 
     @classmethod
     def from_environment(cls) -> "InferenceSettings":
         provider = os.environ.get("INFERENCE_PROVIDER", "disabled")
-        if provider not in {"disabled", "local-http", "fixture", "fake"}:
-            msg = "INFERENCE_PROVIDER must be disabled, local-http, fixture, or fake"
+        if provider not in {"disabled", "local-http", "fixture", "fake", "sam31"}:
+            msg = (
+                "INFERENCE_PROVIDER must be disabled, local-http, fixture, fake, "
+                "or sam31"
+            )
             raise ValueError(msg)
         threshold = float(
             os.environ.get("INFERENCE_IDENTITY_CONFIDENCE_THRESHOLD", "0.8")
@@ -42,9 +46,11 @@ class InferenceSettings:
 
         endpoint = os.environ.get("INFERENCE_PROVIDER_URL")
         fixture = os.environ.get("INFERENCE_FIXTURE_PATH")
+        checkpoint = os.environ.get("SAM31_CHECKPOINT_PATH")
         return cls(
             provider=cast(
-                "Literal['disabled', 'local-http', 'fixture', 'fake']", provider
+                "Literal['disabled', 'local-http', 'fixture', 'fake', 'sam31']",
+                provider,
             ),
             model=os.environ.get("INFERENCE_MODEL", provider),
             model_version=os.environ.get("INFERENCE_MODEL_VERSION", "1"),
@@ -56,6 +62,7 @@ class InferenceSettings:
             identity_confidence_threshold=threshold,
             endpoint=endpoint,
             fixture_path=Path(fixture) if fixture is not None else None,
+            checkpoint_path=Path(checkpoint) if checkpoint is not None else None,
             request_timeout_seconds=timeout_seconds,
         )
 

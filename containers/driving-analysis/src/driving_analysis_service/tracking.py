@@ -246,50 +246,60 @@ class SubjectTrackingService:
         deadline: float,
     ) -> tuple[tuple[SubjectObservation, ...], OpenTrackingGap | None]:
         observations: list[SubjectObservation] = []
-        previous_box: NormalizedBox | None = None
         gap: OpenTrackingGap | None = None
         seed_frame = InferenceFrame(
             image_path=frame_paths[seed_position],
             provenance=manifest.frames[seed_position],
         )
+        inference_frames = tuple(
+            InferenceFrame(frame_path, frame_provenance)
+            for frame_path, frame_provenance in zip(
+                frame_paths[seed_position:],
+                manifest.frames[seed_position:],
+                strict=True,
+            )
+        )
         threshold = self.provider.provenance.identity_confidence_threshold
-        for frame_path, frame_provenance in zip(
-            frame_paths[seed_position:],
-            manifest.frames[seed_position:],
-            strict=True,
-        ):
-            if len(observations) >= MAX_SUBJECT_OBSERVATIONS:
-                raise ProcessOutputLimitError
-            candidate = self.provider.infer(
-                seed_frame=seed_frame,
-                frame=InferenceFrame(frame_path, frame_provenance),
-                seed=request.subject_seed,
-                previous_box=previous_box,
-                timeout_seconds=remaining_seconds(deadline),
-            )
-            box = _trusted_box(candidate, threshold)
-            if box is None:
-                gap = OpenTrackingGap(
-                    startTimestampMs=frame_provenance.timestamp_ms,
-                    reason=_gap_reason(candidate),
+        stream = self.provider.track_segment(
+            seed_frame=seed_frame,
+            frames=inference_frames,
+            seed=request.subject_seed,
+            timeout_seconds=remaining_seconds(deadline),
+        )
+        try:
+            for inference_frame, candidate in zip(
+                inference_frames,
+                stream,
+                strict=True,
+            ):
+                check_deadline(deadline)
+                if len(observations) >= MAX_SUBJECT_OBSERVATIONS:
+                    raise ProcessOutputLimitError
+                frame_provenance = inference_frame.provenance
+                box = _trusted_box(candidate, threshold)
+                if box is None:
+                    gap = OpenTrackingGap(
+                        startTimestampMs=frame_provenance.timestamp_ms,
+                        reason=_gap_reason(candidate),
+                    )
+                    break
+                observations.append(
+                    SubjectObservation(
+                        timestampMs=frame_provenance.timestamp_ms,
+                        frameIndex=frame_provenance.frame_index,
+                        box=box,
+                        center=NormalizedPoint(
+                            x=box.x + box.width / 2,
+                            y=box.y + box.height / 2,
+                        ),
+                        visibility=candidate.visibility,
+                        identityConfidence=candidate.identity_confidence,
+                        origin="detected",
+                        provenance=self.provider.provenance,
+                    )
                 )
-                break
-            previous_box = box
-            observations.append(
-                SubjectObservation(
-                    timestampMs=frame_provenance.timestamp_ms,
-                    frameIndex=frame_provenance.frame_index,
-                    box=box,
-                    center=NormalizedPoint(
-                        x=box.x + box.width / 2,
-                        y=box.y + box.height / 2,
-                    ),
-                    visibility=candidate.visibility,
-                    identityConfidence=candidate.identity_confidence,
-                    origin="detected",
-                    provenance=self.provider.provenance,
-                )
-            )
+        finally:
+            stream.close()
         return tuple(observations), gap
 
 

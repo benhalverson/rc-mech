@@ -63,6 +63,34 @@ When the service itself runs in local Docker, use the allowlisted `http://host.d
 
 For hermetic development, set `INFERENCE_PROVIDER=fake` for a deterministic seed-box provider or `INFERENCE_PROVIDER=fixture` plus `INFERENCE_FIXTURE_PATH=<local JSON path>`. Automated tests use only those adapters and never contact Ollama, a Worker, a remote binding, or a production service.
 
+### SAM3.1 GPU container
+
+The `sam31-runtime` image uses Python 3.12, CUDA 12.8, PyTorch 2.10, and the
+SAM3.1 code pinned at commit
+`96914d2425f90a64f45ca977c2b5165418099543`. It keeps one model resident on
+the GPU and gives a complete prepared-frame segment to one stateful SAM3.1
+video session. The existing Subject box is converted to one positive point at
+its center. SAM3.1 propagates that object forward until its mask disappears or
+the service rejects implausible geometry, at which point the normal open
+Tracking gap asks the User to reselect the buggy.
+
+Build and run the GPU image with the checkpoint mounted read-only:
+
+```console
+docker build --target sam31-runtime -t rc-mech-driving-analysis:sam31 .
+docker run --rm --gpus all --publish 8080:8080 \
+  --mount type=bind,src=/absolute/path/to/sam3.1.pt,dst=/models/sam3.1.pt,readonly \
+  --mount type=bind,src=/absolute/path/to/media,dst=/var/lib/rc-mech,readonly=false \
+  rc-mech-driving-analysis:sam31
+```
+
+The checkpoint must have SHA-256
+`0567debeec80ba4ac6369540c6c248025283cb3ff2b92827509e57e2b3541cb6`.
+`GET /health` loads and verifies the model before reporting ready. This RTX
+3090 path deliberately uses PyTorch attention rather than FlashAttention 3;
+FA3 targets Hopper-class GPUs, while the 3090 is Ampere. That affects speed,
+not whether tracking works.
+
 Confidence is provider-specific: the calibration identifier, threshold, model digest, and resulting configuration digest are pinned in every observation. Values from different configurations or providers must not be compared directly. The synthetic fixture and a successful local Ollama call validate contracts and mechanics only; neither qualifies `llava:13b` for production. Representative private-footage qualification remains in #231 and production packaging in #241.
 
 ## Subject benchmark

@@ -299,6 +299,7 @@ def test_inference_settings_validate_environment(
     monkeypatch.setenv("INFERENCE_IDENTITY_CONFIDENCE_THRESHOLD", "0.75")
     monkeypatch.setenv("INFERENCE_PROVIDER_URL", "http://localhost:11434")
     monkeypatch.setenv("INFERENCE_FIXTURE_PATH", str(tmp_path / "fixture.json"))
+    monkeypatch.setenv("SAM31_CHECKPOINT_PATH", str(tmp_path / "sam3.1.pt"))
     monkeypatch.setenv("INFERENCE_REQUEST_TIMEOUT_SECONDS", "12")
     settings = InferenceSettings.from_environment()
     assert settings.provider == "local-http"
@@ -309,6 +310,7 @@ def test_inference_settings_validate_environment(
     assert settings.identity_confidence_threshold == 0.75
     assert settings.endpoint == "http://localhost:11434"
     assert settings.fixture_path == tmp_path / "fixture.json"
+    assert settings.checkpoint_path == tmp_path / "sam3.1.pt"
     assert settings.request_timeout_seconds == 12
 
     monkeypatch.setenv("RC_MECH_MEDIA_STAGING_ROOT", str(tmp_path / "staged"))

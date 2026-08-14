@@ -1,16 +1,20 @@
 import gzip
 import hashlib
 import json
-from dataclasses import replace
+from collections.abc import Generator
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 from fastapi.testclient import TestClient
 
 from driving_analysis_service.api import create_app
+from driving_analysis_service.contracts import SubjectProvenance, SubjectSeed
 from driving_analysis_service.inference import (
     FakeInferenceProvider,
     FixtureInferenceProvider,
+    InferenceFrame,
+    configuration_provenance,
 )
 from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
@@ -24,6 +28,7 @@ from driving_analysis_service.tracking_contracts import (
     PrepareStageAccepted,
     PrepareStageRequest,
     ProcessingRejected,
+    ProviderCandidate,
     TrackStageAccepted,
     TrackStageRequest,
 )
@@ -36,6 +41,35 @@ from tests.conftest import (
 PREPARED_MEDIA_ID = "bde7ec63-86b9-4c86-a5e8-dbcf4a61f820"
 SEGMENT_ID = "edb9d9c2-1ca8-48c3-ae7d-69222aab25f2"
 MODEL_DIGEST = "4" * 64
+
+
+@dataclass(frozen=True)
+class _SegmentOnlyProvider:
+    _provenance: SubjectProvenance
+
+    @property
+    def provenance(self) -> SubjectProvenance:
+        return self._provenance
+
+    def ready(self, *, timeout_seconds: float | None = None) -> bool:
+        del timeout_seconds
+        return True
+
+    def track_segment(
+        self,
+        *,
+        seed_frame: InferenceFrame,
+        frames: tuple[InferenceFrame, ...],
+        seed: SubjectSeed,
+        timeout_seconds: float | None = None,
+    ) -> Generator[ProviderCandidate]:
+        del seed_frame, timeout_seconds
+        for _frame in frames:
+            yield ProviderCandidate(
+                box=seed.box,
+                identityConfidence=1.0,
+                visibility="visible",
+            )
 
 
 def _inference_settings(
@@ -180,6 +214,26 @@ def test_real_ffmpeg_prepare_and_fake_track_are_immutable(
     ).track(_track_request(prepared))
     assert isinstance(tampered, ProcessingRejected)
     assert tampered.error.code == "MEDIA_UNAVAILABLE"
+
+
+def test_tracking_stage_consumes_one_provider_segment(
+    settings: ServiceSettings,
+    accepted_video: Path,
+) -> None:
+    configured = replace(settings, inference=_inference_settings())
+    prepared = RaceWindowPreparationService(configured).prepare(
+        _prepare_request(stage_media(configured, accepted_video))
+    )
+    assert isinstance(prepared, PrepareStageAccepted)
+    provenance = configuration_provenance(configured.inference)
+
+    result = SubjectTrackingService(
+        configured,
+        _SegmentOnlyProvider(provenance),
+    ).track(_track_request(prepared))
+
+    assert isinstance(result, TrackStageAccepted)
+    assert result.segment.observation_count == 3
 
 
 def test_fixture_provider_stops_at_first_untrusted_frame(
