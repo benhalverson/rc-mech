@@ -9,10 +9,12 @@ interface __BaseEnv_Env {
 	ASSETS: Fetcher;
 	APP_URL?: "http://localhost:8787";
 	ENVIRONMENT: "local" | "production";
+	GPU_LEASE_COORDINATOR: DurableObjectNamespace<import("./src/index").GpuLeaseCoordinator>;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
 		mainModule: typeof import("./src/index");
+		durableNamespaces: "GpuLeaseCoordinator";
 	}
 	interface LocalEnv {
 		PHOTOS: R2Bucket;
@@ -22,6 +24,7 @@ declare namespace Cloudflare {
 		ASSETS: Fetcher;
 		APP_URL: "http://localhost:8787";
 		ENVIRONMENT: "local";
+		GPU_LEASE_COORDINATOR: DurableObjectNamespace<import("./src/index").GpuLeaseCoordinator>;
 	}
 	interface Env extends __BaseEnv_Env {}
 }

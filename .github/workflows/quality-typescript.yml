@@ -72,6 +72,8 @@ jobs:
         run: pnpm exec tsc --noEmit
       - name: Backend policy tests
         run: pnpm test:backend
+      - name: Durable Object coordinator tests
+        run: pnpm test:gpu-coordinator
       - name: Client production build
         run: pnpm client:build
       - name: Angular unit tests

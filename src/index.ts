@@ -18,6 +18,10 @@ import { spaFallback } from './spa-fallback';
 import type { AppEnv } from './types';
 
 export type { AppDependencies } from './app-dependencies';
+export {
+	GpuLeaseCoordinator,
+	getGpuLeaseCoordinator,
+} from './driving-analysis/gpu-lease-coordinator';
 
 export const createApp = (
 	dependencies: AppDependencies = defaultAppDependencies,

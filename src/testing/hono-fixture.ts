@@ -375,6 +375,7 @@ export const createHonoFixture = (
 		ASSETS: assets,
 		APP_URL: 'http://localhost:8787',
 		ENVIRONMENT: 'local',
+		GPU_LEASE_COORDINATOR: {} as Env['GPU_LEASE_COORDINATOR'],
 	} satisfies Env;
 	const auth: AppDependencies = {
 		getSession: async () =>

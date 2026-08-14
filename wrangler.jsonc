@@ -32,6 +32,17 @@
 		}
 	],
 	"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "GPU_LEASE_COORDINATOR", "class_name": "GpuLeaseCoordinator" }
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1-gpu-lease-coordinator",
+			"new_sqlite_classes": ["GpuLeaseCoordinator"]
+		}
+	],
 	"vars": { "ENVIRONMENT": "production" },
 	"env": {
 		"local": {
@@ -48,6 +59,20 @@
 				}
 			],
 			"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
+			"durable_objects": {
+				"bindings": [
+					{
+						"name": "GPU_LEASE_COORDINATOR",
+						"class_name": "GpuLeaseCoordinator"
+					}
+				]
+			},
+			"migrations": [
+				{
+					"tag": "v1-gpu-lease-coordinator",
+					"new_sqlite_classes": ["GpuLeaseCoordinator"]
+				}
+			],
 			"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }
 		}
 	},
