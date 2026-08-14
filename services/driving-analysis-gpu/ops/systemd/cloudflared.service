@@ -1,0 +1,26 @@
+[Unit]
+Description=Chassis Notes outbound Cloudflare Tunnel
+Wants=network-online.target
+After=network-online.target chassis-notes-gpu.service
+Requires=chassis-notes-gpu.service
+
+[Service]
+Type=simple
+User=cloudflared
+Group=cloudflared
+ExecStart=/usr/bin/cloudflared tunnel --config /etc/cloudflared/chassis-notes-gpu.yml run
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/etc/cloudflared
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

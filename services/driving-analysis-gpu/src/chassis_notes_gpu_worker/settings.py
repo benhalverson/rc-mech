@@ -16,6 +16,7 @@ class WorkerSettings:
     transfer_timeout_seconds: float = 30 * 60
     max_input_bytes: int = 50 * 1024 * 1024 * 1024
     max_output_bytes: int = 64 * 1024 * 1024
+    retention_seconds: float = 24 * 60 * 60
 
     @classmethod
     def from_environment(cls) -> "WorkerSettings":
@@ -37,11 +38,15 @@ class WorkerSettings:
         max_output_bytes = int(
             os.environ.get("GPU_MAX_OUTPUT_BYTES", str(64 * 1024 * 1024))
         )
+        retention_seconds = float(
+            os.environ.get("GPU_RETENTION_SECONDS", str(24 * 60 * 60))
+        )
         if (
             watchdog_seconds <= 0
             or transfer_timeout_seconds <= 0
             or max_input_bytes <= 0
             or max_output_bytes <= 0
+            or retention_seconds <= 0
         ):
             message = "GPU worker limits must be positive"
             raise ValueError(message)
@@ -55,6 +60,7 @@ class WorkerSettings:
             transfer_timeout_seconds=transfer_timeout_seconds,
             max_input_bytes=max_input_bytes,
             max_output_bytes=max_output_bytes,
+            retention_seconds=retention_seconds,
         )
 
     def prepare_root(self) -> None:

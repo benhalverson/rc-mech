@@ -1,0 +1,14 @@
+# Copy to /etc/cloudflared/chassis-notes-gpu.yml and fill in deployment values.
+# The credential file must be root-owned, group cloudflared, mode 0640, and is
+# provisioned outside Git.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /etc/cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+no-autoupdate: true
+protocol: http2
+
+ingress:
+  - hostname: gpu-worker.REPLACE_WITH_PRIVATE_DOMAIN
+    service: http://127.0.0.1:8080
+    originRequest:
+      noTLSVerify: false
+  - service: http_status:404

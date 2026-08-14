@@ -1,0 +1,42 @@
+[Unit]
+Description=Chassis Notes private GPU worker container
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+Before=cloudflared.service
+
+[Service]
+Type=simple
+ExecStartPre=/etc/chassis-notes-gpu/preflight.sh
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+ExecStart=/usr/bin/docker run --rm --name chassis-notes-gpu \
+  --gpus all \
+  --network host \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --pids-limit 512 \
+  --memory 32g \
+  --memory-swap 32g \
+  --user 10001:10001 \
+  --env-file /etc/chassis-notes-gpu/worker.env \
+  --mount type=bind,src=/var/lib/chassis-notes-gpu,dst=/var/lib/chassis-notes-gpu \
+  --mount type=bind,src=/etc/chassis-notes-gpu/profile.json,dst=/etc/chassis-notes-gpu/profile.json,readonly \
+  --mount type=bind,src=/opt/chassis-notes-gpu/models/sam3.1.pt,dst=/models/sam3.1.pt,readonly \
+  chassis-notes-driving-analysis-gpu:current
+ExecStop=/usr/bin/docker stop --time 25 chassis-notes-gpu
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/chassis-notes-gpu
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=false
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -726,3 +727,182 @@ def test_completed_job_is_idempotently_reportable_after_restart(
     )
     assert restarted.status(_identity(submission)).state == "completed"
     assert restarted.cancel(_cancel(submission)).state == "completed"
+
+
+def test_terminal_timestamp_is_persisted_and_old_terminal_workspace_is_pruned(
+    worker_settings: WorkerSettings,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+) -> None:
+    now = [1_000.0]
+    settings = replace(worker_settings, retention_seconds=10)
+    submission = submission_factory()
+    manager = _manager(
+        settings,
+        _Executor(artifact_factory),
+        _Transfers(),
+        clock=lambda: now[0],
+    )
+    ready = _advance_to_output_ready(manager, submission)
+    manager.deliver_grant(_grant(submission, ready))
+
+    journal = json.loads((settings.state_root / "execution-state.json").read_text())
+    assert journal["terminalAt"] == 1_000.0
+    assert (settings.state_root / "jobs" / ATTEMPT_ID).exists()
+    os.utime(settings.state_root / "jobs" / ATTEMPT_ID, (0, 0))
+
+    now[0] = 1_011.0
+    assert manager.cleanup_expired() == 1
+    assert not (settings.state_root / "jobs" / ATTEMPT_ID).exists()
+
+
+def test_cleanup_protects_active_and_output_ready_workspaces(
+    worker_settings: WorkerSettings,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+) -> None:
+    now = [1_000.0]
+    settings = replace(worker_settings, retention_seconds=10)
+    submission = submission_factory()
+    manager = _manager(
+        settings,
+        _Executor(artifact_factory),
+        _Transfers(),
+        clock=lambda: now[0],
+    )
+    manager.submit(submission)
+    job_root = settings.state_root / "jobs" / ATTEMPT_ID
+    job_root.mkdir(parents=True, exist_ok=True)
+    now[0] = 1_011.0
+    assert manager.cleanup_expired() == 0
+    assert job_root.exists()
+
+    ready = _advance_to_output_ready(
+        _manager(
+            replace(settings, state_root=settings.state_root.parent / "ready"),
+            _Executor(artifact_factory),
+            _Transfers(),
+            clock=lambda: now[0],
+        ),
+        submission_factory(attemptId="77777777-7777-4777-8777-777777777777"),
+    )
+    assert ready.state == "output-ready"
+
+
+def test_cleanup_interrupts_and_prunes_expired_output_ready_workspace(
+    worker_settings: WorkerSettings,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+) -> None:
+    now = [1_000.0]
+    settings = replace(worker_settings, retention_seconds=10)
+    submission = submission_factory()
+    manager = _manager(
+        settings,
+        _Executor(artifact_factory),
+        _Transfers(),
+        clock=lambda: now[0],
+    )
+    ready = _advance_to_output_ready(manager, submission)
+    assert ready.state == "output-ready"
+    os.utime(settings.state_root / "jobs" / ATTEMPT_ID, (0, 0))
+
+    now[0] = 1_011.0
+    assert manager.cleanup_expired() == 1
+    assert manager.status(_identity(submission)).state == "interrupted"
+    assert not (settings.state_root / "jobs" / ATTEMPT_ID).exists()
+
+
+def test_terminal_journal_without_timestamp_is_backfilled_on_restart(
+    worker_settings: WorkerSettings,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+) -> None:
+    submission = submission_factory()
+    manager = _manager(
+        worker_settings,
+        _Executor(artifact_factory),
+        _Transfers(),
+    )
+    ready = _advance_to_output_ready(manager, submission)
+    manager.deliver_grant(_grant(submission, ready))
+    journal_path = worker_settings.state_root / "execution-state.json"
+    journal = json.loads(journal_path.read_text())
+    journal.pop("terminalAt")
+    journal_path.write_text(json.dumps(journal))
+
+    restarted = _manager(
+        worker_settings,
+        _Executor(artifact_factory),
+        _Transfers(),
+    )
+    assert restarted._journal is not None
+    assert restarted._journal.terminal_at is not None
+
+
+def test_terminal_timestamp_falls_back_to_clock_when_journal_stat_fails(
+    worker_settings: WorkerSettings,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submission = submission_factory()
+    manager = _manager(worker_settings, _Executor(artifact_factory), _Transfers())
+    ready = _advance_to_output_ready(manager, submission)
+    manager.deliver_grant(_grant(submission, ready))
+    journal_path = worker_settings.state_root / "execution-state.json"
+    journal = json.loads(journal_path.read_text())
+    journal.pop("terminalAt")
+    journal_path.write_text(json.dumps(journal))
+    original_stat = jobs_module.Path.stat
+    stat_calls = 0
+
+    def fail_journal_stat(
+        path: Path, *args: object, **kwargs: object
+    ) -> os.stat_result:
+        nonlocal stat_calls
+        if path == journal_path:
+            stat_calls += 1
+        if path == journal_path and stat_calls > 1:
+            error = "unavailable"
+            raise OSError(error)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(jobs_module.Path, "stat", fail_journal_stat)
+    restarted = _manager(worker_settings, _Executor(artifact_factory), _Transfers())
+    assert restarted._journal is not None
+    assert restarted._journal.terminal_at is not None
+
+
+def test_cleanup_skips_a_workspace_that_disappears_during_removal(
+    worker_settings: WorkerSettings,
+    artifact_factory: ArtifactFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = replace(worker_settings, retention_seconds=1)
+    manager = _manager(settings, _Executor(artifact_factory), _Transfers())
+    stale = settings.state_root / "jobs" / "stale"
+    stale.mkdir(parents=True)
+    os.utime(stale, (0, 0))
+    (settings.state_root / "jobs" / "fresh").mkdir()
+    original_rmtree = jobs_module.shutil.rmtree
+
+    def disappear(path: Path) -> None:
+        if path == stale:
+            error = "gone"
+            raise OSError(error)
+        original_rmtree(path)
+
+    monkeypatch.setattr(jobs_module.shutil, "rmtree", disappear)
+    assert manager.cleanup_expired() == 0
+
+
+def test_safe_event_without_job_context_is_still_structured(
+    worker_settings: WorkerSettings,
+    artifact_factory: ArtifactFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    manager = _manager(worker_settings, _Executor(artifact_factory), _Transfers())
+    manager._log_event("host-started")
+    assert '"event":"host-started"' in caplog.text

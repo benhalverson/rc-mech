@@ -20,6 +20,7 @@ def test_settings_load_profile_and_positive_limits(
     monkeypatch.setenv("GPU_TRANSFER_TIMEOUT_SECONDS", "3")
     monkeypatch.setenv("GPU_MAX_INPUT_BYTES", "4")
     monkeypatch.setenv("GPU_MAX_OUTPUT_BYTES", "5")
+    monkeypatch.setenv("GPU_RETENTION_SECONDS", "6")
 
     settings = WorkerSettings.from_environment()
     settings.prepare_root()
@@ -29,6 +30,7 @@ def test_settings_load_profile_and_positive_limits(
     assert settings.transfer_timeout_seconds == 3
     assert settings.max_input_bytes == 4
     assert settings.max_output_bytes == 5
+    assert settings.retention_seconds == 6
     assert settings.state_root.is_dir()
 
 
@@ -78,6 +80,7 @@ def test_settings_reject_invalid_profile(
         ("GPU_TRANSFER_TIMEOUT_SECONDS", "-1"),
         ("GPU_MAX_INPUT_BYTES", "0"),
         ("GPU_MAX_OUTPUT_BYTES", "-1"),
+        ("GPU_RETENTION_SECONDS", "0"),
     ],
 )
 def test_settings_require_positive_limits(
