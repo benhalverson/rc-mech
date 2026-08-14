@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chassis-notes-driving-analysis-gpu"
+version = "0.1.0"
+description = "Private capacity-one SAM 3.1 execution worker"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.141.1",
+  "pydantic==2.13.4",
+  "rc-mech-driving-analysis",
+  "uvicorn==0.52.1",
+]
+
+[project.optional-dependencies]
+sam31 = [
+  "sam3 @ git+https://github.com/facebookresearch/sam3.git@96914d2425f90a64f45ca977c2b5165418099543",
+  "setuptools==81.0.0",
+  "torch==2.10.0",
+  "torchvision==0.25.0",
+]
+
+[dependency-groups]
+dev = [
+  "httpx2==2.10.0",
+  "pytest==9.0.3",
+  "pytest-cov==7.0.0",
+  "ruff==0.15.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chassis_notes_gpu_worker"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+addopts = [
+  "--cov=chassis_notes_gpu_worker",
+  "--cov-branch",
+  "--cov-report=term-missing:skip-covered",
+  "--cov-fail-under=100",
+  "--strict-config",
+  "--strict-markers",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["chassis_notes_gpu_worker"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "COM812",
+  "D100",
+  "D101",
+  "D102",
+  "D103",
+  "D104",
+  "D105",
+  "D107",
+  "D203",
+  "D213",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "S101", "SLF001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+rc-mech-driving-analysis = { path = "../../containers/driving-analysis" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }

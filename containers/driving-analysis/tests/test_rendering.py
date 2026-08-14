@@ -18,10 +18,6 @@ from driving_analysis_service import processes as process_module
 from driving_analysis_service import rendering
 from driving_analysis_service.api import create_app
 from driving_analysis_service.errors import MediaValidationError
-from driving_analysis_service.inference import (
-    FakeInferenceProvider,
-    configuration_provenance,
-)
 from driving_analysis_service.media import ProbeMetadata
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
@@ -33,7 +29,7 @@ from driving_analysis_service.rendering_contracts import (
     RenderStageAccepted,
     RenderStageRequest,
 )
-from driving_analysis_service.settings import InferenceSettings, ServiceSettings
+from driving_analysis_service.settings import ServiceSettings
 from driving_analysis_service.tracking_artifacts import (
     ArtifactConflictError,
     InvalidArtifactError,
@@ -177,10 +173,7 @@ def _body(  # noqa: PLR0913 - test request builder exposes contract fields expli
 
 
 def _client(settings: ServiceSettings) -> TestClient:
-    provider = FakeInferenceProvider(
-        configuration_provenance(InferenceSettings(provider="fake"))
-    )
-    return TestClient(create_app(settings, provider))
+    return TestClient(create_app(settings))
 
 
 def _metadata(*, duration_ms: int = 1000) -> ProbeMetadata:

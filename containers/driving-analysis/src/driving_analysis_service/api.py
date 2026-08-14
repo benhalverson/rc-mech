@@ -14,10 +14,6 @@ from driving_analysis_service.contracts import (
     SafeError,
     ValidationResponse,
 )
-from driving_analysis_service.inference import (
-    InferenceProvider,
-    create_inference_provider,
-)
 from driving_analysis_service.media import MediaValidationService
 from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.rendering import CornerRenderService
@@ -29,37 +25,25 @@ from driving_analysis_service.rendering_contracts import (
 )
 from driving_analysis_service.request_limits import RequestBodyLimitMiddleware
 from driving_analysis_service.settings import ServiceSettings
-from driving_analysis_service.tracking import SubjectTrackingService
 from driving_analysis_service.tracking_contracts import (
     PROCESSING_CONTRACT_VERSION,
     PrepareStageRequest,
     PrepareStageResponse,
     ProcessingRejected,
     ProcessingSafeError,
-    TrackStageRequest,
-    TrackStageResponse,
 )
 
 
 def create_app(
     settings: ServiceSettings | None = None,
-    inference_provider: InferenceProvider | None = None,
 ) -> FastAPI:
     resolved_settings = settings or ServiceSettings.from_environment()
     service = MediaValidationService(resolved_settings)
-    provider = inference_provider or create_inference_provider(
-        resolved_settings.inference
-    )
     processing_admission = threading.BoundedSemaphore(
         resolved_settings.limits.max_concurrent_processing
     )
     preparation_service = RaceWindowPreparationService(
         resolved_settings,
-        processing_admission,
-    )
-    tracking_service = SubjectTrackingService(
-        resolved_settings,
-        provider,
         processing_admission,
     )
     rendering_service = CornerRenderService(resolved_settings, processing_admission)
@@ -97,7 +81,7 @@ def create_app(
                 status_code=422,
                 content=render_response.model_dump(mode="json", by_alias=True),
             )
-        if request.url.path.startswith("/v1/stages/"):
+        if request.url.path == "/v1/stages/prepare":
             processing_response = ProcessingRejected(
                 contractVersion=PROCESSING_CONTRACT_VERSION,
                 correlationId=None,
@@ -134,7 +118,7 @@ def create_app(
         responses={503: {"model": RejectedValidationResponse}},
     )
     def health() -> HealthResponse | JSONResponse:
-        if not _is_ready(resolved_settings, provider):
+        if not _is_ready(resolved_settings):
             response = RejectedValidationResponse(
                 contractVersion=CONTRACT_VERSION,
                 correlationId=None,
@@ -170,13 +154,6 @@ def create_app(
         return preparation_service.prepare(request)
 
     @application.post(
-        "/v1/stages/track",
-        responses={422: {"model": ProcessingRejected}},
-    )
-    def track_subject(request: TrackStageRequest) -> TrackStageResponse:
-        return tracking_service.track(request)
-
-    @application.post(
         "/v1/stages/render",
         responses={422: {"model": RenderStageRejected}},
     )
@@ -186,20 +163,19 @@ def create_app(
     return application
 
 
-def _is_ready(settings: ServiceSettings, provider: InferenceProvider) -> bool:
+def _is_ready(settings: ServiceSettings) -> bool:
     try:
         settings.prepare_roots()
     except OSError:
         return False
     executables = (settings.ffprobe_executable, settings.ffmpeg_executable)
     roots = (settings.staging_root, settings.work_root, settings.artifact_root)
-    local_resources_ready = all(
+    return all(
         executable.is_file() and os.access(executable, os.X_OK)
         for executable in executables
     ) and all(
         root.is_dir() and os.access(root, os.R_OK | os.W_OK | os.X_OK) for root in roots
     )
-    return local_resources_ready and provider.ready()
 
 
 app = create_app()

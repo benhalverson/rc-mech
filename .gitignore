@@ -32,7 +32,6 @@ coverage
 # Python tool and environment state
 
 __pycache__/
-.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 .venv/

@@ -161,13 +161,17 @@ def test_real_ffmpeg_prepare_and_fake_track_are_immutable(
     assert duplicate_prepare.prepared == prepared.prepared
 
     with TestClient(create_app(configured)) as client:
-        track_response = client.post(
+        removed_track_response = client.post(
             "/v1/stages/track",
             json=_track_request(prepared).model_dump(mode="json", by_alias=True),
         )
 
-    assert track_response.status_code == 200
-    tracked = TrackStageAccepted.model_validate(track_response.json())
+    assert removed_track_response.status_code == 404
+    tracked = SubjectTrackingService(
+        configured,
+        FakeInferenceProvider(configuration_provenance(configured.inference)),
+    ).track(_track_request(prepared))
+    assert isinstance(tracked, TrackStageAccepted)
     assert tracked.segment.completed is True
     assert tracked.segment.gap is None
     assert tracked.segment.observation_count == 3

@@ -15,6 +15,7 @@
 			"!!**/public",
 			"!!**/*.d.ts",
 			"!!containers/driving-analysis/tests/fixtures/subject-benchmark/**/*.json",
+			"!!containers/driving-analysis/tests/fixtures/subject-tracking/*.json",
 			"!!**/package-lock.json",
 			"!!**/pnpm-lock.yaml",
 			"!!**/yarn.lock"
