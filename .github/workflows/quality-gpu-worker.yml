@@ -1,0 +1,29 @@
+name: GPU worker quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - services/driving-analysis-gpu/**
+      - containers/driving-analysis/**
+      - .github/workflows/quality-gpu-worker.yml
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: services/driving-analysis-gpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: '3.12'
+      - run: uv run --frozen python -m chassis_notes_gpu_worker.quality
+      - run: bash ops/tests.sh
+      - run: docker build --file Dockerfile --tag chassis-notes-driving-analysis-gpu:ci ../..

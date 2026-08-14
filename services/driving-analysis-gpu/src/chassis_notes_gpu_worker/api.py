@@ -154,6 +154,7 @@ def create_app(  # noqa: C901 - route registration is the application compositio
 def _watchdog_loop(manager: JobManager, stopped: threading.Event) -> None:
     while not stopped.wait(1):
         manager.expire_stale()
+        manager.cleanup_expired()
 
 
 def _error_response(code: str, message: str, status: int) -> JSONResponse:

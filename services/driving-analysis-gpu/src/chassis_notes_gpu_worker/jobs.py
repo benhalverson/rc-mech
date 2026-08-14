@@ -1,6 +1,8 @@
 import hashlib
 import json
+import logging
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -34,6 +36,7 @@ from chassis_notes_gpu_worker.transfers import TransferClient, TransferFailureEr
 
 TaskStarter = Callable[[Callable[[], None]], None]
 Clock = Callable[[], float]
+logger = logging.getLogger(__name__)
 
 TERMINAL_STATES: frozenset[JobState] = frozenset(
     {"completed", "cancelled", "interrupted", "failed"}
@@ -59,6 +62,12 @@ class _Journal(StrictContract):
     artifact: OutputArtifact | None = None
     error: SafeJobError | None = None
     last_control_at: float = Field(alias="lastControlAt", ge=0, strict=True)
+    terminal_at: float | None = Field(
+        default=None, alias="terminalAt", ge=0, strict=True
+    )
+    output_ready_at: float | None = Field(
+        default=None, alias="outputReadyAt", ge=0, strict=True
+    )
 
 
 def _thread_starter(task: Callable[[], None]) -> None:
@@ -87,6 +96,7 @@ class JobManager:
         self._journal: _Journal | None = None
         self.settings.prepare_root()
         self._restore()
+        self.cleanup_expired()
 
     @property
     def capacity(self) -> Literal["available", "busy"]:
@@ -118,6 +128,7 @@ class JobManager:
                 lastControlAt=self._clock(),
             )
             self._persist()
+            self._log_event("job-submitted", capacity="busy")
             return self._status()
 
     def status(self, identity: ExecutionIdentity) -> JobStatus:
@@ -175,9 +186,11 @@ class JobManager:
                     "state": state,
                     "transfer_request": None,
                     "error": None,
+                    "terminal_at": self._clock() if state == "cancelled" else None,
                 }
             )
             self._persist()
+            self._log_event("job-cancel-requested", state=state)
             return self._status()
 
     def expire_stale(self) -> bool:
@@ -193,11 +206,63 @@ class JobManager:
                     "state": "interrupted",
                     "transfer_request": None,
                     "error": _safe_error("JOB_INTERRUPTED"),
+                    "terminal_at": self._clock(),
                 }
             )
             self._physical_busy = self._worker_running
             self._persist()
+            self._log_event("watchdog-interrupted", state="interrupted")
             return True
+
+    def cleanup_expired(self) -> int:
+        """Remove only old, non-active job workspaces from the state volume."""
+        jobs_root = self.settings.state_root / "jobs"
+        if not jobs_root.is_dir():
+            return 0
+        now = self._clock()
+        active_attempt = (
+            self._journal.submission.attempt_id
+            if self._journal is not None
+            and self._journal.state not in TERMINAL_STATES
+            and self._journal.state != "output-ready"
+            else None
+        )
+        removed = 0
+        for candidate in jobs_root.iterdir():
+            if not candidate.is_dir() or candidate.name == active_attempt:
+                continue
+            if (
+                self._journal is not None
+                and candidate.name == self._journal.submission.attempt_id
+            ):
+                terminal_at = self._journal.terminal_at or self._journal.output_ready_at
+                if (
+                    terminal_at is None
+                    or now - terminal_at < self.settings.retention_seconds
+                ):
+                    continue
+                if self._journal.state == "output-ready":
+                    self._journal = self._journal.model_copy(
+                        update={
+                            "state": "interrupted",
+                            "transfer_request": None,
+                            "error": _safe_error("JOB_INTERRUPTED"),
+                            "terminal_at": now,
+                        }
+                    )
+                    self._physical_busy = False
+                    self._persist()
+                    self._log_event("output-retention-expired", state="interrupted")
+            try:
+                age = now - candidate.stat().st_mtime
+                if age >= self.settings.retention_seconds:
+                    shutil.rmtree(candidate)
+                    removed += 1
+            except OSError:
+                logger.info(self._event_json("cleanup-skipped", outcome="unavailable"))
+        if removed:
+            self._log_event("cleanup-completed", removed=removed)
+        return removed
 
     def _transfer(
         self,
@@ -280,11 +345,13 @@ class JobManager:
                             "progress": 99,
                             "transfer_request": None,
                             "completed_transfer_ids": completed,
+                            "terminal_at": self._clock(),
                         }
                     )
                     self._physical_busy = False
                 self._worker_running = False
                 self._persist()
+                self._log_event("transfer-completed", role=role)
         except (JobRejectedError, TransferFailureError):
             with self._lock:
                 self._transfer_failed()
@@ -322,6 +389,7 @@ class JobManager:
                         "progress": 90,
                         "transfer_request": _transfer_request("observation-artifact"),
                         "artifact": result.artifact,
+                        "output_ready_at": self._clock(),
                     }
                 )
                 self._worker_running = False
@@ -337,11 +405,13 @@ class JobManager:
                             "state": "failed",
                             "transfer_request": None,
                             "error": _safe_error("TRACKING_FAILED"),
+                            "terminal_at": self._clock(),
                         }
                     )
                     self._worker_running = False
                     self._physical_busy = False
                     self._persist()
+                    self._log_event("execution-failed", outcome="failed")
 
     def _publish_output(self, result: ExecutionOutput) -> None:
         destination = self._output_path(result.artifact.attempt_id)
@@ -378,6 +448,7 @@ class JobManager:
             update={"state": state, "error": _safe_error("TRANSFER_FAILED")}
         )
         self._persist()
+        self._log_event("transfer-failed", outcome="retryable")
 
     def _finish_cancelled_or_interrupted(self) -> None:
         journal = self._require_journal()
@@ -385,11 +456,16 @@ class JobManager:
             "interrupted" if journal.state == "interrupted" else "cancelled"
         )
         self._journal = journal.model_copy(
-            update={"state": state, "transfer_request": None}
+            update={
+                "state": state,
+                "transfer_request": None,
+                "terminal_at": self._clock(),
+            }
         )
         self._worker_running = False
         self._physical_busy = False
         self._persist()
+        self._log_event("job-terminal", state=state, capacity="available")
 
     def _touch(self) -> None:
         journal = self._require_journal()
@@ -502,12 +578,20 @@ class JobManager:
             self._physical_busy = True
             return
         if journal.state in TERMINAL_STATES:
+            if journal.terminal_at is None:
+                try:
+                    terminal_at = self._journal_path.stat().st_mtime
+                except OSError:
+                    terminal_at = self._clock()
+                self._journal = journal.model_copy(update={"terminal_at": terminal_at})
+                self._persist()
             return
         self._journal = journal.model_copy(
             update={
                 "state": "interrupted",
                 "transfer_request": None,
                 "error": _safe_error("JOB_INTERRUPTED"),
+                "terminal_at": self._clock(),
             }
         )
         self._persist()
@@ -525,6 +609,40 @@ class JobManager:
             and len(value) <= self.settings.max_output_bytes
             and hashlib.sha256(value).hexdigest() == artifact.segment.checksum_sha256
         )
+
+    @staticmethod
+    def _event_json(event: str, **fields: object) -> str:
+        allowed = {"event": event}
+        allowed.update(
+            {
+                key: value
+                for key, value in fields.items()
+                if key
+                in {
+                    "attemptId",
+                    "capacity",
+                    "event",
+                    "outcome",
+                    "role",
+                    "runId",
+                    "segmentId",
+                    "state",
+                    "removed",
+                }
+            }
+        )
+        return json.dumps(allowed, separators=(",", ":"), sort_keys=True)
+
+    def _log_event(self, event: str, **fields: object) -> None:
+        journal = self._journal
+        if journal is not None:
+            fields = {
+                "runId": journal.submission.run_id,
+                "segmentId": journal.submission.segment_id,
+                "attemptId": journal.submission.attempt_id,
+                **fields,
+            }
+        logger.info(self._event_json(event, **fields))
 
 
 def _transfer_request(role: TransferRole) -> TransferRequest:

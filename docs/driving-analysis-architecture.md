@@ -521,3 +521,23 @@ Version one is complete only when:
 - the full repository lint, format, TypeScript, backend coverage, Angular 100% per-file coverage, production build, Playwright, AXE, dry-run deploy, and relevant production acceptance checks pass.
 
 Version one has no external media-acquisition prerequisite: the User supplies the Race recording, Chassis Notes stores it privately in R2, and Cloudflare prepares the owned source into the immutable Track-view artifact consumed by the local GPU worker.
+
+## Private GPU host operations
+
+The local execution boundary described by ADR 0028 is operated with the
+repository-owned assets in `services/driving-analysis-gpu/ops/`. A root-owned
+systemd service runs the capacity-one Docker worker with a loopback-only
+FastAPI listener, read-only model/profile mounts, dropped capabilities, bounded
+tmpfs, and an encrypted UID/GID 10001 state volume. A separate least-privilege
+`cloudflared` service exposes only the private hostname ingress and a default
+deny route. Access service authentication remains exclusively in the trusted
+Worker; neither service receives application, D1, Workflow, Durable Object, or
+R2-signing credentials.
+
+Startup preflight checks the Docker/NVIDIA runtime, storage encryption and
+permissions, profile/checkpoint digest agreement, required mounts, and safe
+container flags. The worker persists terminal timestamps, prunes only expired
+terminal workspaces, protects active and valid `output-ready` work, and emits
+safe lifecycle telemetry without grant URLs, credentials, media, provider
+responses, hostnames, or machine identifiers. Unfinished work is interrupted
+on restart or watchdog expiry and must be reauthorized by Cloudflare.
