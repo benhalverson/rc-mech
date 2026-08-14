@@ -7,7 +7,7 @@ name = "rc-mech-driving-analysis"
 version = "0.1.0"
 description = "Internal Race-video media validation service"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.12,<3.14"
 dependencies = [
   "fastapi==0.141.1",
   "pydantic==2.13.4",
@@ -20,7 +20,6 @@ subject-benchmark = "driving_analysis_service.subject_benchmark_cli:main"
 [dependency-groups]
 dev = [
   "httpx2==2.10.0",
-  "mypy==1.19.1",
   "pytest==9.0.3",
   "pytest-cov==7.0.0",
   "ruff==0.15.6",
@@ -28,12 +27,6 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/driving_analysis_service"]
-
-[tool.mypy]
-python_version = "3.13"
-strict = true
-files = ["src", "tests"]
-plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -58,7 +51,7 @@ show_missing = true
 skip_covered = true
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py312"
 line-length = 88
 
 [tool.ruff.lint]

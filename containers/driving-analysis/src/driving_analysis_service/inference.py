@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Self, cast
@@ -55,15 +56,14 @@ class InferenceProvider(Protocol):
 
     def ready(self, *, timeout_seconds: float | None = None) -> bool: ...
 
-    def infer(
+    def track_segment(
         self,
         *,
         seed_frame: InferenceFrame,
-        frame: InferenceFrame,
+        frames: tuple[InferenceFrame, ...],
         seed: SubjectSeed,
-        previous_box: NormalizedBox | None,
         timeout_seconds: float | None = None,
-    ) -> ProviderCandidate: ...
+    ) -> Generator[ProviderCandidate]: ...
 
 
 def configuration_provenance(settings: InferenceSettings) -> SubjectProvenance:
@@ -91,6 +91,12 @@ def configuration_provenance(settings: InferenceSettings) -> SubjectProvenance:
 
 
 def create_inference_provider(settings: InferenceSettings) -> InferenceProvider:
+    if settings.provider == "sam31":
+        from driving_analysis_service.sam31_inference import (  # noqa: PLC0415
+            Sam31InferenceProvider,
+        )
+
+        return Sam31InferenceProvider.create(settings)
     if settings.provider == "local-http":
         return OllamaInferenceProvider.create(settings)
     if settings.provider == "fixture":
@@ -122,6 +128,17 @@ class DisabledInferenceProvider:
         del seed_frame, frame, seed, previous_box, timeout_seconds
         raise InferenceUnavailableError
 
+    def track_segment(
+        self,
+        *,
+        seed_frame: InferenceFrame,
+        frames: tuple[InferenceFrame, ...],
+        seed: SubjectSeed,
+        timeout_seconds: float | None = None,
+    ) -> Generator[ProviderCandidate]:
+        del seed_frame, frames, seed, timeout_seconds
+        raise InferenceUnavailableError
+
 
 @dataclass(frozen=True)
 class FakeInferenceProvider:
@@ -150,6 +167,26 @@ class FakeInferenceProvider:
             identityConfidence=1.0,
             visibility="visible",
         )
+
+    def track_segment(
+        self,
+        *,
+        seed_frame: InferenceFrame,
+        frames: tuple[InferenceFrame, ...],
+        seed: SubjectSeed,
+        timeout_seconds: float | None = None,
+    ) -> Generator[ProviderCandidate]:
+        previous_box: NormalizedBox | None = None
+        for frame in frames:
+            candidate = self.infer(
+                seed_frame=seed_frame,
+                frame=frame,
+                seed=seed,
+                previous_box=previous_box,
+                timeout_seconds=timeout_seconds,
+            )
+            previous_box = candidate.box
+            yield candidate
 
 
 class FixtureFrame(StrictContract):
@@ -214,6 +251,26 @@ class FixtureInferenceProvider:
             return self._candidates[frame.provenance.frame_index]
         except KeyError as error:
             raise InferenceFailureError from error
+
+    def track_segment(
+        self,
+        *,
+        seed_frame: InferenceFrame,
+        frames: tuple[InferenceFrame, ...],
+        seed: SubjectSeed,
+        timeout_seconds: float | None = None,
+    ) -> Generator[ProviderCandidate]:
+        previous_box: NormalizedBox | None = None
+        for frame in frames:
+            candidate = self.infer(
+                seed_frame=seed_frame,
+                frame=frame,
+                seed=seed,
+                previous_box=previous_box,
+                timeout_seconds=timeout_seconds,
+            )
+            previous_box = candidate.box
+            yield candidate
 
 
 class _OllamaMessage(BaseModel):
@@ -362,6 +419,34 @@ class OllamaInferenceProvider:
             return ProviderCandidate.model_validate_json(envelope.message.content)
         except (ValueError, TypeError) as error:
             raise InferenceFailureError from error
+
+    def track_segment(
+        self,
+        *,
+        seed_frame: InferenceFrame,
+        frames: tuple[InferenceFrame, ...],
+        seed: SubjectSeed,
+        timeout_seconds: float | None = None,
+    ) -> Generator[ProviderCandidate]:
+        deadline = (
+            None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        )
+        previous_box: NormalizedBox | None = None
+        for frame in frames:
+            remaining = (
+                None if deadline is None else max(0.0, deadline - time.monotonic())
+            )
+            if remaining == 0.0:
+                raise InferenceFailureError
+            candidate = self.infer(
+                seed_frame=seed_frame,
+                frame=frame,
+                seed=seed,
+                previous_box=previous_box,
+                timeout_seconds=remaining,
+            )
+            previous_box = candidate.box
+            yield candidate
 
     def _request(
         self,

@@ -1,0 +1,13 @@
+*
+!containers/
+!containers/driving-analysis/
+!containers/driving-analysis/**
+!services/
+!services/driving-analysis-gpu/
+!services/driving-analysis-gpu/**
+**/.coverage
+**/.pytest_cache/
+**/.ruff_cache/
+**/.venv/
+**/__pycache__/
+**/tests/

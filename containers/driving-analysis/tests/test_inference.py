@@ -24,14 +24,15 @@ from driving_analysis_service.inference import (
     configuration_provenance,
     create_inference_provider,
 )
+from driving_analysis_service.sam31_inference import Sam31InferenceProvider
 from driving_analysis_service.settings import InferenceSettings
-from driving_analysis_service.tracking_contracts import PreparedFrame
+from driving_analysis_service.tracking_contracts import PreparedFrame, ProviderCandidate
 
 MODEL_DIGEST = "4" * 64
 
 
 def _settings(
-    provider: Literal["disabled", "local-http", "fixture", "fake"],
+    provider: Literal["disabled", "local-http", "fixture", "fake", "sam31"],
     **changes: object,
 ) -> InferenceSettings:
     values: dict[str, object] = {
@@ -110,11 +111,13 @@ def test_provider_factory_and_disabled_provider(
         _settings("fixture", fixture_path=fixture)
     )
     fake = create_inference_provider(_settings("fake"))
+    sam31 = create_inference_provider(_settings("sam31"))
     disabled = create_inference_provider(_settings("disabled"))
 
     assert isinstance(ollama, OllamaInferenceProvider)
     assert isinstance(fixture_provider, FixtureInferenceProvider)
     assert isinstance(fake, FakeInferenceProvider)
+    assert isinstance(sam31, Sam31InferenceProvider)
     assert isinstance(disabled, DisabledInferenceProvider)
     assert disabled.ready() is False
     with pytest.raises(InferenceUnavailableError):
@@ -128,6 +131,30 @@ def test_provider_factory_and_disabled_provider(
             seed=_seed(),
             previous_box=None,
         )
+    with pytest.raises(InferenceUnavailableError):
+        next(
+            disabled.track_segment(
+                seed_frame=_frame(frame_path),
+                frames=(_frame(frame_path),),
+                seed=_seed(),
+            )
+        )
+
+
+def test_fake_provider_tracks_one_stateful_segment(tmp_path: Path) -> None:
+    provider = FakeInferenceProvider(configuration_provenance(_settings("fake")))
+    frame_path = tmp_path / "frame.jpg"
+    frame_path.write_bytes(b"frame")
+    frames = (_frame(frame_path, 1), _frame(frame_path, 2))
+
+    stream = provider.track_segment(
+        seed_frame=frames[0],
+        frames=frames,
+        seed=_seed(),
+        timeout_seconds=1.0,
+    )
+
+    assert [candidate.box for candidate in stream] == [_seed().box, _seed().box]
 
 
 def test_fixture_provider_validates_files_and_missing_frames(
@@ -232,12 +259,79 @@ def test_fixture_provider_reports_unknown_frame(
     frame_path.write_bytes(b"frame")
     assert provider.ready() is True
     assert provider.provenance.provider == "fixture"
+    candidates = list(
+        provider.track_segment(
+            seed_frame=_frame(frame_path),
+            frames=(_frame(frame_path),),
+            seed=_seed(),
+        )
+    )
+    assert len(candidates) == 1
+    assert candidates[0].visibility == "uncertain"
     with pytest.raises(InferenceFailureError):
         provider.infer(
             seed_frame=_frame(frame_path),
             frame=_frame(frame_path, 2),
             seed=_seed(),
             previous_box=None,
+        )
+
+
+def test_ollama_tracks_a_segment_with_one_shared_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OllamaInferenceProvider.create(_settings("local-http"))
+    frame_path = tmp_path / "frame.jpg"
+    frame_path.write_bytes(b"frame")
+    frames = (_frame(frame_path), _frame(frame_path, 2))
+    previous_boxes: list[NormalizedBox | None] = []
+    timeouts: list[float | None] = []
+
+    def infer(
+        _self: OllamaInferenceProvider,
+        *,
+        seed_frame: InferenceFrame,
+        frame: InferenceFrame,
+        seed: SubjectSeed,
+        previous_box: NormalizedBox | None,
+        timeout_seconds: float | None = None,
+    ) -> ProviderCandidate:
+        del seed_frame, frame, seed
+        previous_boxes.append(previous_box)
+        timeouts.append(timeout_seconds)
+        return ProviderCandidate(
+            box=_seed().box,
+            identityConfidence=1.0,
+            visibility="visible",
+        )
+
+    monkeypatch.setattr(OllamaInferenceProvider, "infer", infer)
+    candidates = list(
+        provider.track_segment(
+            seed_frame=frames[0],
+            frames=frames,
+            seed=_seed(),
+            timeout_seconds=1.0,
+        )
+    )
+
+    assert len(candidates) == 2
+    assert previous_boxes == [None, _seed().box]
+    assert all(timeout is not None and timeout > 0 for timeout in timeouts)
+
+    monkeypatch.setattr(
+        "driving_analysis_service.inference.time.monotonic",
+        lambda: 1.0,
+    )
+    with pytest.raises(InferenceFailureError):
+        next(
+            provider.track_segment(
+                seed_frame=frames[0],
+                frames=frames,
+                seed=_seed(),
+                timeout_seconds=0.0,
+            )
         )
 
 
