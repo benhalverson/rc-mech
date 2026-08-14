@@ -1,6 +1,6 @@
 # Driving analysis API architecture
 
-**Status:** proposed implementation plan
+**Status:** accepted implementation plan
 
 This document turns the accepted Driving-analysis domain and ADRs into an implementable API and Cloudflare design. It is a clean-slate capability inside Chassis Notes; `rc-racing-line-analysis` is not a code or contract dependency.
 
@@ -19,17 +19,29 @@ Angular Driving-analysis route
         |
         v
 Existing authenticated Hono Worker API
-        |---------------------> D1 metadata and lifecycle
-        |<-- browser parts ----> private ANALYSIS_MEDIA R2 binding
-        |-- upload complete ---> RaceVideoValidationWorkflow ---> named container
-        `-- analysis create ---> DrivingAnalysisWorkflow -------> named container
-
-named DrivingAnalysisContainer instances
-        |---------------------> container-hosted inference provider
-        `-- analysis-media.internal --> Worker outbound handler --> private R2
+        |--------------------------> D1 metadata, lifecycle, and accepted evidence
+        |<-- browser parts --------> private ANALYSIS_MEDIA R2 binding
+        |-- upload complete -------> RaceVideoValidationWorkflow
+        `-- analysis create -------> one DrivingAnalysisWorkflow per run
+                                              |
+                 |-- named Python media container
+                 |        `-- analysis-media.internal --> Worker R2 handler --> private R2
+                 |-- singleton GpuLeaseCoordinator Durable Object
+                 `-- TypeScript TrackingProvider
+                          `-- LocalSam31Provider + Access token
+                                      |
+                                      v
+                            gpu.chassisnotes.com
+                                      |
+                              Access -> Tunnel
+                                      |
+                                      v
+                            127.0.0.1:8080 FastAPI
+                                      |
+                              SAM 3.1 -> RTX 3090
 ```
 
-There is no second public API origin. The existing Worker remains the same-origin API and Angular host under ADR 0001. The Python service is reachable only through its container Durable Object binding.
+The existing Worker remains the only browser-facing application API and Angular host under ADR 0001. The Python media service is reachable only through its container binding. The GPU hostname is not a browser API: only the trusted Worker calls it through a fixed-origin provider using Cloudflare Access service authentication, and Cloudflare Tunnel terminates at a loopback-only FastAPI service on the GPU host.
 
 ## Responsibilities
 
@@ -40,10 +52,13 @@ There is no second public API origin. The existing Worker remains the same-origi
 | Feature gateway | API URLs, `httpResource` reads, cold mutation Observables, Zod parsing | User-interface state or workflow decisions |
 | Hono routes | Authentication, Owner/User authorization, request validation, resource ownership, public DTOs | FFmpeg, model invocation, long-running orchestration |
 | Domain rules | State transitions, normalized geometry validation, observation continuity, gate crossing, pass eligibility, ties and ranking | Network, D1, R2, container lifecycle |
-| Cloudflare Workflow | Durable stage sequencing, retry policy, waiting for Re-identification, cancellation checkpoints | Long-lived application state or large binary artifacts |
-| Python container | Media probing, accurate trimming, Track-view crop, inference, observation serialization, clip rendering | Garage ownership, Track-map edits, ranking, publishing results directly |
+| Run-level Cloudflare Workflow | Durable stage sequencing, segment orchestration, retry policy, waiting for Re-identification, cancellation checkpoints | Authoritative application state or large binary artifacts |
+| TypeScript `TrackingProvider` | Provider selection, fixed-origin GPU control, strict Zod parsing, lease/fence checks, transfer-grant issuance, retry classification | Media processing, model execution, public lifecycle ownership |
+| `GpuLeaseCoordinator` Durable Object | Persisted FIFO waiter ordering, one active lease, lease IDs, monotonically increasing fencing tokens | Analysis lifecycle, evidence, provider work, a second durable job queue |
+| Python media container | Media probing, accurate trimming, Track-view crop, frame manifest production, Corner-clip rendering | Tracking, provider selection, Garage ownership, ranking, publishing results directly |
+| Local FastAPI GPU worker | Strict Pydantic GPU protocol, one physical execution, SAM 3.1 Tracking segments, disposable caches and recoverable attempt state | Durable queueing, User waits, application credentials, lifecycle or evidence acceptance |
 | D1 | Durable metadata, versions, state, measurements, provenance, artifact references | Video bytes, frame images, model files |
-| private R2 | Uploaded Race recordings, temporary Race-window media, retained observations, Corner clips and integrity metadata | Public unauthenticated media |
+| private R2 | Uploaded Race recordings, prepared Track-view media, staged and accepted observations, Corner clips and integrity metadata | Public unauthenticated media or lifecycle authority |
 
 ## Video and geometry contract
 
@@ -164,6 +179,8 @@ Creation response:
 
 `requestId` is a client-generated UUID used to make creation idempotent. Re-identification and retry commands also carry client-generated command IDs.
 
+Owned analysis responses expose stable run and Tracking-segment provenance: run ID, Inference-profile digest, segment ID/order/outcome, gap descriptors, and accepted-artifact digest. They never expose attempt or transfer-request IDs, lease IDs, fencing tokens, staging or private object keys, Access details, the GPU hostname, or machine identifiers.
+
 ### Track-map administration
 
 | Method | Path | Authorization |
@@ -200,7 +217,11 @@ completed | failed | cancelled
   -> deleting -> deleted
 ```
 
-Race-video validation uses `probing` and `decode-validation` stages before an analysis exists. Driving-analysis stages are `preparation`, `tracking`, `measurement`, `clip-rendering`, and `finalization`. Analysis progress is monotonic within one run but may reset when a new run starts. D1 is authoritative because completed Workflow state has platform retention limits.
+Race-video validation uses `probing` and `decode-validation` stages before an analysis exists. Driving-analysis stages are `preparation`, `tracking`, `measurement`, `clip-rendering`, and `finalization`. D1 is authoritative because completed Workflow state has platform retention limits.
+
+Provider states such as downloading, processing, output readiness, transfer activity, retry, recovery, and lease waiting are internal. Before the first Tracking segment starts, provider or capacity waits remain public `queued` with `waiting-for-provider` or `waiting-for-capacity`. After any Tracking evidence is accepted, later waits remain `running` at `tracking` and never regress to `queued`. Exact queue position is not public. Progress is a monotonic high-water mark within one run, capped at 99 until the authoritative final commit publishes 100; a new run may reset progress.
+
+Version-one GPU scheduling is persisted FIFO and non-preemptive. Each newly ready segment, including one created by Re-identification, joins the tail. Infrastructure retry preserves the segment's original waiter ordinal, cancellation removes it, and an executing segment retains the physical GPU until a defined segment termination condition.
 
 Failures use stable public codes:
 
@@ -212,7 +233,9 @@ Failures use stable public codes:
 - `UNSUPPORTED_VIDEO_LAYOUT`
 - `TRACK_MAP_UNAVAILABLE`
 - `SUBJECT_NOT_FOUND`
-- `MODEL_FAILED`
+- `TRACKING_PROVIDER_UNAVAILABLE`
+- `TRACKING_PROVIDER_FAILED`
+- `TRACKING_ARTIFACT_INVALID`
 - `ARTIFACT_WRITE_FAILED`
 - `RESOURCE_LIMIT_EXCEEDED`
 - `PROCESSING_FAILED`
@@ -221,32 +244,55 @@ Provider exception text, credentials, media URLs, prompts, and response bodies a
 
 ## Workflow stages
 
-1. **Validate video and ownership** — reload the ready Race-video object, its R2 metadata, every parent record, Track-map version, and command idempotency key.
-2. **Prepare Race window** — the named container reads the uploaded recording through the constrained R2 handler, decodes only the selected interval, crops the fixed Track view, and writes a working MP4 plus checksum to private R2.
-3. **Track Subject car** — the provider begins at the User seed or latest Re-identification and writes compressed Subject observations to R2. It stops at the first ambiguous identity.
-4. **Wait for Re-identification when required** — persist the Tracking gap, publish `awaiting-reidentification`, and use `step.waitForEvent`. Waiting consumes no container and the ephemeral disk may disappear.
-5. **Resume tracking** — reacquire the working segment from R2, append a new immutable observation segment, and repeat until the Race window ends.
-6. **Measure** — TypeScript deterministic rules validate continuity, interpolate gate crossings, construct eligible Corner passes, apply tie rules, and persist measurements transactionally.
-7. **Render clips** — the container receives only validated clip specifications, crops each Corner view, adds unobtrusive Subject-center and gate overlays, and writes browser-compatible H.264 MP4 clips without audio.
-8. **Finalize** — verify R2 checksums and sizes, rank passes per corner, publish `completed`, and schedule deletion of the working Race-window object.
+1. **Validate video and ownership** — reload the ready Race-video object, its R2 metadata, every parent record, Track-map version, immutable Inference profile, and command idempotency key.
+2. **Prepare Race window once per run** — the named media container reads the uploaded recording through the constrained R2 handler, decodes only the selected interval, crops the fixed Track view, and publishes immutable prepared media plus a frame manifest and checksums to private R2.
+3. **Create an immutable Tracking segment** — bind the initial Subject seed or accepted Re-identification, prepared-media descriptor, Race-window end, Inference-profile digest, and versioned segment specification into one digest.
+4. **Acquire GPU capacity** — enqueue the segment once in the singleton coordinator's persisted FIFO order. On acquisition, conditionally activate the lease ID and fencing token in D1 before issuing a transfer grant or contacting the provider.
+5. **Execute and accept the segment** — `LocalSam31Provider` submits idempotently, polls the Access-protected worker, renews authority only from matching status, and supplies ephemeral GET or PUT grants through the shared transfer handshake. A successful output is staged, independently validated, promoted to a grant-inaccessible accepted key, and atomically committed in D1 before lease release.
+6. **Wait for Re-identification when required** — only an accepted `tracking-gap` artifact publishes `awaiting-reidentification`. The Workflow uses `step.waitForEvent` without a GPU lease or local pending job.
+7. **Resume with a new segment** — an accepted Re-identification creates the next immutable segment at the first clear frame. Infrastructure retry creates a new attempt under the existing segment instead.
+8. **Measure** — TypeScript deterministic rules validate accepted observation continuity, interpolate gate crossings, construct eligible Corner passes, apply tie rules, and persist measurements transactionally.
+9. **Render clips** — the media container receives only validated clip specifications, crops each Corner view, adds unobtrusive Subject-center and gate overlays, and writes browser-compatible H.264 MP4 clips without audio.
+10. **Finalize** — verify R2 checksums and sizes, rank passes per corner, publish `completed` and 100 percent progress, and schedule deletion of prepared working media.
 
-Each stage is idempotent on `(runId, stage, inputDigest)`. A retry either returns the already verified output or writes a new attempt key and atomically promotes it. Workflow step outputs contain small descriptors, never video or full observation arrays.
+One Workflow instance owns one immutable run and reloads D1 after every wake, retry, and replay. Each non-Tracking stage is idempotent on `(runId, stage, inputDigest)`; Tracking idempotency additionally distinguishes immutable segment identity from mutable execution attempts. Workflow step outputs contain small descriptors, never video, Transfer-grant URLs, or full observation arrays.
 
-## Python container contract
+## Python media container contract
 
-The service lives at `containers/driving-analysis/`, listens on one internal port, and exposes only versioned stage endpoints:
+The Cloudflare service lives at `containers/driving-analysis/`, listens on one internal port, and exposes only the media stages that require its FFmpeg runtime:
 
 | Method | Internal path | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Process and model readiness. |
+| `GET` | `/health` | Process and media-runtime readiness. |
 | `POST` | `/v1/media/probe` | Probe and bounded-decode a completed upload before it can become ready. |
 | `POST` | `/v1/stages/prepare` | Read the owned Race recording through the R2 handler, trim, crop, and store working media. |
-| `POST` | `/v1/stages/track` | Run one continuous trusted tracking segment from a supplied seed. |
 | `POST` | `/v1/stages/render` | Render an immutable list of validated Corner-clip specifications. |
 
-Requests and responses use strict Pydantic models with `additionalProperties` rejected. The Worker parses responses with corresponding Zod schemas. A shared set of JSON fixtures proves both sides accept and reject the same contract.
+The container has `enableInternet=false` and no GPU-control responsibility. It reaches private R2 only through ADR 0027's named outbound handler and never receives the local GPU Access credential.
 
-A Subject observation contains:
+## Tracking provider and local GPU contract
+
+The provider-neutral `TrackingProvider` interface lives in trusted TypeScript. Its initial `LocalSam31Provider` is configured with one normalized HTTPS origin, builds only relative paths, rejects redirects, injects the Access service token only for an exact origin match, and bounds every request and response before strict Zod parsing.
+
+Every submission names the run's canonical Inference-profile digest. The local worker resolves its installed model, pipeline, runtime, and inference-affecting configuration and rejects anything other than an exact match. Cloudflare treats a selected worker that no longer supports the run's profile as unavailable under that segment's existing 24-hour deadline; it never substitutes the worker's newer profile.
+
+The local FastAPI service exposes a small versioned execution API through Cloudflare Access and Tunnel:
+
+| Method | Internal path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Report bounded process, installed-profile, and physical-capacity readiness. |
+| `POST` | `/v1/jobs` | Idempotently submit one segment execution under an activated lease and attempt. Return `202` when accepted. |
+| `GET` | `/v1/jobs/{segmentId}` | Report internal execution status bound to segment, attempt, lease, fence, and profile digest. |
+| `POST` | `/v1/jobs/{segmentId}/transfer-grants` | Deliver one ephemeral GET or PUT grant for a stable transfer-request ID. |
+| `POST` | `/v1/jobs/{segmentId}/cancel` | Idempotently request cooperative cancellation for the exact active authority. |
+
+The local worker has no durable queue and accepts at most one physical execution. Every local job is one continuous Tracking segment, and local status never becomes the public Driving-analysis lifecycle. A Tracking gap is a successful local `completed` outcome; Cloudflare alone accepts its artifact and publishes `awaiting-reidentification`. A status of `transfer-grant-required` carries only stable transfer identity and role; the delivered URL exists in memory only and is discarded after use.
+
+GPU control requests contain only small descriptors. The GPU worker receives a grant for the immutable prepared Race-window Track-view artifact and frame manifest, never the original Race recording; media bytes flow directly from R2 to the GPU host rather than through the Worker, Python container, or Tunnel request body. Compact observation artifacts flow directly back to R2 through the corresponding PUT grant.
+
+Both Python services use strict Pydantic models with extra fields rejected. The Worker uses corresponding strict Zod schemas, and shared accepted and rejected fixtures prove Zod-to-Pydantic parity for provider-neutral observation, segment, status, transfer, and artifact contracts.
+
+A provider-neutral Subject observation contains:
 
 ```json
 {
@@ -262,6 +308,16 @@ A Subject observation contains:
 
 The configured threshold and provider-specific confidence calibration are part of run provenance. The public domain does not assume confidence values from different models are directly comparable.
 
+### Tracking artifact acceptance
+
+1. The worker finalizes a successful segment artifact locally and reports `output-ready` with attempt, segment, specification, profile, lease, and fencing identities plus contract version, checksum, and byte count.
+2. Cloudflare verifies that D1 and the coordinator still agree on that active authority, then sends a short-lived PUT grant for an attempt-specific staging key through the stable transfer-request handshake.
+3. The worker uploads once from memory and reports transfer completion. Grant expiry reuses the same transfer-request ID; it never creates another segment, attempt, or specification.
+4. Cloudflare independently reads and validates the staged object's checksum, byte count, strict contract, successful outcome, segment binding, specification digest, profile digest, lease ID, and fencing token.
+5. Cloudflare promotes the exact validated bytes to an accepted-evidence key that is never exposed through a PUT grant and validates the promoted object.
+6. Cloudflare acquires a bounded coordinator commit hold conditioned on the same lease and fencing token. The hold prevents lease expiry or reassignment during the final conditional D1 transaction but stores no evidence.
+7. Cloudflare commits the accepted key and checksum in D1 exactly once, then releases the successful lease. Cancelled, expired, stale, interrupted, or failed attempts receive no new grant and can never bind staging or an orphaned promotion as evidence.
+
 ## Persistence model
 
 The exact migration can evolve during implementation, but these ownership and immutability boundaries are required.
@@ -273,16 +329,21 @@ The exact migration can evolve during implementation, but these ownership and im
 | `track_layout` | stable layout identity, venue/name, active/retired state |
 | `track_map_version` | layout ID, integer version, draft/approved/retired state, reference source metadata, creator, approval timestamp |
 | `track_corner` | map-version ID, stable corner key, order, name, entry/exit gate coordinates, Corner-view coordinates |
-| `driving_analysis` | owner, Car, Drive session, Race-video ID, Race window, pinned map version, seed, status/stage/progress, current run, Workflow ID, timestamps |
+| `driving_analysis` | owner, Car, Drive session, Race-video ID, Race window, pinned map version, seed, status/stage/progress high-water mark, current run, timestamps |
 | `driving_analysis_request` | owner and client request ID, request digest, analysis ID, outcome; prevents duplicate jobs |
-| `driving_analysis_run` | sequence, provider/model/image/pipeline/config provenance, status, input digest, started/completed timestamps |
-| `subject_observation_artifact` | run, segment order, R2 reference, checksum, byte count, first/last timestamps |
+| `inference_profile` | canonicalization version, immutable inference-affecting configuration, profile digest; excludes leases, timing, hardware, and transfer details |
+| `driving_analysis_run` | sequence, Workflow ID, Inference-profile digest, status, input digest, started/completed timestamps; one immutable profile and one Workflow per run |
+| `prepared_tracking_media` | run, source and preparation digests, immutable R2 descriptor, frame-manifest descriptor, checksums, byte counts |
+| `tracking_segment` | immutable ID/run/order, initial or Re-identification seed, prepared-media descriptor, specification version and digest, availability deadline, successful outcome, accepted-artifact binding |
+| `tracking_execution_attempt` | segment and attempt IDs, mutable internal state, active lease ID/fencing token, profile digest, timing and bounded diagnostics; never a Transfer-grant URL |
+| `tracking_transfer_request` | stable ID, attempt, GET/PUT role, logical object descriptor, state; grant material is never persisted |
+| `subject_observation_artifact` | run and segment, accepted R2 reference, contract/profile/specification digests, checksum, byte count, first/last timestamps, outcome and optional gap descriptor |
 | `tracking_gap` | run, start timestamp, reason code, correction state |
 | `reidentification` | gap, client command ID, User, timestamp, normalized box, created timestamp; append-only |
 | `corner_pass` | run, corner, ordinal, crossing timestamps/frame pairs, duration, eligibility/exclusion, rank and tie group |
 | `analysis_artifact` | owner, analysis/run, kind, private R2 key, content type, byte count, checksum, retention/deletion timestamps |
 
-Approved Track-map versions, Re-identifications, completed run provenance, and measured Corner passes are immutable. A rerun creates new run records and promotes one run as current without deleting prior evidence.
+Approved Track-map versions, Inference profiles, Tracking-segment specifications, accepted observation artifacts, Re-identifications, completed run provenance, and measured Corner passes are immutable. Attempt state may change only through fenced transitions. A rerun creates a new run, Workflow, and Tracking evidence and promotes that run as current without deleting prior evidence. It may reuse immutable source inputs, but it cannot consume observations accepted under the previous run's profile.
 
 ## Private media and retention
 
@@ -291,20 +352,57 @@ Approved Track-map versions, Re-identifications, completed run provenance, and m
 - Uploaded Race recordings remain private and reusable by analyses for the same Drive session until the User deletes them. Deletion is refused while an analysis is active; completed analyses retain their derived evidence but cannot be retried after their source recording is deleted.
 - Incomplete multipart uploads expire and are aborted automatically. Their D1 upload-part records are then deleted.
 - Working Race-window media is retained while a run is active or awaiting Re-identification, then deleted within 24 hours after completion, cancellation, or terminal failure.
-- Compressed Subject observations and every eligible Corner clip remain until the User deletes the Driving analysis. These are the retained provenance needed to explain a result.
+- Attempt-specific staging objects and promoted objects not referenced by a successful D1 commit are never evidence and are garbage-collected within 24 hours. Accepted Subject observations use separate keys that no Transfer grant can write.
+- Compressed accepted Subject observations and every eligible Corner clip remain until the User deletes the Driving analysis. These are the retained provenance needed to explain a result.
 - Do not retain extracted full frames, model masks, or debug video by default.
+- Presigned Transfer-grant URLs are never stored in D1 or R2 metadata, written to logs, included in provenance, or hashed into idempotency inputs.
 - Deletion is idempotent and recoverable only while R2 object deletion has not completed. The UI must state when deletion becomes permanent.
 - Artifact reads go through the authenticated Worker with ownership checks and byte-range support. The bucket has no `r2.dev` or custom-domain public access.
 
-## Container isolation
+## Cloudflare media-container isolation
 
-- Use one named container instance per validation or processing run, addressed by its validation/run ID; do not randomly load-balance stateful stage requests.
-- Start benchmarking with `standard-4` because it is the largest standard CPU instance, then downsize only if the representative benchmark still passes quality and processing targets. Start with `max_instances: 2` to bound platform spend.
-- The image is `linux/amd64`, pinned by digest in run provenance, and contains FFmpeg, Python, the selected optimized model, and no development tools.
+- Use one named container instance per validation or media-processing run, addressed by its validation/run ID; do not randomly load-balance stateful stage requests.
+- Benchmark FFmpeg preparation and rendering with `standard-4`, then downsize only if representative media still passes processing targets. Start with `max_instances: 2` to bound platform spend.
+- The image is `linux/amd64`, pinned by digest in run provenance, and contains FFmpeg, the media Python service, and no Tracking model or development tools.
 - Set `enableInternet = false` in production. Export `ContainerProxy` and allow only explicit virtual hosts.
 - `analysis-media.internal` is an `outboundByHost` Worker handler that validates the container/run identity and translates constrained HTTP range reads and writes into the `ANALYSIS_MEDIA` R2 binding.
-- A later Workers AI provider uses a separate outbound handler so the Worker keeps the binding and credentials; it does not broaden general internet access.
+- ADR 0027 remains in force for this mediated R2 path. GPU control originates in trusted Worker code and does not add a container egress host or a Python hop.
 - Container disk is scratch space only. Every stage must tolerate a fresh disk after sleep or rollout.
+
+## Local GPU host
+
+- Run `cloudflared` and the FastAPI inference worker as persistent system services that start after reboot and restart after failure. FastAPI listens only on `127.0.0.1:8080`; the host exposes no LAN or public inference port.
+- `cloudflared` initiates the connection outbound to Cloudflare, so the GPU host requires no port forwarding, static address, inbound firewall opening, or publicly exposed home IP.
+- Use a dedicated least-privilege service account and encrypted local storage. The worker holds no R2 signing, Access, application, D1, Workflow, or Durable Object credential.
+- Enforce one physical GPU execution in the local worker even when Cloudflare has reassigned an expired lease. The worker has no local durable queue; a second submission receives `GPU_CAPACITY_BUSY`.
+- A minimal local execution journal may retain identities, specification/profile digests, mutable state, and an `output-ready` descriptor for recovery. It never stores a Transfer grant. Host restart marks unfinished computation interrupted and requires fresh Cloudflare authorization before another attempt can run.
+- Prepared media may use a checksum-keyed cache with a seven-day default TTL and a configured disk budget. Finalized local outputs are deleted after Cloudflare acknowledges acceptance or after 24 hours. Model weights and compiled model caches may persist across segments. Every cache is an optimization and is revalidated before use.
+
+Starting timing defaults are configuration rather than domain state:
+
+| Setting | Default |
+| --- | --- |
+| Provider status poll | 15 seconds |
+| GPU lease lifetime | 90 seconds |
+| Local control-plane watchdog grace | 120 seconds |
+| Cancellation grace before lease release | 60 seconds |
+| GPU control-request timeout | 10 seconds |
+| Artifact D1 commit hold | 30 seconds |
+| Provider-unavailable backoff | Full jitter from 5 seconds, capped at 5 minutes |
+| Input GET Transfer grant | 30 minutes, renewable |
+| Output PUT Transfer grant | 10 minutes, renewable |
+| Ready-segment provider deadline | 24 hours, never extended by retry |
+
+Lease renewal requires a matching current status response and a still-current D1 record. Control-plane silence lets the lease expire before the local watchdog aborts stale physical work. These values should be tuned from production measurements without changing the lifecycle or fencing invariants.
+
+### Lease and failure recovery
+
+- The coordinator assigns one unique lease ID and the next persisted fencing token to the FIFO head. Cloudflare then conditionally activates that identity in D1; no GPU request or Transfer grant is permitted before the D1 commit. A bounded commit hold is part of this lease coordination and prevents reassignment only during the final evidence transaction.
+- If activation fails, release the unused lease or let it expire. If recovery finds D1 and the coordinator disagree, fence the attempt and reconcile from D1/R2 instead of guessing which side won.
+- Polling is Cloudflare-initiated. Every status response must match the current segment, attempt, lease, fence, and profile digest; only then may Cloudflare renew the coordinator lease and persist monotonic internal progress.
+- Cancellation first transitions D1 so late work is fenced, then stops grant issuance and lease renewal and sends an idempotent local cancel. Release the lease after local confirmation or after the 60-second grace if the worker is unreachable.
+- Lease release does not prove physical computation has stopped. If a newly leased submission encounters stale physical work, the local worker returns `GPU_CAPACITY_BUSY`; Cloudflare releases the unstarted lease and restores the same waiter at the FIFO head with its original ordinal and deadline.
+- A local reboot never resumes computation on local authority. An unfinished execution becomes interrupted and a fresh Cloudflare-authorized attempt reuses the immutable segment; an already finalized `output-ready` attempt remains idempotently reportable under its original attempt identity.
 
 ## Client feature boundary
 
@@ -327,34 +425,41 @@ Accessibility requirements include keyboard-operable start/end marking and box a
 - Treat filename extensions and browser content types as untrusted display metadata. FFprobe and bounded decoding in the egress-denied container determine whether the object is supported media.
 - Re-check User ownership at every API and Workflow boundary, including after retries and wakeups.
 - Only the configured application Owner may mutate Track maps.
+- Normalize the HTTPS-only GPU origin once from deployment configuration. Provider code accepts only relative paths, rejects redirects and alternate origins, and injects the Access service token only after an exact origin match; D1 and request data can never choose a host, scheme, or port.
+- Protect the GPU application with an Access Service Auth policy that accepts only the Worker-held service token. Keep that secret at the Worker boundary; neither Python service receives it, and local FastAPI trusts only Access-authenticated Tunnel traffic arriving on loopback.
+- Generate Transfer grants only after lease-first, conditional D1 activation. Bind each grant delivery to the current segment, attempt, lease, fencing token, profile digest, role, and stable transfer-request ID.
+- Keep R2 signing material at the Worker secret boundary. Grants are exact-method, exact-object, short-lived execution capabilities; reissuance preserves the transfer-request ID and is excluded from provenance and idempotency inputs.
+- Accept Tracking evidence only after current-authority checks, strict contract and identity validation, checksum and byte-count validation, promotion away from the grant-writable staging key, and one conditional D1 commit.
 - Use strict duration, coordinate, corner-count, clip-count, and object-size limits. Reject nonfinite coordinates and degenerate gates/views.
 - Do not construct shell command strings from requests. Invoke FFmpeg with argument arrays and validated local paths.
-- Never log upload bodies, video frames, model inputs, Subject boxes, internal media URLs, multipart identifiers, or R2 object bodies.
+- Never log upload bodies, video frames, model inputs, Subject boxes, Transfer-grant or internal media URLs, Access headers, multipart identifiers, or R2 object bodies.
 - Redact container/provider exception text before it reaches D1 or clients. Structured internal logs retain only safe error class and stage.
 - Enforce per-file, retained-storage, incomplete-upload, and active-analysis quotas per User. Rate-limit upload creation and analysis creation without throttling legitimate authenticated part transfer.
 - Cancellation and deletion are ownership-checked commands, not direct Workflow or R2 identifiers supplied by the browser.
 
 ## Local development
 
-- Use the same Dockerfile and Python stage contract locally and in Cloudflare.
-- `wrangler dev` runs the container through local Docker and supports the same outbound-handler shape.
-- `INFERENCE_PROVIDER=local-http` points the Python adapter at the developer's local model; production uses `container-model`. Both must pass the same contract fixtures.
-- Automated tests upload a tiny licensed/synthetic fixture through the multipart API and use fake inference observations plus local R2 doubles. They never contact Workers AI, production D1/R2, or the deployed Worker.
+- Use the same media-container Dockerfile and Python media-stage contract locally and in Cloudflare.
+- `wrangler dev` runs the media container through local Docker and supports ADR 0027's same outbound-handler shape.
+- TypeScript tests inject a fake `TrackingProvider`; local integration may select `LocalSam31Provider` against a developer-controlled endpoint, but production provider selection and its Inference profile remain immutable per run.
+- Automated tests upload a tiny licensed/synthetic fixture through the multipart API and use fake inference observations plus local D1, R2, Workflow, Durable Object, and GPU-control doubles. They never contact the home GPU, Cloudflare Access, production D1/R2, or the deployed Worker.
 - A private candidate-generation operation resolves authorized benchmark objects and runs the selected provider outside the Git worktree. The separate hermetic benchmark command consumes only reviewed manifests, annotations, and stored provider-neutral observations; it never fetches media, invokes a provider, or reads credentials.
-- Record Docker image digest, Python lockfile hash, FFmpeg version, model hash, and pipeline version in every benchmark report.
+- Record the canonicalization version, Inference-profile digest and content, media-image digest, Python lockfile hash, FFmpeg version, model digest, runtime-image digest, and pipeline digest in every benchmark report.
 
 ## Observability
 
-Every safe log and metric carries `analysisId`, `runId`, `stage`, and `attempt`; container logs additionally carry the container Durable Object ID.
+Every safe log and metric carries `analysisId`, `runId`, and `stage`; internal Tracking telemetry also carries `segmentId` and `attemptId`. Lease and fencing identities may appear only in access-controlled structured telemetry, never public errors. Transfer-grant URLs and Access credentials are always redacted.
 
 Track:
 
-- stage wall time, active container time, retries, cold starts, and terminal errors;
+- stage wall time, active media-container time, GPU execution time, retries, cold starts, and terminal errors;
+- FIFO wait time, lease acquisition/renewal/expiry, provider reachability, Access/Tunnel failures, watchdog aborts, physical-capacity conflicts, and cancellation-grace expiry;
 - Race-window duration, decoded frame count, observation count, gap count and duration;
+- prepared-media and model-cache hits, transfer bytes and duration, staging garbage collection, and artifact-validation failures;
 - eligible/ground-truth Corner-pass coverage in benchmarks;
 - identity-switch benchmark failures as a separate release-blocking measure;
 - gate-timing error distribution, clip count, R2 bytes written/deleted, and retained bytes per analysis;
-- provider/model/image/pipeline versions and cost attribution.
+- Inference-profile digest, provider/model/runtime/pipeline versions, and cost attribution.
 
 D1 state, not logs or the Workflow dashboard, supports the User-facing progress view.
 
@@ -362,16 +467,19 @@ D1 state, not logs or the Workflow dashboard, supports the User-facing progress 
 
 ### TypeScript
 
-- Pure tests cover multipart state, size/part validation, normalized geometry, finite gate intersection, direction, timestamp interpolation, gap overlap, eligibility, tie handling, ranking, state transitions, idempotency, and retention rules.
-- Hono tests call public `app.request(path, init, MOCK_ENV)` with typed D1, R2, Workflow, and container doubles. No test loads live Wrangler bindings or remote services.
-- Workflow tests prove completed steps are not repeated, retryable and nonretryable errors diverge correctly, waiting/resume behavior is idempotent, cancellation fences late completions, and a stale run cannot become current.
+- Pure tests cover multipart state, size/part validation, normalized geometry, finite gate intersection, direction, timestamp interpolation, gap overlap, eligibility, tie handling, ranking, public-state projection, profile canonicalization, idempotency, and retention rules.
+- Hono tests call public `app.request(path, init, MOCK_ENV)` with typed D1, R2, Workflow, container, coordinator, and `TrackingProvider` doubles. No test loads live Wrangler bindings or remote services.
+- Workflow tests prove run-level ownership, completed steps are not repeated, segment retry preserves identity, Re-identification creates a segment, retryable and nonretryable errors diverge, waiting/resume is idempotent, cancellation fences late completions, and a stale run cannot become current.
+- Coordinator tests prove persisted FIFO order, monotonic fencing, lease-first/D1-activation ordering, renewal/release conditions, stale-capacity head restoration, cancellation grace, and replay after Durable Object restart.
+- `LocalSam31Provider` tests prove fixed-origin HTTPS normalization, redirect and absolute-URL rejection, exact Access-header scope, time and size bounds, strict status identity, profile-digest matching, shared transfer-grant handshakes, and two-phase accepted-artifact promotion.
 - Ownership tests cover another User's analysis, Drive session, clips, request IDs, and correction IDs; Track-map mutations require the configured Owner.
 
 ### Python
 
-- Pytest unit tests cover strict request models, FFmpeg argument construction, accurate trimming, Track-view and Corner-view pixel conversion, observation serialization, and safe error mapping.
-- Fixture-video integration tests run real FFmpeg and a fake inference provider through probe, prepare, track, and render endpoints.
-- Contract tests share accepted and rejected JSON fixtures with the TypeScript Zod schemas.
+- Media-service unit tests cover strict request models, FFmpeg argument construction, accurate trimming, Track-view and Corner-view pixel conversion, frame manifests, and safe error mapping.
+- Media fixture integration tests run real FFmpeg through probe, prepare, and render endpoints without a Tracking model.
+- GPU-worker unit and integration tests cover capacity one, idempotent submission and cancellation, restart reauthorization, liveness watchdog, exact profile resolution, transfer-grant disposal, Tracking-gap success, output-ready recovery, and no acceptance authority.
+- Contract tests share accepted and rejected JSON fixtures with the TypeScript Zod schemas across both Python services.
 - The representative benchmark contains at least three complete Race windows, produces zero unflagged identity switches, and automatically emits at least 80% of ground-truth Corner passes as eligible.
 
 ### Angular and browser
@@ -384,18 +492,21 @@ D1 state, not logs or the Workflow dashboard, supports the User-facing progress 
 
 Each slice should be independently reviewable and keep tests green before the next begins.
 
+The SAM 3.1 slices reuse the validated adapter, runtime, contracts, fixtures, and tests preserved from the issue 241 work rather than starting a second model implementation. Container-specific hosting assumptions from that work are replaced by ADR 0028's local-worker boundary.
+
 1. **Benchmark harness and fixture contract** — establish manual annotations, shared observation schema, candidate provider adapters, and the zero-switch/80%-coverage report before selecting a model.
 2. **Track-map domain and Owner authorization** — migrations, pure geometry rules, Owner-only Hono APIs, immutable approval/versioning, and focused tests.
 3. **Race-video upload API** — migrations, authenticated multipart create/part/complete/abort routes, D1 resume state, quotas, validation lifecycle, private range playback, OpenAPI, and ownership tests.
-4. **Workflow skeleton** — durable stages, D1 progress, retry/cancel fencing, wait-for-event Re-identification, and a fake container port.
-5. **Python media service** — container scaffold, health, probe, and prepare endpoints, FFmpeg validation/trim/crop, outbound R2 handler, synthetic fixture integration, and image hardening.
-6. **Local inference provider** — Subject seed, observation contract, confidence/gap behavior, benchmark integration, and no ranking in the model service.
-7. **Deterministic evidence engine** — continuity, gate crossings, pass eligibility, ties/ranking, D1 writes, and rerun provenance.
-8. **Clip rendering and private playback** — Corner-view/padding render requests, H.264 output, R2 retention/deletion, authenticated range streaming, and ownership tests.
-9. **Angular creation and correction workflow** — lazy route, gateway/store, resumable upload, private video player, Race-window editor, accessible Subject boxing, progress polling, and Re-identification.
-10. **Angular evidence review** — per-corner pass comparison, Best/tie labels, clips, gaps/exclusions, provenance, deletion, Playwright, and AXE.
-11. **Production container provider** — benchmark-selected optimized model, `standard-4` deployment baseline, constrained egress, observability, cost measurements, and private-source smoke.
-12. **Release hardening** — full backend/client/architecture/browser coverage, dry-run deploy, Container rollout verification, R2 privacy checks, production migration check, and failure/cancellation drills.
+4. **Run Workflow and persistence skeleton** — one Workflow per run, immutable Inference profiles and Tracking segments, mutable fenced attempts, D1 progress projection, wait-for-event Re-identification, and fake media/provider ports.
+5. **Python media service** — container scaffold, health, probe, prepare, and render endpoints; FFmpeg validation/trim/crop, frame manifests, ADR 0027 R2 egress, synthetic fixture integration, and image hardening.
+6. **Provider-neutral Tracking contract and SAM 3.1 runtime** — Subject seeds, segment/profile digests, observations, confidence/gap behavior, strict Pydantic models, parity fixtures, benchmark integration, and no ranking in the model service.
+7. **GPU lease and TypeScript provider control plane** — singleton FIFO coordinator, fencing, `TrackingProvider`, fixed-origin `LocalSam31Provider`, Access-secret injection, deadlines, cancellation, status projection, and fake-provider coverage.
+8. **Local GPU execution service** — FastAPI job state machine, capacity one, restart recovery, watchdog, grant handshake, two-phase outputs, SAM 3.1 on the RTX 3090, loopback binding, `cloudflared`, and persistent system services.
+9. **Accepted-artifact and deterministic evidence engine** — staged validation and promotion, continuity, gate crossings, pass eligibility, ties/ranking, D1 commits, and rerun provenance.
+10. **Clip rendering and private playback** — Corner-view/padding render requests, H.264 output, R2 retention/deletion, authenticated range streaming, and ownership tests.
+11. **Angular creation and correction workflow** — lazy route, gateway/store, resumable upload, private video player, Race-window editor, accessible Subject boxing, coarse wait reasons, monotonic progress, and Re-identification.
+12. **Angular evidence review** — per-corner pass comparison, Best/tie labels, clips, gaps/exclusions, stable run/segment provenance, deletion, Playwright, and AXE.
+13. **Release hardening** — representative SAM benchmark, full backend/client/architecture/browser coverage, dry-run deploy, Container and local-service restart verification, Access/Tunnel and R2 privacy checks, production migration check, and lease/failure/cancellation drills.
 
 ## Completion contract
 
@@ -404,8 +515,9 @@ Version one is complete only when:
 - every accepted workflow rule in `docs/specs/driving-analysis.md` is exposed through the authenticated API and accessible UI;
 - the production model passes zero unflagged identity switches and at least 80% automatic Corner-pass coverage on the versioned benchmark;
 - old Track-map versions and old processing runs remain reproducible and unchanged;
-- no client-controlled R2 key, arbitrary URL fetch, public R2 object, broad container egress, remote automated test, or raw provider error remains;
-- cancellation, retries, Re-identification, container restart, Workflow replay, and artifact deletion are idempotent;
+- no client-controlled R2 key, arbitrary provider origin, public R2 object, broad container egress, leaked Transfer grant or Access secret, remote automated test, or raw provider error remains;
+- cancellation, retries, Re-identification, media-container restart, GPU-host restart, Workflow replay, lease expiry, stale execution, and artifact deletion are idempotent and fenced;
+- every accepted Tracking artifact matches its run, segment specification, active fencing identity, and exact Inference-profile digest;
 - the full repository lint, format, TypeScript, backend coverage, Angular 100% per-file coverage, production build, Playwright, AXE, dry-run deploy, and relevant production acceptance checks pass.
 
-Version one has no external media-acquisition prerequisite: the User supplies the Race recording, Chassis Notes stores it privately in R2, and the same owned object feeds local or Cloudflare processing.
+Version one has no external media-acquisition prerequisite: the User supplies the Race recording, Chassis Notes stores it privately in R2, and Cloudflare prepares the owned source into the immutable Track-view artifact consumed by the local GPU worker.

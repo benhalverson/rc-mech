@@ -58,6 +58,22 @@ _Avoid_: Automatic reacquisition, identity guess, interpolation
 A timestamped, confidence-bearing observation of the Subject car's visible position in the Track view. It is model evidence used by deterministic gate timing, not a Corner pass or ranking by itself.
 _Avoid_: Prediction, racing line, score
 
+**Tracking provider**:
+A replaceable processing capability that follows the Subject car for a bounded portion of a Race window and returns Subject observations or a Tracking gap under a versioned contract. Its hosting location does not change Driving-analysis lifecycle or evidence rules.
+_Avoid_: Model host, analysis owner, GPU queue
+
+**Tracking segment**:
+One continuous interval of Subject-car tracking that starts from the initial Subject seed or a Re-identification and ends at the Race-window boundary, the first Tracking gap, cancellation, or a terminal provider failure. Re-identification starts a new immutable segment within the same processing run; an infrastructure retry does not.
+_Avoid_: GPU job, whole analysis, retry attempt
+
+**Transfer grant**:
+A short-lived capability authorizing one bounded media or artifact transfer for a Tracking-segment execution attempt. Renewing a Transfer grant does not change the segment or its provenance.
+_Avoid_: Storage credential, artifact identity, permanent URL
+
+**Inference profile**:
+The immutable provider, model, pipeline, preprocessing, calibration, threshold, and tracking configuration that defines how every Tracking segment in one run produces Subject observations. Execution timing, hardware identity, leases, and Transfer grants are attempt metadata rather than part of this profile.
+_Avoid_: Machine identity, deployment, mutable provider settings
+
 **Component**:
 A physical part installed on, or kept for, a car, such as a motor, battery, servo, or tire.
 _Avoid_: Part, equipment

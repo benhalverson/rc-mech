@@ -30,25 +30,31 @@ The version-one supported source guarantees that the main static camera does not
 - Creating a Driving analysis immediately returns its stable analysis identifier; it does not hold the HTTP request open until video work finishes.
 - The analysis reports queued, running, awaiting-reidentification, completed, failed, and cancelled states with a current stage and progress suitable for the UI.
 - Upload validation, Race-window extraction, Subject-car tracking, gate-crossing measurement, and Corner-clip rendering are separate resumable stages.
-- A Tracking gap pauses the evidence path at an awaiting-reidentification state until the User supplies Re-identification; completed stages are not repeated unnecessarily.
+- One Tracking segment starts from the initial Subject seed or one Re-identification and ends at Race-window completion, the first Tracking gap, cancellation, or terminal provider failure. Infrastructure retry reuses the same immutable segment; Re-identification creates another segment in the same run.
+- A Tracking gap successfully completes the current segment with observations through the last trusted point. Only after Cloudflare accepts that immutable artifact does the analysis publish `awaiting-reidentification`; the GPU is released and never waits for User input.
+- A ready segment may wait for provider availability or capacity for up to 24 hours. Before Tracking begins this is public `queued`; after accepted Tracking evidence exists the run remains public `running` at `tracking` and never regresses to `queued`.
+- Public progress is monotonic within one run and remains below 100 percent until the authoritative completion commit. Internal download, transfer, retry, lease, and recovery states do not expand the public lifecycle.
 - Retried stages are idempotent and may replace only their own incomplete artifacts. Previously reviewed evidence is not silently duplicated or reinterpreted.
 
 ## Runtime boundary
 
-- The existing TypeScript Worker owns authentication, Garage and Drive-session ownership, validation, API contracts, durable workflow state, persistence metadata, and authorization of stored artifacts.
-- A Python container service owns media probing, FFmpeg extraction and rendering, computer-vision tracking, and gate-crossing observations.
-- The TypeScript layer determines evidence eligibility and the Best corner pass from validated observations. The Python service does not redefine Track maps, select a different Subject car, or publish results directly into Garage history.
+- The existing TypeScript Worker owns authentication, Garage and Drive-session ownership, validation, API contracts, orchestration commands, persistence metadata, and authorization of stored artifacts.
+- One Cloudflare Workflow orchestrates each immutable run, while D1 remains authoritative for the public lifecycle and accepted evidence. A singleton Durable Object coordinates FIFO access to the one physical GPU but owns no analysis state or evidence.
+- A stateless Cloudflare Python container owns media probing, FFmpeg Race-window/Track-view preparation, frame manifests, and Corner-clip rendering. It has no general Internet access and does not proxy GPU control.
+- The versioned `TrackingProvider` boundary lives in trusted TypeScript. The initial provider calls an Access-protected local FastAPI service through Cloudflare Tunnel, where SAM 3.1 runs one continuous segment at a time on the Owner's RTX 3090.
+- The TypeScript layer determines evidence eligibility and the Best corner pass from validated observations. Neither Python service redefines Track maps, selects a different Subject car, owns User-facing lifecycle, or publishes results directly into Garage history.
+- The local worker has no application, D1, Workflow, Durable Object, R2-signing, or Access credential. It transfers prepared media and compact artifacts only through short-lived execution-specific grants issued after Cloudflare acquires and activates a fenced GPU lease.
 - Large temporary media files belong to the processing runtime or private object storage, never D1. Durable relational records retain identifiers, state, measurements, provenance, and artifact references.
 
 ## Inference portability
 
-- The Python service depends on a versioned inference-provider interface rather than a specific model runtime.
-- Local development and Cloudflare deployment use the same pipeline inputs, observations, confidence representation, and error contract.
-- Local development may call a model running on the developer's machine. Cloudflare deployment may call Workers AI or a model packaged in a Cloudflare Container.
-- Every processing run records the provider, model identifier, model version or immutable image digest, pipeline version, and configuration needed to explain and reproduce its observations.
-- Changing a provider or model creates a new processing run. It does not overwrite the provenance of retained Corner passes or clips.
-- The first Cloudflare production provider packages its model and inference runtime in the Python container. The exact model is selected through representative-footage benchmarks rather than architecture preference.
-- Workers AI remains a supported future provider shape, but it is not the version-one production dependency unless a later benchmark demonstrates equivalent Subject-observation quality.
+- Trusted TypeScript depends on a versioned `TrackingProvider` interface rather than a specific hosting location. Strict shared Zod and Pydantic fixtures keep segment, status, observation, transfer, and artifact contracts portable across providers.
+- Every run pins one immutable Inference profile containing only inference-affecting provider, model, runtime, pipeline, preprocessing, precision, confidence-calibration, threshold, prompt, and tracking configuration. A versioned canonicalization scheme produces its digest.
+- The run, every submission, the worker's resolved configuration, every status, and every accepted artifact must carry the same Inference-profile digest. Lease, attempt, timing, host, driver, and hardware observations remain attempt metadata outside that digest.
+- Re-identification changes only the next segment's seed. It never changes the run's Inference profile.
+- If the chosen provider or exact profile becomes unavailable after the run starts, the run waits, retries, fails retryably, or is cancelled. It never migrates silently.
+- Selecting another provider or profile creates a new run and Workflow. The new run may reuse immutable source inputs but regenerates all Tracking evidence instead of combining observations from the earlier profile.
+- Version one's production provider is `LocalSam31Provider` through `gpu.chassisnotes.com`; future managed-GPU providers implement the same TypeScript contract and can be selected only before a run is created.
 
 ## Evidence boundary
 
@@ -56,12 +62,13 @@ The version-one supported source guarantees that the main static camera does not
 - The provider does not define corners, detect a "best" line, assign coaching scores, or rank Corner passes.
 - Tracking is tuned for identity precision rather than maximum coverage. When identity confidence falls below the accepted threshold, the pipeline opens a Tracking gap immediately instead of continuing with a likely guess.
 - False gaps are preferable to silent identity switches: a User can repair a gap through Re-identification, while evidence attributed to the wrong car is invalid.
+- Only `race-window-complete` and `tracking-gap` segment outcomes can produce accepted Subject observations. Partial output from cancelled, interrupted, stale, or provider-failed attempts is diagnostic only and never becomes evidence.
 - Versioned deterministic code validates observation continuity, detects center crossings of reviewed Corner gates, computes gate-to-gate time, applies eligibility rules, and ranks eligible Corner passes.
 - The same retained Subject observations and Track-map version produce the same measurements and ranking under the same deterministic pipeline version.
 
 ## Model benchmark
 
-- The exact local or container-hosted model is not accepted from a demo clip or architecture claim; it must pass a manually annotated representative-footage benchmark.
+- The exact provider, model, and Inference profile are not accepted from a demo clip or architecture claim; they must pass a manually annotated representative-footage benchmark.
 - The initial benchmark contains at least three complete Race windows from the supported fixed camera.
 - The corpus uses different Subject cars and includes differing field density, similar-looking competitors, occlusions, and moments that require or nearly require Re-identification.
 - Ground truth identifies the Subject car, known ambiguous spans, and corner-gate crossings needed to evaluate observation identity, coverage, and timing.
