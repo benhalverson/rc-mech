@@ -14,6 +14,7 @@ const mockD1 = (): D1Database => {
 			null as T | null,
 		all: async <T = Record<string, unknown>>() => emptyResult<T>(),
 		run: async <T = Record<string, unknown>>() => emptyResult<T>(),
+		raw: async <T = unknown[]>() => [] as T[],
 	};
 
 	return {
@@ -86,6 +87,25 @@ test('health is exposed through the Worker request interface', async () => {
 	expect(await response.json()).toEqual({ ok: true, service: 'rc-mech' });
 });
 
+test('scheduled maintenance waits for bounded upload recovery', async () => {
+	let cleanup: Promise<unknown> | undefined;
+	app.scheduled(
+		{
+			cron: '0 */6 * * *',
+			scheduledTime: Date.now(),
+			noRetry: () => undefined,
+		},
+		MOCK_ENV,
+		{
+			waitUntil: (promise) => {
+				cleanup = promise;
+			},
+		} as ExecutionContext,
+	);
+
+	await expect(cleanup).resolves.toBeUndefined();
+});
+
 test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	const response = await request('/api/openapi.json');
 	const document = (await response.json()) as {
@@ -102,6 +122,18 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	expect(document.paths['/api/v1/consumable-maintenance']).toBeDefined();
 	expect(document.paths['/api/v1/consumables/report']).toBeDefined();
 	expect(document.paths['/api/v1/setups']).toBeDefined();
+	expect(
+		document.paths['/api/v1/cars/{carId}/drives/{driveId}/race-videos'],
+	).toBeDefined();
+	expect(document.paths['/api/v1/race-videos/{raceVideoId}']).toBeDefined();
+	expect(
+		document.paths[
+			'/api/v1/race-videos/{raceVideoId}/upload-parts/{partNumber}'
+		],
+	).toBeDefined();
+	expect(
+		document.paths['/api/v1/race-videos/{raceVideoId}/complete'],
+	).toBeDefined();
 	const syncOperation = document.paths[
 		'/api/v1/sync/operations/{operationId}'
 	] as {

@@ -61,7 +61,7 @@ export const createApp = (
 	app.route('/api/v1', createCarsRoutes());
 	app.route('/api/v1', createSetupsRoutes());
 	app.route('/api/v1', createPhotosRoutes());
-	app.route('/api/v1', createMaintenanceRoutes());
+	app.route('/api/v1', createMaintenanceRoutes(dependencies));
 	app.route('/api/v1', createVoiceRoutes(dependencies));
 
 	app.all('/api', (c) => c.json({ error: 'Not found' }, 404));
@@ -70,6 +70,26 @@ export const createApp = (
 	return app;
 };
 
-const app = createApp();
+export const createWorker = (
+	dependencies: AppDependencies = defaultAppDependencies,
+) => {
+	const app = createApp(dependencies);
+	return Object.assign(app, {
+		scheduled(
+			_controller: ScheduledController,
+			env: Env,
+			context: ExecutionContext,
+		): void {
+			context.waitUntil(
+				dependencies
+					.raceRecordingAuthority(env)
+					.recoverStale(100)
+					.then(() => undefined),
+			);
+		},
+	});
+};
+
+const app = createWorker();
 
 export default app;

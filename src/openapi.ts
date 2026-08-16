@@ -1032,6 +1032,224 @@ export const openApi = {
 	},
 };
 
+const raceRecordingPaths = openApi.paths as Record<string, unknown>;
+const raceRecordingSchema = {
+	type: 'object',
+	required: [
+		'id',
+		'carId',
+		'driveSessionId',
+		'fileName',
+		'contentType',
+		'sizeBytes',
+		'partSizeBytes',
+		'status',
+		'uploadedBytes',
+		'uploadedPartNumbers',
+		'createdAt',
+		'updatedAt',
+		'expiresAt',
+		'completedAt',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		carId: { type: 'string' },
+		driveSessionId: { type: 'string' },
+		fileName: { type: 'string', maxLength: 255 },
+		contentType: {
+			type: 'string',
+			enum: ['video/mp4', 'video/quicktime', 'video/webm'],
+		},
+		sizeBytes: { type: 'integer', minimum: 1, maximum: 10_737_418_240 },
+		partSizeBytes: { type: 'integer', enum: [10_485_760] },
+		status: { type: 'string', enum: ['uploading', 'validating'] },
+		uploadedBytes: { type: 'integer', minimum: 0 },
+		uploadedPartNumbers: {
+			type: 'array',
+			items: { type: 'integer', minimum: 1, maximum: 1024 },
+		},
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+		expiresAt: { type: 'string', format: 'date-time' },
+		completedAt: { type: ['string', 'null'], format: 'date-time' },
+	},
+};
+const raceRecordingResponse = {
+	type: 'object',
+	required: ['raceVideo'],
+	properties: { raceVideo: raceRecordingSchema },
+};
+const raceVideoIdParameter = {
+	name: 'raceVideoId',
+	in: 'path',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+};
+Object.assign(raceRecordingPaths, {
+	'/api/v1/cars/{carId}/race-videos': {
+		parameters: [
+			{
+				name: 'carId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+		],
+		get: {
+			summary: 'List resumable Race recordings for an owned Car',
+			responses: {
+				200: {
+					description: 'Authoritative upload and validation progress',
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								required: ['raceVideos'],
+								properties: {
+									raceVideos: {
+										type: 'array',
+										items: raceRecordingSchema,
+									},
+								},
+							},
+						},
+					},
+				},
+				404: { description: 'Car not found' },
+			},
+		},
+	},
+	'/api/v1/cars/{carId}/drives/{driveId}/race-videos': {
+		parameters: [
+			{
+				name: 'carId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+			{
+				name: 'driveId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+		],
+		post: {
+			summary: 'Create or resume an owned private multipart Race recording',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							additionalProperties: false,
+							required: ['fileName', 'contentType', 'sizeBytes', 'requestId'],
+							properties: {
+								fileName: { type: 'string', minLength: 1, maxLength: 255 },
+								contentType: raceRecordingSchema.properties.contentType,
+								sizeBytes: raceRecordingSchema.properties.sizeBytes,
+								requestId: { type: 'string', format: 'uuid' },
+							},
+						},
+					},
+				},
+			},
+			responses: {
+				200: {
+					description: 'Existing idempotent upload',
+					content: { 'application/json': { schema: raceRecordingResponse } },
+				},
+				201: {
+					description: 'Multipart upload created',
+					content: { 'application/json': { schema: raceRecordingResponse } },
+				},
+				400: { description: 'Invalid upload declaration' },
+				404: { description: 'Car or Drive session not found' },
+				409: { description: 'Upload identity or lifecycle conflict' },
+				429: { description: 'Owner quota or creation rate exceeded' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+	},
+	'/api/v1/race-videos/{raceVideoId}': {
+		parameters: [raceVideoIdParameter],
+		get: {
+			summary: 'Read authoritative owner-scoped upload progress',
+			responses: {
+				200: {
+					description: 'Current Race-recording state',
+					content: { 'application/json': { schema: raceRecordingResponse } },
+				},
+				404: { description: 'Race recording not found' },
+			},
+		},
+		delete: {
+			summary: 'Cancel an upload or delete a completed private recording',
+			responses: {
+				204: { description: 'Private recording discarded or already absent' },
+				404: { description: 'Race recording not found' },
+				409: { description: 'Upload completion is already in progress' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+	},
+	'/api/v1/race-videos/{raceVideoId}/upload-parts/{partNumber}': {
+		parameters: [
+			raceVideoIdParameter,
+			{
+				name: 'partNumber',
+				in: 'path',
+				required: true,
+				schema: { type: 'integer', minimum: 1, maximum: 1024 },
+			},
+			{
+				name: 'x-transfer-request-id',
+				in: 'header',
+				required: true,
+				schema: { type: 'string', minLength: 1, maxLength: 200 },
+			},
+		],
+		put: {
+			summary: 'Stream one exact bounded part into the server-held upload',
+			requestBody: {
+				required: true,
+				content: {
+					'application/octet-stream': {
+						schema: { type: 'string', format: 'binary' },
+					},
+				},
+			},
+			responses: {
+				200: {
+					description: 'Authoritative persisted part progress',
+					content: { 'application/json': { schema: raceRecordingResponse } },
+				},
+				400: { description: 'Part number, length, or headers invalid' },
+				404: { description: 'Race recording not found' },
+				409: { description: 'Part identity or lifecycle conflict' },
+				410: { description: 'Upload expired' },
+				429: { description: 'Owner quota exceeded' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+	},
+	'/api/v1/race-videos/{raceVideoId}/complete': {
+		parameters: [raceVideoIdParameter],
+		post: {
+			summary: 'Complete and verify the server-held ordered multipart upload',
+			responses: {
+				200: {
+					description: 'Completed private object ready for media validation',
+					content: { 'application/json': { schema: raceRecordingResponse } },
+				},
+				404: { description: 'Race recording not found' },
+				409: { description: 'Parts missing or lifecycle conflict' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+	},
+});
+
 const setupPaths = openApi.paths as Record<string, unknown>;
 const setupSchema = {
 	type: 'object',

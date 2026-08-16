@@ -1,4 +1,5 @@
 import { expect } from 'vitest';
+import { RaceRecordingAuthority } from '../driving-analysis/race-recording/race-recording-authority';
 import { type AppDependencies, createApp } from '../index';
 import type { VoiceProcessor } from '../voice-processing';
 
@@ -184,6 +185,12 @@ type StoredR2Object = {
 	customMetadata?: Record<string, string>;
 };
 
+type StoredMultipartUpload = {
+	key: string;
+	options?: R2MultipartOptions;
+	parts: Map<number, { bytes: Uint8Array; etag: string }>;
+};
+
 const checksums: R2Checksums = { toJSON: () => ({}) };
 
 const bytesFor = async (
@@ -200,7 +207,9 @@ const bytesFor = async (
 
 export class MockR2Controller {
 	readonly objects = new Map<string, StoredR2Object>();
+	readonly multipartUploads = new Map<string, StoredMultipartUpload>();
 	readonly bucket: R2Bucket;
+	private nextMultipartId = 0;
 
 	constructor() {
 		const objectFor = (key: string, stored: StoredR2Object): R2ObjectBody => {
@@ -272,17 +281,63 @@ export class MockR2Controller {
 			return stored ? objectFor(key, stored) : null;
 		}
 
-		const multipart = (key: string, uploadId: string): R2MultipartUpload => ({
-			key,
-			uploadId,
-			uploadPart: async (partNumber) => ({ partNumber, etag: 'test-etag' }),
-			abort: async () => undefined,
-			complete: async () => {
-				const stored = { bytes: new Uint8Array() };
-				this.objects.set(key, stored);
-				return objectFor(key, stored);
-			},
-		});
+		const multipart = (key: string, uploadId: string): R2MultipartUpload => {
+			const state = () => {
+				const upload = this.multipartUploads.get(uploadId);
+				if (!upload || upload.key !== key)
+					throw new Error('Multipart upload was not found');
+				return upload;
+			};
+			return {
+				key,
+				uploadId,
+				uploadPart: async (partNumber, value) => {
+					const bytes = await bytesFor(value);
+					const etag = `test-etag-${partNumber}-${bytes.byteLength}`;
+					state().parts.set(partNumber, { bytes, etag });
+					return { partNumber, etag };
+				},
+				abort: async () => {
+					state();
+					this.multipartUploads.delete(uploadId);
+				},
+				complete: async (uploadedParts) => {
+					const upload = state();
+					const chunks = uploadedParts.map(({ partNumber, etag }) => {
+						const part = upload.parts.get(partNumber);
+						if (!part || part.etag !== etag)
+							throw new Error('Multipart part did not match');
+						return part.bytes;
+					});
+					const size = chunks.reduce(
+						(total, chunk) => total + chunk.byteLength,
+						0,
+					);
+					const bytes = new Uint8Array(size);
+					let offset = 0;
+					for (const chunk of chunks) {
+						bytes.set(chunk, offset);
+						offset += chunk.byteLength;
+					}
+					const httpMetadata =
+						upload.options?.httpMetadata instanceof Headers
+							? {
+									contentType:
+										upload.options.httpMetadata.get('content-type') ??
+										undefined,
+								}
+							: upload.options?.httpMetadata;
+					const stored = {
+						bytes,
+						httpMetadata,
+						customMetadata: upload.options?.customMetadata,
+					};
+					this.objects.set(key, stored);
+					this.multipartUploads.delete(uploadId);
+					return objectFor(key, stored);
+				},
+			};
+		};
 
 		this.bucket = {
 			head: async (key) => {
@@ -291,7 +346,15 @@ export class MockR2Controller {
 			},
 			get: get.bind(this),
 			put: put.bind(this),
-			createMultipartUpload: async (key) => multipart(key, 'test-upload'),
+			createMultipartUpload: async (key, options) => {
+				const uploadId = `test-upload-${++this.nextMultipartId}`;
+				this.multipartUploads.set(uploadId, {
+					key,
+					options,
+					parts: new Map(),
+				});
+				return multipart(key, uploadId);
+			},
 			resumeMultipartUpload: multipart,
 			delete: async (keys) => {
 				for (const key of typeof keys === 'string' ? [keys] : keys)
@@ -326,6 +389,8 @@ type HonoFixtureOptions = {
 	handleAuth?: AppDependencies['handleAuth'];
 	userId?: string;
 	voiceProcessor?: VoiceProcessor;
+	database?: D1Database;
+	raceRecordingAuthority?: AppDependencies['raceRecordingAuthority'];
 };
 
 export const createHonoFixture = (
@@ -374,7 +439,7 @@ export const createHonoFixture = (
 		},
 	} satisfies Ai;
 	const env = {
-		DB: d1.database,
+		DB: fixtureOptions.database ?? d1.database,
 		PHOTOS: r2.bucket,
 		ANALYSIS_MEDIA: analysisMedia.bucket,
 		EMAIL: email,
@@ -398,6 +463,10 @@ export const createHonoFixture = (
 					throw new Error('Unexpected voice processing in backend tests');
 				},
 			},
+		raceRecordingAuthority:
+			fixtureOptions.raceRecordingAuthority ??
+			((environment) =>
+				new RaceRecordingAuthority(environment.DB, environment.ANALYSIS_MEDIA)),
 	};
 	const app = createApp(auth);
 	return {

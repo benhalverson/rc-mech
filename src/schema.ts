@@ -5,6 +5,7 @@ import {
 	real,
 	sqliteTable,
 	text,
+	uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
 export {
@@ -168,6 +169,79 @@ export const driveSession = sqliteTable('drive_session', {
 	notes: text('notes'),
 	deletedAt: text('deleted_at'),
 });
+export const raceVideo = sqliteTable(
+	'race_video',
+	{
+		id: id('id'),
+		ownerId: text('owner_id')
+			.notNull()
+			.references(() => owner.id),
+		carId: text('car_id')
+			.notNull()
+			.references(() => car.id),
+		driveSessionId: text('drive_session_id')
+			.notNull()
+			.unique()
+			.references(() => driveSession.id),
+		requestId: text('request_id').notNull(),
+		objectKey: text('object_key').notNull().unique(),
+		multipartUploadId: text('multipart_upload_id').notNull().unique(),
+		fileName: text('file_name').notNull(),
+		contentType: text('content_type').notNull(),
+		declaredSize: integer('declared_size').notNull(),
+		actualSize: integer('actual_size'),
+		partSize: integer('part_size').notNull(),
+		status: text('status', {
+			enum: ['uploading', 'completing', 'validating', 'deleting'],
+		})
+			.notNull()
+			.default('uploading'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		expiresAt: text('expires_at').notNull(),
+		completedAt: text('completed_at'),
+	},
+	(table) => [
+		index('race_video_owner_status').on(
+			table.ownerId,
+			table.status,
+			table.expiresAt,
+		),
+		uniqueIndex('race_video_owner_request').on(table.ownerId, table.requestId),
+	],
+);
+export const raceVideoUploadPart = sqliteTable(
+	'race_video_upload_part',
+	{
+		raceVideoId: text('race_video_id')
+			.notNull()
+			.references(() => raceVideo.id, { onDelete: 'cascade' }),
+		partNumber: integer('part_number').notNull(),
+		transferRequestId: text('transfer_request_id'),
+		status: text('status', {
+			enum: ['uploading', 'uploaded', 'recoverable'],
+		})
+			.notNull()
+			.default('uploaded'),
+		claimId: text('claim_id'),
+		claimTransferRequestId: text('claim_transfer_request_id'),
+		etag: text('etag'),
+		byteCount: integer('byte_count').notNull(),
+		claimedAt: text('claimed_at'),
+		uploadedAt: text('uploaded_at'),
+	},
+	(table) => [
+		primaryKey({ columns: [table.raceVideoId, table.partNumber] }),
+		uniqueIndex('race_video_part_transfer').on(
+			table.raceVideoId,
+			table.transferRequestId,
+		),
+		uniqueIndex('race_video_part_claim_transfer').on(
+			table.raceVideoId,
+			table.claimTransferRequestId,
+		),
+	],
+);
 export const maintenancePlan = sqliteTable('maintenance_plan', {
 	id: id('id'),
 	carId: text('car_id').notNull(),

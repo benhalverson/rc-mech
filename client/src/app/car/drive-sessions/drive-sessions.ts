@@ -31,6 +31,7 @@ import { CarStore } from '../car-store';
 import type { DriveSession } from './drive-session.models';
 import { DriveSessionStore } from './drive-session-store';
 import { localDateTime, toIso } from './drive-session-time';
+import { RaceRecordingUpload } from './driving-analysis/race-recording-upload';
 
 type DriveSessionForm = {
 	startedAt: string;
@@ -61,6 +62,7 @@ const emptyForm = (): DriveSessionForm => ({
 		LucideSave,
 		LucideTriangleAlert,
 		RouterLink,
+		RaceRecordingUpload,
 	],
 	templateUrl: './drive-sessions.html',
 	host: { class: 'block' },
