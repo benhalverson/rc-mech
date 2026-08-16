@@ -182,5 +182,8 @@ class Sam31TrackingExecutor:
                 profileDigest=submission.profile_digest,
                 segment=segment,
             ),
-            path=output_path,
+            # The executor's job root is private, and its upload contract owns a
+            # concrete Path after the tracking service has safely resolved the
+            # immutable bundle member.
+            path=output_path.path,
         )

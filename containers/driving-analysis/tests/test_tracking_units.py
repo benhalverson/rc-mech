@@ -1,3 +1,4 @@
+import errno
 import gzip
 import hashlib
 import os
@@ -379,7 +380,7 @@ def test_completed_preparation_rejects_changed_input_and_tampering(
         PREPARED_BUNDLE_SUFFIX,
         PREPARED_MEDIA_SUFFIX,
     )
-    media_path.write_bytes(b"tampered")
+    media_path.path.write_bytes(b"tampered")
     tampered = RaceWindowPreparationService(configured).prepare(
         _prepare_request(prepared.prepared.source_byte_count)
     )
@@ -432,6 +433,31 @@ def test_preparation_recovers_a_concurrent_identical_publication(
             PREPARED_BUNDLE_SUFFIX,
         )
     ]
+
+    calls = 0
+
+    def recover_conflict(
+        _request: PrepareStageRequest,
+        _current_settings: ServiceSettings,
+        _deadline: float,
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        return prepared.prepared.model_copy(update={"checksum_sha256": "0" * 64})
+
+    monkeypatch.setattr(
+        preparation_module,
+        "_recover_completed_preparation",
+        recover_conflict,
+    )
+    stage_media(configured, accepted_video)
+    conflict = RaceWindowPreparationService(configured).prepare(
+        _prepare_request(prepared.prepared.source_byte_count)
+    )
+    assert isinstance(conflict, ProcessingRejected)
+    assert conflict.error.code == "ARTIFACT_CONFLICT"
 
 
 def test_tracking_recovers_a_concurrent_identical_publication(
@@ -553,7 +579,7 @@ def test_tracking_recovers_a_concurrent_identical_publication(
     assert conflict.error.code == "ARTIFACT_CONFLICT"
 
 
-def test_incomplete_tracking_bundle_has_no_completed_segment(
+def test_incomplete_tracking_bundle_is_an_immutable_id_conflict(
     settings: ServiceSettings,
 ) -> None:
     settings.prepare_roots()
@@ -562,15 +588,13 @@ def test_incomplete_tracking_bundle_has_no_completed_segment(
         SEGMENT_ID,
         artifact_module.OBSERVATION_BUNDLE_SUFFIX,
     ).mkdir()
-    assert (
+    with pytest.raises(ArtifactConflictError):
         tracking_module._recover_completed_segment(
             _track_request(),
             settings,
             SHA,
             time.monotonic() + 10,
         )
-        is None
-    )
 
 
 def test_tracking_rejects_unready_provider(settings: ServiceSettings) -> None:
@@ -1167,6 +1191,16 @@ def test_copy_verified_artifact_removes_a_checksum_mismatch(
 
     assert not destination.exists()
 
+    for invalid_size in (-1, 11):
+        with pytest.raises(InvalidArtifactError):
+            artifact_module.copy_verified_artifact(
+                source,
+                destination,
+                expected_bytes=invalid_size,
+                expected_checksum="0" * 64,
+                max_bytes=10,
+            )
+
 
 def test_bundle_and_completion_validation_defenses(
     settings: ServiceSettings,
@@ -1198,10 +1232,10 @@ def test_bundle_and_completion_validation_defenses(
             max_bytes=100,
         )
 
-    def deny_rename(_self: Path, _destination: Path) -> Path:
+    def deny_rename(*_args: object) -> None:
         raise PermissionError
 
-    monkeypatch.setattr(Path, "rename", deny_rename)
+    monkeypatch.setattr(artifact_module, "_rename_noreplace", deny_rename)
     with pytest.raises(PermissionError):
         artifact_module.publish_bundle(
             settings.artifact_root / "denied.bundle",
@@ -1215,18 +1249,21 @@ def test_bundle_durability_is_retried_after_post_rename_failure(
 ) -> None:
     settings.prepare_roots()
     destination = settings.artifact_root / "durable.bundle"
-    original_sync = artifact_module._fsync_directory
+    original_sync = artifact_module.fsync_with_deadline
 
-    def fail_post_rename_sync(
-        directory: Path, *, deadline: float | None = None
-    ) -> None:
-        if directory == destination.parent and destination.exists():
+    def fail_post_rename_sync(descriptor: int, deadline: float | None = None) -> None:
+        parent = destination.parent.stat()
+        identity = os.fstat(descriptor)
+        if destination.exists() and (identity.st_dev, identity.st_ino) == (
+            parent.st_dev,
+            parent.st_ino,
+        ):
             raise ProcessTimeoutError
-        original_sync(directory, deadline=deadline)
+        original_sync(descriptor, deadline)
 
     monkeypatch.setattr(
         artifact_module,
-        "_fsync_directory",
+        "fsync_with_deadline",
         fail_post_rename_sync,
     )
     with pytest.raises(ProcessTimeoutError):
@@ -1237,7 +1274,7 @@ def test_bundle_durability_is_retried_after_post_rename_failure(
         )
     assert (destination / "member").read_bytes() == b"value"
 
-    monkeypatch.setattr(artifact_module, "_fsync_directory", original_sync)
+    monkeypatch.setattr(artifact_module, "fsync_with_deadline", original_sync)
     artifact_module.ensure_bundle_durable(
         destination,
         deadline=time.monotonic() + 1,
@@ -1246,6 +1283,326 @@ def test_bundle_durability_is_retried_after_post_rename_failure(
     not_directory.write_bytes(b"value")
     with pytest.raises(InvalidArtifactError):
         artifact_module.ensure_bundle_durable(not_directory)
+
+
+@pytest.mark.parametrize("destination_type", ["file", "directory", "symlink"])
+def test_bundle_publication_never_replaces_an_existing_destination_type(
+    settings: ServiceSettings,
+    destination_type: str,
+) -> None:
+    settings.prepare_roots()
+    destination = settings.artifact_root / "occupied.bundle"
+    if destination_type == "file":
+        destination.write_bytes(b"existing")
+    elif destination_type == "directory":
+        destination.mkdir()
+    else:
+        target = settings.artifact_root / "target.bundle"
+        target.mkdir()
+        destination.symlink_to(target, target_is_directory=True)
+
+    assert artifact_module.publish_bundle(destination, {"member": b"new"}) is False
+    if destination_type == "file":
+        assert destination.read_bytes() == b"existing"
+    elif destination_type == "directory":
+        assert list(destination.iterdir()) == []
+    else:
+        assert destination.is_symlink()
+    assert not any(
+        child.name.startswith(".pending-bundle-")
+        for child in settings.artifact_root.iterdir()
+    )
+
+
+def test_bundle_publication_cannot_be_redirected_by_parent_replacement(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    original_root = tmp_path / "original-artifacts"
+    destination = settings.artifact_root / "stable.bundle"
+    original_rename = artifact_module._rename_noreplace
+
+    def replace_parent_then_publish(
+        parent_descriptor: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
+        settings.artifact_root.rename(original_root)
+        settings.artifact_root.mkdir(mode=0o700)
+        original_rename(parent_descriptor, source_name, destination_name)
+
+    monkeypatch.setattr(
+        artifact_module,
+        "_rename_noreplace",
+        replace_parent_then_publish,
+    )
+    with pytest.raises(PermissionError, match="identity changed"):
+        artifact_module.publish_bundle(destination, {"member": b"trusted"})
+
+    assert list(settings.artifact_root.iterdir()) == []
+    assert (original_root / "stable.bundle" / "member").read_bytes() == b"trusted"
+
+
+def test_bundle_read_cannot_be_redirected_by_parent_replacement(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    bundle = settings.artifact_root / "stable.bundle"
+    bundle.mkdir()
+    (bundle / "member").write_bytes(b"trusted")
+    replacement = tmp_path / "replacement"
+    replacement.mkdir(mode=0o700)
+    replacement_bundle = replacement / "stable.bundle"
+    replacement_bundle.mkdir()
+    (replacement_bundle / "member").write_bytes(b"redirected")
+    original_root = tmp_path / "original-artifacts"
+    original_open = os.open
+    replaced = False
+
+    def replace_parent_before_member_open(
+        path: str | bytes | Path,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal replaced
+        if str(path).endswith("/member") and not replaced:
+            replaced = True
+            settings.artifact_root.rename(original_root)
+            replacement.rename(settings.artifact_root)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    member = artifact_module.BundleMember(
+        settings.artifact_root,
+        "stable.bundle",
+        "member",
+    )
+    monkeypatch.setattr(artifact_module.os, "open", replace_parent_before_member_open)
+    with pytest.raises(PermissionError, match="identity changed"):
+        artifact_module.read_artifact(member, max_bytes=32)
+
+
+def test_bundle_reservation_rejects_invalid_shapes_and_cleans_partial_work(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    destination = settings.artifact_root / "reserved.bundle"
+    with pytest.raises(ValueError, match="path component"):
+        artifact_module.reserve_bundle(destination, {"../member": 1})
+    with pytest.raises(ValueError, match="negative"):
+        artifact_module.reserve_bundle(destination, {"member": -1})
+
+    reservation = artifact_module.reserve_bundle(destination, {"member": 1})
+    with reservation:
+        with pytest.raises(ValueError, match="match reserved"):
+            reservation.publish({"different": b"x"})
+        with pytest.raises(ProcessOutputLimitError):
+            reservation.publish({"member": b"too large"})
+
+    def reject_capacity(_descriptor: int, _byte_count: int) -> None:
+        raise ProcessOutputLimitError
+
+    monkeypatch.setattr(
+        artifact_module,
+        "reserve_file_capacity",
+        reject_capacity,
+    )
+    with (
+        pytest.raises(ProcessOutputLimitError),
+        artifact_module.reserve_bundle(destination, {"member": 1}),
+    ):
+        pass
+    assert list(settings.artifact_root.iterdir()) == []
+
+    unopened = artifact_module.reserve_bundle(destination, {"member": 1})
+    unopened.__exit__(None, None, None)
+    with pytest.raises(RuntimeError, match="not open"):
+        unopened._root()
+    with pytest.raises(RuntimeError, match="not open"):
+        unopened._pending()
+
+
+def test_bundle_reservation_cleans_a_pending_directory_when_open_fails(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    original_open = os.open
+
+    def fail_pending_open(
+        path: str | bytes | Path,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if isinstance(path, str) and path.startswith(".pending-bundle-"):
+            message = "pending open denied"
+            raise PermissionError(message)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(artifact_module.os, "open", fail_pending_open)
+    with (
+        pytest.raises(PermissionError, match="pending open denied"),
+        artifact_module.reserve_bundle(
+            settings.artifact_root / "failed.bundle",
+            {"member": 1},
+        ),
+    ):
+        pass
+    assert list(settings.artifact_root.iterdir()) == []
+
+
+def test_bundle_member_open_rejects_missing_and_nonregular_entries(
+    settings: ServiceSettings,
+) -> None:
+    settings.prepare_roots()
+    missing_bundle = artifact_module.BundleMember(
+        settings.artifact_root,
+        "missing.bundle",
+        "member",
+    )
+    assert (
+        artifact_module.read_completion(
+            missing_bundle,
+            PrepareStageAccepted,
+            max_bytes=100,
+        )
+        is None
+    )
+
+    bundle = settings.artifact_root / "present.bundle"
+    bundle.mkdir()
+    missing_member = artifact_module.BundleMember(
+        settings.artifact_root,
+        bundle.name,
+        "missing",
+    )
+    assert (
+        artifact_module.read_completion(
+            missing_member,
+            PrepareStageAccepted,
+            max_bytes=100,
+        )
+        is None
+    )
+    (bundle / "directory-member").mkdir()
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.read_artifact(
+            artifact_module.BundleMember(
+                settings.artifact_root,
+                bundle.name,
+                "directory-member",
+            ),
+            max_bytes=100,
+        )
+
+    linked_bundle_target = settings.artifact_root / "target.bundle"
+    linked_bundle_target.mkdir()
+    linked_bundle = settings.artifact_root / "linked.bundle"
+    linked_bundle.symlink_to(linked_bundle_target, target_is_directory=True)
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.read_artifact(
+            artifact_module.BundleMember(
+                settings.artifact_root,
+                linked_bundle.name,
+                "member",
+            ),
+            max_bytes=100,
+        )
+
+    linked_member_target = bundle / "target-member"
+    linked_member_target.write_bytes(b"value")
+    linked_member = bundle / "linked-member"
+    linked_member.symlink_to(linked_member_target)
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.read_artifact(
+            artifact_module.BundleMember(
+                settings.artifact_root,
+                bundle.name,
+                linked_member.name,
+            ),
+            max_bytes=100,
+        )
+
+    settings.artifact_root.chmod(0o755)
+    try:
+        with pytest.raises(PermissionError, match="group or other"):
+            artifact_module.read_artifact(missing_bundle, max_bytes=100)
+    finally:
+        settings.artifact_root.chmod(0o700)
+
+
+def test_bundle_helpers_reject_conflicts_and_operating_system_failures(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    occupied = settings.artifact_root / "occupied.bundle"
+    occupied.write_bytes(b"file")
+    with pytest.raises(ArtifactConflictError):
+        artifact_module.bundle_exists(settings, "occupied", ".bundle")
+
+    linked = tmp_path / "linked"
+    target = tmp_path / "target"
+    target.write_bytes(b"value")
+    linked.symlink_to(target)
+    with pytest.raises(InvalidArtifactError):
+        artifact_module.read_artifact(linked, max_bytes=10)
+    with pytest.raises(ValueError, match="path component"):
+        artifact_module._validate_name("../invalid")
+    with pytest.raises(ValueError, match="path component"):
+        artifact_module._validate_name(".")
+    monkeypatch.setattr(artifact_module.os.path, "normpath", lambda _path: "/escape")
+    with pytest.raises(ValueError, match="escaped"):
+        artifact_module._directory_entry_path(1, "safe")
+
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    parent_descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    second_descriptor = os.open(second, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(OSError, match="identity changed"):
+            artifact_module._verify_directory_entry(
+                parent_descriptor,
+                first.name,
+                second_descriptor,
+            )
+    finally:
+        os.close(parent_descriptor)
+        os.close(second_descriptor)
+
+    monkeypatch.setattr(artifact_module, "_RENAMEAT2", lambda *_args: -1)
+    monkeypatch.setattr(artifact_module.ctypes, "get_errno", lambda: errno.EPERM)
+    with pytest.raises(OSError, match="Operation not permitted") as raised:
+        artifact_module._rename_noreplace(1, "source", "destination")
+    assert raised.value.errno == errno.EPERM
+
+
+def test_bundle_copy_enforces_the_reserved_member_capacity(
+    settings: ServiceSettings,
+    tmp_path: Path,
+) -> None:
+    settings.prepare_roots()
+    source = tmp_path / "source"
+    source.write_bytes(b"larger")
+    with (
+        artifact_module.reserve_bundle(
+            settings.artifact_root / "small.bundle",
+            {"member": 1},
+        ) as reservation,
+        pytest.raises(ProcessOutputLimitError),
+    ):
+        reservation.publish({"member": source})
 
 
 def test_stage_deadlines_reject_expired_work() -> None:

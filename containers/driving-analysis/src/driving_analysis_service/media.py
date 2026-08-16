@@ -28,6 +28,7 @@ from driving_analysis_service.contracts import (
     ValidationResponse,
 )
 from driving_analysis_service.errors import MediaValidationError
+from driving_analysis_service.local_storage import reserve_file_capacity
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessStreams,
@@ -283,6 +284,9 @@ class _ClaimedMedia:
         except ProcessTimeoutError:
             self._cleanup()
             raise
+        except ProcessOutputLimitError:
+            self._cleanup()
+            raise
         except OSError as error:
             self._cleanup()
             raise MediaValidationError(
@@ -383,6 +387,7 @@ def _copy_and_consume(
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
             0o600,
         )
+        reserve_file_capacity(destination_descriptor, expected_bytes)
         copied_bytes = 0
         while chunk := os.read(source_descriptor, 1024 * 1024):
             check_deadline(deadline)

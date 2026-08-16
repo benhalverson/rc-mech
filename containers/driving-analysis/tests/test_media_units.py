@@ -721,6 +721,24 @@ def test_claim_maps_cross_filesystem_copy_failure(
     )
 
 
+def test_claim_propagates_capacity_reservation_failure_and_cleans_workspace(
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.prepare_roots()
+    (settings.staging_root / f"{STAGED_MEDIA_ID}.media").write_bytes(b"x")
+    request = MediaValidationRequest.model_validate(request_body(1))
+
+    def reject_capacity(_descriptor: int, _byte_count: int) -> None:
+        raise ProcessOutputLimitError
+
+    monkeypatch.setattr(media_module, "reserve_file_capacity", reject_capacity)
+    with pytest.raises(ProcessOutputLimitError):
+        media_module.claim_staged_media(request, settings).__enter__()
+    assert list(settings.staging_root.iterdir()) == []
+    assert list(settings.work_root.iterdir()) == []
+
+
 def test_cross_filesystem_copy_rejects_a_nonregular_source(tmp_path: Path) -> None:
     source = tmp_path / "source.media"
     destination = tmp_path / "destination.media"

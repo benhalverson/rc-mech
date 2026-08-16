@@ -20,9 +20,11 @@ from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
 from driving_analysis_service.tracking import SubjectTrackingService
 from driving_analysis_service.tracking_artifacts import (
+    MAX_OBSERVATION_SEGMENT_BYTES,
     OBSERVATION_BUNDLE_SUFFIX,
     OBSERVATION_SEGMENT_SUFFIX,
     bundle_member_path,
+    read_artifact,
 )
 from driving_analysis_service.tracking_contracts import (
     PrepareStageAccepted,
@@ -184,7 +186,10 @@ def test_real_ffmpeg_prepare_and_fake_track_are_immutable(
         OBSERVATION_BUNDLE_SUFFIX,
         OBSERVATION_SEGMENT_SUFFIX,
     )
-    raw_segment = segment_path.read_bytes()
+    raw_segment = read_artifact(
+        segment_path,
+        max_bytes=MAX_OBSERVATION_SEGMENT_BYTES,
+    )
     assert hashlib.sha256(raw_segment).hexdigest() == tracked.segment.checksum_sha256
     envelope = json.loads(gzip.decompress(raw_segment))
     assert [item["timestampMs"] for item in envelope["observations"]] == [100, 200, 300]
@@ -211,7 +216,7 @@ def test_real_ffmpeg_prepare_and_fake_track_are_immutable(
     assert isinstance(conflict, ProcessingRejected)
     assert conflict.error.code == "ARTIFACT_CONFLICT"
 
-    segment_path.write_bytes(b"tampered")
+    segment_path.path.write_bytes(b"tampered")
     tampered = SubjectTrackingService(
         configured,
         FakeInferenceProvider(tracked.segment.provenance),
@@ -269,12 +274,15 @@ def test_fixture_provider_stops_at_first_untrusted_frame(
     assert result.segment.observation_count == 2
     assert result.segment.gap is not None
     assert result.segment.gap.start_timestamp_ms == 300
-    raw = bundle_member_path(
-        configured,
-        SEGMENT_ID,
-        OBSERVATION_BUNDLE_SUFFIX,
-        OBSERVATION_SEGMENT_SUFFIX,
-    ).read_bytes()
+    raw = read_artifact(
+        bundle_member_path(
+            configured,
+            SEGMENT_ID,
+            OBSERVATION_BUNDLE_SUFFIX,
+            OBSERVATION_SEGMENT_SUFFIX,
+        ),
+        max_bytes=MAX_OBSERVATION_SEGMENT_BYTES,
+    )
     observations = json.loads(gzip.decompress(raw))["observations"]
     assert [item["frameIndex"] for item in observations] == [1, 2]
 

@@ -2,7 +2,6 @@
 
 import hashlib
 import math
-import os
 import tempfile
 import threading
 import time
@@ -17,6 +16,7 @@ from driving_analysis_service.contracts import (
     NormalizedPoint,
 )
 from driving_analysis_service.errors import MediaValidationError
+from driving_analysis_service.local_storage import reserve_file_capacity
 from driving_analysis_service.media import (
     ProbeMetadata,
     claim_staged_media,
@@ -52,15 +52,17 @@ from driving_analysis_service.rendering_contracts import (
 from driving_analysis_service.settings import ServiceSettings
 from driving_analysis_service.tracking_artifacts import (
     ArtifactConflictError,
+    BundleReservation,
     InvalidArtifactError,
+    bundle_exists,
     bundle_member_path,
     bundle_path,
     canonical_json,
     copy_verified_artifact,
     ensure_bundle_durable,
     file_digest,
-    publish_bundle,
     read_completion,
+    reserve_bundle,
 )
 from driving_analysis_service.tracking_contracts import (
     TRACK_VIEW_HEIGHT,
@@ -73,8 +75,8 @@ RENDER_COMPLETION_SUFFIX = ".corner.json"
 MAX_FFMPEG_VERSION_BYTES = 16 * 1024
 MAX_FFMPEG_ERROR_LINE_BYTES = 16 * 1024
 MAX_FFMPEG_ALLOCATION_BYTES = 64 * 1024 * 1024
-MIN_STORAGE_HEADROOM_BYTES = 256 * 1024 * 1024
 MIN_OUTPUT_DIMENSION = 2
+MAX_COMPLETION_BYTES = 64 * 1024
 
 
 class RenderInvalidMediaError(ValueError):
@@ -148,12 +150,34 @@ class CornerRenderService:
         if recovered is not None:
             return _accepted(request, recovered)
 
-        _validate_storage_capacity(
-            self.settings,
-            request.input.expected_byte_count,
-            request.specification.max_output_bytes,
-        )
+        media_name = f"{request.render_id}{RENDER_MEDIA_SUFFIX}"
+        completion_name = f"{request.render_id}{RENDER_COMPLETION_SUFFIX}"
+        with reserve_bundle(
+            bundle_path(self.settings, request.render_id, RENDER_BUNDLE_SUFFIX),
+            {
+                media_name: request.specification.max_output_bytes,
+                completion_name: MAX_COMPLETION_BYTES,
+            },
+            deadline=deadline,
+        ) as publication:
+            return self._render_reserved(
+                request,
+                deadline,
+                started_at,
+                publication,
+                media_name,
+                completion_name,
+            )
 
+    def _render_reserved(  # noqa: PLR0913 - explicit immutable publication inputs
+        self,
+        request: RenderStageRequest,
+        deadline: float,
+        started_at: float,
+        publication: BundleReservation,
+        media_name: str,
+        completion_name: str,
+    ) -> RenderStageResponse:
         with claim_staged_media(request, self.settings, deadline=deadline) as source:
             source_bytes, source_checksum, metadata = inspect_and_probe_media(
                 source,
@@ -203,13 +227,11 @@ class CornerRenderService:
                 completion = canonical_json(
                     artifact.model_dump(mode="json", by_alias=True)
                 )
-                created = publish_bundle(
-                    bundle_path(self.settings, request.render_id, RENDER_BUNDLE_SUFFIX),
+                created = publication.publish(
                     {
-                        f"{request.render_id}{RENDER_MEDIA_SUFFIX}": work_path,
-                        f"{request.render_id}{RENDER_COMPLETION_SUFFIX}": completion,
+                        media_name: work_path,
+                        completion_name: completion,
                     },
-                    deadline=deadline,
                 )
                 if not created:
                     recovered = _recover(request, self.settings, deadline)
@@ -261,7 +283,7 @@ def _recover(
     deadline: float,
 ) -> RenderArtifact | None:
     bundle = bundle_path(settings, request.render_id, RENDER_BUNDLE_SUFFIX)
-    if not bundle.exists():
+    if not bundle_exists(settings, request.render_id, RENDER_BUNDLE_SUFFIX):
         return None
     completion = read_completion(
         bundle_member_path(
@@ -272,7 +294,7 @@ def _recover(
         deadline=deadline,
     )
     if completion is None:
-        return None
+        raise ArtifactConflictError
     if (
         completion.render_id != request.render_id
         or completion.case_id != request.case_id
@@ -289,7 +311,6 @@ def _recover(
     with tempfile.TemporaryDirectory(
         prefix="recovery-", dir=settings.work_root
     ) as recovery_directory:
-        _validate_recovery_capacity(settings, completion.byte_count)
         recovery_media = Path(recovery_directory) / "artifact.mp4"
         copy_verified_artifact(
             media,
@@ -355,6 +376,7 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
             )
         )
         with destination.open("xb", buffering=0) as output:
+            reserve_file_capacity(output.fileno(), specification.max_output_bytes)
             result = run_bounded_process(
                 settings.ffmpeg_executable,
                 (
@@ -499,39 +521,6 @@ def _validate_output_duration(
 
 def _discard_process_error(_line: bytes) -> bool:
     return True
-
-
-def _validate_storage_capacity(
-    settings: ServiceSettings,
-    expected_input_bytes: int,
-    max_output_bytes: int,
-) -> None:
-    work_available = _available_bytes(settings.work_root)
-    artifact_available = _available_bytes(settings.artifact_root)
-    if settings.work_root.stat().st_dev == settings.artifact_root.stat().st_dev:
-        required = (
-            expected_input_bytes + 2 * max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
-        )
-        if min(work_available, artifact_available) < required:
-            raise ProcessOutputLimitError
-        return
-    work_required = expected_input_bytes + max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
-    artifact_required = max_output_bytes + MIN_STORAGE_HEADROOM_BYTES
-    if work_available < work_required or artifact_available < artifact_required:
-        raise ProcessOutputLimitError
-
-
-def _validate_recovery_capacity(
-    settings: ServiceSettings, expected_output_bytes: int
-) -> None:
-    required = expected_output_bytes + MIN_STORAGE_HEADROOM_BYTES
-    if _available_bytes(settings.work_root) < required:
-        raise ProcessOutputLimitError
-
-
-def _available_bytes(path: Path) -> int:
-    filesystem = os.statvfs(path)
-    return filesystem.f_bavail * filesystem.f_frsize
 
 
 def _same_render_result(first: RenderArtifact, second: RenderArtifact) -> bool:

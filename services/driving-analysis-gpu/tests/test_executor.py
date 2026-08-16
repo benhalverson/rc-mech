@@ -7,12 +7,14 @@ from driving_analysis_service.contracts import SubjectProvenance, SubjectSeed
 from driving_analysis_service.inference import InferenceFrame
 from driving_analysis_service.tracking_artifacts import (
     FRAME_MANIFEST_SUFFIX,
+    MAX_COMPRESSED_MANIFEST_BYTES,
     OBSERVATION_BUNDLE_SUFFIX,
     OBSERVATION_SEGMENT_SUFFIX,
     PREPARED_BUNDLE_SUFFIX,
     PREPARED_MEDIA_SUFFIX,
     bundle_member_path,
     bundle_path,
+    read_artifact,
 )
 from driving_analysis_service.tracking_contracts import (
     PreparedFrame,
@@ -150,18 +152,24 @@ class _TrackingService:
     def track(self, request: TrackStageRequest) -> TrackStageAccepted | object:
         settings = self.settings
         prepared_id = request.prepared.prepared_media_id
-        _TrackingService.copied_media = bundle_member_path(
-            settings,
-            prepared_id,
-            PREPARED_BUNDLE_SUFFIX,
-            PREPARED_MEDIA_SUFFIX,
-        ).read_bytes()
-        _TrackingService.copied_manifest = bundle_member_path(
-            settings,
-            prepared_id,
-            PREPARED_BUNDLE_SUFFIX,
-            FRAME_MANIFEST_SUFFIX,
-        ).read_bytes()
+        _TrackingService.copied_media = read_artifact(
+            bundle_member_path(
+                settings,
+                prepared_id,
+                PREPARED_BUNDLE_SUFFIX,
+                PREPARED_MEDIA_SUFFIX,
+            ),
+            max_bytes=request.prepared.byte_count,
+        )
+        _TrackingService.copied_manifest = read_artifact(
+            bundle_member_path(
+                settings,
+                prepared_id,
+                PREPARED_BUNDLE_SUFFIX,
+                FRAME_MANIFEST_SUFFIX,
+            ),
+            max_bytes=MAX_COMPRESSED_MANIFEST_BYTES,
+        )
         response = _TrackingService.response
         if isinstance(response, TrackStageAccepted):
             bundle_path(
@@ -175,7 +183,7 @@ class _TrackingService:
                 OBSERVATION_BUNDLE_SUFFIX,
                 OBSERVATION_SEGMENT_SUFFIX,
             )
-            output.write_bytes(b"observations")
+            output.path.write_bytes(b"observations")
         if _TrackingService.cancel_during_track is not None:
             _TrackingService.cancel_during_track.set()
         return response
