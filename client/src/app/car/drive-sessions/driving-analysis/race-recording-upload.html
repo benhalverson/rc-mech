@@ -1,0 +1,73 @@
+<section class="grid gap-3" [attr.aria-labelledby]="'race-recording-title-' + driveSession().id">
+	<div class="flex flex-wrap items-start justify-between gap-3">
+		<div class="min-w-0">
+			<h4 class="m-0 text-sm font-semibold text-alloy-text" [id]="'race-recording-title-' + driveSession().id">Race recording<span class="alloy-visually-hidden"> for Drive session starting {{ driveSession().startedAt }}</span></h4>
+			@if (displayFileName(); as fileName) {
+				<p class="alloy-technical m-0 mt-1 break-words text-alloy-text-secondary">{{ fileName }} · {{ declaredSize() }}</p>
+			} @else {
+				<p class="m-0 mt-1 text-sm text-alloy-text-secondary">Attach private static-camera race footage for later analysis.</p>
+			}
+		</div>
+		@if (status() === 'complete') {
+			<span class="inline-flex items-center gap-2 text-sm font-semibold text-alloy-text" role="status"><svg lucideCheckCircle2 size="17" strokeWidth="1.8" aria-hidden="true"></svg>Upload complete</span>
+		} @else if (status() === 'removing') {
+			<span class="text-sm font-semibold text-alloy-text-secondary" role="status">Removing recording…</span>
+		}
+	</div>
+	@if (status() === 'uploading' || status() === 'paused' || status() === 'cancelling' || status() === 'failed') {
+		<div class="grid gap-2">
+			<div class="flex items-center justify-between gap-3 text-sm text-alloy-text-secondary">
+				<span>{{ progressLabel() }}</span>
+				<span class="alloy-technical">{{ progressPercent() }}%</span>
+			</div>
+			<progress class="h-2 w-full accent-alloy-accent" [max]="100" [value]="progressPercent()" [attr.aria-label]="'Race recording upload ' + progressPercent() + ' percent complete'"></progress>
+		</div>
+	}
+
+	@if (fileError()) {
+		<p class="alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="17" strokeWidth="1.8" aria-hidden="true"></svg><strong>File not selected</strong></span>
+			<span>{{ fileError() }}</span>
+		</p>
+	}
+	@if (transfer()?.status === 'failed') {
+		<p class="alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="17" strokeWidth="1.8" aria-hidden="true"></svg><strong>Upload stopped</strong></span>
+			<span>{{ store.error() }}</span>
+		</p>
+	}
+	@if (status() === 'removal-failed') {
+		<p class="alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="17" strokeWidth="1.8" aria-hidden="true"></svg><strong>Removal stopped</strong></span>
+			<span>{{ store.removalError() }}</span>
+		</p>
+	}
+	@if (store.readFailure() && !recording()) {
+		<div class="alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="17" strokeWidth="1.8" aria-hidden="true"></svg><strong>Recording status unavailable</strong></span>
+			<button class="alloy-control alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="store.retry()"><svg lucideRefreshCw size="17" strokeWidth="1.8" aria-hidden="true"></svg>Try again</button>
+		</div>
+	}
+
+	@if ((!driveSession().deletedAt && !carArchived()) || recording() || transfer()?.recordingId) {
+		<div class="flex flex-wrap items-center gap-2" role="group" aria-label="Race recording upload controls">
+			@if (!driveSession().deletedAt && !carArchived()) {
+				@if (status() === 'uploading') {
+					<button data-race-recording-pause class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center gap-2" type="button" (click)="pause()"><svg lucidePause size="17" strokeWidth="1.8" aria-hidden="true"></svg>Pause</button>
+				} @else if (status() === 'paused' && store.hasSelectedFile(driveSession().id)) {
+					<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center gap-2" type="button" (click)="resume()"><svg lucidePlay size="17" strokeWidth="1.8" aria-hidden="true"></svg>Resume</button>
+				}
+				@if (status() === 'idle' || status() === 'paused' || status() === 'failed') {
+					<label class="alloy-control has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-alloy-focus inline-flex cursor-pointer items-center gap-2">
+						<svg lucideUpload size="17" strokeWidth="1.8" aria-hidden="true"></svg>
+						<span>{{ recording() ? 'Choose same file' : 'Attach recording' }}</span>
+						<input data-race-recording-file class="alloy-visually-hidden" type="file" accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm" (change)="selectFile($event)" [disabled]="!canSelectFile()" />
+					</label>
+				}
+			}
+			@if ((recording() || transfer()?.recordingId) && status() !== 'removing') {
+				<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center gap-2" type="button" (click)="remove()" [disabled]="store.removalPending()"><svg lucideX size="17" strokeWidth="1.8" aria-hidden="true"></svg>{{ completedRecording() ? 'Delete recording permanently' : 'Cancel upload' }}</button>
+			}
+		</div>
+	}
+</section>

@@ -11,6 +11,7 @@ import type {
 } from './drive-session.models';
 import { DriveSessionStore } from './drive-session-store';
 import { DriveSessions } from './drive-sessions';
+import { DrivingAnalysisStore } from './driving-analysis/driving-analysis-store';
 
 const driveSession = (overrides: Partial<DriveSession> = {}): DriveSession => ({
 	id: 'drive-1',
@@ -72,20 +73,54 @@ class FakeDriveSessionStore {
 	);
 }
 
+class FakeDrivingAnalysisStore {
+	readonly recordings = signal([]);
+	readonly transfer = signal({
+		status: 'idle' as const,
+		driveSessionId: null,
+		recordingId: null,
+		uploadedBytes: 0,
+		totalBytes: 0,
+		error: null,
+	});
+	readonly pending = signal(false);
+	readonly error = signal('');
+	readonly removal = signal({
+		status: 'idle' as const,
+		driveSessionId: null,
+		recordingId: null,
+		error: null,
+	});
+	readonly removalPending = signal(false);
+	readonly removalError = signal('');
+	readonly readFailure = signal(null);
+	readonly selectCar = vi.fn();
+	readonly startUpload = vi.fn();
+	readonly pauseUpload = vi.fn();
+	readonly resumeUpload = vi.fn();
+	readonly removeRecording = vi.fn();
+	readonly retry = vi.fn();
+	readonly hasSelectedFile = vi.fn(() => false);
+	readonly selectedFileName = vi.fn(() => '');
+}
+
 describe('DriveSessions', () => {
 	let fixture: ComponentFixture<DriveSessions>;
 	let carStore: FakeCarStore;
 	let store: FakeDriveSessionStore;
+	let raceRecordingStore: FakeDrivingAnalysisStore;
 
 	beforeEach(async () => {
 		carStore = new FakeCarStore();
 		store = new FakeDriveSessionStore();
+		raceRecordingStore = new FakeDrivingAnalysisStore();
 		await TestBed.configureTestingModule({
 			imports: [DriveSessions],
 			providers: [
 				provideRouter([]),
 				{ provide: CarStore, useValue: carStore },
 				{ provide: DriveSessionStore, useValue: store },
+				{ provide: DrivingAnalysisStore, useValue: raceRecordingStore },
 			],
 		}).compileComponents();
 		fixture = TestBed.createComponent(DriveSessions);

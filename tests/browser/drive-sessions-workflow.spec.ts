@@ -201,3 +201,139 @@ test('keeps dark Drive session editing, history, and archive states accessible',
 	).toHaveCount(0);
 	expect(await scan(page)).toEqual([]);
 });
+
+test('resumes a Race recording from authoritative multipart progress without retransmitting completed parts', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await createCar(page, 'Race recording recovery fixture');
+	const driveResponse = await page.request.post(
+		`/api/v1/cars/${created.car.id}/drives`,
+		{
+			data: {
+				startedAt: '2026-08-16T18:00:00.000Z',
+				durationMinutes: 20,
+				conditions: 'Dry',
+			},
+		},
+	);
+	expect(driveResponse.ok()).toBe(true);
+	const driveBody = (await driveResponse.json()) as {
+		driveSession: { id: string };
+	};
+	const uploadUrl = `/api/v1/cars/${created.car.id}/drives/${driveBody.driveSession.id}/race-videos`;
+	const createResponse = await page.request.post(uploadUrl, {
+		data: {
+			fileName: 'Final.mp4',
+			contentType: 'video/mp4',
+			sizeBytes: 3,
+			requestId: '00000000-0000-4000-8000-000000000234',
+		},
+	});
+	expect(createResponse.status()).toBe(201);
+	const createdRecording = (await createResponse.json()) as {
+		raceVideo: { id: string };
+	};
+	const recordingId = createdRecording.raceVideo.id;
+	const seededPart = await page.request.put(
+		`/api/v1/race-videos/${recordingId}/upload-parts/1`,
+		{
+			headers: {
+				'content-length': '3',
+				'content-type': 'application/octet-stream',
+				'x-transfer-request-id': 'browser-seeded-part-1',
+			},
+			data: Buffer.from('abc'),
+		},
+	);
+	expect(seededPart.ok()).toBe(true);
+	let browserPartRequests = 0;
+	page.on('request', (request) => {
+		if (
+			request.method() === 'PUT' &&
+			request.url().includes(`/api/v1/race-videos/${recordingId}/upload-parts/`)
+		)
+			browserPartRequests += 1;
+	});
+	await page.goto(`/garage/${created.car.id}/drive-sessions`);
+	await expect(page.getByText('Final.mp4 · 3 bytes')).toBeVisible();
+	await expect(page.getByText('Upload paused')).toBeVisible();
+	await expect(page.getByRole('progressbar')).toHaveAttribute('value', '100');
+	await page.locator('input[type="file"]').setInputFiles({
+		name: 'Final.mp4',
+		mimeType: 'video/mp4',
+		buffer: Buffer.from('abc'),
+	});
+	await expect(page.getByText('Upload complete')).toBeVisible();
+	expect(browserPartRequests).toBe(0);
+	expect(await scan(page)).toEqual([]);
+
+	await page.reload();
+	const completedSection = page.locator(
+		`section[aria-labelledby="race-recording-title-${driveBody.driveSession.id}"]`,
+	);
+	await expect(completedSection.getByText('Final.mp4 · 3 bytes')).toBeVisible();
+	await expect(completedSection.getByText('Upload complete')).toBeVisible();
+	await completedSection
+		.getByRole('button', { name: 'Delete recording permanently' })
+		.click();
+	await expect(completedSection.getByText('Final.mp4 · 3 bytes')).toHaveCount(
+		0,
+	);
+	await expect(completedSection.locator('input[type="file"]')).toBeFocused();
+
+	const cancellableDrive = await page.request.post(
+		`/api/v1/cars/${created.car.id}/drives`,
+		{
+			data: {
+				startedAt: '2026-08-16T18:30:00.000Z',
+				durationMinutes: 20,
+				conditions: 'Dry',
+			},
+		},
+	);
+	const cancellableDriveBody = (await cancellableDrive.json()) as {
+		driveSession: { id: string };
+	};
+	const cancellableUrl = `/api/v1/cars/${created.car.id}/drives/${cancellableDriveBody.driveSession.id}/race-videos`;
+	const cancellable = await page.request.post(cancellableUrl, {
+		data: {
+			fileName: 'Cancel.mp4',
+			contentType: 'video/mp4',
+			sizeBytes: 3,
+			requestId: '00000000-0000-4000-8000-000000000235',
+		},
+	});
+	expect(cancellable.status()).toBe(201);
+	await page.reload();
+	const cancellableSection = page.locator(
+		`section[aria-labelledby="race-recording-title-${cancellableDriveBody.driveSession.id}"]`,
+	);
+	await expect(
+		cancellableSection.getByText('Cancel.mp4 · 3 bytes'),
+	).toBeVisible();
+	await cancellableSection
+		.getByRole('button', { name: 'Cancel upload' })
+		.click();
+	await expect(
+		cancellableSection.getByText('Cancel.mp4 · 3 bytes'),
+	).toHaveCount(0);
+	await expect(cancellableSection.locator('input[type="file"]')).toBeFocused();
+
+	await page.route(`**${cancellableUrl}`, (route) =>
+		route.fulfill({
+			status: 503,
+			json: { error: 'Private media storage is unavailable' },
+		}),
+	);
+	await cancellableSection.locator('input[type="file"]').setInputFiles({
+		name: 'Retry.mp4',
+		mimeType: 'video/mp4',
+		buffer: Buffer.from('abc'),
+	});
+	await expect(page.getByText('Upload stopped')).toBeVisible();
+	await expect(
+		page.getByText('Private media storage is unavailable'),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+});
