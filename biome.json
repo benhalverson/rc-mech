@@ -15,7 +15,6 @@
 			"!!**/public",
 			"!!**/*.d.ts",
 			"!!containers/driving-analysis/tests/fixtures/subject-benchmark/**/*.json",
-			"!!containers/driving-analysis/tests/fixtures/subject-tracking/*.json",
 			"!!**/package-lock.json",
 			"!!**/pnpm-lock.yaml",
 			"!!**/yarn.lock"
@@ -60,6 +59,17 @@
 		}
 	},
 	"overrides": [
+		{
+			"includes": [
+				"containers/driving-analysis/tests/fixtures/subject-tracking/prepare-accepted.json",
+				"containers/driving-analysis/tests/fixtures/subject-tracking/track-gap-accepted.json",
+				"containers/driving-analysis/tests/fixtures/subject-tracking/track-rejected.json",
+				"containers/driving-analysis/tests/fixtures/subject-tracking/trusted-provider.json"
+			],
+			"formatter": {
+				"enabled": false
+			}
+		},
 		{
 			"includes": ["client/**/*.html"],
 			"linter": {

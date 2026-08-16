@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,21 @@ from driving_analysis_service.tracking_contracts import (
 
 UUID = "bde7ec63-86b9-4c86-a5e8-dbcf4a61f820"
 SHA = "4" * 64
+SUBJECT_TRACKING_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "subject-tracking"
+SUBJECT_TRACKING_FIXTURE_DIGESTS = {
+    "prepare-accepted.json": (
+        "f272e38ad613d219299172cd25333168e925ff73e063b10bdf87ad71aa7fa8dc"
+    ),
+    "track-gap-accepted.json": (
+        "6fc158003f691eb21f533871226914a00e185ff9a8d4be7270318cd896439100"
+    ),
+    "track-rejected.json": (
+        "6af11f65350f854ab171962372b747c567ea73d7b6a6a33abf74aeb2c5ecc815"
+    ),
+    "trusted-provider.json": (
+        "3b60d5303d5829a24c0e41d261b0800f18b5e0e35d368d1105ae9867f810efa0"
+    ),
+}
 
 
 def _manifest_payload() -> dict[str, object]:
@@ -356,6 +372,16 @@ def test_versioned_processing_response_fixtures_are_strict(
     filename: str,
     contract: type[PrepareStageAccepted | TrackStageAccepted | ProcessingRejected],
 ) -> None:
-    fixture = Path(__file__).parent / "fixtures" / "subject-tracking" / filename
+    fixture = SUBJECT_TRACKING_FIXTURE_ROOT / filename
     parsed = contract.model_validate_json(fixture.read_bytes())
     assert parsed.contract_version == "subject-tracking.v1"
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_digest"), SUBJECT_TRACKING_FIXTURE_DIGESTS.items()
+)
+def test_subject_tracking_fixture_bytes_are_stable(
+    filename: str, expected_digest: str
+) -> None:
+    fixture_bytes = (SUBJECT_TRACKING_FIXTURE_ROOT / filename).read_bytes()
+    assert hashlib.sha256(fixture_bytes).hexdigest() == expected_digest
