@@ -20,6 +20,7 @@
 		"format": "biome format --write .",
 		"format:check": "biome format --reporter=summary .",
 		"test:backend": "vitest run --coverage",
+		"test:gpu-coordinator": "vitest run --config vitest.gpu.config.ts",
 		"test:architecture": "vitest run --config tools/vitest.config.ts",
 		"test:auth:e2e": "bash scripts/auth-flow-smoke.sh",
 		"test:production": "bash scripts/production-acceptance.sh",

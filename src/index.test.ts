@@ -72,6 +72,7 @@ const MOCK_ENV = {
 	} as unknown as Fetcher,
 	APP_URL: 'http://localhost:8787',
 	ENVIRONMENT: 'local',
+	GPU_LEASE_COORDINATOR: {} as Env['GPU_LEASE_COORDINATOR'],
 } satisfies Env;
 
 const request = (path: string, init?: RequestInit) =>
