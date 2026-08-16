@@ -7,6 +7,16 @@ import {
 	text,
 } from 'drizzle-orm/sqlite-core';
 
+export {
+	inferenceProfileAuthority,
+	preparedTrackingMedia,
+	subjectObservationArtifact,
+	trackingExecutionAttempt,
+	trackingRun,
+	trackingSegment,
+	trackingTransferRequest,
+} from './driving-analysis/tracking/authority-schema';
+
 const id = (name: string) => text(name).primaryKey();
 export const car = sqliteTable('car', {
 	id: id('id'),
