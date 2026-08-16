@@ -187,7 +187,7 @@ export const cancelCommandSchema = executionIdentitySchema.extend({
 	contractVersion: z.literal('tracking-provider.v1'),
 });
 
-const subjectProvenanceSchema = z.strictObject({
+export const subjectProvenanceSchema = z.strictObject({
 	provider: safeIdentifierSchema,
 	model: safeIdentifierSchema,
 	modelVersion: safeIdentifierSchema,
@@ -202,6 +202,60 @@ const openTrackingGapSchema = z.strictObject({
 	startTimestampMs: timestampSchema,
 	reason: z.enum(['ambiguous-identity', 'occluded', 'missing']),
 });
+
+const normalizedPointSchema = z.strictObject({
+	x: z.number().min(0).max(1),
+	y: z.number().min(0).max(1),
+});
+
+export const subjectObservationSchema = z
+	.strictObject({
+		timestampMs: timestampSchema,
+		frameIndex: frameIndexSchema,
+		box: normalizedBoxSchema,
+		center: normalizedPointSchema,
+		visibility: z.enum(['visible', 'occluded', 'uncertain']),
+		identityConfidence: z.number().min(0).max(1),
+		origin: z.enum([
+			'detected',
+			'user-reidentified-point',
+			'user-reidentified-box',
+		]),
+		provenance: subjectProvenanceSchema,
+	})
+	.refine(
+		(observation) =>
+			Math.abs(
+				observation.center.x - (observation.box.x + observation.box.width / 2),
+			) <= 1e-6 &&
+			Math.abs(
+				observation.center.y - (observation.box.y + observation.box.height / 2),
+			) <= 1e-6,
+	);
+
+export const subjectObservationSegmentSchema = z
+	.strictObject({
+		contractVersion: z.literal('subject-observation-segment.v1'),
+		outcome: z.literal('accepted'),
+		caseId: safeIdentifierSchema,
+		observations: z.array(subjectObservationSchema).max(MAX_FRAME_COUNT),
+		openGap: openTrackingGapSchema.nullable(),
+		provenance: subjectProvenanceSchema,
+	})
+	.refine((segment) =>
+		segment.observations.every((observation, index) => {
+			const previous = segment.observations[index - 1];
+			return (
+				(previous === undefined ||
+					(observation.timestampMs > previous.timestampMs &&
+						observation.frameIndex > previous.frameIndex)) &&
+				(segment.openGap === null ||
+					observation.timestampMs < segment.openGap.startTimestampMs) &&
+				JSON.stringify(observation.provenance) ===
+					JSON.stringify(segment.provenance)
+			);
+		}),
+	);
 
 export const observationSegmentArtifactSchema = z
 	.strictObject({
@@ -296,8 +350,13 @@ export const rejectedJobResponseSchema = z.strictObject({
 
 export type ExecutionIdentity = z.infer<typeof executionIdentitySchema>;
 export type PreparedMediaArtifact = z.infer<typeof preparedMediaArtifactSchema>;
+export type SubjectProvenance = z.infer<typeof subjectProvenanceSchema>;
+export type SubjectObservationSegment = z.infer<
+	typeof subjectObservationSegmentSchema
+>;
 export type SubjectSeed = z.infer<typeof subjectSeedSchema>;
 export type TrackingJobSubmission = z.infer<typeof trackingJobSubmissionSchema>;
 export type TransferGrantCommand = z.infer<typeof transferGrantCommandSchema>;
+export type OutputArtifact = z.infer<typeof outputArtifactSchema>;
 export type CancelCommand = z.infer<typeof cancelCommandSchema>;
 export type JobStatus = z.infer<typeof jobStatusSchema>;

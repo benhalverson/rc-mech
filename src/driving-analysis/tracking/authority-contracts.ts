@@ -23,6 +23,17 @@ const stableTransferScopeSchema = authorityIdentifierSchema.refine(
 		!/(?:[a-z][a-z0-9+.-]*:\/\/|www\.)/i.test(value),
 );
 
+const privateObjectKeySchema = z
+	.string()
+	.min(1)
+	.max(1024)
+	.refine(
+		(value) =>
+			!/^[a-z][a-z0-9+.-]*:\/\//i.test(value) &&
+			!value.includes('\\') &&
+			!value.split('/').some((part) => part === '' || part === '..'),
+	);
+
 export const createTrackingRunCommandSchema = z.strictObject({
 	runId: uuidV4Schema,
 	analysisId: authorityIdentifierSchema,
@@ -151,6 +162,58 @@ export const prepareTrackingTransferGrantCommandSchema = z
 			value.method === (value.role === 'observation-artifact' ? 'PUT' : 'GET'),
 	);
 
+export const prepareTrackingArtifactPublicationCommandSchema = z.strictObject({
+	ownerId: authorityIdentifierSchema,
+	runId: uuidV4Schema,
+	segmentId: uuidV4Schema,
+	attemptId: uuidV4Schema,
+	leaseId: uuidV4Schema,
+	fence: positiveIntSchema,
+	profileDigest: sha256Schema,
+	specificationDigest: sha256Schema,
+	transferRequestId: uuidV4Schema,
+});
+
+export const recordTrackingArtifactPromotionCommandSchema =
+	prepareTrackingArtifactPublicationCommandSchema
+		.extend({
+			artifactId: uuidV4Schema,
+			stagingObjectKey: privateObjectKeySchema,
+			acceptedObjectKey: privateObjectKeySchema,
+			checksumSha256: sha256Schema,
+			contractDigest: sha256Schema,
+			byteCount: positiveIntSchema,
+			deleteAfter: isoTimestampSchema,
+			createdAt: isoTimestampSchema,
+		})
+		.refine(
+			(value) =>
+				value.stagingObjectKey ===
+					`tracking-staging/${value.attemptId}/${value.transferRequestId}/subject-observations.json.gz` &&
+				value.acceptedObjectKey ===
+					`tracking-evidence/${value.runId}/${value.segmentId}/${value.attemptId}/subject-observations.json.gz`,
+		);
+
+export const markTrackingArtifactPromotionReadyCommandSchema = z.strictObject({
+	ownerId: authorityIdentifierSchema,
+	runId: uuidV4Schema,
+	segmentId: uuidV4Schema,
+	attemptId: uuidV4Schema,
+	leaseId: uuidV4Schema,
+	fence: positiveIntSchema,
+	artifactId: uuidV4Schema,
+	expectedVersion: positiveIntSchema,
+	updatedAt: isoTimestampSchema,
+});
+
+export const markTrackingArtifactPromotionDeletedCommandSchema = z.strictObject(
+	{
+		artifactId: uuidV4Schema,
+		expectedVersion: positiveIntSchema,
+		deletedAt: isoTimestampSchema,
+	},
+);
+
 export const trackingGapSchema = z.strictObject({
 	startTimestampMs: z.number().int().min(0),
 	reason: z.enum(['ambiguous-identity', 'occluded', 'missing']),
@@ -164,12 +227,11 @@ export const acceptTrackingArtifactCommandSchema = z
 		attemptId: uuidV4Schema,
 		leaseId: uuidV4Schema,
 		fence: positiveIntSchema,
+		profileDigest: sha256Schema,
+		specificationDigest: sha256Schema,
+		transferRequestId: uuidV4Schema,
 		artifactId: uuidV4Schema,
-		acceptedObjectKey: z
-			.string()
-			.min(1)
-			.max(1024)
-			.refine((value) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(value)),
+		acceptedObjectKey: privateObjectKeySchema,
 		checksumSha256: sha256Schema,
 		contractDigest: sha256Schema,
 		byteCount: positiveIntSchema,
@@ -181,6 +243,8 @@ export const acceptTrackingArtifactCommandSchema = z
 	})
 	.refine(
 		(value) =>
+			value.acceptedObjectKey ===
+				`tracking-evidence/${value.runId}/${value.segmentId}/${value.attemptId}/subject-observations.json.gz` &&
 			(value.outcome === 'tracking-gap') === (value.gap !== null) &&
 			((value.firstTimestampMs === null && value.lastTimestampMs === null) ||
 				(value.firstTimestampMs !== null &&
@@ -237,6 +301,18 @@ export type TransitionTrackingTransferRequestCommand = z.infer<
 >;
 export type PrepareTrackingTransferGrantCommand = z.infer<
 	typeof prepareTrackingTransferGrantCommandSchema
+>;
+export type PrepareTrackingArtifactPublicationCommand = z.infer<
+	typeof prepareTrackingArtifactPublicationCommandSchema
+>;
+export type RecordTrackingArtifactPromotionCommand = z.infer<
+	typeof recordTrackingArtifactPromotionCommandSchema
+>;
+export type MarkTrackingArtifactPromotionReadyCommand = z.infer<
+	typeof markTrackingArtifactPromotionReadyCommandSchema
+>;
+export type MarkTrackingArtifactPromotionDeletedCommand = z.infer<
+	typeof markTrackingArtifactPromotionDeletedCommandSchema
 >;
 export type AcceptTrackingArtifactCommand = z.infer<
 	typeof acceptTrackingArtifactCommandSchema

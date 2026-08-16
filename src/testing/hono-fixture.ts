@@ -183,6 +183,9 @@ type StoredR2Object = {
 	bytes: Uint8Array;
 	httpMetadata?: R2HTTPMetadata;
 	customMetadata?: Record<string, string>;
+	etag: string;
+	version: string;
+	uploaded: Date;
 };
 
 type StoredMultipartUpload = {
@@ -209,27 +212,38 @@ export class MockR2Controller {
 	readonly objects = new Map<string, StoredR2Object>();
 	readonly multipartUploads = new Map<string, StoredMultipartUpload>();
 	readonly bucket: R2Bucket;
+	listTruncated = false;
+	listCursor: string | undefined;
 	private nextMultipartId = 0;
+	private nextObjectVersion = 0;
 
 	constructor() {
+		const metadataFor = (key: string, stored: StoredR2Object): R2Object => ({
+			key,
+			version: stored.version,
+			size: stored.bytes.byteLength,
+			etag: stored.etag,
+			httpEtag: `"${stored.etag}"`,
+			checksums,
+			uploaded: stored.uploaded,
+			httpMetadata: stored.httpMetadata,
+			customMetadata: stored.customMetadata,
+			storageClass: 'Standard',
+			writeHttpMetadata(headers) {
+				if (stored.httpMetadata?.contentType)
+					headers.set('content-type', stored.httpMetadata.contentType);
+				if (stored.httpMetadata?.contentEncoding)
+					headers.set('content-encoding', stored.httpMetadata.contentEncoding);
+			},
+		});
+
 		const objectFor = (key: string, stored: StoredR2Object): R2ObjectBody => {
 			let bodyUsed = false;
 			const copy = () => stored.bytes.slice();
+			const metadata = metadataFor(key, stored);
 			return {
-				key,
-				version: 'test-version',
-				size: stored.bytes.byteLength,
-				etag: 'test-etag',
-				httpEtag: '"test-etag"',
-				checksums,
-				uploaded: new Date('2026-01-01T00:00:00.000Z'),
-				httpMetadata: stored.httpMetadata,
-				customMetadata: stored.customMetadata,
-				storageClass: 'Standard',
-				writeHttpMetadata(headers) {
-					if (stored.httpMetadata?.contentType)
-						headers.set('content-type', stored.httpMetadata.contentType);
-				},
+				...metadata,
+				writeHttpMetadata: (headers) => metadata.writeHttpMetadata(headers),
 				get body() {
 					bodyUsed = true;
 					return new Blob([copy()]).stream();
@@ -256,7 +270,9 @@ export class MockR2Controller {
 				| null
 				| Blob,
 			options?: R2PutOptions,
-		): Promise<R2Object> {
+		): Promise<R2Object | null> {
+			const current = this.objects.get(key);
+			if (!conditionMatches(current, options?.onlyIf)) return null;
 			const httpMetadata =
 				options?.httpMetadata instanceof Headers
 					? {
@@ -264,21 +280,39 @@ export class MockR2Controller {
 								options.httpMetadata.get('content-type') ?? undefined,
 						}
 					: options?.httpMetadata;
-			const stored = {
+			const ordinal = ++this.nextObjectVersion;
+			const stored: StoredR2Object = {
 				bytes: await bytesFor(value),
 				httpMetadata,
 				customMetadata: options?.customMetadata,
+				etag: `test-etag-${ordinal}`,
+				version: `test-version-${ordinal}`,
+				uploaded: new Date('2026-01-01T00:00:00.000Z'),
 			};
 			this.objects.set(key, stored);
 			return objectFor(key, stored);
 		}
 
+		function get(
+			this: MockR2Controller,
+			key: string,
+			options: R2GetOptions & { onlyIf: R2Conditional | Headers },
+		): Promise<R2ObjectBody | R2Object | null>;
+		function get(
+			this: MockR2Controller,
+			key: string,
+			options?: R2GetOptions,
+		): Promise<R2ObjectBody | null>;
 		async function get(
 			this: MockR2Controller,
 			key: string,
-		): Promise<R2ObjectBody | null> {
+			options?: R2GetOptions,
+		): Promise<R2ObjectBody | R2Object | null> {
 			const stored = this.objects.get(key);
-			return stored ? objectFor(key, stored) : null;
+			if (!stored) return null;
+			return conditionMatches(stored, options?.onlyIf)
+				? objectFor(key, stored)
+				: metadataFor(key, stored);
 		}
 
 		const multipart = (key: string, uploadId: string): R2MultipartUpload => {
@@ -327,10 +361,14 @@ export class MockR2Controller {
 										undefined,
 								}
 							: upload.options?.httpMetadata;
-					const stored = {
+					const ordinal = ++this.nextObjectVersion;
+					const stored: StoredR2Object = {
 						bytes,
 						httpMetadata,
 						customMetadata: upload.options?.customMetadata,
+						etag: `test-etag-${ordinal}`,
+						version: `test-version-${ordinal}`,
+						uploaded: new Date('2026-01-01T00:00:00.000Z'),
 					};
 					this.objects.set(key, stored);
 					this.multipartUploads.delete(uploadId);
@@ -365,24 +403,66 @@ export class MockR2Controller {
 					.filter(([key]) => key.startsWith(options?.prefix ?? ''))
 					.map(([key, stored]) => objectFor(key, stored)),
 				delimitedPrefixes: [],
-				truncated: false,
+				truncated: this.listTruncated,
+				cursor: this.listCursor,
 			}),
 		};
 	}
 
 	seed(
 		key: string,
-		value: string,
+		value: string | Uint8Array,
 		httpMetadata: R2HTTPMetadata = { contentType: 'image/jpeg' },
 		customMetadata?: Record<string, string>,
+		uploaded = new Date('2026-01-01T00:00:00.000Z'),
 	): void {
+		const ordinal = ++this.nextObjectVersion;
 		this.objects.set(key, {
-			bytes: new TextEncoder().encode(value),
+			bytes:
+				typeof value === 'string' ? new TextEncoder().encode(value) : value,
 			httpMetadata,
 			customMetadata,
+			etag: `test-etag-${ordinal}`,
+			version: `test-version-${ordinal}`,
+			uploaded,
 		});
 	}
 }
+
+const conditionMatches = (
+	stored: StoredR2Object | undefined,
+	condition: R2Conditional | Headers | undefined,
+): boolean => {
+	if (!condition) return true;
+	if (condition instanceof Headers) {
+		const match = condition.get('if-match');
+		if (match && (!stored || (match !== '*' && unquote(match) !== stored.etag)))
+			return false;
+		const noneMatch = condition.get('if-none-match');
+		if (
+			noneMatch &&
+			stored &&
+			(noneMatch === '*' || unquote(noneMatch) === stored.etag)
+		)
+			return false;
+		return true;
+	}
+	if (condition.etagMatches !== undefined)
+		return stored?.etag === unquote(condition.etagMatches);
+	if (condition.etagDoesNotMatch !== undefined)
+		return (
+			!stored ||
+			(condition.etagDoesNotMatch !== '*' &&
+				stored.etag !== unquote(condition.etagDoesNotMatch))
+		);
+	if (condition.uploadedBefore !== undefined)
+		return !!stored && stored.uploaded < condition.uploadedBefore;
+	if (condition.uploadedAfter !== undefined)
+		return !!stored && stored.uploaded > condition.uploadedAfter;
+	return true;
+};
+
+const unquote = (value: string): string => value.replace(/^"|"$/g, '');
 
 type HonoFixtureOptions = {
 	authenticated?: boolean;

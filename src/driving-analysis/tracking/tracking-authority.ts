@@ -1,4 +1,15 @@
-import { and, asc, eq, exists, isNull, or, sql } from 'drizzle-orm';
+import {
+	and,
+	asc,
+	eq,
+	exists,
+	inArray,
+	isNull,
+	lte,
+	notExists,
+	or,
+	sql,
+} from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import {
 	type AcceptTrackingArtifactCommand,
@@ -11,11 +22,19 @@ import {
 	createTrackingSegmentCommandSchema,
 	type FenceTrackingRunCommand,
 	fenceTrackingRunCommandSchema,
+	type MarkTrackingArtifactPromotionDeletedCommand,
+	type MarkTrackingArtifactPromotionReadyCommand,
+	markTrackingArtifactPromotionDeletedCommandSchema,
+	markTrackingArtifactPromotionReadyCommandSchema,
+	type PrepareTrackingArtifactPublicationCommand,
 	type PrepareTrackingTransferGrantCommand,
 	type PublicTrackingProvenance,
+	prepareTrackingArtifactPublicationCommandSchema,
 	prepareTrackingTransferGrantCommandSchema,
 	publicTrackingProvenanceSchema,
+	type RecordTrackingArtifactPromotionCommand,
 	type RecordTrackingTransferRequestCommand,
+	recordTrackingArtifactPromotionCommandSchema,
 	recordTrackingTransferRequestCommandSchema,
 	type TransitionTrackingAttemptCommand,
 	type TransitionTrackingTransferRequestCommand,
@@ -29,6 +48,7 @@ import {
 	preparedTrackingObject,
 	preparedTrackingRetention,
 	subjectObservationArtifact,
+	trackingArtifactPromotion,
 	trackingAuthoritySchema,
 	trackingExecutionAttempt,
 	trackingPublicProvenance,
@@ -37,9 +57,15 @@ import {
 	trackingSegment,
 	trackingTransferRequest,
 } from './authority-schema';
-import { preparedMediaArtifactSchema } from './contracts';
+import {
+	type PreparedMediaArtifact,
+	preparedMediaArtifactSchema,
+	type SubjectSeed,
+	subjectSeedSchema,
+} from './contracts';
 import {
 	digestInferenceProfile,
+	type InferenceProfile,
 	inferenceProfileSchema,
 } from './inference-profile';
 import {
@@ -69,8 +95,21 @@ type TrackingSegmentRecord = typeof trackingSegment.$inferSelect;
 type TrackingAttemptRecord = typeof trackingExecutionAttempt.$inferSelect;
 type TrackingTransferRequestRecord =
 	typeof trackingTransferRequest.$inferSelect;
-type SubjectObservationArtifactRecord =
+export type SubjectObservationArtifactRecord =
 	typeof subjectObservationArtifact.$inferSelect;
+export type TrackingArtifactPromotionRecord =
+	typeof trackingArtifactPromotion.$inferSelect;
+
+export type TrackingArtifactPublicationContext = {
+	prepared: PreparedMediaArtifact;
+	profile: InferenceProfile;
+	seed: SubjectSeed;
+};
+
+export type TrackingArtifactCleanupCandidate = Pick<
+	TrackingArtifactPromotionRecord,
+	'artifactId' | 'acceptedObjectKey' | 'version' | 'state'
+>;
 
 export type TrackingTransferGrantContext = {
 	objectKey: string;
@@ -675,11 +714,326 @@ export class TrackingAuthority {
 		return updated;
 	}
 
+	async prepareArtifactPublication(
+		commandValue: PrepareTrackingArtifactPublicationCommand,
+	): Promise<TrackingArtifactPublicationContext> {
+		const command =
+			prepareTrackingArtifactPublicationCommandSchema.parse(commandValue);
+		const attempt = await this.requireCurrentAttempt(command);
+		const segment = await this.ownedSegment(command.runId, command.segmentId);
+		/* c8 ignore next -- requireCurrentAttempt already proves the owned segment exists. */
+		if (!segment) throw notFound('Tracking segment was not found');
+		if (
+			attempt.state !== 'output-ready' ||
+			segment.profileDigest !== command.profileDigest ||
+			segment.specificationDigest !== command.specificationDigest ||
+			attempt.profileDigest !== command.profileDigest ||
+			attempt.specificationDigest !== command.specificationDigest
+		)
+			throw stale('Tracking artifact publication identity is stale');
+
+		const [transfer, prepared, profile] = await Promise.all([
+			this.database
+				.select()
+				.from(trackingTransferRequest)
+				.where(
+					and(
+						eq(trackingTransferRequest.id, command.transferRequestId),
+						eq(trackingTransferRequest.attemptId, command.attemptId),
+					),
+				)
+				.get(),
+			this.database
+				.select()
+				.from(preparedTrackingMedia)
+				.where(
+					and(
+						eq(preparedTrackingMedia.id, segment.preparedMediaId),
+						eq(preparedTrackingMedia.runId, command.runId),
+					),
+				)
+				.get(),
+			this.database
+				.select()
+				.from(inferenceProfileAuthority)
+				.where(
+					eq(inferenceProfileAuthority.profileDigest, command.profileDigest),
+				)
+				.get(),
+		]);
+		if (!transfer || !prepared || !profile)
+			throw notFound('Tracking artifact publication context was not found');
+		if (
+			transfer.role !== 'observation-artifact' ||
+			transfer.method !== 'PUT' ||
+			transfer.objectScope !== command.transferRequestId ||
+			transfer.state !== 'granted'
+		)
+			throw invalidTransition(
+				'Tracking observation transfer is not ready for publication',
+			);
+		return {
+			prepared: preparedMediaArtifactSchema.parse(
+				JSON.parse(prepared.descriptorJson),
+			),
+			profile: inferenceProfileSchema.parse(
+				JSON.parse(profile.configurationJson),
+			),
+			seed: subjectSeedSchema.parse(JSON.parse(segment.seedJson)),
+		};
+	}
+
+	async recordArtifactPromotion(
+		commandValue: RecordTrackingArtifactPromotionCommand,
+	): Promise<TrackingArtifactPromotionRecord> {
+		const command =
+			recordTrackingArtifactPromotionCommandSchema.parse(commandValue);
+		await this.prepareArtifactPublication({
+			ownerId: command.ownerId,
+			runId: command.runId,
+			segmentId: command.segmentId,
+			attemptId: command.attemptId,
+			leaseId: command.leaseId,
+			fence: command.fence,
+			profileDigest: command.profileDigest,
+			specificationDigest: command.specificationDigest,
+			transferRequestId: command.transferRequestId,
+		});
+		await this.database
+			.insert(trackingArtifactPromotion)
+			.values({
+				artifactId: command.artifactId,
+				runId: command.runId,
+				segmentId: command.segmentId,
+				attemptId: command.attemptId,
+				transferRequestId: command.transferRequestId,
+				stagingObjectKey: command.stagingObjectKey,
+				acceptedObjectKey: command.acceptedObjectKey,
+				checksumSha256: command.checksumSha256,
+				contractDigest: command.contractDigest,
+				byteCount: command.byteCount,
+				state: 'pending',
+				deleteAfter: command.deleteAfter,
+				version: 1,
+				createdAt: command.createdAt,
+				updatedAt: command.createdAt,
+				deletedAt: null,
+			})
+			.onConflictDoNothing();
+		const stored = await this.database
+			.select()
+			.from(trackingArtifactPromotion)
+			.where(
+				or(
+					eq(trackingArtifactPromotion.artifactId, command.artifactId),
+					eq(
+						trackingArtifactPromotion.transferRequestId,
+						command.transferRequestId,
+					),
+					eq(
+						trackingArtifactPromotion.stagingObjectKey,
+						command.stagingObjectKey,
+					),
+					eq(
+						trackingArtifactPromotion.acceptedObjectKey,
+						command.acceptedObjectKey,
+					),
+				),
+			)
+			.get();
+		/* c8 ignore next -- an insert-or-existing D1 write always yields one matching identity unless D1 fails. */
+		if (!stored)
+			throw conflict('Tracking artifact promotion was not persisted');
+		if (!promotionMatches(stored, command))
+			throw conflict(
+				'Tracking artifact promotion was replayed with different immutable input',
+			);
+		if (stored.state === 'deleting' || stored.state === 'deleted')
+			throw stale('Tracking artifact promotion is no longer publishable');
+		return stored;
+	}
+
+	async markArtifactPromotionReady(
+		commandValue: MarkTrackingArtifactPromotionReadyCommand,
+	): Promise<TrackingArtifactPromotionRecord> {
+		const command =
+			markTrackingArtifactPromotionReadyCommandSchema.parse(commandValue);
+		await this.requireCurrentAttempt(command);
+		const stored = await this.database
+			.select()
+			.from(trackingArtifactPromotion)
+			.where(eq(trackingArtifactPromotion.artifactId, command.artifactId))
+			.get();
+		if (!stored) throw notFound('Tracking artifact promotion was not found');
+		/* c8 ignore next 6 -- recordArtifactPromotion writes current authority identity and the migration makes every identity column immutable; this is corruption defense. */
+		if (
+			stored.runId !== command.runId ||
+			stored.segmentId !== command.segmentId ||
+			stored.attemptId !== command.attemptId
+		)
+			throw conflict('Tracking artifact promotion identity is inconsistent');
+		if (stored.state === 'promoted' || stored.state === 'accepted')
+			return stored;
+		if (
+			stored.state !== 'pending' ||
+			stored.version !== command.expectedVersion
+		)
+			throw stale('Tracking artifact promotion authority changed');
+		const updated = await this.database
+			.update(trackingArtifactPromotion)
+			.set({
+				state: 'promoted',
+				version: stored.version + 1,
+				updatedAt: command.updatedAt,
+			})
+			.where(
+				and(
+					eq(trackingArtifactPromotion.artifactId, command.artifactId),
+					eq(trackingArtifactPromotion.state, 'pending'),
+					eq(trackingArtifactPromotion.version, stored.version),
+					this.currentAuthorityExists(command),
+				),
+			)
+			.returning()
+			.get();
+		/* c8 ignore next -- a zero-row result requires a concurrent D1 authority or cleanup change after the read above. */
+		if (!updated) throw stale('Tracking artifact promotion authority changed');
+		return updated;
+	}
+
+	async cleanupPromotionCandidates(
+		now: string,
+		limit = 50,
+	): Promise<readonly TrackingArtifactCleanupCandidate[]> {
+		if (Number.isNaN(Date.parse(now)))
+			throw new RangeError('Cleanup time is invalid');
+		if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+			throw new RangeError('Cleanup limit must be between 1 and 100');
+		const unreferenced = notExists(
+			this.database
+				.select({ id: subjectObservationArtifact.id })
+				.from(subjectObservationArtifact)
+				.where(
+					or(
+						eq(
+							subjectObservationArtifact.id,
+							trackingArtifactPromotion.artifactId,
+						),
+						eq(
+							subjectObservationArtifact.acceptedObjectKey,
+							trackingArtifactPromotion.acceptedObjectKey,
+						),
+					),
+				),
+		);
+		const due = await this.database
+			.select()
+			.from(trackingArtifactPromotion)
+			.where(
+				and(
+					inArray(trackingArtifactPromotion.state, [
+						'pending',
+						'promoted',
+						'deleting',
+					]),
+					lte(trackingArtifactPromotion.deleteAfter, now),
+					unreferenced,
+				),
+			)
+			.orderBy(asc(trackingArtifactPromotion.deleteAfter))
+			.limit(limit);
+		const claimed: TrackingArtifactCleanupCandidate[] = [];
+		for (const candidate of due) {
+			if (candidate.state === 'deleting') {
+				claimed.push(candidate);
+				continue;
+			}
+			const updated = await this.database
+				.update(trackingArtifactPromotion)
+				.set({
+					state: 'deleting',
+					version: candidate.version + 1,
+					updatedAt: now,
+				})
+				.where(
+					and(
+						eq(trackingArtifactPromotion.artifactId, candidate.artifactId),
+						inArray(trackingArtifactPromotion.state, ['pending', 'promoted']),
+						eq(trackingArtifactPromotion.version, candidate.version),
+						unreferenced,
+					),
+				)
+				.returning()
+				.get();
+			/* c8 ignore next -- a zero-row result requires a concurrent D1 cleanup claim after the selected snapshot; skipping it is the safe outcome. */
+			if (updated) claimed.push(updated);
+		}
+		return claimed;
+	}
+
+	async markArtifactPromotionDeleted(
+		commandValue: MarkTrackingArtifactPromotionDeletedCommand,
+	): Promise<TrackingArtifactPromotionRecord> {
+		const command =
+			markTrackingArtifactPromotionDeletedCommandSchema.parse(commandValue);
+		const updated = await this.database
+			.update(trackingArtifactPromotion)
+			.set({
+				state: 'deleted',
+				version: command.expectedVersion + 1,
+				updatedAt: command.deletedAt,
+				deletedAt: command.deletedAt,
+			})
+			.where(
+				and(
+					eq(trackingArtifactPromotion.artifactId, command.artifactId),
+					eq(trackingArtifactPromotion.state, 'deleting'),
+					eq(trackingArtifactPromotion.version, command.expectedVersion),
+					notExists(
+						this.database
+							.select({ id: subjectObservationArtifact.id })
+							.from(subjectObservationArtifact)
+							.where(eq(subjectObservationArtifact.id, command.artifactId)),
+					),
+				),
+			)
+			.returning()
+			.get();
+		if (updated) return updated;
+		const stored = await this.database
+			.select()
+			.from(trackingArtifactPromotion)
+			.where(eq(trackingArtifactPromotion.artifactId, command.artifactId))
+			.get();
+		if (
+			stored?.state === 'deleted' &&
+			stored.version === command.expectedVersion + 1 &&
+			stored.deletedAt === command.deletedAt
+		)
+			return stored;
+		throw stale('Tracking artifact cleanup authority changed');
+	}
+
+	async acceptedArtifactFor(
+		ownerId: string,
+		runId: string,
+		segmentId: string,
+	): Promise<SubjectObservationArtifactRecord | null> {
+		await this.requireOwnedRun(ownerId, runId);
+		const segment = await this.ownedSegment(runId, segmentId);
+		if (!segment) throw notFound('Tracking segment was not found');
+		if (segment.acceptedArtifactId === null) return null;
+		const artifact = await this.acceptedArtifact(segment.acceptedArtifactId);
+		/* c8 ignore next -- a segment can only bind an artifact inserted in the same D1 batch. */
+		if (!artifact) throw conflict('Accepted Tracking artifact was not found');
+		return artifact;
+	}
+
 	async acceptArtifact(
 		commandValue: AcceptTrackingArtifactCommand,
 	): Promise<SubjectObservationArtifactRecord> {
 		const command = acceptTrackingArtifactCommandSchema.parse(commandValue);
-		await this.requireActiveRun(command.ownerId, command.runId);
+		await this.requireOwnedRun(command.ownerId, command.runId);
 		const segment = await this.ownedSegment(command.runId, command.segmentId);
 		if (!segment) throw notFound('Tracking segment was not found');
 		if (segment.acceptedArtifactId !== null) {
@@ -689,6 +1043,7 @@ export class TrackingAuthority {
 				'Tracking segment already has different accepted evidence',
 			);
 		}
+		await this.requireActiveRun(command.ownerId, command.runId);
 		const attempt = await this.requireCurrentAttempt(command);
 		if (attempt.state !== 'output-ready')
 			throw invalidTransition('Tracking artifact is not output-ready');
@@ -718,6 +1073,14 @@ export class TrackingAuthority {
 				trackingExecutionAttempt,
 				eq(trackingExecutionAttempt.id, trackingSegment.currentAttemptId),
 			)
+			.innerJoin(
+				trackingArtifactPromotion,
+				eq(trackingArtifactPromotion.artifactId, command.artifactId),
+			)
+			.innerJoin(
+				trackingTransferRequest,
+				eq(trackingTransferRequest.id, command.transferRequestId),
+			)
 			.innerJoin(trackingRun, eq(trackingRun.id, trackingSegment.runId))
 			.where(
 				and(
@@ -734,14 +1097,32 @@ export class TrackingAuthority {
 					eq(trackingExecutionAttempt.leaseId, command.leaseId),
 					eq(trackingExecutionAttempt.fence, command.fence),
 					eq(trackingExecutionAttempt.state, 'output-ready'),
-					eq(
-						trackingExecutionAttempt.profileDigest,
-						trackingSegment.profileDigest,
-					),
+					eq(trackingSegment.profileDigest, command.profileDigest),
+					eq(trackingSegment.specificationDigest, command.specificationDigest),
+					eq(trackingExecutionAttempt.profileDigest, command.profileDigest),
 					eq(
 						trackingExecutionAttempt.specificationDigest,
-						trackingSegment.specificationDigest,
+						command.specificationDigest,
 					),
+					eq(trackingArtifactPromotion.runId, command.runId),
+					eq(trackingArtifactPromotion.segmentId, command.segmentId),
+					eq(trackingArtifactPromotion.attemptId, command.attemptId),
+					eq(
+						trackingArtifactPromotion.transferRequestId,
+						command.transferRequestId,
+					),
+					eq(trackingArtifactPromotion.state, 'promoted'),
+					eq(
+						trackingArtifactPromotion.acceptedObjectKey,
+						command.acceptedObjectKey,
+					),
+					eq(trackingArtifactPromotion.checksumSha256, command.checksumSha256),
+					eq(trackingArtifactPromotion.contractDigest, command.contractDigest),
+					eq(trackingArtifactPromotion.byteCount, command.byteCount),
+					eq(trackingTransferRequest.attemptId, command.attemptId),
+					eq(trackingTransferRequest.role, 'observation-artifact'),
+					eq(trackingTransferRequest.method, 'PUT'),
+					eq(trackingTransferRequest.state, 'granted'),
 				),
 			);
 		await this.database.batch([
@@ -806,13 +1187,61 @@ export class TrackingAuthority {
 						),
 					),
 				),
+			this.database
+				.update(trackingArtifactPromotion)
+				.set({
+					state: 'accepted',
+					version: sql`${trackingArtifactPromotion.version} + 1`,
+					updatedAt: command.createdAt,
+				})
+				.where(
+					and(
+						eq(trackingArtifactPromotion.artifactId, command.artifactId),
+						eq(trackingArtifactPromotion.state, 'promoted'),
+						exists(
+							this.database
+								.select({ id: subjectObservationArtifact.id })
+								.from(subjectObservationArtifact)
+								.where(eq(subjectObservationArtifact.id, command.artifactId)),
+						),
+					),
+				),
+			this.database
+				.update(trackingTransferRequest)
+				.set({
+					state: 'completed',
+					version: sql`${trackingTransferRequest.version} + 1`,
+					updatedAt: command.createdAt,
+				})
+				.where(
+					and(
+						eq(trackingTransferRequest.id, command.transferRequestId),
+						eq(trackingTransferRequest.attemptId, command.attemptId),
+						eq(trackingTransferRequest.state, 'granted'),
+						exists(
+							this.database
+								.select({ id: subjectObservationArtifact.id })
+								.from(subjectObservationArtifact)
+								.where(eq(subjectObservationArtifact.id, command.artifactId)),
+						),
+					),
+				),
 		]);
-		const [accepted, updatedSegment] = await Promise.all([
+		const [accepted, updatedSegment, promotion] = await Promise.all([
 			this.acceptedArtifact(command.artifactId),
 			this.ownedSegment(command.runId, command.segmentId),
+			this.database
+				.select()
+				.from(trackingArtifactPromotion)
+				.where(eq(trackingArtifactPromotion.artifactId, command.artifactId))
+				.get(),
 		]);
 		/* c8 ignore next 3 -- these are post-batch D1 race defenses; acceptance itself is one conditional batch. */
-		if (!accepted || updatedSegment?.acceptedArtifactId !== command.artifactId)
+		if (
+			!accepted ||
+			updatedSegment?.acceptedArtifactId !== command.artifactId ||
+			promotion?.state !== 'accepted'
+		)
 			throw stale('Tracking artifact lost its acceptance race');
 		/* c8 ignore next 2 -- a committed immutable artifact cannot change between the conditional batch and this read. */
 		if (!artifactMatches(accepted, command))
@@ -1067,6 +1496,8 @@ const artifactMatches = (
 	artifact.attemptId === command.attemptId &&
 	artifact.leaseId === command.leaseId &&
 	artifact.fence === command.fence &&
+	artifact.profileDigest === command.profileDigest &&
+	artifact.specificationDigest === command.specificationDigest &&
 	artifact.acceptedObjectKey === command.acceptedObjectKey &&
 	artifact.checksumSha256 === command.checksumSha256 &&
 	artifact.contractDigest === command.contractDigest &&
@@ -1077,6 +1508,21 @@ const artifactMatches = (
 	artifact.firstTimestampMs === command.firstTimestampMs &&
 	artifact.lastTimestampMs === command.lastTimestampMs &&
 	artifact.createdAt === command.createdAt;
+
+const promotionMatches = (
+	promotion: TrackingArtifactPromotionRecord,
+	command: RecordTrackingArtifactPromotionCommand,
+): boolean =>
+	promotion.artifactId === command.artifactId &&
+	promotion.runId === command.runId &&
+	promotion.segmentId === command.segmentId &&
+	promotion.attemptId === command.attemptId &&
+	promotion.transferRequestId === command.transferRequestId &&
+	promotion.stagingObjectKey === command.stagingObjectKey &&
+	promotion.acceptedObjectKey === command.acceptedObjectKey &&
+	promotion.checksumSha256 === command.checksumSha256 &&
+	promotion.contractDigest === command.contractDigest &&
+	promotion.byteCount === command.byteCount;
 
 const isAllowedAttemptTransition = (current: string, next: string): boolean =>
 	MUTABLE_ATTEMPT_STATES.includes(

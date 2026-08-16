@@ -316,12 +316,25 @@ class SubjectObservationSegment(StrictContract):
     provenance: SubjectProvenance
 
     @model_validator(mode="after")
-    def observations_precede_gap(self) -> "SubjectObservationSegment":
+    def observations_are_bound_and_ordered(self) -> "SubjectObservationSegment":
+        if any(
+            current.timestamp_ms <= previous.timestamp_ms
+            or current.frame_index <= previous.frame_index
+            for previous, current in zip(
+                self.observations, self.observations[1:], strict=False
+            )
+        ):
+            raise ValueError("observations must be strictly ordered")
         if self.open_gap is not None and any(
             observation.timestamp_ms >= self.open_gap.start_timestamp_ms
             for observation in self.observations
         ):
             raise ValueError("observations must precede the open Tracking gap")
+        if any(
+            observation.provenance != self.provenance
+            for observation in self.observations
+        ):
+            raise ValueError("observations must match segment provenance")
         return self
 
 
