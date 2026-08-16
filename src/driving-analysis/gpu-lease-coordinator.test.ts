@@ -3,8 +3,8 @@ import { env, evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
 	GPU_COMMIT_HOLD_DURATION_MS,
-	GPU_LEASE_DURATION_MS,
 	GPU_LEASE_COORDINATOR_STORAGE_KEY,
+	GPU_LEASE_DURATION_MS,
 	getGpuLeaseCoordinator,
 	type PersistedGpuLeaseState,
 } from './gpu-lease-coordinator';
