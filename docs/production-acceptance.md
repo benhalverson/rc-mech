@@ -26,12 +26,16 @@ The production Worker needs these bindings and values:
 
 - `DB`: the production D1 database, with all migrations applied.
 - `PHOTOS`: the private `rc-mech-photos` R2 bucket. Do not make it public.
+- `ANALYSIS_MEDIA`: the private `rc-mech-analysis-media` R2 bucket. Do not
+  enable an `r2.dev` URL or custom domain.
 - `EMAIL`: Cloudflare Email Service for magic-link delivery.
 - `APP_URL`: the final HTTPS origin; it controls redirects, trusted origins,
   cookies, and the passkey relying-party identity.
 - `BETTER_AUTH_SECRET`: a production secret.
 - `OWNER_EMAIL`: the normalized owner address allowed to sign in.
 - `EMAIL_FROM`: a verified sender address for Email Service.
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`: Worker-only
+  signing material for an R2 key scoped to `rc-mech-analysis-media`.
 
 Set secrets with Wrangler rather than committing them:
 
@@ -40,6 +44,9 @@ pnpm exec wrangler secret put APP_URL
 pnpm exec wrangler secret put BETTER_AUTH_SECRET
 pnpm exec wrangler secret put OWNER_EMAIL
 pnpm exec wrangler secret put EMAIL_FROM
+pnpm exec wrangler secret put R2_ACCOUNT_ID
+pnpm exec wrangler secret put R2_ACCESS_KEY_ID
+pnpm exec wrangler secret put R2_SECRET_ACCESS_KEY
 ```
 
 Before deployment, run the clean-checkout checks and build the static shell:
@@ -66,12 +73,12 @@ the directory marker. A successful build should not dirty tracked files.
 
 `pnpm test:production` is the safe clean-checkout dry-run. For release
 acceptance after provisioning, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1`; that mode
-requires all four production secret names,
+requires all seven production secret names,
 and it requires `RC_MECH_DEPLOYED_URL`, `RC_MECH_OWNER_COOKIE`,
 `RC_MECH_OWNER_CAR_ID`, `RC_MECH_OWNER_PHOTO_ID`, and
 `RC_MECH_OTHER_OWNER_COOKIE`, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after
 an operator verifies that both `r2.dev` and custom-domain access are disabled.
-It checks remote migration status, the R2 bucket,
+It checks remote migration status, both R2 buckets and their custom domains,
 the deployed passkey RP host, authenticated owner reads, and cross-owner
 record/photo isolation. Email delivery still requires the operator to send and
 redeem a real magic link; the release script deliberately does not send mail.

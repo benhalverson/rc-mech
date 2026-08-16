@@ -11,7 +11,9 @@ import {
 	createTrackingSegmentCommandSchema,
 	type FenceTrackingRunCommand,
 	fenceTrackingRunCommandSchema,
+	type PrepareTrackingTransferGrantCommand,
 	type PublicTrackingProvenance,
+	prepareTrackingTransferGrantCommandSchema,
 	publicTrackingProvenanceSchema,
 	type RecordTrackingTransferRequestCommand,
 	recordTrackingTransferRequestCommandSchema,
@@ -69,6 +71,13 @@ type TrackingTransferRequestRecord =
 	typeof trackingTransferRequest.$inferSelect;
 type SubjectObservationArtifactRecord =
 	typeof subjectObservationArtifact.$inferSelect;
+
+export type TrackingTransferGrantContext = {
+	objectKey: string;
+	contentType: string;
+	role: PrepareTrackingTransferGrantCommand['role'];
+	method: PrepareTrackingTransferGrantCommand['method'];
+};
 
 const MUTABLE_ATTEMPT_STATES = [
 	'active',
@@ -535,13 +544,87 @@ export class TrackingAuthority {
 			stored.attemptId !== command.attemptId ||
 			stored.role !== command.role ||
 			stored.method !== command.method ||
-			stored.objectScope !== command.objectScope ||
-			stored.createdAt !== command.createdAt
+			stored.objectScope !== command.objectScope
 		)
 			throw conflict(
 				'Transfer-request identity was replayed with different immutable scope',
 			);
 		return stored;
+	}
+
+	async prepareTransferGrant(
+		commandValue: PrepareTrackingTransferGrantCommand,
+	): Promise<TrackingTransferGrantContext> {
+		const command =
+			prepareTrackingTransferGrantCommandSchema.parse(commandValue);
+		const attempt = await this.requireCurrentAttempt(command);
+		const segment = await this.ownedSegment(command.runId, command.segmentId);
+		/* c8 ignore next -- requireCurrentAttempt already proves the owned segment exists. */
+		if (!segment) throw notFound('Tracking segment was not found');
+		if (
+			segment.profileDigest !== command.profileDigest ||
+			segment.specificationDigest !== command.specificationDigest ||
+			attempt.profileDigest !== command.profileDigest ||
+			attempt.specificationDigest !== command.specificationDigest
+		)
+			throw stale('Tracking transfer identity is stale');
+		if (
+			command.role === 'observation-artifact'
+				? attempt.state !== 'output-ready'
+				: attempt.state !== 'active' && attempt.state !== 'transferring'
+		)
+			throw invalidTransition(
+				'Tracking attempt cannot issue the requested transfer role',
+			);
+
+		const resolved =
+			command.role === 'observation-artifact'
+				? {
+						objectScope: command.transferRequestId,
+						objectKey: `tracking-staging/${command.attemptId}/${command.transferRequestId}/subject-observations.json.gz`,
+						contentType: 'application/octet-stream',
+					}
+				: await this.preparedTransferObject(segment, command.role);
+		await this.recordTransferRequest({
+			ownerId: command.ownerId,
+			runId: command.runId,
+			segmentId: command.segmentId,
+			attemptId: command.attemptId,
+			leaseId: command.leaseId,
+			fence: command.fence,
+			transferRequestId: command.transferRequestId,
+			role: command.role,
+			method: command.method,
+			objectScope: resolved.objectScope,
+			createdAt: command.requestedAt,
+		});
+		return {
+			objectKey: resolved.objectKey,
+			contentType: resolved.contentType,
+			role: command.role,
+			method: command.method,
+		};
+	}
+
+	async authorizeTransferGrant(
+		commandValue: PrepareTrackingTransferGrantCommand,
+	): Promise<TrackingTransferGrantContext> {
+		const command =
+			prepareTrackingTransferGrantCommandSchema.parse(commandValue);
+		const context = await this.prepareTransferGrant(command);
+		await this.transitionTransferRequest({
+			ownerId: command.ownerId,
+			runId: command.runId,
+			segmentId: command.segmentId,
+			attemptId: command.attemptId,
+			leaseId: command.leaseId,
+			fence: command.fence,
+			transferRequestId: command.transferRequestId,
+			expectedState: 'required',
+			nextState: 'granted',
+			updatedAt: command.requestedAt,
+		});
+		return context;
 	}
 
 	async transitionTransferRequest(
@@ -857,6 +940,37 @@ export class TrackingAuthority {
 				),
 			)
 			.get();
+	}
+
+	private async preparedTransferObject(
+		segment: TrackingSegmentRecord,
+		role: 'prepared-media' | 'frame-manifest',
+	): Promise<{
+		objectScope: string;
+		objectKey: string;
+		contentType: string;
+	}> {
+		const object = await this.database
+			.select({
+				objectKey: preparedTrackingObject.objectKey,
+				contentType: preparedTrackingObject.contentType,
+			})
+			.from(preparedTrackingObject)
+			.where(
+				and(
+					eq(preparedTrackingObject.preparedMediaId, segment.preparedMediaId),
+					eq(preparedTrackingObject.runId, segment.runId),
+					eq(preparedTrackingObject.role, role),
+				),
+			)
+			.get();
+		/* c8 ignore next -- accepted prepared authority requires both immutable role objects. */
+		if (!object) throw notFound('Prepared Tracking object was not found');
+		return {
+			objectScope: segment.preparedMediaId,
+			objectKey: object.objectKey,
+			contentType: object.contentType,
+		};
 	}
 
 	private async requireCurrentAttempt(command: {

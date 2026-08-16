@@ -42,6 +42,9 @@ importers:
       '@scalar/hono-api-reference':
         specifier: ^0.11.13
         version: 0.11.13(hono@4.13.1)
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
       better-auth:
         specifier: ^1.6.26
         version: 1.6.26(@cloudflare/workers-types@5.20260808.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260808.1)(kysely@0.29.4))(vitest@4.1.10)
@@ -2387,6 +2390,9 @@ packages:
 
   ast-v8-to-istanbul@1.0.5:
     resolution: {integrity: sha512-UPAgKJFSEGMWSDr3LX4tqnAb4f7KGT8O40Tyx8wbYmmZ/yn58lNCm8h3svs3eXgiGd5AXxz8NDOvXWvicq+rJA==}
+
+  aws4fetch@1.0.20:
+    resolution: {integrity: sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==}
 
   axe-core@4.13.0:
     resolution: {integrity: sha512-UzGt8zg7Ny8djbYMhxl2zuEevVa7r2gJjYY5Lwr1xM7+XU2nd6CkIWFTVcCIbAP63vSz71NaVyyuSk9lHKcy0A==}
@@ -5772,6 +5778,8 @@ snapshots:
       '@jridgewell/trace-mapping': 0.3.31
       estree-walker: 3.0.3
       js-tokens: 10.0.0
+
+  aws4fetch@1.0.20: {}
 
   axe-core@4.13.0: {}
 

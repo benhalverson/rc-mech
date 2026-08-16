@@ -67,6 +67,22 @@ describe('GpuLeaseCoordinator', () => {
 		const first = await stub.acquire({ now });
 		if (first.status !== 'acquired') throw new Error('expected first lease');
 		expect(
+			await stub.witness({
+				segmentId: 'one',
+				leaseId: first.leaseId,
+				fence: first.fence,
+				now,
+			}),
+		).toEqual({ status: 'ok', expiresAt: first.expiresAt });
+		expect(
+			await stub.witness({
+				segmentId: 'one',
+				leaseId: crypto.randomUUID(),
+				fence: first.fence,
+				now,
+			}),
+		).toEqual({ status: 'stale' });
+		expect(
 			await stub.renew({
 				segmentId: 'one',
 				leaseId: crypto.randomUUID(),

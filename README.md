@@ -68,9 +68,12 @@ pnpm exec wrangler secret put BETTER_AUTH_SECRET
 pnpm exec wrangler secret put OWNER_EMAIL
 pnpm exec wrangler secret put EMAIL_FROM
 pnpm exec wrangler secret put APP_URL
+pnpm exec wrangler secret put R2_ACCOUNT_ID
+pnpm exec wrangler secret put R2_ACCESS_KEY_ID
+pnpm exec wrangler secret put R2_SECRET_ACCESS_KEY
 ```
 
-These secrets belong to the production `rc-mech` Worker. `OWNER_EMAIL` and `EMAIL_FROM` must be real addresses accepted by the configured Email Service sender. Do not commit any of these values. The seeded `OWNER-01` code appears in the Owner's invite history.
+These secrets belong to the production `rc-mech` Worker. The R2 key must be scoped to the private `rc-mech-analysis-media` bucket and is used only to sign exact-object Tracking transfer grants. `OWNER_EMAIL` and `EMAIL_FROM` must be real addresses accepted by the configured Email Service sender. Do not commit any of these values. The seeded `OWNER-01` code appears in the Owner's invite history.
 
 Attach the Worker to the chosen HTTPS domain through the Cloudflare Workers custom-domain or route configuration, then deploy with `pnpm run deploy`. Validate the configuration without changing Cloudflare state with `pnpm test:production`; set `RC_MECH_DEPLOYED_URL=https://your-domain.example pnpm test:production` to also check health, docs, unauthenticated API rejection, private-photo rejection, and JSON API 404 behavior. For a release check, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1` plus the deployed URL, owner session cookie/car/photo IDs, a second-owner session cookie, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after verifying the bucket has no public r2.dev or custom-domain access; this mode fails closed on missing production secret names, remote migration/R2 checks, deployed passkey RP host, authenticated owner reads, and cross-owner record/photo isolation. Email delivery and a real passkey ceremony remain operator checks because automation would send real mail or require a browser credential. The full local authenticated lifecycle smoke remains `pnpm test:auth:e2e`; it creates only local D1/R2 test data.
 

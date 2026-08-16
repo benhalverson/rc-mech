@@ -24,6 +24,7 @@ import type {
 	ActivateTrackingAttemptCommand,
 	CreateTrackingRunCommand,
 	CreateTrackingSegmentCommand,
+	PrepareTrackingTransferGrantCommand,
 } from './authority-contracts';
 import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
 import {
@@ -176,15 +177,29 @@ const createSegmentAuthority = async () => {
 	const value = authorityFixture();
 	await value.authority.createRun(runCommand());
 	await seedPreparedTrackView(value);
-	await value.authority.createSegment(segmentCommand());
-	return value;
+	const segment = await value.authority.createSegment(segmentCommand());
+	return { ...value, segment };
 };
 
 const createAttemptAuthority = async () => {
 	const value = await createSegmentAuthority();
-	await value.authority.activateAttempt(attemptCommand());
-	return value;
+	const attempt = await value.authority.activateAttempt(attemptCommand());
+	return { ...value, attempt };
 };
+
+const transferGrantCommand = (
+	specificationDigest: string,
+	overrides: Partial<PrepareTrackingTransferGrantCommand> = {},
+): PrepareTrackingTransferGrantCommand => ({
+	...attemptWitness(),
+	profileDigest: PROFILE_DIGEST,
+	specificationDigest,
+	transferRequestId: TRANSFER_ID,
+	role: 'prepared-media',
+	method: 'GET',
+	requestedAt: NOW,
+	...overrides,
+});
 
 const makeOutputReady = async (authority: TrackingAuthority) => {
 	await authority.transitionAttempt({
@@ -447,6 +462,106 @@ describe('TrackingAuthority', () => {
 				})
 			).state,
 		).toBe('completed');
+	});
+
+	test('resolves and authorizes exact prepared objects with replay-safe renewal', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		const command = transferGrantCommand(segment.specificationDigest);
+		expect(await authority.prepareTransferGrant(command)).toEqual({
+			objectKey: `prepared/${PREPARED_ID}/track-view.mp4`,
+			contentType: 'video/mp4',
+			role: 'prepared-media',
+			method: 'GET',
+		});
+		const authorized = await authority.authorizeTransferGrant(command);
+		expect(
+			await authority.authorizeTransferGrant({
+				...command,
+				requestedAt: LATER,
+			}),
+		).toEqual(authorized);
+
+		await expectAuthorityError(
+			authority.prepareTransferGrant({
+				...command,
+				profileDigest: 'f'.repeat(64),
+			}),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.prepareTransferGrant({
+				...command,
+				specificationDigest: 'e'.repeat(64),
+			}),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.prepareTransferGrant({
+				...command,
+				ownerId: 'other-owner',
+			}),
+			'NOT_FOUND',
+		);
+	});
+
+	test('issues only output-ready PUT scope and fences completed transfer replay', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		const outputCommand = transferGrantCommand(segment.specificationDigest, {
+			role: 'observation-artifact',
+			method: 'PUT',
+		});
+		await expectAuthorityError(
+			authority.prepareTransferGrant(outputCommand),
+			'INVALID_TRANSITION',
+		);
+		await makeOutputReady(authority);
+		expect(await authority.authorizeTransferGrant(outputCommand)).toEqual({
+			objectKey: `tracking-staging/${ATTEMPT_ID}/${TRANSFER_ID}/subject-observations.json.gz`,
+			contentType: 'application/octet-stream',
+			role: 'observation-artifact',
+			method: 'PUT',
+		});
+		await authority.transitionTransferRequest({
+			...attemptWitness(),
+			transferRequestId: TRANSFER_ID,
+			expectedState: 'granted',
+			nextState: 'completed',
+			updatedAt: LATER,
+		});
+		await expectAuthorityError(
+			authority.authorizeTransferGrant({
+				...outputCommand,
+				requestedAt: LATER,
+			}),
+			'INVALID_TRANSITION',
+		);
+	});
+
+	test('rejects transfer identity replay across exact roles and methods', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		const command = transferGrantCommand(segment.specificationDigest);
+		await authority.prepareTransferGrant(command);
+		await authority.transitionAttempt({
+			...attemptWitness(),
+			expectedState: 'active',
+			nextState: 'transferring',
+			progress: 1,
+			safeFailureCode: null,
+			updatedAt: LATER,
+		});
+		await expectAuthorityError(
+			authority.prepareTransferGrant({
+				...command,
+				role: 'frame-manifest',
+			}),
+			'CONFLICT',
+		);
+		await expect(
+			authority.prepareTransferGrant({
+				...command,
+				method: 'PUT',
+			}),
+		).rejects.toThrow();
 	});
 
 	test('accepts immutable evidence once and exposes only sanitized provenance', async () => {

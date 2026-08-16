@@ -20,12 +20,16 @@ if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 	: "${RC_MECH_OTHER_OWNER_COOKIE:?RC_MECH_OTHER_OWNER_COOKIE is required for release acceptance}"
 	: "${RC_MECH_R2_PUBLIC_ACCESS_VALIDATED:?Set RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1 after verifying r2.dev and custom-domain access are disabled}"
 	test "$RC_MECH_R2_PUBLIC_ACCESS_VALIDATED" = 1
-	if ! pnpm exec wrangler secret list --json | jq -e 'map(.name) | (["APP_URL", "BETTER_AUTH_SECRET", "OWNER_EMAIL", "EMAIL_FROM"] - .) == []' >/dev/null; then
-		echo 'production secrets are incomplete; configure APP_URL, BETTER_AUTH_SECRET, OWNER_EMAIL, and EMAIL_FROM' >&2
+	if ! pnpm exec wrangler secret list --json | jq -e 'map(.name) | (["APP_URL", "BETTER_AUTH_SECRET", "OWNER_EMAIL", "EMAIL_FROM", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] - .) == []' >/dev/null; then
+		echo 'production secrets are incomplete; configure application, email, and R2 signing secrets' >&2
 		exit 1
 	fi
 	if ! pnpm exec wrangler r2 bucket list | grep -q '^name:[[:space:]]*rc-mech-photos$'; then
 		echo 'production R2 bucket rc-mech-photos was not found' >&2
+		exit 1
+	fi
+	if ! pnpm exec wrangler r2 bucket list | grep -q '^name:[[:space:]]*rc-mech-analysis-media$'; then
+		echo 'production R2 bucket rc-mech-analysis-media was not found' >&2
 		exit 1
 	fi
 	migration_output="$(pnpm exec wrangler d1 migrations list DB --remote 2>&1)" || {
@@ -42,6 +46,14 @@ if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 	}
 	if ! grep -qi 'no custom domains' <<<"$custom_domains"; then
 		echo 'production R2 bucket has a custom domain; remove public exposure before release' >&2
+		exit 1
+	fi
+	analysis_custom_domains="$(pnpm exec wrangler r2 bucket domain list rc-mech-analysis-media 2>&1)" || {
+		echo "$analysis_custom_domains" >&2
+		exit 1
+	}
+	if ! grep -qi 'no custom domains' <<<"$analysis_custom_domains"; then
+		echo 'production analysis-media R2 bucket has a custom domain; remove public exposure before release' >&2
 		exit 1
 	fi
 fi

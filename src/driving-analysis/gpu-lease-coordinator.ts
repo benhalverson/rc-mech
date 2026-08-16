@@ -34,13 +34,12 @@ export const gpuLeaseAcquireInput = z
 	.object({ now: z.number().int().nonnegative().optional() })
 	.strict()
 	.default({});
-export const gpuLeaseWitnessInput = z
-	.object({ segmentId, leaseId, fence })
-	.strict();
-export const gpuLeaseRenewInput = gpuLeaseWitnessInput.extend({
+const gpuLeaseIdentityInput = z.object({ segmentId, leaseId, fence }).strict();
+export const gpuLeaseWitnessInput = gpuLeaseIdentityInput.extend({
 	now: z.number().int().nonnegative().optional(),
 });
-export const gpuLeaseReleaseInput = gpuLeaseWitnessInput.extend({
+export const gpuLeaseRenewInput = gpuLeaseWitnessInput;
+export const gpuLeaseReleaseInput = gpuLeaseIdentityInput.extend({
 	completed: z.boolean().optional(),
 });
 export const gpuLeaseCancelInput = z
@@ -50,13 +49,13 @@ export const gpuLeaseCancelInput = z
 		(value) => (value.leaseId === undefined) === (value.fence === undefined),
 		'Lease and fence must be supplied together',
 	);
-export const gpuLeaseBusyInput = gpuLeaseWitnessInput.extend({
+export const gpuLeaseBusyInput = gpuLeaseIdentityInput.extend({
 	now: z.number().int().nonnegative().optional(),
 });
-export const gpuLeaseHoldInput = gpuLeaseWitnessInput.extend({
+export const gpuLeaseHoldInput = gpuLeaseIdentityInput.extend({
 	now: z.number().int().nonnegative().optional(),
 });
-export const gpuLeaseHoldReleaseInput = gpuLeaseWitnessInput.extend({
+export const gpuLeaseHoldReleaseInput = gpuLeaseIdentityInput.extend({
 	holdId: z.string().uuid(),
 	now: z.number().int().nonnegative().optional(),
 });
@@ -214,6 +213,20 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 			if (expiresAt <= now) return { status: 'stale' } as const;
 			lease.expiresAt = expiresAt;
 			return { status: 'ok', expiresAt } as const;
+		});
+		await this.scheduleAlarm();
+		return result;
+	}
+
+	async witness(raw: GpuLeaseWitnessInput): Promise<GpuLeaseMutationResult> {
+		const input = gpuLeaseWitnessInput.parse(raw);
+		const now = this.clock(input.now);
+		const result = await this.mutate((state) => {
+			this.expire(state, now);
+			const lease = this.current(state, input);
+			return lease
+				? ({ status: 'ok', expiresAt: lease.expiresAt } as const)
+				: ({ status: 'stale' } as const);
 		});
 		await this.scheduleAlarm();
 		return result;

@@ -131,6 +131,26 @@ export const transitionTrackingTransferRequestCommandSchema = z.strictObject({
 	updatedAt: isoTimestampSchema,
 });
 
+export const prepareTrackingTransferGrantCommandSchema = z
+	.strictObject({
+		ownerId: authorityIdentifierSchema,
+		runId: uuidV4Schema,
+		segmentId: uuidV4Schema,
+		attemptId: uuidV4Schema,
+		leaseId: uuidV4Schema,
+		fence: positiveIntSchema,
+		profileDigest: sha256Schema,
+		specificationDigest: sha256Schema,
+		transferRequestId: uuidV4Schema,
+		role: z.enum(['prepared-media', 'frame-manifest', 'observation-artifact']),
+		method: z.enum(['GET', 'PUT']),
+		requestedAt: isoTimestampSchema,
+	})
+	.refine(
+		(value) =>
+			value.method === (value.role === 'observation-artifact' ? 'PUT' : 'GET'),
+	);
+
 export const trackingGapSchema = z.strictObject({
 	startTimestampMs: z.number().int().min(0),
 	reason: z.enum(['ambiguous-identity', 'occluded', 'missing']),
@@ -214,6 +234,9 @@ export type RecordTrackingTransferRequestCommand = z.infer<
 >;
 export type TransitionTrackingTransferRequestCommand = z.infer<
 	typeof transitionTrackingTransferRequestCommandSchema
+>;
+export type PrepareTrackingTransferGrantCommand = z.infer<
+	typeof prepareTrackingTransferGrantCommandSchema
 >;
 export type AcceptTrackingArtifactCommand = z.infer<
 	typeof acceptTrackingArtifactCommandSchema
