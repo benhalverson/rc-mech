@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import stat
 import sys
@@ -73,6 +74,7 @@ class BundleMember:
 
 ArtifactSource = Path | BundleMember
 _RENAME_NOREPLACE = 1
+_SAFE_NAME_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,255}\Z", re.ASCII)
 _LIBC = ctypes.CDLL(None, use_errno=True)
 _RENAMEAT2 = _LIBC.renameat2
 _RENAMEAT2.argtypes = (
@@ -273,9 +275,8 @@ def bundle_exists(settings: ServiceSettings, artifact_id: str, suffix: str) -> b
     name = _validate_name(f"{artifact_id}{suffix}")
     with open_private_root(settings.artifact_root) as root_descriptor:
         try:
-            identity = os.stat(
-                os.path.basename(name),  # noqa: PTH119 - CodeQL path sanitizer
-                dir_fd=root_descriptor,
+            identity = os.stat(  # noqa: PTH116 - descriptor-stable proc path
+                _directory_entry_path(root_descriptor, name),
                 follow_symlinks=False,
             )
         except FileNotFoundError:
@@ -592,12 +593,22 @@ def _write_all(descriptor: int, value: bytes) -> None:
 
 
 def _validate_name(name: str) -> str:
-    # CodeQL models basename as a path-injection sanitizer; retain it here
-    # instead of the equivalent Path.name operation.
-    safe_name = os.path.basename(name)  # noqa: PTH119
-    if not safe_name or safe_name in {".", ".."} or safe_name != name:
+    if name in {".", ".."} or _SAFE_NAME_PATTERN.fullmatch(name) is None:
         raise ValueError("Artifact names must be one path component")
-    return safe_name
+    return name
+
+
+def _directory_entry_path(parent_descriptor: int, name: str) -> str:
+    safe_name = _validate_name(name)
+    base_path = f"/proc/self/fd/{parent_descriptor}/"
+    # This follows CodeQL's normalize-then-check path-injection pattern while
+    # retaining the open directory descriptor as the authoritative parent.
+    full_path = os.path.normpath(
+        os.path.join(base_path, safe_name)  # noqa: PTH118
+    )
+    if not full_path.startswith(base_path):
+        raise ValueError("Artifact path escaped its trusted directory")
+    return full_path
 
 
 def _member_size(value: Path | bytes) -> int:
@@ -627,12 +638,10 @@ def _copy_descriptors(
 
 
 def _open_bundle(root_descriptor: int, name: str) -> int:
-    safe_name = _validate_name(name)
     try:
         return os.open(
-            os.path.basename(safe_name),  # noqa: PTH119 - CodeQL path sanitizer
+            _directory_entry_path(root_descriptor, name),
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-            dir_fd=root_descriptor,
         )
     except OSError as error:
         raise InvalidArtifactError from error
@@ -640,30 +649,22 @@ def _open_bundle(root_descriptor: int, name: str) -> int:
 
 def _try_open_bundle_member(member: BundleMember) -> int | None:
     descriptor: int | None = None
-    bundle_name = _validate_name(member.bundle_name)
-    member_name = _validate_name(member.member_name)
     try:
         with open_private_root(member.root) as root_descriptor:
             try:
-                bundle_descriptor = os.open(
-                    os.path.basename(  # noqa: PTH119 - CodeQL path sanitizer
-                        bundle_name
-                    ),
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                    dir_fd=root_descriptor,
-                )
-            except FileNotFoundError:
-                return None
-            except OSError as error:
-                raise InvalidArtifactError from error
+                bundle_descriptor = _open_bundle(root_descriptor, member.bundle_name)
+            except InvalidArtifactError as error:
+                if isinstance(error.__cause__, FileNotFoundError):
+                    return None
+                raise
             try:
                 try:
                     descriptor = os.open(
-                        os.path.basename(  # noqa: PTH119 - CodeQL path sanitizer
-                            member_name
+                        _directory_entry_path(
+                            bundle_descriptor,
+                            member.member_name,
                         ),
                         os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
-                        dir_fd=bundle_descriptor,
                     )
                 except FileNotFoundError:
                     return None

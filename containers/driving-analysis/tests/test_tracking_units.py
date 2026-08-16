@@ -1371,7 +1371,7 @@ def test_bundle_read_cannot_be_redirected_by_parent_replacement(
         dir_fd: int | None = None,
     ) -> int:
         nonlocal replaced
-        if path == "member" and dir_fd is not None and not replaced:
+        if str(path).endswith("/member") and not replaced:
             replaced = True
             settings.artifact_root.rename(original_root)
             replacement.rename(settings.artifact_root)
@@ -1558,6 +1558,11 @@ def test_bundle_helpers_reject_conflicts_and_operating_system_failures(
         artifact_module.read_artifact(linked, max_bytes=10)
     with pytest.raises(ValueError, match="path component"):
         artifact_module._validate_name("../invalid")
+    with pytest.raises(ValueError, match="path component"):
+        artifact_module._validate_name(".")
+    monkeypatch.setattr(artifact_module.os.path, "normpath", lambda _path: "/escape")
+    with pytest.raises(ValueError, match="escaped"):
+        artifact_module._directory_entry_path(1, "safe")
 
     first = tmp_path / "first"
     second = tmp_path / "second"
