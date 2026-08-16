@@ -54,6 +54,7 @@ const migrationDirectory = resolve(
 const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
+	'0022_tracking_artifact_publication.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -153,25 +154,35 @@ const attemptWitness = () => ({
 
 const artifactCommand = (
 	overrides: Partial<AcceptTrackingArtifactCommand> = {},
-): AcceptTrackingArtifactCommand => ({
-	ownerId: OWNER_ID,
-	runId: RUN_ID,
-	segmentId: SEGMENT_ID,
-	attemptId: ATTEMPT_ID,
-	leaseId: LEASE_ID,
-	fence: 7,
-	artifactId: ARTIFACT_ID,
-	acceptedObjectKey: 'accepted/opaque-artifact',
-	checksumSha256: 'a'.repeat(64),
-	contractDigest: 'b'.repeat(64),
-	byteCount: 20,
-	outcome: 'completed',
-	gap: null,
-	firstTimestampMs: 100,
-	lastTimestampMs: 300,
-	createdAt: LATER,
-	...overrides,
-});
+): AcceptTrackingArtifactCommand => {
+	const command = {
+		ownerId: OWNER_ID,
+		runId: RUN_ID,
+		segmentId: SEGMENT_ID,
+		attemptId: ATTEMPT_ID,
+		leaseId: LEASE_ID,
+		fence: 7,
+		profileDigest: PROFILE_DIGEST,
+		specificationDigest: '4'.repeat(64),
+		transferRequestId: TRANSFER_ID,
+		artifactId: ARTIFACT_ID,
+		checksumSha256: 'a'.repeat(64),
+		contractDigest: 'b'.repeat(64),
+		byteCount: 20,
+		outcome: 'completed' as const,
+		gap: null,
+		firstTimestampMs: 100,
+		lastTimestampMs: 300,
+		createdAt: LATER,
+		...overrides,
+	};
+	return {
+		...command,
+		acceptedObjectKey:
+			overrides.acceptedObjectKey ??
+			`tracking-evidence/${command.runId}/${command.segmentId}/${command.attemptId}/subject-observations.json.gz`,
+	};
+};
 
 const createSegmentAuthority = async () => {
 	const value = authorityFixture();
@@ -218,6 +229,44 @@ const makeOutputReady = async (authority: TrackingAuthority) => {
 		safeFailureCode: null,
 		updatedAt: LATER,
 	});
+};
+
+const preparePromotion = async (
+	authority: TrackingAuthority,
+	specificationDigest: string,
+	commandOverrides: Partial<AcceptTrackingArtifactCommand> = {},
+) => {
+	const command = artifactCommand({
+		specificationDigest,
+		...commandOverrides,
+	});
+	await authority.authorizeTransferGrant(
+		transferGrantCommand(specificationDigest, {
+			role: 'observation-artifact',
+			method: 'PUT',
+		}),
+	);
+	const promotion = await authority.recordArtifactPromotion({
+		...attemptWitness(),
+		profileDigest: PROFILE_DIGEST,
+		specificationDigest,
+		transferRequestId: TRANSFER_ID,
+		artifactId: command.artifactId,
+		stagingObjectKey: `tracking-staging/${ATTEMPT_ID}/${TRANSFER_ID}/subject-observations.json.gz`,
+		acceptedObjectKey: command.acceptedObjectKey,
+		checksumSha256: command.checksumSha256,
+		contractDigest: command.contractDigest,
+		byteCount: command.byteCount,
+		deleteAfter: '2026-08-17T20:01:00.000Z',
+		createdAt: command.createdAt,
+	});
+	await authority.markArtifactPromotionReady({
+		...attemptWitness(),
+		artifactId: command.artifactId,
+		expectedVersion: promotion.version,
+		updatedAt: command.createdAt,
+	});
+	return command;
 };
 
 const expectAuthorityError = async (
@@ -565,10 +614,14 @@ describe('TrackingAuthority', () => {
 	});
 
 	test('accepts immutable evidence once and exposes only sanitized provenance', async () => {
-		const { authority } = await createAttemptAuthority();
+		const { authority, segment } = await createAttemptAuthority();
 		await makeOutputReady(authority);
-		const accepted = await authority.acceptArtifact(artifactCommand());
-		expect(await authority.acceptArtifact(artifactCommand())).toEqual(accepted);
+		const command = await preparePromotion(
+			authority,
+			segment.specificationDigest,
+		);
+		const accepted = await authority.acceptArtifact(command);
+		expect(await authority.acceptArtifact(command)).toEqual(accepted);
 		const provenance = await authority.publicProvenance(
 			OWNER_ID,
 			ANALYSIS_ID,
@@ -616,14 +669,14 @@ describe('TrackingAuthority', () => {
 	});
 
 	test('publishes an accepted Tracking gap without internal authority', async () => {
-		const { authority } = await createAttemptAuthority();
+		const { authority, segment } = await createAttemptAuthority();
 		await makeOutputReady(authority);
 		const gap = {
 			startTimestampMs: 250,
 			reason: 'ambiguous-identity' as const,
 		};
 		await authority.acceptArtifact(
-			artifactCommand({
+			await preparePromotion(authority, segment.specificationDigest, {
 				outcome: 'tracking-gap',
 				gap,
 				firstTimestampMs: null,
@@ -636,6 +689,162 @@ describe('TrackingAuthority', () => {
 			RUN_ID,
 		);
 		expect(provenance.segments[0]?.gap).toEqual(gap);
+	});
+
+	test('requires one granted output transfer before publication', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		const command = transferGrantCommand(segment.specificationDigest, {
+			role: 'observation-artifact',
+			method: 'PUT',
+		});
+		const publicationCommand = {
+			ownerId: command.ownerId,
+			runId: command.runId,
+			segmentId: command.segmentId,
+			attemptId: command.attemptId,
+			leaseId: command.leaseId,
+			fence: command.fence,
+			profileDigest: command.profileDigest,
+			specificationDigest: command.specificationDigest,
+			transferRequestId: command.transferRequestId,
+		};
+		await expectAuthorityError(
+			authority.prepareArtifactPublication(publicationCommand),
+			'NOT_FOUND',
+		);
+		await authority.prepareTransferGrant(command);
+		await expectAuthorityError(
+			authority.prepareArtifactPublication(publicationCommand),
+			'INVALID_TRANSITION',
+		);
+		await authority.transitionTransferRequest({
+			...attemptWitness(),
+			transferRequestId: TRANSFER_ID,
+			expectedState: 'required',
+			nextState: 'granted',
+			updatedAt: LATER,
+		});
+		expect(
+			await authority.prepareArtifactPublication(publicationCommand),
+		).toMatchObject({
+			prepared: { preparedMediaId: PREPARED_ID },
+			profile: { provider: 'local-sam31' },
+			seed: submissionFixture().trackingRequest.subjectSeed,
+		});
+	});
+
+	test('claims and terminally records only unreferenced promotion cleanup', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		const artifact = artifactCommand({
+			specificationDigest: segment.specificationDigest,
+		});
+		await authority.authorizeTransferGrant(
+			transferGrantCommand(segment.specificationDigest, {
+				role: 'observation-artifact',
+				method: 'PUT',
+			}),
+		);
+		const promotionCommand = {
+			...attemptWitness(),
+			profileDigest: PROFILE_DIGEST,
+			specificationDigest: segment.specificationDigest,
+			transferRequestId: TRANSFER_ID,
+			artifactId: artifact.artifactId,
+			stagingObjectKey: `tracking-staging/${ATTEMPT_ID}/${TRANSFER_ID}/subject-observations.json.gz`,
+			acceptedObjectKey: artifact.acceptedObjectKey,
+			checksumSha256: artifact.checksumSha256,
+			contractDigest: artifact.contractDigest,
+			byteCount: artifact.byteCount,
+			deleteAfter: LATER,
+			createdAt: NOW,
+		};
+		const pending = await authority.recordArtifactPromotion(promotionCommand);
+		await expectAuthorityError(
+			authority.markArtifactPromotionReady({
+				...attemptWitness(),
+				artifactId: artifact.artifactId,
+				expectedVersion: 2,
+				updatedAt: LATER,
+			}),
+			'STALE_AUTHORITY',
+		);
+		const promoted = await authority.markArtifactPromotionReady({
+			...attemptWitness(),
+			artifactId: artifact.artifactId,
+			expectedVersion: pending.version,
+			updatedAt: LATER,
+		});
+		expect(
+			await authority.markArtifactPromotionReady({
+				...attemptWitness(),
+				artifactId: artifact.artifactId,
+				expectedVersion: promoted.version,
+				updatedAt: LATER,
+			}),
+		).toEqual(promoted);
+		await expectAuthorityError(
+			authority.markArtifactPromotionReady({
+				...attemptWitness(),
+				artifactId: SECOND_ATTEMPT_ID,
+				expectedVersion: 1,
+				updatedAt: LATER,
+			}),
+			'NOT_FOUND',
+		);
+		await expectAuthorityError(
+			authority.recordArtifactPromotion({
+				...promotionCommand,
+				checksumSha256: 'f'.repeat(64),
+			}),
+			'CONFLICT',
+		);
+		await expect(
+			authority.cleanupPromotionCandidates('invalid'),
+		).rejects.toThrow(RangeError);
+		await expect(
+			authority.cleanupPromotionCandidates(LATER, 0),
+		).rejects.toThrow(RangeError);
+		const [claimed] = await authority.cleanupPromotionCandidates(LATER);
+		if (!claimed) throw new Error('Expected one cleanup claim');
+		expect(claimed).toMatchObject({ state: 'deleting', version: 3 });
+		expect(await authority.cleanupPromotionCandidates(LATER)).toEqual([
+			claimed,
+		]);
+		await expectAuthorityError(
+			authority.recordArtifactPromotion(promotionCommand),
+			'STALE_AUTHORITY',
+		);
+		const deleted = await authority.markArtifactPromotionDeleted({
+			artifactId: artifact.artifactId,
+			expectedVersion: claimed.version,
+			deletedAt: LATER,
+		});
+		expect(deleted.state).toBe('deleted');
+		expect(
+			await authority.markArtifactPromotionDeleted({
+				artifactId: artifact.artifactId,
+				expectedVersion: claimed.version,
+				deletedAt: LATER,
+			}),
+		).toEqual(deleted);
+		await expectAuthorityError(
+			authority.markArtifactPromotionDeleted({
+				artifactId: artifact.artifactId,
+				expectedVersion: 99,
+				deletedAt: LATER,
+			}),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.recordArtifactPromotion(promotionCommand),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SECOND_SEGMENT_ID),
+			'NOT_FOUND',
+		);
 	});
 
 	test('fails closed for missing ownership, parents, and invalid transitions', async () => {
@@ -878,17 +1087,11 @@ describe('TrackingAuthority', () => {
 	});
 
 	test('enforces immutable database records below the gateway', async () => {
-		const { authority, database } = await createAttemptAuthority();
+		const { authority, database, segment } = await createAttemptAuthority();
 		await makeOutputReady(authority);
-		await authority.recordTransferRequest({
-			...attemptWitness(),
-			transferRequestId: TRANSFER_ID,
-			role: 'observation-artifact',
-			method: 'PUT',
-			objectScope: 'attempt-output',
-			createdAt: NOW,
-		});
-		await authority.acceptArtifact(artifactCommand());
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest),
+		);
 		for (const statement of [
 			"UPDATE inference_profile SET contract_version = 'other'",
 			"UPDATE tracking_run SET analysis_id = 'other'",
@@ -896,7 +1099,9 @@ describe('TrackingAuthority', () => {
 			"UPDATE tracking_segment SET seed_json = '{}'",
 			"UPDATE tracking_execution_attempt SET lease_id = 'other'",
 			"UPDATE tracking_transfer_request SET object_scope = 'other'",
+			"UPDATE tracking_artifact_promotion SET accepted_object_key = 'other'",
 			"UPDATE subject_observation_artifact SET accepted_object_key = 'other'",
+			'DELETE FROM tracking_artifact_promotion',
 			'DELETE FROM subject_observation_artifact',
 		])
 			await expect(database.prepare(statement).run()).rejects.toThrow(

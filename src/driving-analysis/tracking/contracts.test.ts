@@ -17,6 +17,7 @@ import {
 	preparedMediaArtifactSchema,
 	rejectedJobResponseSchema,
 	safeJobErrorSchema,
+	subjectObservationSegmentSchema,
 	trackingJobSubmissionSchema,
 	transferGrantCommandSchema,
 	transferRequestSchema,
@@ -204,6 +205,69 @@ describe('tracking provider contracts', () => {
 				gap: null,
 			}).success,
 		).toBe(false);
+	});
+
+	test('validates the strict accepted observation bytes', () => {
+		const provenance = jobStatusFixture(true).artifact?.segment.provenance;
+		expect(provenance).toBeDefined();
+		const first = {
+			timestampMs: 100,
+			frameIndex: 1,
+			box: { x: 0.1, y: 0.2, width: 0.2, height: 0.2 },
+			center: { x: 0.2, y: 0.3 },
+			visibility: 'visible',
+			identityConfidence: 0.9,
+			origin: 'detected',
+			provenance,
+		};
+		const segment = {
+			contractVersion: 'subject-observation-segment.v1',
+			outcome: 'accepted',
+			caseId: 'fixture-race',
+			observations: [
+				first,
+				{
+					...first,
+					timestampMs: 200,
+					frameIndex: 2,
+				},
+			],
+			openGap: null,
+			provenance,
+		};
+		expect(subjectObservationSegmentSchema.safeParse(segment).success).toBe(
+			true,
+		);
+		for (const invalid of [
+			{
+				...segment,
+				unknown: true,
+			},
+			{
+				...segment,
+				observations: [{ ...first, center: { x: 0.4, y: 0.3 } }],
+			},
+			{
+				...segment,
+				observations: [first, { ...first, timestampMs: 200 }],
+			},
+			{
+				...segment,
+				openGap: { startTimestampMs: 100, reason: 'missing' },
+			},
+			{
+				...segment,
+				observations: [
+					{
+						...first,
+						provenance: { ...provenance, modelVersion: 'other' },
+					},
+				],
+			},
+		])
+			expect(subjectObservationSegmentSchema.safeParse(invalid).success).toBe(
+				false,
+			);
 	});
 
 	test('requires canonical safe provider errors', () => {

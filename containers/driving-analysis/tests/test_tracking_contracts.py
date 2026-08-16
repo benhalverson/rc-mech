@@ -303,6 +303,42 @@ def test_observation_segment_rejects_observations_inside_open_gap() -> None:
         )
 
 
+@pytest.mark.parametrize("failure", ["order", "provenance"])
+def test_observation_segment_binds_order_and_provenance(failure: str) -> None:
+    provenance = _provenance()
+    first = {
+        "timestampMs": 100,
+        "frameIndex": 1,
+        "box": {"x": 0.1, "y": 0.2, "width": 0.2, "height": 0.2},
+        "center": {"x": 0.2, "y": 0.3},
+        "identityConfidence": 0.9,
+        "visibility": "visible",
+        "origin": "detected",
+        "provenance": provenance,
+    }
+    second = {
+        **first,
+        "timestampMs": 200,
+        "frameIndex": 2 if failure != "order" else 1,
+        "provenance": (
+            provenance
+            if failure != "provenance"
+            else {**provenance, "modelVersion": "other"}
+        ),
+    }
+    with pytest.raises(ValidationError, match=failure):
+        SubjectObservationSegment.model_validate(
+            {
+                "contractVersion": "subject-observation-segment.v1",
+                "outcome": "accepted",
+                "caseId": "fixture-race",
+                "observations": [first, second],
+                "openGap": None,
+                "provenance": provenance,
+            }
+        )
+
+
 def test_inference_settings_validate_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

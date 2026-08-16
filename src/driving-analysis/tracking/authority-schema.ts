@@ -329,6 +329,69 @@ export const trackingTransferRequest = sqliteTable(
 	],
 );
 
+export const trackingArtifactPromotion = sqliteTable(
+	'tracking_artifact_promotion',
+	{
+		artifactId: text('artifact_id').primaryKey(),
+		runId: text('run_id')
+			.notNull()
+			.references(() => trackingRun.id),
+		segmentId: text('segment_id')
+			.notNull()
+			.references(() => trackingSegment.id),
+		attemptId: text('attempt_id')
+			.notNull()
+			.references(() => trackingExecutionAttempt.id),
+		transferRequestId: text('transfer_request_id')
+			.notNull()
+			.references(() => trackingTransferRequest.id),
+		stagingObjectKey: text('staging_object_key').notNull(),
+		acceptedObjectKey: text('accepted_object_key').notNull(),
+		checksumSha256: text('checksum_sha256').notNull(),
+		contractDigest: text('contract_digest').notNull(),
+		byteCount: integer('byte_count').notNull(),
+		state: text('state', {
+			enum: ['pending', 'promoted', 'accepted', 'deleting', 'deleted'],
+		})
+			.notNull()
+			.default('pending'),
+		deleteAfter: text('delete_after').notNull(),
+		version: integer('version').notNull().default(1),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		deletedAt: text('deleted_at'),
+	},
+	(table) => [
+		uniqueIndex('tracking_artifact_promotion_transfer').on(
+			table.transferRequestId,
+		),
+		uniqueIndex('tracking_artifact_promotion_staging').on(
+			table.stagingObjectKey,
+		),
+		uniqueIndex('tracking_artifact_promotion_accepted').on(
+			table.acceptedObjectKey,
+		),
+		index('tracking_artifact_promotion_cleanup').on(
+			table.state,
+			table.deleteAfter,
+		),
+		check(
+			'tracking_artifact_promotion_checksum',
+			sql`length(${table.checksumSha256}) = 64`,
+		),
+		check(
+			'tracking_artifact_promotion_contract_digest',
+			sql`length(${table.contractDigest}) = 64`,
+		),
+		check('tracking_artifact_promotion_bytes', sql`${table.byteCount} > 0`),
+		check('tracking_artifact_promotion_version', sql`${table.version} > 0`),
+		check(
+			'tracking_artifact_promotion_deleted',
+			sql`(${table.state} = 'deleted' AND ${table.deletedAt} IS NOT NULL) OR (${table.state} <> 'deleted' AND ${table.deletedAt} IS NULL)`,
+		),
+	],
+);
+
 export const subjectObservationArtifact = sqliteTable(
 	'subject_observation_artifact',
 	{
@@ -398,6 +461,7 @@ export const trackingAuthoritySchema = {
 	trackingSegment,
 	trackingExecutionAttempt,
 	trackingTransferRequest,
+	trackingArtifactPromotion,
 	subjectObservationArtifact,
 	trackingPublicProvenance,
 };
