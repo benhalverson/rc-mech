@@ -273,7 +273,11 @@ def bundle_exists(settings: ServiceSettings, artifact_id: str, suffix: str) -> b
     name = _validate_name(f"{artifact_id}{suffix}")
     with open_private_root(settings.artifact_root) as root_descriptor:
         try:
-            identity = os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
+            identity = os.stat(
+                os.path.basename(name),  # noqa: PTH119 - CodeQL path sanitizer
+                dir_fd=root_descriptor,
+                follow_symlinks=False,
+            )
         except FileNotFoundError:
             return False
         if not stat.S_ISDIR(identity.st_mode):
@@ -626,7 +630,7 @@ def _open_bundle(root_descriptor: int, name: str) -> int:
     safe_name = _validate_name(name)
     try:
         return os.open(
-            safe_name,
+            os.path.basename(safe_name),  # noqa: PTH119 - CodeQL path sanitizer
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
             dir_fd=root_descriptor,
         )
@@ -642,7 +646,9 @@ def _try_open_bundle_member(member: BundleMember) -> int | None:
         with open_private_root(member.root) as root_descriptor:
             try:
                 bundle_descriptor = os.open(
-                    bundle_name,
+                    os.path.basename(  # noqa: PTH119 - CodeQL path sanitizer
+                        bundle_name
+                    ),
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                     dir_fd=root_descriptor,
                 )
@@ -653,7 +659,9 @@ def _try_open_bundle_member(member: BundleMember) -> int | None:
             try:
                 try:
                     descriptor = os.open(
-                        member_name,
+                        os.path.basename(  # noqa: PTH119 - CodeQL path sanitizer
+                            member_name
+                        ),
                         os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                         dir_fd=bundle_descriptor,
                     )
