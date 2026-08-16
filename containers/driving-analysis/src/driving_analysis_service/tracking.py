@@ -49,6 +49,7 @@ from driving_analysis_service.tracking_artifacts import (
     PREPARED_MEDIA_SUFFIX,
     ArtifactConflictError,
     InvalidArtifactError,
+    bundle_exists,
     bundle_member_path,
     bundle_path,
     canonical_json,
@@ -327,7 +328,11 @@ def _recover_completed_segment(
         request.observation_segment_id,
         OBSERVATION_BUNDLE_SUFFIX,
     )
-    if not bundle.exists():
+    if not bundle_exists(
+        settings,
+        request.observation_segment_id,
+        OBSERVATION_BUNDLE_SUFFIX,
+    ):
         return None
     completed = read_completion(
         bundle_member_path(
@@ -341,7 +346,7 @@ def _recover_completed_segment(
         deadline=deadline,
     )
     if completed is None:
-        return None
+        raise ArtifactConflictError
     if not _segment_matches_request(completed, request, tracking_input_digest):
         raise ArtifactConflictError
     checksum, byte_count = file_digest(

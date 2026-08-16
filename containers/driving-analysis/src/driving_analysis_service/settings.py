@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
+from driving_analysis_service.local_storage import prepare_private_root
+
 FFPROBE_EXECUTABLE = Path("/usr/bin/ffprobe")
 FFMPEG_EXECUTABLE = Path("/usr/bin/ffmpeg")
 DEFAULT_MODEL_DIGEST = "0" * 64
@@ -125,6 +127,6 @@ class ServiceSettings:
         )
 
     def prepare_roots(self) -> None:
-        self.staging_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.work_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.artifact_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        prepare_private_root(self.staging_root)
+        prepare_private_root(self.work_root)
+        prepare_private_root(self.artifact_root)

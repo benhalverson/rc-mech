@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from driving_analysis_service import processes as process_module
 from driving_analysis_service import rendering
+from driving_analysis_service import tracking_artifacts as artifact_module
 from driving_analysis_service.api import create_app
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.media import ProbeMetadata
@@ -436,8 +437,15 @@ def test_render_rejects_insufficient_storage_before_ffmpeg(
     source = _video(tmp_path)
     checksum = hashlib.sha256(source.read_bytes()).hexdigest()
     byte_count = stage_media(settings, source)
-    filesystem = SimpleNamespace(f_bavail=1, f_frsize=1)
-    monkeypatch.setattr(os, "statvfs", lambda _path: filesystem)
+
+    def reject_reservation(_descriptor: int, _byte_count: int) -> None:
+        raise ProcessOutputLimitError
+
+    monkeypatch.setattr(
+        artifact_module,
+        "reserve_file_capacity",
+        reject_reservation,
+    )
 
     def unexpected_ffmpeg(*_args: object, **_kwargs: object) -> str:
         raise AssertionError("FFmpeg was invoked without storage capacity")
@@ -456,67 +464,28 @@ def test_render_rejects_insufficient_storage_before_ffmpeg(
     assert response.json()["error"]["code"] == "RESOURCE_LIMIT"
 
 
-def test_render_requires_capacity_on_separate_work_and_artifact_filesystems(
+def test_render_reserves_work_output_before_ffmpeg(
     settings: ServiceSettings,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class RootIdentity:
-        def __init__(self, device: int) -> None:
-            self.st_dev = device
+    destination = tmp_path / "reserved.mp4"
+    request = RenderStageRequest.model_validate(_body(1, SHA))
 
-    original_stat = Path.stat
-    monkeypatch.setattr(
-        Path,
-        "stat",
-        lambda path: (
-            RootIdentity(1)
-            if path == settings.work_root
-            else RootIdentity(2)
-            if path == settings.artifact_root
-            else original_stat(path)
-        ),
-    )
-    available = iter(
-        (
-            rendering.MIN_STORAGE_HEADROOM_BYTES,
-            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
-        )
-    )
-    monkeypatch.setattr(
-        rendering,
-        "_available_bytes",
-        lambda _path: next(available),
-    )
+    def reject_reservation(_descriptor: int, _byte_count: int) -> None:
+        raise ProcessOutputLimitError
+
+    monkeypatch.setattr(rendering, "reserve_file_capacity", reject_reservation)
     with pytest.raises(ProcessOutputLimitError):
-        rendering._validate_storage_capacity(settings, 1, 1)
-    available = iter(
-        (
-            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
-            rendering.MIN_STORAGE_HEADROOM_BYTES,
+        rendering._render_clip(
+            tmp_path / "source.mp4",
+            destination,
+            request.specification,
+            _metadata(),
+            settings,
+            time.monotonic() + 10,
         )
-    )
-    with pytest.raises(ProcessOutputLimitError):
-        rendering._validate_storage_capacity(settings, 1, 1)
-    available = iter(
-        (
-            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
-            rendering.MIN_STORAGE_HEADROOM_BYTES + 2,
-        )
-    )
-    rendering._validate_storage_capacity(settings, 1, 1)
-    monkeypatch.setattr(
-        rendering,
-        "_available_bytes",
-        lambda _path: rendering.MIN_STORAGE_HEADROOM_BYTES,
-    )
-    with pytest.raises(ProcessOutputLimitError):
-        rendering._validate_recovery_capacity(settings, 1)
-    monkeypatch.setattr(
-        rendering,
-        "_available_bytes",
-        lambda _path: rendering.MIN_STORAGE_HEADROOM_BYTES + 1,
-    )
-    rendering._validate_recovery_capacity(settings, 1)
+    assert not destination.exists()
     assert rendering._discard_process_error(b"discarded") is True
 
 
@@ -1028,13 +997,14 @@ def test_render_recovery_rejects_tampered_completion_or_media(
         rendering._recover(request, settings, time.monotonic() + 10)
 
 
-def test_render_recovery_returns_none_without_completion(
+def test_render_recovery_conflicts_without_completion(
     settings: ServiceSettings,
 ) -> None:
     settings.prepare_roots()
     request = RenderStageRequest.model_validate(_body(1, SHA))
     (settings.artifact_root / f"{RENDER_ID}.corner").mkdir()
-    assert rendering._recover(request, settings, 10.0) is None
+    with pytest.raises(ArtifactConflictError):
+        rendering._recover(request, settings, time.monotonic() + 10)
 
 
 def test_render_maps_malformed_recovery_artifact_to_safe_error(
@@ -1226,7 +1196,8 @@ def test_render_publish_race_recovers_verified_artifact(
         return artifact.model_copy(update={"elapsed_ms": artifact.elapsed_ms + 1})
 
     def publish(
-        _destination: Path, members: dict[str, Path | bytes], **_kwargs: object
+        _publication: object,
+        members: dict[str, Path | bytes],
     ) -> bool:
         captured["members"] = {
             name: value if isinstance(value, bytes) else value.read_bytes()
@@ -1235,7 +1206,7 @@ def test_render_publish_race_recovers_verified_artifact(
         return False
 
     monkeypatch.setattr(rendering, "_recover", recover)
-    monkeypatch.setattr(rendering, "publish_bundle", publish)
+    monkeypatch.setattr(rendering.BundleReservation, "publish", publish)
     response = rendering.CornerRenderService(settings).render(request)
     assert response.outcome == "accepted"
     published = RenderArtifact.model_validate_json(

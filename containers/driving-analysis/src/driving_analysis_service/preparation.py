@@ -44,6 +44,7 @@ from driving_analysis_service.tracking_artifacts import (
     PREPARED_MEDIA_SUFFIX,
     ArtifactConflictError,
     InvalidArtifactError,
+    bundle_exists,
     bundle_member_path,
     bundle_path,
     canonical_json,
@@ -254,7 +255,7 @@ def _recover_completed_preparation(
     deadline: float,
 ) -> PreparedMediaArtifact | None:
     bundle = bundle_path(settings, request.prepared_media_id, PREPARED_BUNDLE_SUFFIX)
-    if not bundle.exists():
+    if not bundle_exists(settings, request.prepared_media_id, PREPARED_BUNDLE_SUFFIX):
         return None
     completed = read_completion(
         bundle_member_path(
@@ -268,7 +269,7 @@ def _recover_completed_preparation(
         deadline=deadline,
     )
     if completed is None:
-        return None
+        raise ArtifactConflictError
     if (
         completed.prepared_media_id != request.prepared_media_id
         or completed.case_id != request.case_id

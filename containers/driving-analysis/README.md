@@ -4,6 +4,10 @@ This internal FastAPI service validates staged Race recordings, prepares bounded
 
 The caller stages the recording as `<stagedMediaId>.media` beneath `RC_MECH_MEDIA_STAGING_ROOT` (default `/var/lib/rc-mech/staged`) and supplies only the opaque UUID plus the expected byte count. Probe and prepare requests consume that temporary staged file. Request work is isolated beneath `RC_MECH_MEDIA_WORK_ROOT` (default `/tmp/rc-mech-media`) and removed after every accepted or rejected result. Immutable prepared media, provenance manifests, and gzip observation segments are written as atomically published artifact bundles beneath `RC_MECH_ANALYSIS_ARTIFACT_ROOT` (default `/var/lib/rc-mech/artifacts`); their completion descriptors make identical retries idempotent. Later Worker integration mediates durable private R2 storage.
 
+All three configured roots are deployment-owned capabilities. Each must be an absolute, non-symlink directory owned by the service's effective user, with mode `0700`; readiness and every operation fail closed if ownership, permissions, type, or directory identity does not match. The deployment must likewise control the ancestor hierarchy and mount configuration. Artifact reads and publication hold directory descriptors across validation and access, so replacing a configured root cannot redirect an in-flight operation.
+
+The service requires Linux `fallocate(2)` with `FALLOC_FL_KEEP_SIZE` and `renameat2(2)` with `RENAME_NOREPLACE`. Claimed-media copies, rendered output, recovery copies, and pending immutable bundle members reserve their bounded extents before writing. This makes storage admission deterministic even if unrelated processes consume free space concurrently, including when staging and work are on different filesystems. Bundle commit never replaces an existing file, directory, or symlink; an existing bundle without a valid completion descriptor is an immutable-ID conflict, not recoverable scratch.
+
 ## Quality gate
 
 Install `uv`, then run the complete hermetic Python gate from this directory:
@@ -17,7 +21,7 @@ The command checks formatting, lint, strict static analysis, tests, and branch c
 ## Run locally
 
 ```console
-mkdir -p /tmp/rc-mech-staged /tmp/rc-mech-work
+install -d -m 0700 /tmp/rc-mech-staged /tmp/rc-mech-work /tmp/rc-mech-artifacts
 RC_MECH_MEDIA_STAGING_ROOT=/tmp/rc-mech-staged \
 RC_MECH_MEDIA_WORK_ROOT=/tmp/rc-mech-work \
 RC_MECH_ANALYSIS_ARTIFACT_ROOT=/tmp/rc-mech-artifacts \
@@ -45,7 +49,7 @@ Saturated stage admission returns `SERVICE_BUSY`; an invalid Race-window limit r
 Ollama's local HTTP API is the `local-http` adapter. It must expose a vision-capable model; this machine's `llava:13b` install reports `vision` and digest `0d0eb4d7f485d7d0a21fd9b0c1d5b04da481d2150a097e81b64acb59758fdef6`. This one command starts the complete processing service against it:
 
 ```console
-mkdir -p /tmp/rc-mech-staged /tmp/rc-mech-work /tmp/rc-mech-artifacts && \
+install -d -m 0700 /tmp/rc-mech-staged /tmp/rc-mech-work /tmp/rc-mech-artifacts && \
 RC_MECH_MEDIA_STAGING_ROOT=/tmp/rc-mech-staged \
 RC_MECH_MEDIA_WORK_ROOT=/tmp/rc-mech-work \
 RC_MECH_ANALYSIS_ARTIFACT_ROOT=/tmp/rc-mech-artifacts \
