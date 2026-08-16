@@ -81,7 +81,7 @@ export const digestInferenceProfile = async (
 		.join('');
 };
 
-const canonicalJson = (value: CanonicalJson): string => {
+export const canonicalJson = (value: CanonicalJson): string => {
 	if (typeof value === 'string') return JSON.stringify(value);
 	return `{${Object.entries(value)
 		.sort(([left], [right]) => (left < right ? -1 : 1))
@@ -89,7 +89,7 @@ const canonicalJson = (value: CanonicalJson): string => {
 		.join(',')}}`;
 };
 
-const float64Token = (value: number): string => {
+export const float64Token = (value: number): string => {
 	const buffer = new ArrayBuffer(8);
 	new DataView(buffer).setFloat64(0, value === 0 ? 0 : value);
 	return `f64:${[...new Uint8Array(buffer)]

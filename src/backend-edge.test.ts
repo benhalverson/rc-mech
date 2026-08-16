@@ -501,7 +501,7 @@ describe('backend defensive and alternate paths', () => {
 				references += 1;
 			}
 		}
-		expect(references).toBe(14);
+		expect(references).toBe(24);
 	});
 
 	test('covers consumable cross-field validation alternatives', () => {

@@ -66,6 +66,18 @@ _Avoid_: Model host, analysis owner, GPU queue
 One continuous interval of Subject-car tracking that starts from the initial Subject seed or a Re-identification and ends at the Race-window boundary, the first Tracking gap, cancellation, or a terminal provider failure. Re-identification starts a new immutable segment within the same processing run; an infrastructure retry does not.
 _Avoid_: GPU job, whole analysis, retry attempt
 
+**Tracking run**:
+One immutable generation of Tracking evidence for a Driving analysis. It pins one Inference profile for every Tracking segment it contains; retrying after replacement or terminal failure creates another Tracking run rather than combining evidence across profiles.
+_Avoid_: Drive session, mutable processing job, provider deployment
+
+**Tracking execution attempt**:
+One infrastructure attempt to execute an existing Tracking segment under current fenced authority. An infrastructure retry may create another attempt without changing the segment specification or its place in the Tracking run.
+_Avoid_: Tracking segment, Tracking run, accepted evidence
+
+**Accepted Tracking artifact**:
+Immutable Subject-observation or Tracking-gap evidence that Cloudflare has validated and committed for exactly one current Tracking segment execution attempt. Staged, stale, cancelled, expired, or otherwise uncommitted output is not accepted evidence.
+_Avoid_: Upload, staging object, provider response
+
 **Transfer grant**:
 A short-lived capability authorizing one bounded media or artifact transfer for a Tracking-segment execution attempt. Renewing a Transfer grant does not change the segment or its provenance.
 _Avoid_: Storage credential, artifact identity, permanent URL

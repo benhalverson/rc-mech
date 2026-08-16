@@ -46,7 +46,7 @@ const normalizedBoxSchema = z
 			box.width * box.height >= 1e-12,
 	);
 
-const raceWindowSchema = z
+export const raceWindowSchema = z
 	.strictObject({
 		startTimestampMs: timestampSchema,
 		endTimestampMs: timestampSchema.positive(),
@@ -94,7 +94,7 @@ export const preparedMediaArtifactSchema = z.strictObject({
 	preparationConfigurationDigest: sha256Schema,
 });
 
-const subjectSeedSchema = z.strictObject({
+export const subjectSeedSchema = z.strictObject({
 	timestampMs: timestampSchema,
 	frameIndex: frameIndexSchema,
 	identity: safeIdentifierSchema,
@@ -295,6 +295,8 @@ export const rejectedJobResponseSchema = z.strictObject({
 });
 
 export type ExecutionIdentity = z.infer<typeof executionIdentitySchema>;
+export type PreparedMediaArtifact = z.infer<typeof preparedMediaArtifactSchema>;
+export type SubjectSeed = z.infer<typeof subjectSeedSchema>;
 export type TrackingJobSubmission = z.infer<typeof trackingJobSubmissionSchema>;
 export type TransferGrantCommand = z.infer<typeof transferGrantCommandSchema>;
 export type CancelCommand = z.infer<typeof cancelCommandSchema>;
