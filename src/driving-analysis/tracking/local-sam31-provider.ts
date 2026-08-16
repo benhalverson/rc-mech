@@ -53,26 +53,26 @@ export type LocalSam31ProviderConfig = {
 };
 
 export class LocalSam31Provider implements TrackingProvider {
-	readonly #origin: URL;
-	readonly #accessClientId: string;
-	readonly #accessClientSecret: string;
-	readonly #timeoutMs: number;
-	readonly #maxResponseBytes: number;
-	readonly #fetcher: ProviderFetch;
+	private readonly origin: URL;
+	private readonly accessClientId: string;
+	private readonly accessClientSecret: string;
+	private readonly timeoutMs: number;
+	private readonly maxResponseBytes: number;
+	private readonly fetcher: ProviderFetch;
 
 	constructor(config: LocalSam31ProviderConfig) {
-		this.#origin = normalizeOrigin(config.origin);
-		this.#accessClientId = requiredCredential(config.accessClientId);
-		this.#accessClientSecret = requiredCredential(config.accessClientSecret);
-		this.#timeoutMs = positiveBound(
+		this.origin = normalizeOrigin(config.origin);
+		this.accessClientId = requiredCredential(config.accessClientId);
+		this.accessClientSecret = requiredCredential(config.accessClientSecret);
+		this.timeoutMs = positiveBound(
 			config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 			'Provider timeout',
 		);
-		this.#maxResponseBytes = positiveBound(
+		this.maxResponseBytes = positiveBound(
 			config.maxResponseBytes ?? DEFAULT_RESPONSE_BYTES,
 			'Provider response limit',
 		);
-		this.#fetcher = config.fetcher ?? fetch;
+		this.fetcher = config.fetcher ?? fetch;
 	}
 
 	async submit(
@@ -80,7 +80,7 @@ export class LocalSam31Provider implements TrackingProvider {
 	): Promise<TrackingProviderResult<JobStatus>> {
 		const parsed = trackingJobSubmissionSchema.safeParse(submission);
 		if (!parsed.success) return invalidRequest();
-		return this.#request('/v1/jobs', 'POST', parsed.data, parsed.data);
+		return this.request('/v1/jobs', 'POST', parsed.data, parsed.data);
 	}
 
 	async status(
@@ -96,7 +96,7 @@ export class LocalSam31Provider implements TrackingProvider {
 			specificationDigest: parsed.data.specificationDigest,
 			profileDigest: parsed.data.profileDigest,
 		});
-		return this.#request(
+		return this.request(
 			`/v1/jobs/${encodeURIComponent(parsed.data.segmentId)}?${query}`,
 			'GET',
 			undefined,
@@ -109,7 +109,7 @@ export class LocalSam31Provider implements TrackingProvider {
 	): Promise<TrackingProviderResult<JobStatus>> {
 		const parsed = cancelCommandSchema.safeParse(command);
 		if (!parsed.success) return invalidRequest();
-		return this.#request(
+		return this.request(
 			`/v1/jobs/${encodeURIComponent(parsed.data.segmentId)}/cancel`,
 			'POST',
 			parsed.data,
@@ -122,7 +122,7 @@ export class LocalSam31Provider implements TrackingProvider {
 	): Promise<TrackingProviderResult<JobStatus>> {
 		const parsed = transferGrantCommandSchema.safeParse(command);
 		if (!parsed.success) return invalidRequest();
-		return this.#request(
+		return this.request(
 			`/v1/jobs/${encodeURIComponent(parsed.data.segmentId)}/transfer-grants`,
 			'POST',
 			parsed.data,
@@ -130,25 +130,25 @@ export class LocalSam31Provider implements TrackingProvider {
 		);
 	}
 
-	async #request(
+	private async request(
 		path: string,
 		method: 'GET' | 'POST',
 		body: object | undefined,
 		expectedIdentity: ExecutionIdentity,
 	): Promise<TrackingProviderResult<JobStatus>> {
-		const url = resolveProviderUrl(this.#origin, path);
+		const url = resolveProviderUrl(this.origin, path);
 		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
+		const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 		try {
 			let response: Response;
 			try {
-				response = await this.#fetcher(
+				response = await this.fetcher(
 					new Request(url, {
 						method,
 						headers: {
 							Accept: 'application/json',
-							'CF-Access-Client-Id': this.#accessClientId,
-							'CF-Access-Client-Secret': this.#accessClientSecret,
+							'CF-Access-Client-Id': this.accessClientId,
+							'CF-Access-Client-Secret': this.accessClientSecret,
 							...(body === undefined
 								? {}
 								: { 'Content-Type': 'application/json' }),
@@ -163,7 +163,7 @@ export class LocalSam31Provider implements TrackingProvider {
 			}
 			const result = await parseProviderResponse(
 				response,
-				this.#maxResponseBytes,
+				this.maxResponseBytes,
 				expectedIdentity,
 			);
 			return controller.signal.aborted ? unavailable() : result;

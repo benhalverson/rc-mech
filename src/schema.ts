@@ -10,9 +10,12 @@ import {
 export {
 	inferenceProfileAuthority,
 	preparedTrackingMedia,
+	preparedTrackingObject,
+	preparedTrackingRetention,
 	subjectObservationArtifact,
 	trackingExecutionAttempt,
 	trackingRun,
+	trackingRunInput,
 	trackingSegment,
 	trackingTransferRequest,
 } from './driving-analysis/tracking/authority-schema';

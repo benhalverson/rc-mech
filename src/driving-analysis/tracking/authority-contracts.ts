@@ -1,10 +1,5 @@
 import { z } from 'zod';
-import {
-	preparedMediaArtifactSchema,
-	sha256Schema,
-	subjectSeedSchema,
-	uuidV4Schema,
-} from './contracts';
+import { sha256Schema, subjectSeedSchema, uuidV4Schema } from './contracts';
 import { inferenceProfileSchema } from './inference-profile';
 
 const authorityIdentifierSchema = z
@@ -36,13 +31,6 @@ export const createTrackingRunCommandSchema = z.strictObject({
 	workflowId: authorityIdentifierSchema,
 	profile: inferenceProfileSchema,
 	inputDigest: sha256Schema,
-	createdAt: isoTimestampSchema,
-});
-
-export const recordPreparedTrackingMediaCommandSchema = z.strictObject({
-	ownerId: authorityIdentifierSchema,
-	runId: uuidV4Schema,
-	descriptor: preparedMediaArtifactSchema,
 	createdAt: isoTimestampSchema,
 });
 
@@ -211,9 +199,6 @@ export const publicTrackingProvenanceSchema = z.strictObject({
 
 export type CreateTrackingRunCommand = z.infer<
 	typeof createTrackingRunCommandSchema
->;
-export type RecordPreparedTrackingMediaCommand = z.infer<
-	typeof recordPreparedTrackingMediaCommandSchema
 >;
 export type CreateTrackingSegmentCommand = z.infer<
 	typeof createTrackingSegmentCommandSchema

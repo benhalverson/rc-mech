@@ -22,6 +22,11 @@ export {
 	GpuLeaseCoordinator,
 	getGpuLeaseCoordinator,
 } from './driving-analysis/gpu-lease-coordinator';
+export {
+	preparedTrackViewStore,
+	R2PreparedTrackViewStore,
+} from './driving-analysis/tracking/r2-prepared-track-view-store';
+export { TrackViewPreparation } from './driving-analysis/tracking/track-view-preparation';
 
 export const createApp = (
 	dependencies: AppDependencies = defaultAppDependencies,

@@ -10,18 +10,22 @@ import {
 	PROFILE_DIGEST,
 	RUN_ID,
 	SEGMENT_ID,
-	SHA,
 	submissionFixture,
 	TRANSFER_ID,
 } from '../../testing/driving-analysis-tracking-fixtures';
+import {
+	preparedDescriptorFixture,
+	preparedObjectsFixture,
+	trackingRunInputFixture,
+} from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import type {
 	AcceptTrackingArtifactCommand,
 	ActivateTrackingAttemptCommand,
 	CreateTrackingRunCommand,
 	CreateTrackingSegmentCommand,
-	RecordPreparedTrackingMediaCommand,
 } from './authority-contracts';
+import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
 import {
 	TrackingAuthority,
 	TrackingAuthorityError,
@@ -39,14 +43,19 @@ const SECOND_LEASE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ARTIFACT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const REIDENTIFICATION_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const OTHER_TRANSFER_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const INPUT_DIGEST =
+	'b9fcffe729ec029ce020dc5e1583d9573579d6576ffd8bfc036e05ca77b8f133';
 
-const migration = readFileSync(
-	resolve(
-		dirname(fileURLToPath(import.meta.url)),
-		'../../../migrations/0019_tracking_authority.sql',
-	),
-	'utf8',
+const migrationDirectory = resolve(
+	dirname(fileURLToPath(import.meta.url)),
+	'../../../migrations',
 );
+const migrations = [
+	'0019_tracking_authority.sql',
+	'0020_immutable_track_view.sql',
+]
+	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
+	.join('\n');
 
 let fixture: SqliteD1Fixture | undefined;
 
@@ -57,9 +66,10 @@ afterEach(() => {
 
 const authorityFixture = () => {
 	fixture = createSqliteD1();
-	fixture.exec(migration);
+	fixture.exec(migrations);
 	return {
 		authority: new TrackingAuthority(fixture.database),
+		preparedAuthority: new PreparedTrackViewAuthority(fixture.database),
 		database: fixture.database,
 	};
 };
@@ -73,20 +83,30 @@ const runCommand = (
 	sequence: 1,
 	workflowId: WORKFLOW_ID,
 	profile: inferenceProfileFixture(),
-	inputDigest: SHA,
+	inputDigest: INPUT_DIGEST,
 	createdAt: NOW,
 	...overrides,
 });
 
-const preparedCommand = (
-	overrides: Partial<RecordPreparedTrackingMediaCommand> = {},
-): RecordPreparedTrackingMediaCommand => ({
-	ownerId: OWNER_ID,
-	runId: RUN_ID,
-	descriptor: submissionFixture().trackingRequest.prepared,
-	createdAt: NOW,
-	...overrides,
-});
+const seedPreparedTrackView = async (
+	value: ReturnType<typeof authorityFixture>,
+) => {
+	await value.preparedAuthority.pinRunInput({
+		ownerId: OWNER_ID,
+		input: trackingRunInputFixture(),
+		createdAt: NOW,
+	});
+	await value.preparedAuthority.acceptPreparedTrackView({
+		ownerId: OWNER_ID,
+		runId: RUN_ID,
+		expectedRunVersion: 1,
+		expectedInputDigest: INPUT_DIGEST,
+		descriptor: preparedDescriptorFixture(INPUT_DIGEST, PREPARED_ID),
+		objects: preparedObjectsFixture(PREPARED_ID),
+		deleteAfter: '2026-08-17T20:00:00.000Z',
+		createdAt: NOW,
+	});
+};
 
 const segmentCommand = (
 	overrides: Partial<CreateTrackingSegmentCommand> = {},
@@ -155,7 +175,7 @@ const artifactCommand = (
 const createSegmentAuthority = async () => {
 	const value = authorityFixture();
 	await value.authority.createRun(runCommand());
-	await value.authority.recordPreparedMedia(preparedCommand());
+	await seedPreparedTrackView(value);
 	await value.authority.createSegment(segmentCommand());
 	return value;
 };
@@ -224,13 +244,11 @@ describe('TrackingAuthority', () => {
 		expect(second.profileDigest).not.toBe(PROFILE_DIGEST);
 	});
 
-	test('keeps prepared media and segment specifications immutable across replay', async () => {
-		const { authority } = authorityFixture();
+	test('consumes complete prepared authority and keeps segment specifications immutable across replay', async () => {
+		const value = authorityFixture();
+		const { authority } = value;
 		await authority.createRun(runCommand());
-		const prepared = await authority.recordPreparedMedia(preparedCommand());
-		expect(await authority.recordPreparedMedia(preparedCommand())).toEqual(
-			prepared,
-		);
+		await seedPreparedTrackView(value);
 		const segment = await authority.createSegment(segmentCommand());
 		expect(segment).toMatchObject({
 			id: SEGMENT_ID,
@@ -241,14 +259,6 @@ describe('TrackingAuthority', () => {
 		expect(segment.specificationDigest).toMatch(/^[0-9a-f]{64}$/);
 		expect(await authority.createSegment(segmentCommand())).toEqual(segment);
 
-		const changedDescriptor = submissionFixture().trackingRequest.prepared;
-		changedDescriptor.checksumSha256 = 'f'.repeat(64);
-		await expectAuthorityError(
-			authority.recordPreparedMedia(
-				preparedCommand({ descriptor: changedDescriptor }),
-			),
-			'CONFLICT',
-		);
 		await expectAuthorityError(
 			authority.createSegment(
 				segmentCommand({ availabilityDeadlineAt: 2_000_000_001 }),
@@ -258,9 +268,10 @@ describe('TrackingAuthority', () => {
 	});
 
 	test('rejects segment seeds outside their prepared Race window or order', async () => {
-		const { authority } = authorityFixture();
+		const value = authorityFixture();
+		const { authority } = value;
 		await authority.createRun(runCommand());
-		await authority.recordPreparedMedia(preparedCommand());
+		await seedPreparedTrackView(value);
 		await expectAuthorityError(
 			authority.createSegment(
 				segmentCommand({
@@ -513,12 +524,17 @@ describe('TrackingAuthority', () => {
 	});
 
 	test('fails closed for missing ownership, parents, and invalid transitions', async () => {
-		const { authority } = authorityFixture();
+		const value = authorityFixture();
+		const { authority } = value;
 		await authority.createRun(runCommand());
 		await expectAuthorityError(
-			authority.recordPreparedMedia(
-				preparedCommand({ ownerId: 'different-owner' }),
-			),
+			authority.fenceRun({
+				ownerId: 'different-owner',
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status: 'cancelled',
+				completedAt: LATER,
+			}),
 			'NOT_FOUND',
 		);
 		await expectAuthorityError(
@@ -532,7 +548,7 @@ describe('TrackingAuthority', () => {
 			profileDigest: PROFILE_DIGEST,
 			segments: [],
 		});
-		await authority.recordPreparedMedia(preparedCommand());
+		await seedPreparedTrackView(value);
 		await expectAuthorityError(
 			authority.activateAttempt(
 				attemptCommand({ segmentId: SECOND_SEGMENT_ID }),
@@ -774,9 +790,10 @@ describe('TrackingAuthority', () => {
 	});
 
 	test('creates a Re-identification segment under the same run', async () => {
-		const { authority } = authorityFixture();
+		const value = authorityFixture();
+		const { authority } = value;
 		await authority.createRun(runCommand());
-		await authority.recordPreparedMedia(preparedCommand());
+		await seedPreparedTrackView(value);
 		await authority.createSegment(segmentCommand());
 		const segment = await authority.createSegment(
 			segmentCommand({

@@ -332,8 +332,11 @@ The exact migration can evolve during implementation, but these ownership and im
 | `driving_analysis` | owner, Car, Drive session, Race-video ID, Race window, pinned map version, seed, status/stage/progress high-water mark, current run, timestamps |
 | `driving_analysis_request` | owner and client request ID, request digest, analysis ID, outcome; prevents duplicate jobs |
 | `inference_profile` | canonicalization version, immutable inference-affecting configuration, profile digest; excludes leases, timing, hardware, and transfer details |
-| `driving_analysis_run` | sequence, Workflow ID, Inference-profile digest, status, input digest, started/completed timestamps; one immutable profile and one Workflow per run |
-| `prepared_tracking_media` | run, source and preparation digests, immutable R2 descriptor, frame-manifest descriptor, checksums, byte counts |
+| `tracking_run` | analysis, owner, sequence, Workflow ID, Inference-profile digest, status/version, input digest, started/completed timestamps; one immutable profile and one Workflow per run |
+| `tracking_run_input` | run/owner, Race-video ID and private source key, source checksum/size, exact Race window, approved Track-map version, fixed source-layout version/digest/dimensions; immutable and unique per run |
+| `prepared_tracking_media` | run, immutable preparation descriptor, source/preparation/media/frame-manifest digests, byte counts, exact Race window; immutable and unique per run |
+| `prepared_tracking_object` | prepared-media/run identity, media or frame-manifest role, private R2 key, checksum, byte count, content type/encoding; exactly one of each role per accepted descriptor |
+| `prepared_tracking_retention` | run/prepared-media identity, earliest deletion time, active/deleted state, optimistic version, deletion timestamp; mutable only through the terminal cleanup transition |
 | `tracking_segment` | immutable ID/run/order, initial or Re-identification seed, prepared-media descriptor, specification version and digest, availability deadline, successful outcome, accepted-artifact binding |
 | `tracking_execution_attempt` | segment and attempt IDs, mutable internal state, active lease ID/fencing token, profile digest, timing and bounded diagnostics; never a Transfer-grant URL |
 | `tracking_transfer_request` | stable ID, attempt, GET/PUT role, logical object descriptor, state; grant material is never persisted |
@@ -352,6 +355,7 @@ Approved Track-map versions, Inference profiles, Tracking-segment specifications
 - Uploaded Race recordings remain private and reusable by analyses for the same Drive session until the User deletes them. Deletion is refused while an analysis is active; completed analyses retain their derived evidence but cannot be retried after their source recording is deleted.
 - Incomplete multipart uploads expire and are aborted automatically. Their D1 upload-part records are then deleted.
 - Working Race-window media is retained while a run is active or awaiting Re-identification, then deleted within 24 hours after completion, cancellation, or terminal failure.
+- Accepted prepared Track-view objects remain checksum-bound to their immutable descriptor. Cleanup requires both their configured retention time and at least 24 hours since the owning Tracking run became terminal; the deletion record advances monotonically and retries are idempotent.
 - Attempt-specific staging objects and promoted objects not referenced by a successful D1 commit are never evidence and are garbage-collected within 24 hours. Accepted Subject observations use separate keys that no Transfer grant can write.
 - Compressed accepted Subject observations and every eligible Corner clip remain until the User deletes the Driving analysis. These are the retained provenance needed to explain a result.
 - Do not retain extracted full frames, model masks, or debug video by default.
