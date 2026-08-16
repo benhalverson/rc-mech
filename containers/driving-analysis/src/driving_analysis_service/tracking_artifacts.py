@@ -93,13 +93,15 @@ class BundleReservation:
         *,
         deadline: float | None = None,
     ) -> None:
-        _validate_name(destination.name)
+        self._destination_name = _validate_name(destination.name)
+        validated_capacities: dict[str, int] = {}
         for name, capacity in capacities.items():
-            _validate_name(name)
+            safe_name = _validate_name(name)
             if capacity < 0:
                 raise ValueError("Bundle member capacity cannot be negative")
+            validated_capacities[safe_name] = capacity
         self.destination = destination
-        self.capacities = dict(capacities)
+        self.capacities = validated_capacities
         self.deadline = deadline
         self._root_scope = open_private_root(destination.parent)
         self._root_descriptor: int | None = None
@@ -171,7 +173,7 @@ class BundleReservation:
             _rename_noreplace(
                 self._root(),
                 self._pending_name,
-                self.destination.name,
+                self._destination_name,
             )
         except FileExistsError:
             return False
@@ -259,10 +261,8 @@ def bundle_member_path(
     bundle_suffix: str,
     member_suffix: str,
 ) -> BundleMember:
-    bundle_name = f"{artifact_id}{bundle_suffix}"
-    member_name = f"{artifact_id}{member_suffix}"
-    _validate_name(bundle_name)
-    _validate_name(member_name)
+    bundle_name = _validate_name(f"{artifact_id}{bundle_suffix}")
+    member_name = _validate_name(f"{artifact_id}{member_suffix}")
     with open_private_root(settings.artifact_root) as root_descriptor:
         bundle_descriptor = _open_bundle(root_descriptor, bundle_name)
         os.close(bundle_descriptor)
@@ -270,8 +270,7 @@ def bundle_member_path(
 
 
 def bundle_exists(settings: ServiceSettings, artifact_id: str, suffix: str) -> bool:
-    name = f"{artifact_id}{suffix}"
-    _validate_name(name)
+    name = _validate_name(f"{artifact_id}{suffix}")
     with open_private_root(settings.artifact_root) as root_descriptor:
         try:
             identity = os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
@@ -303,9 +302,9 @@ def publish_bundle(
 
 
 def ensure_bundle_durable(destination: Path, *, deadline: float | None = None) -> None:
-    _validate_name(destination.name)
+    name = _validate_name(destination.name)
     with open_private_root(destination.parent) as root_descriptor:
-        bundle_descriptor = _open_bundle(root_descriptor, destination.name)
+        bundle_descriptor = _open_bundle(root_descriptor, name)
         try:
             fsync_with_deadline(bundle_descriptor, deadline)
             fsync_with_deadline(root_descriptor, deadline)
@@ -588,9 +587,13 @@ def _write_all(descriptor: int, value: bytes) -> None:
         remaining = remaining[written:]
 
 
-def _validate_name(name: str) -> None:
-    if not name or name in {".", ".."} or Path(name).name != name:
+def _validate_name(name: str) -> str:
+    # CodeQL models basename as a path-injection sanitizer; retain it here
+    # instead of the equivalent Path.name operation.
+    safe_name = os.path.basename(name)  # noqa: PTH119
+    if not safe_name or safe_name in {".", ".."} or safe_name != name:
         raise ValueError("Artifact names must be one path component")
+    return safe_name
 
 
 def _member_size(value: Path | bytes) -> int:
@@ -620,9 +623,10 @@ def _copy_descriptors(
 
 
 def _open_bundle(root_descriptor: int, name: str) -> int:
+    safe_name = _validate_name(name)
     try:
         return os.open(
-            name,
+            safe_name,
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
             dir_fd=root_descriptor,
         )
@@ -632,11 +636,13 @@ def _open_bundle(root_descriptor: int, name: str) -> int:
 
 def _try_open_bundle_member(member: BundleMember) -> int | None:
     descriptor: int | None = None
+    bundle_name = _validate_name(member.bundle_name)
+    member_name = _validate_name(member.member_name)
     try:
         with open_private_root(member.root) as root_descriptor:
             try:
                 bundle_descriptor = os.open(
-                    member.bundle_name,
+                    bundle_name,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                     dir_fd=root_descriptor,
                 )
@@ -647,7 +653,7 @@ def _try_open_bundle_member(member: BundleMember) -> int | None:
             try:
                 try:
                     descriptor = os.open(
-                        member.member_name,
+                        member_name,
                         os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                         dir_fd=bundle_descriptor,
                     )
