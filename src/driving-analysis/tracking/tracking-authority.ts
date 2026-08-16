@@ -13,9 +13,7 @@ import {
 	fenceTrackingRunCommandSchema,
 	type PublicTrackingProvenance,
 	publicTrackingProvenanceSchema,
-	type RecordPreparedTrackingMediaCommand,
 	type RecordTrackingTransferRequestCommand,
-	recordPreparedTrackingMediaCommandSchema,
 	recordTrackingTransferRequestCommandSchema,
 	type TransitionTrackingAttemptCommand,
 	type TransitionTrackingTransferRequestCommand,
@@ -26,11 +24,14 @@ import {
 import {
 	inferenceProfileAuthority,
 	preparedTrackingMedia,
+	preparedTrackingObject,
+	preparedTrackingRetention,
 	subjectObservationArtifact,
 	trackingAuthoritySchema,
 	trackingExecutionAttempt,
 	trackingPublicProvenance,
 	trackingRun,
+	trackingRunInput,
 	trackingSegment,
 	trackingTransferRequest,
 } from './authority-schema';
@@ -39,6 +40,10 @@ import {
 	digestInferenceProfile,
 	inferenceProfileSchema,
 } from './inference-profile';
+import {
+	FRAME_MANIFEST_CONTENT_TYPE,
+	PREPARED_MEDIA_CONTENT_TYPE,
+} from './track-view-contracts';
 import { buildTrackingSegmentSpecification } from './tracking-segment-specification';
 
 export type TrackingAuthorityErrorCode =
@@ -58,7 +63,6 @@ export class TrackingAuthorityError extends Error {
 }
 
 type TrackingRunRecord = typeof trackingRun.$inferSelect;
-type PreparedTrackingMediaRecord = typeof preparedTrackingMedia.$inferSelect;
 type TrackingSegmentRecord = typeof trackingSegment.$inferSelect;
 type TrackingAttemptRecord = typeof trackingExecutionAttempt.$inferSelect;
 type TrackingTransferRequestRecord =
@@ -90,10 +94,10 @@ const ALLOWED_ATTEMPT_TRANSITIONS: Readonly<
 };
 
 export class TrackingAuthority {
-	readonly #database;
+	private readonly database;
 
 	constructor(binding: D1Database) {
-		this.#database = drizzle(binding, { schema: trackingAuthoritySchema });
+		this.database = drizzle(binding, { schema: trackingAuthoritySchema });
 	}
 
 	async createRun(
@@ -103,8 +107,8 @@ export class TrackingAuthority {
 		const profile = inferenceProfileSchema.parse(command.profile);
 		const profileDigest = await digestInferenceProfile(profile);
 		const configurationJson = JSON.stringify(profile);
-		await this.#database.batch([
-			this.#database
+		await this.database.batch([
+			this.database
 				.insert(inferenceProfileAuthority)
 				.values({
 					profileDigest,
@@ -114,7 +118,7 @@ export class TrackingAuthority {
 					createdAt: command.createdAt,
 				})
 				.onConflictDoNothing(),
-			this.#database
+			this.database
 				.insert(trackingRun)
 				.values({
 					id: command.runId,
@@ -131,12 +135,12 @@ export class TrackingAuthority {
 				.onConflictDoNothing(),
 		]);
 		const [storedProfile, storedRun] = await Promise.all([
-			this.#database
+			this.database
 				.select()
 				.from(inferenceProfileAuthority)
 				.where(eq(inferenceProfileAuthority.profileDigest, profileDigest))
 				.get(),
-			this.#database
+			this.database
 				.select()
 				.from(trackingRun)
 				.where(
@@ -172,73 +176,81 @@ export class TrackingAuthority {
 		return storedRun;
 	}
 
-	async recordPreparedMedia(
-		commandValue: RecordPreparedTrackingMediaCommand,
-	): Promise<PreparedTrackingMediaRecord> {
-		const command =
-			recordPreparedTrackingMediaCommandSchema.parse(commandValue);
-		await this.#requireActiveRun(command.ownerId, command.runId);
-		const descriptor = preparedMediaArtifactSchema.parse(command.descriptor);
-		const descriptorJson = JSON.stringify(descriptor);
-		await this.#database
-			.insert(preparedTrackingMedia)
-			.values({
-				id: descriptor.preparedMediaId,
-				runId: command.runId,
-				descriptorJson,
-				preparationInputDigest: descriptor.preparationInputDigest,
-				preparedChecksum: descriptor.checksumSha256,
-				frameManifestChecksum: descriptor.frameManifestChecksumSha256,
-				sourceChecksum: descriptor.sourceChecksumSha256,
-				windowStartTimestampMs: descriptor.window.startTimestampMs,
-				windowEndTimestampMs: descriptor.window.endTimestampMs,
-				createdAt: command.createdAt,
-			})
-			.onConflictDoNothing();
-		const stored = await this.#database
-			.select()
-			.from(preparedTrackingMedia)
-			.where(
-				or(
-					eq(preparedTrackingMedia.id, descriptor.preparedMediaId),
-					eq(preparedTrackingMedia.runId, command.runId),
-				),
-			)
-			.get();
-		/* c8 ignore next -- an insert-or-existing D1 write always yields one matching identity unless D1 fails. */
-		if (!stored) throw conflict('Prepared media was not persisted');
-		if (
-			stored.id !== descriptor.preparedMediaId ||
-			stored.runId !== command.runId ||
-			stored.descriptorJson !== descriptorJson ||
-			stored.createdAt !== command.createdAt
-		)
-			throw conflict(
-				'Prepared-media identity was replayed with different immutable input',
-			);
-		return stored;
-	}
-
 	async createSegment(
 		commandValue: CreateTrackingSegmentCommand,
 	): Promise<TrackingSegmentRecord> {
 		const command = createTrackingSegmentCommandSchema.parse(commandValue);
-		const run = await this.#requireActiveRun(command.ownerId, command.runId);
-		const preparedRecord = await this.#database
-			.select()
-			.from(preparedTrackingMedia)
-			.where(
-				and(
-					eq(preparedTrackingMedia.id, command.preparedMediaId),
-					eq(preparedTrackingMedia.runId, command.runId),
-				),
-			)
-			.get();
-		if (!preparedRecord)
-			throw notFound('Prepared media was not found for this run');
+		const run = await this.requireActiveRun(command.ownerId, command.runId);
+		const [preparedRecord, input, objects, retention] = await Promise.all([
+			this.database
+				.select()
+				.from(preparedTrackingMedia)
+				.where(
+					and(
+						eq(preparedTrackingMedia.id, command.preparedMediaId),
+						eq(preparedTrackingMedia.runId, command.runId),
+					),
+				)
+				.get(),
+			this.database
+				.select()
+				.from(trackingRunInput)
+				.where(
+					and(
+						eq(trackingRunInput.runId, command.runId),
+						eq(trackingRunInput.ownerId, command.ownerId),
+					),
+				)
+				.get(),
+			this.database
+				.select()
+				.from(preparedTrackingObject)
+				.where(
+					eq(preparedTrackingObject.preparedMediaId, command.preparedMediaId),
+				)
+				.orderBy(asc(preparedTrackingObject.role)),
+			this.database
+				.select()
+				.from(preparedTrackingRetention)
+				.where(
+					and(
+						eq(preparedTrackingRetention.runId, command.runId),
+						eq(
+							preparedTrackingRetention.preparedMediaId,
+							command.preparedMediaId,
+						),
+						eq(preparedTrackingRetention.state, 'active'),
+					),
+				)
+				.get(),
+		]);
+		if (!preparedRecord || !input || !retention || objects.length !== 2)
+			throw notFound('Accepted prepared Track view was not found for this run');
 		const prepared = preparedMediaArtifactSchema.parse(
 			JSON.parse(preparedRecord.descriptorJson),
 		);
+		const manifest = objects[0];
+		const media = objects[1];
+		/* c8 ignore next 19 -- the typed prepared-view authority validates this tuple before its one immutable D1 commit; this remains a corruption defense at the consumer boundary. */
+		if (
+			input.inputDigest !== run.inputDigest ||
+			prepared.preparationInputDigest !== input.inputDigest ||
+			prepared.sourceByteCount !== input.sourceByteCount ||
+			prepared.sourceChecksumSha256 !== input.sourceChecksum ||
+			prepared.window.startTimestampMs !== input.windowStartTimestampMs ||
+			prepared.window.endTimestampMs !== input.windowEndTimestampMs ||
+			manifest?.role !== 'frame-manifest' ||
+			manifest.byteCount !== prepared.frameManifestByteCount ||
+			manifest.checksumSha256 !== prepared.frameManifestChecksumSha256 ||
+			manifest.contentType !== FRAME_MANIFEST_CONTENT_TYPE ||
+			manifest.contentEncoding !== 'gzip' ||
+			media?.role !== 'prepared-media' ||
+			media.byteCount !== prepared.byteCount ||
+			media.checksumSha256 !== prepared.checksumSha256 ||
+			media.contentType !== PREPARED_MEDIA_CONTENT_TYPE ||
+			media.contentEncoding !== null
+		)
+			throw conflict('Prepared Track-view authority is inconsistent');
 		if (
 			command.seed.value.timestampMs < prepared.window.startTimestampMs ||
 			command.seed.value.timestampMs >= prepared.window.endTimestampMs ||
@@ -253,7 +265,7 @@ export class TrackingAuthority {
 			run.profileDigest,
 		);
 		const seedJson = JSON.stringify(command.seed.value);
-		await this.#database
+		await this.database
 			.insert(trackingSegment)
 			.values({
 				id: command.segmentId,
@@ -272,7 +284,7 @@ export class TrackingAuthority {
 				createdAt: command.createdAt,
 			})
 			.onConflictDoNothing();
-		const stored = await this.#database
+		const stored = await this.database
 			.select()
 			.from(trackingSegment)
 			.where(
@@ -309,16 +321,16 @@ export class TrackingAuthority {
 		commandValue: ActivateTrackingAttemptCommand,
 	): Promise<TrackingAttemptRecord> {
 		const command = activateTrackingAttemptCommandSchema.parse(commandValue);
-		await this.#requireActiveRun(command.ownerId, command.runId);
-		const segment = await this.#ownedSegment(command.runId, command.segmentId);
+		await this.requireActiveRun(command.ownerId, command.runId);
+		const segment = await this.ownedSegment(command.runId, command.segmentId);
 		if (!segment) throw notFound('Tracking segment was not found');
-		const existing = await this.#database
+		const existing = await this.database
 			.select()
 			.from(trackingExecutionAttempt)
 			.where(eq(trackingExecutionAttempt.id, command.attemptId))
 			.get();
 		if (existing) {
-			this.#assertAttemptIdentity(existing, segment, command);
+			this.assertAttemptIdentity(existing, segment, command);
 			if (
 				segment.currentAttemptId === command.attemptId &&
 				existing.state !== 'proposed'
@@ -341,7 +353,7 @@ export class TrackingAuthority {
 						command.expectedCurrentAttemptId,
 					);
 		const runIsCurrent = exists(
-			this.#database
+			this.database
 				.select({ id: trackingRun.id })
 				.from(trackingRun)
 				.where(
@@ -352,8 +364,8 @@ export class TrackingAuthority {
 					),
 				),
 		);
-		await this.#database.batch([
-			this.#database
+		await this.database.batch([
+			this.database
 				.insert(trackingExecutionAttempt)
 				.values({
 					id: command.attemptId,
@@ -369,7 +381,7 @@ export class TrackingAuthority {
 					updatedAt: command.createdAt,
 				})
 				.onConflictDoNothing(),
-			this.#database
+			this.database
 				.update(trackingSegment)
 				.set({
 					currentAttemptId: command.attemptId,
@@ -387,7 +399,7 @@ export class TrackingAuthority {
 						runIsCurrent,
 					),
 				),
-			this.#database
+			this.database
 				.update(trackingExecutionAttempt)
 				.set({
 					state: 'active',
@@ -402,7 +414,7 @@ export class TrackingAuthority {
 						eq(trackingExecutionAttempt.fence, command.fence),
 						eq(trackingExecutionAttempt.state, 'proposed'),
 						exists(
-							this.#database
+							this.database
 								.select({ id: trackingSegment.id })
 								.from(trackingSegment)
 								.where(
@@ -418,17 +430,17 @@ export class TrackingAuthority {
 				),
 		]);
 		const [activated, current] = await Promise.all([
-			this.#database
+			this.database
 				.select()
 				.from(trackingExecutionAttempt)
 				.where(eq(trackingExecutionAttempt.id, command.attemptId))
 				.get(),
-			this.#ownedSegment(command.runId, command.segmentId),
+			this.ownedSegment(command.runId, command.segmentId),
 		]);
 		/* c8 ignore next 2 -- these are post-batch D1 race defenses; the conditional-write behavior is exercised through the migration integration tests. */
 		if (!activated || !current)
 			throw stale('Tracking attempt was not activated');
-		this.#assertAttemptIdentity(activated, current, command);
+		this.assertAttemptIdentity(activated, current, command);
 		/* c8 ignore next 5 -- these are post-batch D1 race defenses; the conditional-write behavior is exercised through the migration integration tests. */
 		if (
 			activated.state !== 'active' ||
@@ -442,7 +454,7 @@ export class TrackingAuthority {
 		commandValue: TransitionTrackingAttemptCommand,
 	): Promise<TrackingAttemptRecord> {
 		const command = transitionTrackingAttemptCommandSchema.parse(commandValue);
-		const attempt = await this.#requireCurrentAttempt(command);
+		const attempt = await this.requireCurrentAttempt(command);
 		if (
 			attempt.state === command.nextState &&
 			attempt.progress === command.progress &&
@@ -456,7 +468,7 @@ export class TrackingAuthority {
 			(command.nextState === 'failed') !== (command.safeFailureCode !== null)
 		)
 			throw invalidTransition('Tracking-attempt transition is invalid');
-		const updated = await this.#database
+		const updated = await this.database
 			.update(trackingExecutionAttempt)
 			.set({
 				state: command.nextState,
@@ -473,7 +485,7 @@ export class TrackingAuthority {
 					eq(trackingExecutionAttempt.fence, command.fence),
 					eq(trackingExecutionAttempt.state, command.expectedState),
 					eq(trackingExecutionAttempt.version, attempt.version),
-					this.#currentAuthorityExists(command),
+					this.currentAuthorityExists(command),
 				),
 			)
 			.returning()
@@ -488,8 +500,8 @@ export class TrackingAuthority {
 	): Promise<TrackingTransferRequestRecord> {
 		const command =
 			recordTrackingTransferRequestCommandSchema.parse(commandValue);
-		await this.#requireCurrentAttempt(command);
-		await this.#database
+		await this.requireCurrentAttempt(command);
+		await this.database
 			.insert(trackingTransferRequest)
 			.values({
 				id: command.transferRequestId,
@@ -503,7 +515,7 @@ export class TrackingAuthority {
 				updatedAt: command.createdAt,
 			})
 			.onConflictDoNothing();
-		const stored = await this.#database
+		const stored = await this.database
 			.select()
 			.from(trackingTransferRequest)
 			.where(
@@ -537,8 +549,8 @@ export class TrackingAuthority {
 	): Promise<TrackingTransferRequestRecord> {
 		const command =
 			transitionTrackingTransferRequestCommandSchema.parse(commandValue);
-		await this.#requireCurrentAttempt(command);
-		const request = await this.#database
+		await this.requireCurrentAttempt(command);
+		const request = await this.database
 			.select()
 			.from(trackingTransferRequest)
 			.where(
@@ -557,7 +569,7 @@ export class TrackingAuthority {
 				: command.nextState !== 'completed')
 		)
 			throw invalidTransition('Transfer-request transition is invalid');
-		const updated = await this.#database
+		const updated = await this.database
 			.update(trackingTransferRequest)
 			.set({
 				state: command.nextState,
@@ -570,7 +582,7 @@ export class TrackingAuthority {
 					eq(trackingTransferRequest.attemptId, command.attemptId),
 					eq(trackingTransferRequest.state, command.expectedState),
 					eq(trackingTransferRequest.version, request.version),
-					this.#currentAuthorityExists(command),
+					this.currentAuthorityExists(command),
 				),
 			)
 			.returning()
@@ -584,21 +596,21 @@ export class TrackingAuthority {
 		commandValue: AcceptTrackingArtifactCommand,
 	): Promise<SubjectObservationArtifactRecord> {
 		const command = acceptTrackingArtifactCommandSchema.parse(commandValue);
-		await this.#requireActiveRun(command.ownerId, command.runId);
-		const segment = await this.#ownedSegment(command.runId, command.segmentId);
+		await this.requireActiveRun(command.ownerId, command.runId);
+		const segment = await this.ownedSegment(command.runId, command.segmentId);
 		if (!segment) throw notFound('Tracking segment was not found');
 		if (segment.acceptedArtifactId !== null) {
-			const accepted = await this.#acceptedArtifact(segment.acceptedArtifactId);
+			const accepted = await this.acceptedArtifact(segment.acceptedArtifactId);
 			if (accepted && artifactMatches(accepted, command)) return accepted;
 			throw conflict(
 				'Tracking segment already has different accepted evidence',
 			);
 		}
-		const attempt = await this.#requireCurrentAttempt(command);
+		const attempt = await this.requireCurrentAttempt(command);
 		if (attempt.state !== 'output-ready')
 			throw invalidTransition('Tracking artifact is not output-ready');
 		const gapJson = command.gap === null ? null : JSON.stringify(command.gap);
-		const artifactSelection = this.#database
+		const artifactSelection = this.database
 			.select({
 				id: sql<string>`${command.artifactId}`,
 				runId: trackingSegment.runId,
@@ -649,12 +661,12 @@ export class TrackingAuthority {
 					),
 				),
 			);
-		await this.#database.batch([
-			this.#database
+		await this.database.batch([
+			this.database
 				.insert(subjectObservationArtifact)
 				.select(artifactSelection)
 				.onConflictDoNothing(),
-			this.#database
+			this.database
 				.update(trackingSegment)
 				.set({
 					outcome: command.outcome,
@@ -674,7 +686,7 @@ export class TrackingAuthority {
 						eq(trackingSegment.authorityFence, command.fence),
 						isNull(trackingSegment.acceptedArtifactId),
 						exists(
-							this.#database
+							this.database
 								.select({ id: subjectObservationArtifact.id })
 								.from(subjectObservationArtifact)
 								.where(
@@ -686,7 +698,7 @@ export class TrackingAuthority {
 						),
 					),
 				),
-			this.#database
+			this.database
 				.update(trackingExecutionAttempt)
 				.set({
 					state: 'completed',
@@ -699,7 +711,7 @@ export class TrackingAuthority {
 						eq(trackingExecutionAttempt.state, 'output-ready'),
 						eq(trackingExecutionAttempt.version, attempt.version),
 						exists(
-							this.#database
+							this.database
 								.select({ id: trackingSegment.id })
 								.from(trackingSegment)
 								.where(
@@ -713,8 +725,8 @@ export class TrackingAuthority {
 				),
 		]);
 		const [accepted, updatedSegment] = await Promise.all([
-			this.#acceptedArtifact(command.artifactId),
-			this.#ownedSegment(command.runId, command.segmentId),
+			this.acceptedArtifact(command.artifactId),
+			this.ownedSegment(command.runId, command.segmentId),
 		]);
 		/* c8 ignore next 3 -- these are post-batch D1 race defenses; acceptance itself is one conditional batch. */
 		if (!accepted || updatedSegment?.acceptedArtifactId !== command.artifactId)
@@ -729,7 +741,7 @@ export class TrackingAuthority {
 		commandValue: FenceTrackingRunCommand,
 	): Promise<TrackingRunRecord> {
 		const command = fenceTrackingRunCommandSchema.parse(commandValue);
-		const run = await this.#requireOwnedRun(command.ownerId, command.runId);
+		const run = await this.requireOwnedRun(command.ownerId, command.runId);
 		if (
 			run.status === command.status &&
 			run.version === command.expectedVersion + 1 &&
@@ -738,7 +750,7 @@ export class TrackingAuthority {
 			return run;
 		if (run.status !== 'active' || run.version !== command.expectedVersion)
 			throw stale('Tracking run has already changed');
-		const updated = await this.#database
+		const updated = await this.database
 			.update(trackingRun)
 			.set({
 				status: command.status,
@@ -765,7 +777,7 @@ export class TrackingAuthority {
 		analysisId: string,
 		runId: string,
 	): Promise<PublicTrackingProvenance> {
-		const rows = await this.#database
+		const rows = await this.database
 			.select()
 			.from(trackingPublicProvenance)
 			.where(
@@ -808,11 +820,11 @@ export class TrackingAuthority {
 		});
 	}
 
-	async #requireOwnedRun(
+	private async requireOwnedRun(
 		ownerId: string,
 		runId: string,
 	): Promise<TrackingRunRecord> {
-		const run = await this.#database
+		const run = await this.database
 			.select()
 			.from(trackingRun)
 			.where(and(eq(trackingRun.id, runId), eq(trackingRun.ownerId, ownerId)))
@@ -821,21 +833,21 @@ export class TrackingAuthority {
 		return run;
 	}
 
-	async #requireActiveRun(
+	private async requireActiveRun(
 		ownerId: string,
 		runId: string,
 	): Promise<TrackingRunRecord> {
-		const run = await this.#requireOwnedRun(ownerId, runId);
+		const run = await this.requireOwnedRun(ownerId, runId);
 		if (run.status !== 'active')
 			throw stale('Tracking run is no longer active');
 		return run;
 	}
 
-	async #ownedSegment(
+	private async ownedSegment(
 		runId: string,
 		segmentId: string,
 	): Promise<TrackingSegmentRecord | undefined> {
-		return this.#database
+		return this.database
 			.select()
 			.from(trackingSegment)
 			.where(
@@ -847,7 +859,7 @@ export class TrackingAuthority {
 			.get();
 	}
 
-	async #requireCurrentAttempt(command: {
+	private async requireCurrentAttempt(command: {
 		ownerId: string;
 		runId: string;
 		segmentId: string;
@@ -855,17 +867,17 @@ export class TrackingAuthority {
 		leaseId: string;
 		fence: number;
 	}): Promise<TrackingAttemptRecord> {
-		await this.#requireActiveRun(command.ownerId, command.runId);
+		await this.requireActiveRun(command.ownerId, command.runId);
 		const [segment, attempt] = await Promise.all([
-			this.#ownedSegment(command.runId, command.segmentId),
-			this.#database
+			this.ownedSegment(command.runId, command.segmentId),
+			this.database
 				.select()
 				.from(trackingExecutionAttempt)
 				.where(eq(trackingExecutionAttempt.id, command.attemptId))
 				.get(),
 		]);
 		if (!segment || !attempt) throw notFound('Tracking attempt was not found');
-		this.#assertAttemptIdentity(attempt, segment, command);
+		this.assertAttemptIdentity(attempt, segment, command);
 		if (
 			segment.currentAttemptId !== command.attemptId ||
 			segment.authorityLeaseId !== command.leaseId ||
@@ -878,7 +890,7 @@ export class TrackingAuthority {
 		return attempt;
 	}
 
-	#assertAttemptIdentity(
+	private assertAttemptIdentity(
 		attempt: TrackingAttemptRecord,
 		segment: TrackingSegmentRecord,
 		command: { segmentId: string; leaseId: string; fence: number },
@@ -893,7 +905,7 @@ export class TrackingAuthority {
 			throw conflict('Tracking-attempt identity is inconsistent');
 	}
 
-	#currentAuthorityExists(command: {
+	private currentAuthorityExists(command: {
 		ownerId: string;
 		runId: string;
 		segmentId: string;
@@ -902,7 +914,7 @@ export class TrackingAuthority {
 		fence: number;
 	}) {
 		return exists(
-			this.#database
+			this.database
 				.select({ id: trackingSegment.id })
 				.from(trackingSegment)
 				.innerJoin(trackingRun, eq(trackingRun.id, trackingSegment.runId))
@@ -920,10 +932,10 @@ export class TrackingAuthority {
 		);
 	}
 
-	async #acceptedArtifact(
+	private async acceptedArtifact(
 		artifactId: string,
 	): Promise<SubjectObservationArtifactRecord | undefined> {
-		return this.#database
+		return this.database
 			.select()
 			.from(subjectObservationArtifact)
 			.where(eq(subjectObservationArtifact.id, artifactId))

@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm';
 import {
 	check,
+	foreignKey,
 	index,
 	integer,
+	primaryKey,
 	sqliteTable,
 	sqliteView,
 	text,
@@ -81,9 +83,120 @@ export const preparedTrackingMedia = sqliteTable(
 	},
 	(table) => [
 		uniqueIndex('prepared_tracking_media_run').on(table.runId),
+		uniqueIndex('prepared_tracking_media_identity').on(table.id, table.runId),
 		check(
 			'prepared_tracking_media_window',
 			sql`${table.windowEndTimestampMs} > ${table.windowStartTimestampMs}`,
+		),
+	],
+);
+
+export const trackingRunInput = sqliteTable(
+	'tracking_run_input',
+	{
+		runId: text('run_id')
+			.primaryKey()
+			.references(() => trackingRun.id),
+		ownerId: text('owner_id').notNull(),
+		raceVideoId: text('race_video_id').notNull(),
+		sourceObjectKey: text('source_object_key').notNull(),
+		sourceByteCount: integer('source_byte_count').notNull(),
+		sourceChecksum: text('source_checksum').notNull(),
+		windowStartTimestampMs: integer('window_start_timestamp_ms').notNull(),
+		windowEndTimestampMs: integer('window_end_timestamp_ms').notNull(),
+		approvedTrackMapVersionId: text('approved_track_map_version_id').notNull(),
+		sourceLayoutVersion: text('source_layout_version').notNull(),
+		sourceLayoutDigest: text('source_layout_digest').notNull(),
+		sourceWidth: integer('source_width').notNull(),
+		sourceHeight: integer('source_height').notNull(),
+		inputDigest: text('input_digest').notNull(),
+		createdAt: text('created_at').notNull(),
+	},
+	(table) => [
+		index('tracking_run_input_owner').on(table.ownerId, table.runId),
+		check('tracking_run_input_source_bytes', sql`${table.sourceByteCount} > 0`),
+		check(
+			'tracking_run_input_source_checksum',
+			sql`length(${table.sourceChecksum}) = 64`,
+		),
+		check(
+			'tracking_run_input_window',
+			sql`${table.windowEndTimestampMs} > ${table.windowStartTimestampMs}`,
+		),
+		check(
+			'tracking_run_input_layout_digest',
+			sql`length(${table.sourceLayoutDigest}) = 64`,
+		),
+		check(
+			'tracking_run_input_dimensions',
+			sql`${table.sourceWidth} > 0 AND ${table.sourceHeight} > 0`,
+		),
+		check('tracking_run_input_digest', sql`length(${table.inputDigest}) = 64`),
+	],
+);
+
+export const preparedTrackingObject = sqliteTable(
+	'prepared_tracking_object',
+	{
+		preparedMediaId: text('prepared_media_id').notNull(),
+		runId: text('run_id').notNull(),
+		role: text('role', {
+			enum: ['prepared-media', 'frame-manifest'],
+		}).notNull(),
+		objectKey: text('object_key').notNull().unique(),
+		byteCount: integer('byte_count').notNull(),
+		checksumSha256: text('checksum_sha256').notNull(),
+		contentType: text('content_type').notNull(),
+		contentEncoding: text('content_encoding'),
+		createdAt: text('created_at').notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.preparedMediaId, table.role] }),
+		foreignKey({
+			columns: [table.preparedMediaId, table.runId],
+			foreignColumns: [preparedTrackingMedia.id, preparedTrackingMedia.runId],
+		}),
+		index('prepared_tracking_object_run').on(table.runId),
+		check('prepared_tracking_object_bytes', sql`${table.byteCount} > 0`),
+		check(
+			'prepared_tracking_object_checksum',
+			sql`length(${table.checksumSha256}) = 64`,
+		),
+		check(
+			'prepared_tracking_object_media',
+			sql`(${table.role} = 'prepared-media' AND ${table.contentType} = 'video/mp4' AND ${table.contentEncoding} IS NULL) OR (${table.role} = 'frame-manifest' AND ${table.contentType} = 'application/vnd.rc-mech.prepared-frame-manifest+json' AND ${table.contentEncoding} = 'gzip')`,
+		),
+	],
+);
+
+export const preparedTrackingRetention = sqliteTable(
+	'prepared_tracking_retention',
+	{
+		runId: text('run_id')
+			.primaryKey()
+			.references(() => trackingRun.id),
+		preparedMediaId: text('prepared_media_id')
+			.notNull()
+			.unique()
+			.references(() => preparedTrackingMedia.id),
+		deleteAfter: text('delete_after').notNull(),
+		state: text('state', { enum: ['active', 'deleted'] })
+			.notNull()
+			.default('active'),
+		version: integer('version').notNull().default(1),
+		deletedAt: text('deleted_at'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+	},
+	(table) => [
+		index('prepared_tracking_retention_cleanup').on(
+			table.state,
+			table.deleteAfter,
+		),
+		check('prepared_tracking_retention_version', sql`${table.version} > 0`),
+		check(
+			'prepared_tracking_retention_state',
+			sql`(${table.state} = 'active' AND ${table.deletedAt} IS NULL) OR (${table.state} = 'deleted' AND ${table.deletedAt} IS NOT NULL)`,
 		),
 	],
 );
@@ -279,6 +392,9 @@ export const trackingAuthoritySchema = {
 	inferenceProfileAuthority,
 	trackingRun,
 	preparedTrackingMedia,
+	trackingRunInput,
+	preparedTrackingObject,
+	preparedTrackingRetention,
 	trackingSegment,
 	trackingExecutionAttempt,
 	trackingTransferRequest,

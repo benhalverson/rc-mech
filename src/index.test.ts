@@ -54,6 +54,7 @@ const mockAi = {
 const MOCK_ENV = {
 	DB: mockD1(),
 	PHOTOS: mockR2,
+	ANALYSIS_MEDIA: mockR2,
 	EMAIL: {
 		send: async () => {
 			throw new Error('Unexpected email delivery in backend tests');

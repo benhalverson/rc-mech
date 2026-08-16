@@ -160,6 +160,10 @@ _Avoid_: Full video, trim, processing range
 The bottom two-thirds of a supported Race recording, where the authoritative static-camera view remains fixed for the entire Race window. Other camera panels, overlays, and broadcast graphics are outside the Driving analysis.
 _Avoid_: User-selected crop, camera feed, composite view
 
+**Prepared Track view**:
+The immutable private media artifact prepared once for a Tracking run from its pinned Race window and fixed Track view, together with a checksum-bound frame manifest that preserves source frame and timestamp provenance. It never contains or grants access to the original Race recording, and a disposable local copy does not become new authority after cache loss.
+_Avoid_: Original recording, mutable crop, cache entry, GPU upload
+
 **Track layout**:
 The physical arrangement and direction of the racing surface visible in the Track view. One venue may use different Track layouts over time.
 _Avoid_: Track, venue, camera view

@@ -31,7 +31,13 @@
 			"migrations_dir": "migrations"
 		}
 	],
-	"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
+	"r2_buckets": [
+		{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" },
+		{
+			"binding": "ANALYSIS_MEDIA",
+			"bucket_name": "rc-mech-analysis-media"
+		}
+	],
 	"durable_objects": {
 		"bindings": [
 			{ "name": "GPU_LEASE_COORDINATOR", "class_name": "GpuLeaseCoordinator" }
@@ -58,7 +64,13 @@
 					"migrations_dir": "migrations"
 				}
 			],
-			"r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" }],
+			"r2_buckets": [
+				{ "binding": "PHOTOS", "bucket_name": "rc-mech-photos" },
+				{
+					"binding": "ANALYSIS_MEDIA",
+					"bucket_name": "rc-mech-analysis-media"
+				}
+			],
 			"durable_objects": {
 				"bindings": [
 					{

@@ -72,23 +72,26 @@ export class MockD1Controller {
 	readonly queries: RecordedD1Query[] = [];
 	readonly batches: string[][] = [];
 	readonly database: D1Database;
-	#steps: D1Step[] = [];
-	readonly #queryByStatement = new WeakMap<D1PreparedStatement, string>();
+	private steps: D1Step[] = [];
+	private readonly queryByStatement = new WeakMap<
+		D1PreparedStatement,
+		string
+	>();
 
 	constructor() {
-		this.database = this.#database();
+		this.database = this.createDatabase();
 	}
 
 	queue(...steps: D1Step[]): void {
-		this.#steps.push(...steps);
+		this.steps.push(...steps);
 	}
 
 	expectConsumed(): void {
-		expect(this.#steps).toEqual([]);
+		expect(this.steps).toEqual([]);
 	}
 
-	#take(kind: RecordedD1Query['operation']): D1Step {
-		const step = this.#steps.shift();
+	private take(kind: RecordedD1Query['operation']): D1Step {
+		const step = this.steps.shift();
 		if (!step) throw new Error(`Unexpected D1 ${kind} call`);
 		if (step.kind === 'error') throw step.error;
 		if (step.kind !== kind)
@@ -96,11 +99,11 @@ export class MockD1Controller {
 		return step;
 	}
 
-	#statement(query: string): D1PreparedStatement {
+	private statement(query: string): D1PreparedStatement {
 		let values: unknown[] = [];
 		const record = (operation: RecordedD1Query['operation']) => {
 			this.queries.push({ query, values, operation });
-			return this.#take(operation);
+			return this.take(operation);
 		};
 		const statement: D1PreparedStatement = {
 			bind: (...nextValues) => {
@@ -125,7 +128,7 @@ export class MockD1Controller {
 				) as D1Result<T>;
 			},
 			raw: (async () => {
-				const step = this.#steps.shift();
+				const step = this.steps.shift();
 				if (!step) throw new Error('Unexpected D1 raw call');
 				if (step.kind === 'error') throw step.error;
 				if (step.kind !== 'first' && step.kind !== 'all')
@@ -138,20 +141,20 @@ export class MockD1Controller {
 				return rows.map((row) => rawRow(query, row));
 			}) as D1PreparedStatement['raw'],
 		};
-		this.#queryByStatement.set(statement, query);
+		this.queryByStatement.set(statement, query);
 		return statement;
 	}
 
-	#database(): D1Database {
-		const prepare = (query: string) => this.#statement(query);
+	private createDatabase(): D1Database {
+		const prepare = (query: string) => this.statement(query);
 		const batch = async <T = unknown>(statements: D1PreparedStatement[]) => {
 			this.batches.push(
 				statements.map(
-					(statement) => this.#queryByStatement.get(statement) ?? '<unknown>',
+					(statement) => this.queryByStatement.get(statement) ?? '<unknown>',
 				),
 			);
 			this.queries.push({ query: '<batch>', values: [], operation: 'batch' });
-			const step = this.#take('batch');
+			const step = this.take('batch');
 			const rows = step.kind === 'batch' ? step.rows : undefined;
 			return statements.map((_, index) =>
 				d1Result(
@@ -308,10 +311,12 @@ export class MockR2Controller {
 		key: string,
 		value: string,
 		httpMetadata: R2HTTPMetadata = { contentType: 'image/jpeg' },
+		customMetadata?: Record<string, string>,
 	): void {
 		this.objects.set(key, {
 			bytes: new TextEncoder().encode(value),
 			httpMetadata,
+			customMetadata,
 		});
 	}
 }
@@ -330,6 +335,7 @@ export const createHonoFixture = (
 		typeof options === 'boolean' ? { authenticated: options } : options;
 	const d1 = new MockD1Controller();
 	const r2 = new MockR2Controller();
+	const analysisMedia = new MockR2Controller();
 	const email: SendEmail = {
 		send: async () => {
 			throw new Error('Unexpected email delivery in backend tests');
@@ -370,6 +376,7 @@ export const createHonoFixture = (
 	const env = {
 		DB: d1.database,
 		PHOTOS: r2.bucket,
+		ANALYSIS_MEDIA: analysisMedia.bucket,
 		EMAIL: email,
 		AI: ai,
 		ASSETS: assets,
@@ -396,6 +403,7 @@ export const createHonoFixture = (
 	return {
 		d1,
 		r2,
+		analysisMedia,
 		env,
 		request: (path: string, init?: RequestInit) => app.request(path, init, env),
 	};
