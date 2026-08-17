@@ -21,6 +21,7 @@ import {
 import type {
 	PublicTrackingProvenance,
 	PublicTrackingState,
+	TrackingWorkflowIdentity,
 } from './authority-contracts';
 import {
 	type ExecutionIdentity,
@@ -36,9 +37,11 @@ import {
 import {
 	type R2TransferGrantAuthority,
 	r2TransferGrantAuthority,
+	TrackingTransferGrantError,
 } from './r2-transfer-grant-authority';
 import {
 	type TrackingArtifactPublication,
+	TrackingArtifactPublicationError,
 	trackingArtifactPublication,
 } from './tracking-artifact-publication';
 import {
@@ -47,7 +50,14 @@ import {
 } from './tracking-authority';
 
 const STATUS_POLL_INTERVAL = '15 seconds';
-const ACQUIRE_RETRY_LIMIT = Math.ceil(GPU_MAX_DEADLINE_MS / (15 * 1000));
+const SINGLE_ATTEMPT_STEP = {
+	retries: {
+		limit: 1,
+		delay: 0,
+		backoff: 'constant',
+	},
+	timeout: '30 seconds',
+} as const;
 
 const authorityIdentifierSchema = z
 	.string()
@@ -184,22 +194,20 @@ export class FirstTrackingSegmentWorkflow {
 				this.authority.workflowContext(workflowIdentity),
 			);
 		}
-		await this.authorizeProviderContact(
-			workflowIdentity,
-			identity,
-			step,
-			'submit',
-		);
-
 		let status: JobStatus;
 		try {
-			status = await step.do('submit-tracking-segment', async () => {
-				const result = await this.provider.submit(
-					this.submission(context, identity),
-				);
-				if (result.ok === false) throw providerFailure(result.code);
-				return result.value;
-			});
+			status = await step.do(
+				'submit-tracking-segment',
+				SINGLE_ATTEMPT_STEP,
+				async () => {
+					await this.assertProviderAuthority(workflowIdentity, identity);
+					const result = await this.provider.submit(
+						this.submission(context, identity),
+					);
+					if (result.ok === false) throw providerFailure(result.code);
+					return result.value;
+				},
+			);
 		} catch (error) {
 			return this.fail(error, workflowIdentity, identity, step);
 		}
@@ -229,7 +237,12 @@ export class FirstTrackingSegmentWorkflow {
 								transferRequestId,
 								artifact,
 							});
-						} catch {
+						} catch (error) {
+							if (
+								error instanceof TrackingArtifactPublicationError &&
+								error.code === 'STALE_AUTHORITY'
+							)
+								throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
 							throw new TrackingWorkflowError('TRACKING_ARTIFACT_INVALID');
 						}
 						return { accepted: true };
@@ -248,16 +261,26 @@ export class FirstTrackingSegmentWorkflow {
 						throw new TrackingWorkflowError('TRACKING_PROVIDER_FAILED');
 					status = await step.do(
 						`deliver-${request.role}-grant-${statusIndex}`,
+						SINGLE_ATTEMPT_STEP,
 						async () => {
-							const grant = await this.grants.issue({
-								...identity,
-								transferRequestId: request.transferRequestId,
-								role: request.role,
-								method: request.method,
-							});
-							const result = await this.provider.deliverTransferGrant(grant);
-							if (result.ok === false) throw providerFailure(result.code);
-							return result.value;
+							try {
+								const grant = await this.grants.issue({
+									...identity,
+									transferRequestId: request.transferRequestId,
+									role: request.role,
+									method: request.method,
+								});
+								const result = await this.provider.deliverTransferGrant(grant);
+								if (result.ok === false) throw providerFailure(result.code);
+								return result.value;
+							} catch (error) {
+								if (
+									error instanceof TrackingTransferGrantError &&
+									error.code === 'LEASE_MISMATCH'
+								)
+									throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+								throw error;
+							}
 						},
 					);
 					continue;
@@ -267,15 +290,11 @@ export class FirstTrackingSegmentWorkflow {
 					`wait-for-tracking-status-${statusIndex}`,
 					STATUS_POLL_INTERVAL,
 				);
-				await this.authorizeProviderContact(
-					workflowIdentity,
-					identity,
-					step,
-					`status-${statusIndex}`,
-				);
 				status = await step.do(
 					`read-tracking-status-${statusIndex}`,
+					SINGLE_ATTEMPT_STEP,
 					async () => {
+						await this.assertProviderAuthority(workflowIdentity, identity);
 						const result = await this.provider.status(
 							providerIdentity(identity),
 						);
@@ -309,13 +328,7 @@ export class FirstTrackingSegmentWorkflow {
 	}
 
 	private async acquireAndActivate(
-		workflowIdentity: {
-			ownerId: string;
-			analysisId: string;
-			runId: string;
-			workflowId: string;
-			segmentId: string;
-		},
+		workflowIdentity: TrackingWorkflowIdentity,
 		context: TrackingWorkflowContext,
 		createdAt: string,
 		step: WorkflowStep,
@@ -329,14 +342,7 @@ export class FirstTrackingSegmentWorkflow {
 		);
 		const lease = await step.do(
 			'acquire-first-tracking-lease',
-			{
-				retries: {
-					limit: ACQUIRE_RETRY_LIMIT,
-					delay: STATUS_POLL_INTERVAL,
-					backoff: 'constant',
-				},
-				timeout: GPU_MAX_DEADLINE_MS,
-			},
+			SINGLE_ATTEMPT_STEP,
 			async () => {
 				const result = await this.coordinator.acquire({
 					segmentId: context.segmentId,
@@ -403,38 +409,19 @@ export class FirstTrackingSegmentWorkflow {
 		};
 	}
 
-	private async authorizeProviderContact(
-		workflowIdentity: {
-			ownerId: string;
-			analysisId: string;
-			runId: string;
-			workflowId: string;
-			segmentId: string;
-		},
+	private async assertProviderAuthority(
+		workflowIdentity: TrackingWorkflowIdentity,
 		identity: AttemptIdentity,
-		step: WorkflowStep,
-		name: string,
 	): Promise<void> {
-		const context = await step.do(
-			`reload-current-authority-${name}`,
-			async () => this.authority.workflowContext(workflowIdentity),
-		);
+		const context = await this.authority.workflowContext(workflowIdentity);
 		assertCurrentAttempt(context, identity);
-		const witness = await step.do(`witness-current-lease-${name}`, async () =>
-			this.coordinator.witness(leaseIdentity(identity)),
-		);
+		const witness = await this.coordinator.witness(leaseIdentity(identity));
 		if (witness.status !== 'ok')
 			throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
 	}
 
 	private async synchronizeAuthority(
-		workflowIdentity: {
-			ownerId: string;
-			analysisId: string;
-			runId: string;
-			workflowId: string;
-			segmentId: string;
-		},
+		workflowIdentity: TrackingWorkflowIdentity,
 		identity: AttemptIdentity,
 		status: JobStatus,
 		statusIndex: number,
@@ -487,16 +474,15 @@ export class FirstTrackingSegmentWorkflow {
 
 	private async fail(
 		error: unknown,
-		workflowIdentity: {
-			ownerId: string;
-			analysisId: string;
-			runId: string;
-			workflowId: string;
-			segmentId: string;
-		},
+		workflowIdentity: TrackingWorkflowIdentity,
 		identity: AttemptIdentity,
 		step: WorkflowStep,
 	): Promise<never> {
+		if (
+			error instanceof TrackingWorkflowError &&
+			error.code === 'TRACKING_AUTHORITY_STALE'
+		)
+			throw error;
 		const code = publicFailure(error);
 		try {
 			await step.do('record-safe-tracking-failure', async () => {
@@ -527,13 +513,7 @@ export class FirstTrackingSegmentWorkflow {
 	}
 
 	private publicResult(
-		workflowIdentity: {
-			ownerId: string;
-			analysisId: string;
-			runId: string;
-			workflowId: string;
-			segmentId: string;
-		},
+		workflowIdentity: TrackingWorkflowIdentity,
 		step: WorkflowStep,
 		name: string,
 	): Promise<FirstTrackingWorkflowResult> {
@@ -676,7 +656,7 @@ const transitionPath = (
 	const currentRank = ranks[current as keyof typeof ranks];
 	const targetRank = ranks[target];
 	if (targetRank < currentRank)
-		throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+		throw new TrackingWorkflowError('TRACKING_PROVIDER_FAILED');
 	if (current === target) return [target];
 	if (target === 'transferring') return ['transferring'];
 	if (target === 'processing') return ['processing'];

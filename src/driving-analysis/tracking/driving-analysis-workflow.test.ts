@@ -51,9 +51,11 @@ import {
 import { inferenceProfileSchema } from './inference-profile';
 import type { TrackingProvider } from './local-sam31-provider';
 import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
+import { TrackingTransferGrantError } from './r2-transfer-grant-authority';
 import {
 	stagingArtifactObjectKey,
 	subjectProvenanceForProfile,
+	TrackingArtifactPublicationError,
 	trackingInputDigestFor,
 } from './tracking-artifact-publication';
 import {
@@ -93,19 +95,46 @@ afterEach(() => {
 
 class WorkflowStepFixture {
 	readonly names: string[] = [];
+	readonly configurations = new Map<
+		string,
+		{ retries?: { limit: number }; timeout?: string | number } | null
+	>();
+	private readonly outputs = new Map<string, unknown>();
 
 	async do<T>(
 		name: string,
-		callbackOrConfiguration: (() => Promise<T>) | object,
+		callbackOrConfiguration:
+			| (() => Promise<T>)
+			| {
+					retries?: { limit: number };
+					timeout?: string | number;
+			  },
 		configuredCallback?: () => Promise<T>,
 	): Promise<T> {
 		this.names.push(name);
+		if (this.outputs.has(name)) return this.outputs.get(name) as T;
+		const configuration =
+			typeof callbackOrConfiguration === 'function'
+				? null
+				: callbackOrConfiguration;
+		this.configurations.set(name, configuration);
 		const callback =
 			typeof callbackOrConfiguration === 'function'
 				? callbackOrConfiguration
 				: configuredCallback;
 		if (!callback) throw new Error('missing Workflow callback');
-		return callback();
+		const attemptLimit = configuration?.retries?.limit ?? 5;
+		let failure: unknown;
+		for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
+			try {
+				const output = await callback();
+				this.outputs.set(name, output);
+				return output;
+			} catch (error) {
+				failure = error;
+			}
+		}
+		throw failure;
 	}
 
 	async sleep(name: string): Promise<void> {
@@ -128,7 +157,7 @@ class CoordinatorFixture {
 		return { status: 'enqueued' as const };
 	}
 
-	async acquire(input: GpuLeaseAcquireInput) {
+	async acquire(input: GpuLeaseAcquireInput): Promise<GpuLeaseAcquireResult> {
 		this.calls.push('coordinator-acquire');
 		this.trace.push('coordinator-acquire');
 		return {
@@ -687,10 +716,19 @@ describe('DrivingAnalysisWorkflow', () => {
 		const callsBeforeReplay = fetcher.mock.calls.length;
 		const replay = await workflow.run(
 			workflowEvent(),
-			new WorkflowStepFixture() as unknown as WorkflowStep,
+			steps as unknown as WorkflowStep,
 		);
 		expect(replay).toEqual(result);
+		const authoritativeReplay = await workflow.run(
+			workflowEvent(),
+			new WorkflowStepFixture() as unknown as WorkflowStep,
+		);
+		expect(authoritativeReplay).toEqual(result);
 		expect(fetcher).toHaveBeenCalledTimes(callsBeforeReplay);
+		expect(steps.configurations.get('submit-tracking-segment')).toMatchObject({
+			retries: { limit: 1 },
+			timeout: '30 seconds',
+		});
 	});
 
 	test('derives stable version-four attempt identities', async () => {
@@ -776,6 +814,56 @@ describe('DrivingAnalysisWorkflow', () => {
 		expect(value.authority.activateAttempt).not.toHaveBeenCalled();
 	});
 
+	test('keeps D1 safely queued after the single capacity attempt is unavailable', async () => {
+		const { authority, database } = await prepareAuthority();
+		const coordinator = new CoordinatorFixture(authority);
+		vi.spyOn(coordinator, 'acquire').mockResolvedValue({ status: 'busy' });
+		const workflow = new DrivingAnalysisWorkflow({} as ExecutionContext, {
+			DB: database,
+			ANALYSIS_MEDIA: new MockR2Controller().bucket,
+			GPU_LEASE_COORDINATOR: { getByName: () => coordinator },
+			GPU_PROVIDER_ORIGIN: 'https://gpu.chassisnotes.com',
+			GPU_ACCESS_CLIENT_ID: 'access-client-id',
+			GPU_ACCESS_CLIENT_SECRET: 'access-client-secret',
+			R2_ACCOUNT_ID: 'a'.repeat(32),
+			R2_ACCESS_KEY_ID: 'access-key',
+			R2_SECRET_ACCESS_KEY: 'secret-key',
+		});
+		await expect(
+			workflow.run(
+				workflowEvent(),
+				new WorkflowStepFixture() as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(
+			new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE'),
+		);
+		expect(await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID)).toEqual({
+			runId: RUN_ID,
+			lifecycle: 'queued',
+			stage: 'tracking',
+			progress: 0,
+			waitReason: 'waiting-for-capacity',
+			safeFailureCode: null,
+		});
+	});
+
+	test('retries an idempotent D1 activation without retrying provider contact', async () => {
+		const value = coreWorkflowFixture();
+		value.authority.activateAttempt.mockRejectedValueOnce(
+			new Error('transient D1 failure'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(
+			new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE'),
+		);
+		expect(value.authority.activateAttempt).toHaveBeenCalledTimes(2);
+		expect(value.provider.submit).toHaveBeenCalledOnce();
+	});
+
 	test('releases a lease that D1 refuses to activate', async () => {
 		const value = coreWorkflowFixture();
 		value.authority.activateAttempt.mockRejectedValue(
@@ -801,6 +889,10 @@ describe('DrivingAnalysisWorkflow', () => {
 			),
 		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
 		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
+		expect(value.coordinator.release).not.toHaveBeenCalled();
 	});
 
 	test('records a safe failure when grant delivery is rejected', async () => {
@@ -860,7 +952,11 @@ describe('DrivingAnalysisWorkflow', () => {
 				workflowEvent(),
 				value.steps as unknown as WorkflowStep,
 			),
-		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
+		expect(value.coordinator.release).not.toHaveBeenCalled();
 	});
 
 	test.each([
@@ -981,6 +1077,35 @@ describe('DrivingAnalysisWorkflow', () => {
 		);
 	});
 
+	test('does not rewrite stale publication authority as an artifact failure', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: completedStatusFixture(submission),
+		}));
+		value.publication.publish.mockRejectedValue(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
+		expect(value.coordinator.release).not.toHaveBeenCalled();
+	});
+
 	test('normalizes an unexpected grant-authority exception', async () => {
 		const value = coreWorkflowFixture();
 		value.provider.submit.mockImplementation(async (submission) => ({
@@ -1008,6 +1133,37 @@ describe('DrivingAnalysisWorkflow', () => {
 		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
 	});
 
+	test('does not rewrite stale grant authority as a provider failure', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(
+				submission,
+				'transfer-grant-required',
+				0,
+				{
+					transferRequestId: PREPARED_TRANSFER_ID,
+					role: 'prepared-media',
+					method: 'GET',
+				},
+				null,
+			),
+		}));
+		value.grants.issue.mockRejectedValue(
+			new TrackingTransferGrantError('LEASE_MISMATCH'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
+		expect(value.coordinator.release).not.toHaveBeenCalled();
+	});
+
 	test('rejects changed D1 authority between resume witness and provider contact', async () => {
 		const value = coreWorkflowFixture({
 			attemptId: ATTEMPT_ID,
@@ -1030,6 +1186,9 @@ describe('DrivingAnalysisWorkflow', () => {
 			),
 		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
 		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
 	});
 
 	test.each([
@@ -1091,7 +1250,7 @@ describe('DrivingAnalysisWorkflow', () => {
 		});
 		value.authority.workflowContext
 			.mockResolvedValueOnce(value.getContext())
-			.mockRejectedValueOnce(new Error('private persistence detail'));
+			.mockRejectedValue(new Error('private persistence detail'));
 		await expect(
 			value.workflow.run(
 				workflowEvent(),
