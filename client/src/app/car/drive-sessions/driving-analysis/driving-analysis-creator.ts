@@ -154,7 +154,7 @@ export class DrivingAnalysisCreator {
 	}
 
 	protected togglePlayback(player: HTMLVideoElement): void {
-		if (player.paused) void player.play();
+		if (player.paused) void player.play().catch(() => this.playing.set(false));
 		else player.pause();
 	}
 

@@ -244,7 +244,9 @@ describe('DrivingAnalysisCreator', () => {
 			configurable: true,
 			get: () => paused,
 		});
+		let playFailure: Error | null = null;
 		const play = vi.fn(async () => {
+			if (playFailure) throw playFailure;
 			paused = false;
 			video.dispatchEvent(new Event('play'));
 		});
@@ -263,6 +265,11 @@ describe('DrivingAnalysisCreator', () => {
 		expect(playback?.textContent).toContain('Pause recording');
 		playback?.click();
 		expect(pause).toHaveBeenCalledOnce();
+		playFailure = new Error('Playback unavailable');
+		playback?.click();
+		await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+		fixture.detectChanges();
+		expect(playback?.textContent).toContain('Play recording');
 		seek.value = '250000';
 		seek.dispatchEvent(new Event('input', { bubbles: true }));
 		expect(video.currentTime).toBe(250);
