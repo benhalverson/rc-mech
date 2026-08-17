@@ -44,13 +44,23 @@
 			{ "name": "GPU_LEASE_COORDINATOR", "class_name": "GpuLeaseCoordinator" }
 		]
 	},
+	"workflows": [
+		{
+			"binding": "DRIVING_ANALYSIS_WORKFLOW",
+			"name": "rc-mech-driving-analysis",
+			"class_name": "DrivingAnalysisWorkflow"
+		}
+	],
 	"migrations": [
 		{
 			"tag": "v1-gpu-lease-coordinator",
 			"new_sqlite_classes": ["GpuLeaseCoordinator"]
 		}
 	],
-	"vars": { "ENVIRONMENT": "production" },
+	"vars": {
+		"ENVIRONMENT": "production",
+		"GPU_PROVIDER_ORIGIN": "https://gpu.chassisnotes.com"
+	},
 	"env": {
 		"local": {
 			"routes": [],
@@ -80,13 +90,24 @@
 					}
 				]
 			},
+			"workflows": [
+				{
+					"binding": "DRIVING_ANALYSIS_WORKFLOW",
+					"name": "rc-mech-driving-analysis-local",
+					"class_name": "DrivingAnalysisWorkflow"
+				}
+			],
 			"migrations": [
 				{
 					"tag": "v1-gpu-lease-coordinator",
 					"new_sqlite_classes": ["GpuLeaseCoordinator"]
 				}
 			],
-			"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }
+			"vars": {
+				"APP_URL": "http://localhost:8787",
+				"ENVIRONMENT": "local",
+				"GPU_PROVIDER_ORIGIN": "https://gpu.invalid"
+			}
 		}
 	},
 	"observability": { "enabled": true }

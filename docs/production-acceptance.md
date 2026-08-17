@@ -36,6 +36,10 @@ The production Worker needs these bindings and values:
 - `EMAIL_FROM`: a verified sender address for Email Service.
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`: Worker-only
   signing material for an R2 key scoped to `rc-mech-analysis-media`.
+- `GPU_PROVIDER_ORIGIN`: the fixed HTTPS `LocalSam31Provider` origin. Production
+  config pins it to `https://gpu.chassisnotes.com`.
+- `GPU_ACCESS_CLIENT_ID` and `GPU_ACCESS_CLIENT_SECRET`: the Worker-only
+  Cloudflare Access service token admitted by the GPU-host policy.
 
 Set secrets with Wrangler rather than committing them:
 
@@ -47,6 +51,8 @@ pnpm exec wrangler secret put EMAIL_FROM
 pnpm exec wrangler secret put R2_ACCOUNT_ID
 pnpm exec wrangler secret put R2_ACCESS_KEY_ID
 pnpm exec wrangler secret put R2_SECRET_ACCESS_KEY
+pnpm exec wrangler secret put GPU_ACCESS_CLIENT_ID
+pnpm exec wrangler secret put GPU_ACCESS_CLIENT_SECRET
 ```
 
 Before deployment, run the clean-checkout checks and build the static shell:
@@ -73,7 +79,7 @@ the directory marker. A successful build should not dirty tracked files.
 
 `pnpm test:production` is the safe clean-checkout dry-run. For release
 acceptance after provisioning, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1`; that mode
-requires all seven production secret names,
+requires all nine production secret names,
 and it requires `RC_MECH_DEPLOYED_URL`, `RC_MECH_OWNER_COOKIE`,
 `RC_MECH_OWNER_CAR_ID`, `RC_MECH_OWNER_PHOTO_ID`, and
 `RC_MECH_OTHER_OWNER_COOKIE`, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after

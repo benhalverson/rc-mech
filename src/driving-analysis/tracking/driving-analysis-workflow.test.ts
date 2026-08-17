@@ -1,0 +1,1102 @@
+import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import {
+	ATTEMPT_ID,
+	inferenceProfileFixture,
+	jobStatusFixture,
+	LEASE_ID,
+	PROFILE_DIGEST,
+	RUN_ID,
+	SEGMENT_ID,
+	submissionFixture,
+} from '../../testing/driving-analysis-tracking-fixtures';
+import { MockR2Controller } from '../../testing/hono-fixture';
+import {
+	preparedDescriptorFixture,
+	preparedObjectsFixture,
+	trackingRunInputFixture,
+} from '../../testing/prepared-track-view-fixtures';
+import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
+import type {
+	GpuLeaseAcquireInput,
+	GpuLeaseAcquireResult,
+	GpuLeaseEnqueueInput,
+	GpuLeaseEnqueueResult,
+	GpuLeaseHoldInput,
+	GpuLeaseHoldReleaseInput,
+	GpuLeaseMutationResult,
+	GpuLeaseReleaseInput,
+	GpuLeaseRenewInput,
+	GpuLeaseWitnessInput,
+} from '../gpu-lease-coordinator';
+import type {
+	ExecutionIdentity,
+	JobStatus,
+	OutputArtifact,
+	SubjectProvenance,
+	TrackingJobSubmission,
+	TransferGrantCommand,
+} from './contracts';
+import {
+	DrivingAnalysisWorkflow,
+	type DrivingAnalysisWorkflowEnvironment,
+	deterministicUuidV4,
+	FirstTrackingSegmentWorkflow,
+	type FirstTrackingWorkflowPayload,
+	TrackingWorkflowError,
+} from './driving-analysis-workflow';
+import { inferenceProfileSchema } from './inference-profile';
+import type { TrackingProvider } from './local-sam31-provider';
+import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
+import {
+	stagingArtifactObjectKey,
+	subjectProvenanceForProfile,
+	trackingInputDigestFor,
+} from './tracking-artifact-publication';
+import {
+	TrackingAuthority,
+	type TrackingWorkflowContext,
+} from './tracking-authority';
+
+const OWNER_ID = 'owner-1';
+const ANALYSIS_ID = 'analysis-1';
+const WORKFLOW_ID = 'workflow-1';
+const INPUT_DIGEST =
+	'b9fcffe729ec029ce020dc5e1583d9573579d6576ffd8bfc036e05ca77b8f133';
+const NOW = new Date('2026-08-16T20:00:00.000Z');
+const PREPARED_TRANSFER_ID = '77777777-7777-4777-8777-777777777777';
+const MANIFEST_TRANSFER_ID = '88888888-8888-4888-8888-888888888888';
+const OUTPUT_TRANSFER_ID = '99999999-9999-4999-8999-999999999999';
+
+const migrationDirectory = resolve(
+	dirname(fileURLToPath(import.meta.url)),
+	'../../../migrations',
+);
+const migrations = [
+	'0019_tracking_authority.sql',
+	'0020_immutable_track_view.sql',
+	'0022_tracking_artifact_publication.sql',
+]
+	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
+	.join('\n');
+
+let sqlite: SqliteD1Fixture | undefined;
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+	sqlite?.close();
+	sqlite = undefined;
+});
+
+class WorkflowStepFixture {
+	readonly names: string[] = [];
+
+	async do<T>(
+		name: string,
+		callbackOrConfiguration: (() => Promise<T>) | object,
+		configuredCallback?: () => Promise<T>,
+	): Promise<T> {
+		this.names.push(name);
+		const callback =
+			typeof callbackOrConfiguration === 'function'
+				? callbackOrConfiguration
+				: configuredCallback;
+		if (!callback) throw new Error('missing Workflow callback');
+		return callback();
+	}
+
+	async sleep(name: string): Promise<void> {
+		this.names.push(name);
+	}
+}
+
+class CoordinatorFixture {
+	readonly calls: string[] = [];
+	private readonly authority: TrackingAuthority;
+	private readonly trace: string[];
+
+	constructor(authority: TrackingAuthority, trace: string[] = []) {
+		this.authority = authority;
+		this.trace = trace;
+	}
+
+	async enqueue(_input: GpuLeaseEnqueueInput) {
+		this.calls.push('coordinator-enqueue');
+		return { status: 'enqueued' as const };
+	}
+
+	async acquire(input: GpuLeaseAcquireInput) {
+		this.calls.push('coordinator-acquire');
+		this.trace.push('coordinator-acquire');
+		return {
+			status: 'acquired' as const,
+			segmentId: input.segmentId ?? SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			expiresAt: NOW.getTime() + 90_000,
+		};
+	}
+
+	async witness(_input: GpuLeaseWitnessInput) {
+		this.calls.push('coordinator-witness');
+		return { status: 'ok' as const, expiresAt: NOW.getTime() + 90_000 };
+	}
+
+	async renew(_input: GpuLeaseRenewInput) {
+		this.calls.push('coordinator-renew');
+		return { status: 'ok' as const, expiresAt: NOW.getTime() + 90_000 };
+	}
+
+	async beginCommitHold(_input: GpuLeaseHoldInput) {
+		this.calls.push('coordinator-hold');
+		return {
+			status: 'ok' as const,
+			holdId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			expiresAt: NOW.getTime() + 30_000,
+		};
+	}
+
+	async releaseCommitHold(_input: GpuLeaseHoldReleaseInput) {
+		this.calls.push('coordinator-release-hold');
+		return { status: 'ok' as const };
+	}
+
+	async release(input: GpuLeaseReleaseInput) {
+		if (input.completed) {
+			const accepted = await this.authority.acceptedArtifactFor(
+				OWNER_ID,
+				RUN_ID,
+				SEGMENT_ID,
+			);
+			expect(accepted).not.toBeNull();
+		}
+		this.calls.push('coordinator-release');
+		this.trace.push('coordinator-release');
+		return { status: 'ok' as const };
+	}
+}
+
+const prepareAuthority = async () => {
+	sqlite = createSqliteD1();
+	sqlite.exec(migrations);
+	const authority = new TrackingAuthority(sqlite.database);
+	const preparedAuthority = new PreparedTrackViewAuthority(sqlite.database);
+	await authority.createRun({
+		runId: RUN_ID,
+		analysisId: ANALYSIS_ID,
+		ownerId: OWNER_ID,
+		sequence: 1,
+		workflowId: WORKFLOW_ID,
+		profile: inferenceProfileFixture(),
+		inputDigest: INPUT_DIGEST,
+		createdAt: NOW.toISOString(),
+	});
+	await preparedAuthority.pinRunInput({
+		ownerId: OWNER_ID,
+		input: trackingRunInputFixture(),
+		createdAt: NOW.toISOString(),
+	});
+	await preparedAuthority.acceptPreparedTrackView({
+		ownerId: OWNER_ID,
+		runId: RUN_ID,
+		expectedRunVersion: 1,
+		expectedInputDigest: INPUT_DIGEST,
+		descriptor: preparedDescriptorFixture(INPUT_DIGEST),
+		objects: preparedObjectsFixture(),
+		deleteAfter: '2026-08-18T20:00:00.000Z',
+		createdAt: NOW.toISOString(),
+	});
+	return { authority, database: sqlite.database };
+};
+
+const workflowEvent = (): Readonly<
+	WorkflowEvent<FirstTrackingWorkflowPayload>
+> => ({
+	payload: {
+		ownerId: OWNER_ID,
+		analysisId: ANALYSIS_ID,
+		runId: RUN_ID,
+		segmentId: SEGMENT_ID,
+		preparedMediaId: preparedDescriptorFixture(INPUT_DIGEST).preparedMediaId,
+		subjectSeed: submissionFixture().trackingRequest.subjectSeed,
+	},
+	timestamp: NOW,
+	instanceId: WORKFLOW_ID,
+	workflowName: 'rc-mech-driving-analysis',
+});
+
+const status = (
+	identity: ExecutionIdentity,
+	state: JobStatus['state'],
+	progress: number,
+	transferRequest: JobStatus['transferRequest'],
+	artifact: OutputArtifact | null,
+): JobStatus => ({
+	contractVersion: 'tracking-provider.v1',
+	runId: identity.runId,
+	segmentId: identity.segmentId,
+	attemptId: identity.attemptId,
+	leaseId: identity.leaseId,
+	fencingToken: identity.fencingToken,
+	specificationDigest: identity.specificationDigest,
+	profileDigest: identity.profileDigest,
+	state,
+	resolvedProfileDigest: identity.profileDigest,
+	progress,
+	transferRequest,
+	artifact,
+	error: null,
+});
+
+const completedStatusFixture = (
+	submission: TrackingJobSubmission,
+): JobStatus => {
+	const fixture = jobStatusFixture(true).artifact;
+	if (!fixture) throw new Error('missing artifact fixture');
+	return status(submission, 'completed', 99, null, {
+		...fixture,
+		runId: submission.runId,
+		segmentId: submission.segmentId,
+		attemptId: submission.attemptId,
+		leaseId: submission.leaseId,
+		fencingToken: submission.fencingToken,
+		specificationDigest: submission.specificationDigest,
+		profileDigest: submission.profileDigest,
+		segment: {
+			...fixture.segment,
+			observationSegmentId: submission.segmentId,
+		},
+	});
+};
+
+const artifactFixture = async (
+	authority: TrackingAuthority,
+	submission: TrackingJobSubmission,
+): Promise<{ artifact: OutputArtifact; bytes: Uint8Array }> => {
+	const context = await authority.workflowContext({
+		ownerId: OWNER_ID,
+		analysisId: ANALYSIS_ID,
+		runId: RUN_ID,
+		workflowId: WORKFLOW_ID,
+		segmentId: SEGMENT_ID,
+	});
+	const provenance = await subjectProvenanceForProfile(
+		inferenceProfileSchema.parse(inferenceProfileFixture()),
+	);
+	const envelope = {
+		contractVersion: 'subject-observation-segment.v1' as const,
+		outcome: 'accepted' as const,
+		caseId: context.prepared.caseId,
+		observations: [observation(provenance)],
+		openGap: null,
+		provenance,
+	};
+	const bytes = await gzip(
+		new TextEncoder().encode(`${JSON.stringify(envelope)}\n`),
+	);
+	return {
+		bytes,
+		artifact: {
+			contractVersion: 'tracking-artifact.v1',
+			runId: submission.runId,
+			segmentId: submission.segmentId,
+			attemptId: submission.attemptId,
+			leaseId: submission.leaseId,
+			fencingToken: submission.fencingToken,
+			specificationDigest: submission.specificationDigest,
+			profileDigest: submission.profileDigest,
+			segment: {
+				observationSegmentId: submission.segmentId,
+				caseId: context.prepared.caseId,
+				byteCount: bytes.byteLength,
+				checksumSha256: await digest(bytes),
+				contentEncoding: 'gzip',
+				mediaType: 'application/vnd.rc-mech.subject-observations+json',
+				observationCount: 1,
+				completed: true,
+				gap: null,
+				provenance,
+				ffmpegVersion: context.prepared.ffmpegVersion,
+				sourceChecksumSha256: context.prepared.sourceChecksumSha256,
+				preparedChecksumSha256: context.prepared.checksumSha256,
+				preparationConfigurationDigest:
+					context.prepared.preparationConfigurationDigest,
+				trackingInputDigest: await trackingInputDigestFor(
+					context,
+					submission.segmentId,
+					provenance,
+				),
+			},
+		},
+	};
+};
+
+const observation = (provenance: SubjectProvenance) => ({
+	timestampMs: 100,
+	frameIndex: 1,
+	box: { x: 0.1, y: 0.2, width: 0.2, height: 0.2 },
+	center: { x: 0.2, y: 0.3 },
+	visibility: 'visible' as const,
+	identityConfidence: 0.9,
+	origin: 'detected' as const,
+	provenance,
+});
+
+const gzip = async (bytes: Uint8Array): Promise<Uint8Array> =>
+	new Uint8Array(
+		await new Response(
+			new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip')),
+		).arrayBuffer(),
+	);
+
+const digest = async (bytes: Uint8Array): Promise<string> => {
+	const value = await crypto.subtle.digest('SHA-256', bytes);
+	return [...new Uint8Array(value)]
+		.map((byte) => byte.toString(16).padStart(2, '0'))
+		.join('');
+};
+
+const jsonResponse = (value: unknown): Response =>
+	new Response(JSON.stringify(value), {
+		status: 200,
+		headers: { 'content-type': 'application/json' },
+	});
+
+const coreWorkflowFixture = (
+	attempt: TrackingWorkflowContext['attempt'] = null,
+) => {
+	let context: TrackingWorkflowContext = {
+		ownerId: OWNER_ID,
+		runId: RUN_ID,
+		analysisId: ANALYSIS_ID,
+		workflowId: WORKFLOW_ID,
+		profileDigest: PROFILE_DIGEST,
+		segmentId: SEGMENT_ID,
+		preparedMediaId: preparedDescriptorFixture(INPUT_DIGEST).preparedMediaId,
+		specificationDigest: '4'.repeat(64),
+		availabilityDeadlineAt: NOW.getTime() + 86_400_000,
+		outcome: null,
+		acceptedArtifactId: null,
+		outputTransferRequestId: null,
+		prepared: preparedDescriptorFixture(INPUT_DIGEST),
+		profile: inferenceProfileFixture(),
+		seed: submissionFixture().trackingRequest.subjectSeed,
+		attempt,
+	};
+	type Activation = {
+		attemptId: string;
+		leaseId: string;
+		fence: number;
+	};
+	type Transition = {
+		nextState: NonNullable<TrackingWorkflowContext['attempt']>['state'];
+		progress: number;
+		safeFailureCode: string | null;
+	};
+	const authority = {
+		createFirstSegment: vi.fn(async () => context),
+		workflowContext: vi.fn(async () => context),
+		activateAttempt: vi.fn(async (command: Activation) => {
+			context = {
+				...context,
+				attempt: {
+					attemptId: command.attemptId,
+					leaseId: command.leaseId,
+					fence: command.fence,
+					state: 'active',
+					progress: 0,
+					safeFailureCode: null,
+				},
+			};
+			return context.attempt;
+		}),
+		transitionAttempt: vi.fn(async (command: Transition) => {
+			if (!context.attempt) throw new Error('missing attempt');
+			context = {
+				...context,
+				attempt: {
+					...context.attempt,
+					state: command.nextState,
+					progress: command.progress,
+					safeFailureCode: command.safeFailureCode,
+				},
+			};
+			return context.attempt;
+		}),
+		publicState: vi.fn(async () => ({
+			runId: RUN_ID,
+			lifecycle: 'running' as const,
+			stage: 'tracking' as const,
+			progress: 99,
+			waitReason: null,
+			safeFailureCode: null,
+		})),
+		publicProvenance: vi.fn(async () => ({
+			runId: RUN_ID,
+			profileDigest: PROFILE_DIGEST,
+			segments: [],
+		})),
+	};
+	const coordinator = {
+		enqueue: vi.fn<
+			(input: GpuLeaseEnqueueInput) => Promise<GpuLeaseEnqueueResult>
+		>(async () => ({ status: 'enqueued' })),
+		acquire: vi.fn<
+			(input: GpuLeaseAcquireInput) => Promise<GpuLeaseAcquireResult>
+		>(async () => ({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			expiresAt: NOW.getTime() + 90_000,
+		})),
+		witness: vi.fn<
+			(input: GpuLeaseWitnessInput) => Promise<GpuLeaseMutationResult>
+		>(async () => ({ status: 'ok' })),
+		renew: vi.fn<
+			(input: GpuLeaseRenewInput) => Promise<GpuLeaseMutationResult>
+		>(async () => ({ status: 'ok' })),
+		release: vi.fn<
+			(input: GpuLeaseReleaseInput) => Promise<GpuLeaseMutationResult>
+		>(async () => ({ status: 'ok' })),
+		beginCommitHold: vi.fn<
+			(input: GpuLeaseHoldInput) => Promise<GpuLeaseMutationResult>
+		>(async () => ({ status: 'ok' })),
+		releaseCommitHold: vi.fn<
+			(input: GpuLeaseHoldReleaseInput) => Promise<GpuLeaseMutationResult>
+		>(async () => ({ status: 'ok' })),
+	};
+	const provider = {
+		submit: vi.fn<TrackingProvider['submit']>(async () => ({
+			ok: false,
+			code: 'TRACKING_PROVIDER_UNAVAILABLE',
+			retryable: true,
+		})),
+		status: vi.fn<TrackingProvider['status']>(async () => ({
+			ok: false,
+			code: 'TRACKING_PROVIDER_RESPONSE_INVALID',
+			retryable: false,
+		})),
+		cancel: vi.fn<TrackingProvider['cancel']>(async () => ({
+			ok: false,
+			code: 'TRACKING_PROVIDER_RESPONSE_INVALID',
+			retryable: false,
+		})),
+		deliverTransferGrant: vi.fn<TrackingProvider['deliverTransferGrant']>(
+			async () => ({
+				ok: false,
+				code: 'TRACKING_PROVIDER_RESPONSE_INVALID',
+				retryable: false,
+			}),
+		),
+	};
+	const grants = {
+		issue: vi.fn(
+			async (command: {
+				runId: string;
+				segmentId: string;
+				attemptId: string;
+				leaseId: string;
+				fencingToken: number;
+				specificationDigest: string;
+				profileDigest: string;
+				transferRequestId: string;
+				role: 'prepared-media' | 'frame-manifest' | 'observation-artifact';
+				method: 'GET' | 'PUT';
+			}) => ({
+				contractVersion: 'tracking-provider.v1' as const,
+				...command,
+				url: 'https://r2.example/object?signature=secret',
+				expiresAt: 2_000_000_000,
+			}),
+		),
+	};
+	const publication = { publish: vi.fn() };
+	const workflow = new FirstTrackingSegmentWorkflow(
+		authority as unknown as TrackingAuthority,
+		coordinator as unknown as ConstructorParameters<
+			typeof FirstTrackingSegmentWorkflow
+		>[1],
+		provider,
+		grants,
+		publication,
+	);
+	return {
+		authority,
+		coordinator,
+		getContext: () => context,
+		grants,
+		provider,
+		publication,
+		steps: new WorkflowStepFixture(),
+		workflow,
+	};
+};
+
+describe('DrivingAnalysisWorkflow', () => {
+	test('runs the first immutable segment through LocalSam31Provider and commits evidence before release', async () => {
+		const { authority, database } = await prepareAuthority();
+		const r2 = new MockR2Controller();
+		const trace: string[] = [];
+		const coordinator = new CoordinatorFixture(authority, trace);
+		const providerCalls: string[] = [];
+		let submission: TrackingJobSubmission | undefined;
+		let artifact: OutputArtifact | undefined;
+		let bytes: Uint8Array | undefined;
+		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+			const request = input instanceof Request ? input : new Request(input);
+			const path = new URL(request.url).pathname;
+			if (path === '/v1/jobs') {
+				submission = (await request.json()) as TrackingJobSubmission;
+				const current = await authority.workflowContext({
+					ownerId: OWNER_ID,
+					analysisId: ANALYSIS_ID,
+					runId: RUN_ID,
+					workflowId: WORKFLOW_ID,
+					segmentId: SEGMENT_ID,
+				});
+				expect(current.attempt?.state).toBe('active');
+				expect(current.attempt?.leaseId).toBe(LEASE_ID);
+				({ artifact, bytes } = await artifactFixture(authority, submission));
+				providerCalls.push('provider-submit');
+				trace.push('provider-submit');
+				return jsonResponse(
+					status(
+						submission,
+						'transfer-grant-required',
+						0,
+						{
+							transferRequestId: PREPARED_TRANSFER_ID,
+							role: 'prepared-media',
+							method: 'GET',
+						},
+						null,
+					),
+				);
+			}
+			if (path.endsWith('/transfer-grants')) {
+				const grant = (await request.json()) as TransferGrantCommand;
+				providerCalls.push(`provider-grant-${grant.role}`);
+				if (!submission || !artifact || !bytes)
+					throw new Error('submission fixture was not prepared');
+				if (grant.role === 'prepared-media')
+					return jsonResponse(
+						status(
+							submission,
+							'transfer-grant-required',
+							10,
+							{
+								transferRequestId: MANIFEST_TRANSFER_ID,
+								role: 'frame-manifest',
+								method: 'GET',
+							},
+							null,
+						),
+					);
+				if (grant.role === 'frame-manifest')
+					return jsonResponse(status(submission, 'processing', 20, null, null));
+				r2.seed(
+					stagingArtifactObjectKey(submission.attemptId, OUTPUT_TRANSFER_ID),
+					bytes,
+					{ contentType: 'application/octet-stream' },
+				);
+				return jsonResponse(
+					status(submission, 'completed', 99, null, artifact),
+				);
+			}
+			if (request.method === 'GET' && path.includes('/v1/jobs/')) {
+				providerCalls.push('provider-status');
+				if (!submission || !artifact)
+					throw new Error('submission fixture was not prepared');
+				return jsonResponse(
+					status(
+						submission,
+						'output-ready',
+						90,
+						{
+							transferRequestId: OUTPUT_TRANSFER_ID,
+							role: 'observation-artifact',
+							method: 'PUT',
+						},
+						artifact,
+					),
+				);
+			}
+			throw new Error(`unexpected provider request: ${request.method} ${path}`);
+		});
+		vi.stubGlobal('fetch', fetcher);
+		const environment: DrivingAnalysisWorkflowEnvironment = {
+			DB: database,
+			ANALYSIS_MEDIA: r2.bucket,
+			GPU_LEASE_COORDINATOR: { getByName: () => coordinator },
+			GPU_PROVIDER_ORIGIN: 'https://gpu.chassisnotes.com',
+			GPU_ACCESS_CLIENT_ID: 'access-client-id',
+			GPU_ACCESS_CLIENT_SECRET: 'access-client-secret',
+			R2_ACCOUNT_ID: 'a'.repeat(32),
+			R2_ACCESS_KEY_ID: 'access-key',
+			R2_SECRET_ACCESS_KEY: 'secret-key',
+		};
+		const workflow = new DrivingAnalysisWorkflow(
+			{} as ExecutionContext,
+			environment,
+		);
+		const steps = new WorkflowStepFixture();
+		const result = await workflow.run(
+			workflowEvent(),
+			steps as unknown as WorkflowStep,
+		);
+
+		expect(result).toMatchObject({
+			state: {
+				runId: RUN_ID,
+				lifecycle: 'running',
+				stage: 'tracking',
+				progress: 99,
+				safeFailureCode: null,
+			},
+			provenance: {
+				runId: RUN_ID,
+				profileDigest: PROFILE_DIGEST,
+				segments: [
+					{
+						segmentId: SEGMENT_ID,
+						outcome: 'completed',
+						artifact: { artifactId: submission?.attemptId },
+					},
+				],
+			},
+		});
+		expect(trace.indexOf('coordinator-acquire')).toBeLessThan(
+			trace.indexOf('provider-submit'),
+		);
+		expect(providerCalls).toEqual([
+			'provider-submit',
+			'provider-grant-prepared-media',
+			'provider-grant-frame-manifest',
+			'provider-status',
+			'provider-grant-observation-artifact',
+		]);
+		expect(coordinator.calls.at(-1)).toBe('coordinator-release');
+		expect(JSON.stringify(result)).not.toMatch(
+			/leaseId|fencingToken|transferRequest|objectKey|gpu\.chassisnotes/i,
+		);
+
+		const callsBeforeReplay = fetcher.mock.calls.length;
+		const replay = await workflow.run(
+			workflowEvent(),
+			new WorkflowStepFixture() as unknown as WorkflowStep,
+		);
+		expect(replay).toEqual(result);
+		expect(fetcher).toHaveBeenCalledTimes(callsBeforeReplay);
+	});
+
+	test('derives stable version-four attempt identities', async () => {
+		const first = await deterministicUuidV4('one immutable lease');
+		expect(first).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+		);
+		expect(await deterministicUuidV4('one immutable lease')).toBe(first);
+		expect(await deterministicUuidV4('another lease')).not.toBe(first);
+	});
+
+	test('fails malformed Workflow time before touching authority', async () => {
+		const value = coreWorkflowFixture();
+		await expect(
+			value.workflow.run(
+				{ ...workflowEvent(), timestamp: new Date(Number.NaN) },
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.authority.createFirstSegment).not.toHaveBeenCalled();
+	});
+
+	test('resumes current authority and records a safe unavailable failure', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'active',
+			progress: 0,
+			safeFailureCode: null,
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(
+			new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE'),
+		);
+		expect(value.coordinator.acquire).not.toHaveBeenCalled();
+		expect(value.authority.transitionAttempt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				nextState: 'failed',
+				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+			}),
+		);
+		expect(value.coordinator.release).toHaveBeenCalledOnce();
+	});
+
+	test('replaces a stale resumed lease with a newly activated attempt', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			fence: 6,
+			state: 'active',
+			progress: 0,
+			safeFailureCode: null,
+		});
+		value.coordinator.witness.mockResolvedValueOnce({ status: 'stale' });
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.coordinator.acquire).toHaveBeenCalledOnce();
+		expect(value.authority.activateAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({ expectedCurrentAttemptId: ATTEMPT_ID }),
+		);
+	});
+
+	test('fails closed when capacity cannot return the requested segment', async () => {
+		const value = coreWorkflowFixture();
+		value.coordinator.acquire.mockResolvedValue({ status: 'busy' });
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(
+			new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE'),
+		);
+		expect(value.authority.activateAttempt).not.toHaveBeenCalled();
+	});
+
+	test('releases a lease that D1 refuses to activate', async () => {
+		const value = coreWorkflowFixture();
+		value.authority.activateAttempt.mockRejectedValue(
+			new Error('private D1 detail'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.coordinator.release).toHaveBeenCalledOnce();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+
+	test('never contacts the provider after a stale lease witness', async () => {
+		const value = coreWorkflowFixture();
+		value.coordinator.witness.mockResolvedValue({ status: 'stale' });
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+
+	test('records a safe failure when grant delivery is rejected', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(
+				submission,
+				'transfer-grant-required',
+				0,
+				{
+					transferRequestId: PREPARED_TRANSFER_ID,
+					role: 'prepared-media',
+					method: 'GET',
+				},
+				null,
+			),
+		}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+		expect(value.coordinator.renew).toHaveBeenCalledOnce();
+		expect(value.coordinator.release).toHaveBeenCalledOnce();
+	});
+
+	test.each(['processing', 'transferring', 'cancel-requested'] as const)(
+		'fails safely when the provider status read after %s is rejected',
+		async (providerState) => {
+			const value = coreWorkflowFixture();
+			value.provider.submit.mockImplementation(async (submission) => ({
+				ok: true,
+				value: status(submission, providerState, 20, null, null),
+			}));
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+			expect(value.provider.status).toHaveBeenCalledOnce();
+			expect(value.coordinator.release).toHaveBeenCalledOnce();
+		},
+	);
+
+	test('fails closed when lease renewal loses its fence', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(submission, 'processing', 20, null, null),
+		}));
+		value.coordinator.renew.mockResolvedValue({ status: 'stale' });
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+	});
+
+	test.each([
+		{
+			name: 'terminal provider status',
+			makeStatus: (submission: TrackingJobSubmission) =>
+				status(submission, 'failed', 30, null, null),
+			expected: 'TRACKING_PROVIDER_FAILED',
+		},
+		{
+			name: 'output without an artifact',
+			makeStatus: (submission: TrackingJobSubmission) =>
+				status(
+					submission,
+					'output-ready',
+					90,
+					{
+						transferRequestId: OUTPUT_TRANSFER_ID,
+						role: 'observation-artifact',
+						method: 'PUT',
+					},
+					null,
+				),
+			expected: 'TRACKING_ARTIFACT_INVALID',
+		},
+	] as const)('rejects $name', async ({ makeStatus, expected }) => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: makeStatus(submission),
+		}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(
+			new TrackingWorkflowError(
+				expected as 'TRACKING_PROVIDER_FAILED' | 'TRACKING_ARTIFACT_INVALID',
+			),
+		);
+	});
+
+	test('rejects a provider state regression from output-ready authority', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(
+				submission,
+				'transfer-grant-required',
+				90,
+				{
+					transferRequestId: PREPARED_TRANSFER_ID,
+					role: 'prepared-media',
+					method: 'GET',
+				},
+				null,
+			),
+		}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+	});
+
+	test('rejects completed output without its D1-authorized transfer identity', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: completedStatusFixture(submission),
+		}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_ARTIFACT_INVALID'));
+		expect(value.publication.publish).not.toHaveBeenCalled();
+	});
+
+	test('maps artifact-publication failures to one safe code', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: completedStatusFixture(submission),
+		}));
+		value.publication.publish.mockRejectedValue(
+			new Error('private R2 validation detail'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_ARTIFACT_INVALID'));
+		expect(value.authority.transitionAttempt).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				nextState: 'failed',
+				safeFailureCode: 'TRACKING_ARTIFACT_INVALID',
+			}),
+		);
+	});
+
+	test('normalizes an unexpected grant-authority exception', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(
+				submission,
+				'transfer-grant-required',
+				0,
+				{
+					transferRequestId: PREPARED_TRANSFER_ID,
+					role: 'prepared-media',
+					method: 'GET',
+				},
+				null,
+			),
+		}));
+		value.grants.issue.mockRejectedValue(
+			new Error('private signing exception'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+	});
+
+	test('rejects changed D1 authority between resume witness and provider contact', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'active',
+			progress: 0,
+			safeFailureCode: null,
+		});
+		value.coordinator.witness.mockImplementationOnce(async () => {
+			const context = value.getContext();
+			if (!context.attempt) throw new Error('missing attempt');
+			context.attempt.leaseId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+			return { status: 'ok' };
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+
+	test.each([
+		{
+			config: {
+				GPU_ACCESS_CLIENT_ID: 'id',
+				GPU_ACCESS_CLIENT_SECRET: 'secret',
+			},
+			expected: 'GPU provider origin is invalid',
+		},
+		{
+			config: {
+				GPU_PROVIDER_ORIGIN: 'https://gpu.chassisnotes.com',
+				GPU_ACCESS_CLIENT_SECRET: 'secret',
+			},
+			expected: 'GPU provider Access credential is invalid',
+		},
+		{
+			config: {
+				GPU_PROVIDER_ORIGIN: 'https://gpu.chassisnotes.com',
+				GPU_ACCESS_CLIENT_ID: 'id',
+			},
+			expected: 'GPU provider Access credential is invalid',
+		},
+	] as const)(
+		'fails startup when provider deployment configuration is incomplete',
+		async ({ config, expected }) => {
+			const coordinator = new CoordinatorFixture({} as TrackingAuthority);
+			const environment: DrivingAnalysisWorkflowEnvironment = {
+				DB: {} as D1Database,
+				ANALYSIS_MEDIA: {} as R2Bucket,
+				GPU_LEASE_COORDINATOR: { getByName: () => coordinator },
+				R2_ACCOUNT_ID: 'a'.repeat(32),
+				R2_ACCESS_KEY_ID: 'access-key',
+				R2_SECRET_ACCESS_KEY: 'secret-key',
+				...config,
+			};
+			const workflow = new DrivingAnalysisWorkflow(
+				{} as ExecutionContext,
+				environment,
+			);
+			await expect(
+				workflow.run(
+					workflowEvent(),
+					new WorkflowStepFixture() as unknown as WorkflowStep,
+				),
+			).rejects.toThrow(expected);
+		},
+	);
+
+	test('redacts an internal failure while recording the safe failure', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'active',
+			progress: 0,
+			safeFailureCode: null,
+		});
+		value.authority.workflowContext
+			.mockResolvedValueOnce(value.getContext())
+			.mockRejectedValueOnce(new Error('private persistence detail'));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+	});
+});

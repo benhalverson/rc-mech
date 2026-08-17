@@ -31,7 +31,10 @@ export const gpuLeaseEnqueueInput = z
 		'Deadline must be current and within the coordinator maximum',
 	);
 export const gpuLeaseAcquireInput = z
-	.object({ now: z.number().int().nonnegative().optional() })
+	.object({
+		segmentId: segmentId.optional(),
+		now: z.number().int().nonnegative().optional(),
+	})
 	.strict()
 	.default({});
 const gpuLeaseIdentityInput = z.object({ segmentId, leaseId, fence }).strict();
@@ -159,7 +162,8 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 	async acquire(
 		raw: GpuLeaseAcquireInput = {},
 	): Promise<GpuLeaseAcquireResult> {
-		const { now: requestedNow } = gpuLeaseAcquireInput.parse(raw);
+		const { segmentId: requestedSegmentId, now: requestedNow } =
+			gpuLeaseAcquireInput.parse(raw);
 		const now = this.clock(requestedNow);
 		const result = await this.mutate<GpuLeaseAcquireResult>((state) => {
 			this.expire(state, now);
@@ -172,6 +176,11 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 					this.markTerminal(state, waiter.segmentId, 'deadline-expired');
 					continue;
 				}
+				if (
+					requestedSegmentId !== undefined &&
+					waiter.segmentId !== requestedSegmentId
+				)
+					return { status: 'busy' };
 				state.waiters.shift();
 				state.fence += 1;
 				const expiresAt = Math.min(

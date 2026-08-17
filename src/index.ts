@@ -22,6 +22,7 @@ export {
 	GpuLeaseCoordinator,
 	getGpuLeaseCoordinator,
 } from './driving-analysis/gpu-lease-coordinator';
+export { DrivingAnalysisWorkflow } from './driving-analysis/tracking/driving-analysis-workflow';
 export {
 	preparedTrackViewStore,
 	R2PreparedTrackViewStore,

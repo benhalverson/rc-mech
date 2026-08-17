@@ -72,6 +72,20 @@ export const createTrackingSegmentCommandSchema = z.strictObject({
 	createdAt: isoTimestampSchema,
 });
 
+export const createFirstTrackingSegmentCommandSchema =
+	createTrackingSegmentCommandSchema.extend({
+		analysisId: authorityIdentifierSchema,
+		workflowId: authorityIdentifierSchema,
+	});
+
+export const trackingWorkflowIdentitySchema = z.strictObject({
+	ownerId: authorityIdentifierSchema,
+	analysisId: authorityIdentifierSchema,
+	runId: uuidV4Schema,
+	workflowId: authorityIdentifierSchema,
+	segmentId: uuidV4Schema,
+});
+
 export const activateTrackingAttemptCommandSchema = z.strictObject({
 	ownerId: authorityIdentifierSchema,
 	runId: uuidV4Schema,
@@ -281,11 +295,41 @@ export const publicTrackingProvenanceSchema = z.strictObject({
 	),
 });
 
+export const publicTrackingStateSchema = z.strictObject({
+	runId: uuidV4Schema,
+	lifecycle: z.enum([
+		'queued',
+		'running',
+		'awaiting-reidentification',
+		'completed',
+		'failed',
+		'cancelled',
+	]),
+	stage: z.literal('tracking'),
+	progress: z.number().int().min(0).max(100),
+	waitReason: z
+		.enum(['waiting-for-provider', 'waiting-for-capacity'])
+		.nullable(),
+	safeFailureCode: z
+		.enum([
+			'TRACKING_PROVIDER_UNAVAILABLE',
+			'TRACKING_PROVIDER_FAILED',
+			'TRACKING_ARTIFACT_INVALID',
+		])
+		.nullable(),
+});
+
 export type CreateTrackingRunCommand = z.infer<
 	typeof createTrackingRunCommandSchema
 >;
 export type CreateTrackingSegmentCommand = z.infer<
 	typeof createTrackingSegmentCommandSchema
+>;
+export type CreateFirstTrackingSegmentCommand = z.infer<
+	typeof createFirstTrackingSegmentCommandSchema
+>;
+export type TrackingWorkflowIdentity = z.infer<
+	typeof trackingWorkflowIdentitySchema
 >;
 export type ActivateTrackingAttemptCommand = z.infer<
 	typeof activateTrackingAttemptCommandSchema
@@ -323,3 +367,4 @@ export type FenceTrackingRunCommand = z.infer<
 export type PublicTrackingProvenance = z.infer<
 	typeof publicTrackingProvenanceSchema
 >;
+export type PublicTrackingState = z.infer<typeof publicTrackingStateSchema>;
