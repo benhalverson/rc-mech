@@ -1,7 +1,9 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { By } from '@angular/platform-browser';
+import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { TrackMapVersion } from './track-map.models';
+import type {
+	SaveTrackMapDraftCommand,
+	TrackMapVersion,
+} from './track-map.models';
 import { TrackMapEditor } from './track-map-editor';
 
 const version: TrackMapVersion = {
@@ -33,15 +35,79 @@ const version: TrackMapVersion = {
 		},
 	],
 };
-const eventWithValue = (value: string): Event => {
-	const input = document.createElement('input');
-	input.value = value;
-	return { target: input } as unknown as Event;
-};
 
 describe('TrackMapEditor', () => {
 	let fixture: ComponentFixture<TrackMapEditor>;
 	let component: TrackMapEditor;
+
+	const button = (name: string): HTMLButtonElement => {
+		const match = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(item) => item.textContent?.trim().includes(name),
+		) as HTMLButtonElement | undefined;
+		if (!match) throw new Error(`Button not found: ${name}`);
+		return match;
+	};
+	const fill = (selector: string, value: string): void => {
+		const input = fixture.nativeElement.querySelector(
+			selector,
+		) as HTMLInputElement;
+		input.value = value;
+		input.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
+	};
+	const labelled = <T extends HTMLInputElement | HTMLSelectElement>(
+		name: string,
+		tagName: 'input' | 'select',
+	): T => {
+		const label = [...fixture.nativeElement.querySelectorAll('label')].find(
+			(item) => item.textContent?.trim().startsWith(name),
+		) as HTMLLabelElement | undefined;
+		const control = label?.querySelector(tagName) as T | null | undefined;
+		if (!control) throw new Error(`Control not found: ${name}`);
+		return control;
+	};
+	const choose = (control: HTMLSelectElement, value: string): void => {
+		control.value = value;
+		control.dispatchEvent(new Event('input'));
+		control.dispatchEvent(new Event('change'));
+		fixture.detectChanges();
+	};
+	const canvas = (): HTMLButtonElement =>
+		fixture.nativeElement.querySelector('button.track-canvas-button');
+	const setCanvasBounds = (
+		left: number,
+		top: number,
+		width: number,
+		height: number,
+	): void => {
+		Object.defineProperty(canvas(), 'getBoundingClientRect', {
+			configurable: true,
+			value: () => ({ left, top, width, height }),
+		});
+	};
+	const press = (key: string, shiftKey = false): void => {
+		canvas().dispatchEvent(
+			new KeyboardEvent('keydown', {
+				key,
+				shiftKey,
+				bubbles: true,
+				cancelable: true,
+			}),
+		);
+		fixture.detectChanges();
+	};
+	const clickCanvas = (clientX: number, clientY: number): void => {
+		canvas().dispatchEvent(
+			new MouseEvent('click', { clientX, clientY, bubbles: true }),
+		);
+		fixture.detectChanges();
+	};
+	const savedCommands = (): SaveTrackMapDraftCommand[] => {
+		const saved: SaveTrackMapDraftCommand[] = [];
+		component.saveRequested.subscribe((command) => saved.push(command));
+		return saved;
+	};
+
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
 			imports: [TrackMapEditor],
@@ -52,108 +118,133 @@ describe('TrackMapEditor', () => {
 		fixture.detectChanges();
 	});
 	afterEach(() => TestBed.resetTestingModule());
-	it('renders the geometry and supports corner and coordinate editing', () => {
-		expect(fixture.nativeElement.textContent).toContain('Turn 1');
-		const value = component as unknown as Record<
-			string,
-			(...args: unknown[]) => void
-		>;
-		value['addCorner']();
-		value['selectCorner']('turn-2');
-		value['setKey'](eventWithValue('turn-1'));
+
+	it('edits identity and directions through rendered Signal Form controls', () => {
+		const saved = savedCommands();
+		button('Add corner').click();
 		fixture.detectChanges();
+		press('ArrowRight');
+		fill('#corner-key', 'turn-1');
 		expect(fixture.nativeElement.textContent).toContain(
 			'Corner key “turn-1” is duplicated.',
 		);
-		value['setKey'](eventWithValue('turn-2'));
-		value['selectCorner']('turn-1');
-		value['selectCorner']('missing');
-		value['setName'](eventWithValue('First corner'));
-		value['setKey'](eventWithValue('first-corner'));
-		value['setCoordinate'](eventWithValue('0.33'), 'entryStart', 'x');
-		value['selectPoint']('entryStart');
-		value['moveSelected']({
-			key: 'ArrowRight',
-			shiftKey: true,
-			preventDefault: () => undefined,
-		} as unknown as KeyboardEvent);
+		fill('#corner-key', 'turn-2');
+		fill('#corner-name', 'Hairpin');
+		choose(labelled('Entry', 'select'), 'reverse');
+		choose(labelled('Exit', 'select'), 'reverse');
+		const height = labelled<HTMLInputElement>('Height', 'input');
+		height.value = '2';
+		height.dispatchEvent(new Event('input'));
 		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain('First corner');
-		value['removeCorner']();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Corner view must be a positive rectangle inside the Track view.',
+		);
+		height.value = '0.3';
+		height.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
+		(
+			fixture.nativeElement.querySelector(
+				'button.alloy-control-primary',
+			) as HTMLButtonElement
+		).click();
+		expect(saved[0]?.corners[1]).toMatchObject({
+			key: 'turn-2',
+			name: 'Hairpin',
+			entryGate: { direction: 'reverse' },
+			exitGate: { direction: 'reverse' },
+			cornerView: { height: 0.3 },
+		});
 	});
-	it('preserves an in-progress draft for the same version and resets for a new one', () => {
-		const value = component as unknown as Record<
-			string,
-			(...args: unknown[]) => void
-		>;
-		value['addCorner']();
+
+	it('preserves same-revision edits and rebases on new revisions and versions', () => {
+		button('Add corner').click();
 		fixture.componentRef.setInput('version', { ...version, corners: [] });
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Turn 2');
+		fixture.componentRef.setInput('version', {
+			...version,
+			updatedAt: '2026-01-02',
+			corners: [{ ...version.corners[0], name: 'Canonical name' }],
+		});
+		fixture.detectChanges();
+		expect(
+			(fixture.nativeElement.querySelector('#corner-name') as HTMLInputElement)
+				.value,
+		).toBe('Canonical name');
 		fixture.componentRef.setInput('version', {
 			...version,
 			id: 'version-2',
 			corners: [],
 		});
 		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).not.toContain('Turn 2');
+		expect(fixture.nativeElement.textContent).not.toContain('Canonical name');
 	});
-	it('moves a selected point from the canvas, validates, and emits save', () => {
-		const value = component as unknown as Record<
-			string,
-			(...args: unknown[]) => unknown
-		>;
-		const canvas = document.createElement('button');
-		Object.defineProperty(canvas, 'getBoundingClientRect', {
-			value: () => ({ left: 0, top: 0, width: 640, height: 360 }),
-		});
-		value['moveFromCanvas']({
-			currentTarget: canvas,
-			clientX: 320,
-			clientY: 180,
-		} as unknown as MouseEvent);
-		let saved: readonly TrackMapVersion['corners'][number][] = [];
-		component.saveRequested.subscribe((corners) => {
-			saved = corners;
-		});
-		value['saveDraft']();
-		expect(saved).toEqual([
-			{
-				...version.corners[0],
-				entryGate: {
-					...version.corners[0].entryGate,
-					start: { x: 0.5, y: 0.5 },
-				},
-			},
-		]);
+
+	it('allocates unused keys and ordered positions after rendered removal', () => {
+		const saved = savedCommands();
+		button('Add corner').click();
+		fixture.detectChanges();
+		choose(fixture.nativeElement.querySelector('#corner-select'), 'turn-1');
+		button('Remove corner').click();
+		button('Add corner').click();
+		fixture.detectChanges();
+		button('Save draft geometry').click();
+		expect(saved[0]?.corners.map(({ key, order }) => ({ key, order }))).toEqual(
+			[
+				{ key: 'turn-2', order: 1 },
+				{ key: 'turn-1', order: 2 },
+			],
+		);
 	});
-	it('covers point targets, guarded events, and empty editor states', () => {
-		const value = component as unknown as Record<
-			string,
-			(...args: unknown[]) => unknown
-		>;
-		value['setName']({
-			target: document.createElement('div'),
-		} as unknown as Event);
-		for (const target of ['entryStart', 'entryEnd', 'exitStart', 'exitEnd']) {
-			value['selectPoint'](target);
-			value['setCoordinate'](eventWithValue('2'), target, 'y');
-		}
-		value['selectCornerEvent']({
-			target: document.createElement('div'),
-		} as unknown as Event);
-		value['selectPointEvent']({
-			target: document.createElement('div'),
-		} as unknown as Event);
-		value['moveSelected']({
-			key: 'PageDown',
-			shiftKey: false,
-		} as unknown as KeyboardEvent);
-		value['moveFromCanvas']({
-			currentTarget: document.createElement('div'),
-		} as unknown as MouseEvent);
+
+	it('moves the selected gate point by keyboard and pointer', () => {
+		const saved = savedCommands();
+		choose(
+			fixture.nativeElement.querySelector(
+				'select[aria-label="Geometry target"]',
+			),
+			'entryStart',
+		);
+		canvas().focus();
+		expect(document.activeElement).toBe(canvas());
+		press('ArrowRight', true);
+		setCanvasBounds(0, 0, 640, 360);
+		clickCanvas(320, 180);
+		button('Save draft geometry').click();
+		expect(saved[0]?.corners[0]?.entryGate.start).toEqual({ x: 0.5, y: 0.5 });
+	});
+
+	it('adjusts Corner-view position and size by keyboard and pointer', () => {
+		const saved = savedCommands();
+		const target = fixture.nativeElement.querySelector(
+			'select[aria-label="Geometry target"]',
+		) as HTMLSelectElement;
+		choose(target, 'viewPosition');
+		press('ArrowLeft');
+		press('ArrowUp');
+		setCanvasBounds(100, 100, 100, 100);
+		clickCanvas(120, 130);
+		choose(target, 'viewSize');
+		press('ArrowRight');
+		press('ArrowDown');
+		clickCanvas(180, 190);
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Geometry needs attention',
+		);
+		button('Save draft geometry').click();
+		const view = saved[0]?.corners[0]?.cornerView;
+		expect(view?.x).toBeCloseTo(0.2);
+		expect(view?.y).toBeCloseTo(0.3);
+		expect(view?.width).toBeCloseTo(0.6);
+		expect(view?.height).toBeCloseTo(0.6);
+	});
+
+	it('keeps invalid, busy, irrelevant-key, and empty states safe', () => {
+		const saved = savedCommands();
+		press('PageDown');
 		fixture.componentRef.setInput('version', {
 			...version,
+			id: 'version-invalid',
 			corners: [
 				{
 					...version.corners[0],
@@ -169,70 +260,29 @@ describe('TrackMapEditor', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Geometry needs attention',
 		);
-		value['saveDraft']();
+		for (const control of fixture.nativeElement.querySelectorAll(
+			'input, select',
+		))
+			expect((control as HTMLInputElement | HTMLSelectElement).disabled).toBe(
+				true,
+			);
+		(
+			fixture.nativeElement.querySelector(
+				'button.alloy-control-primary',
+			) as HTMLButtonElement
+		).click();
+		expect(saved).toEqual([]);
+		fixture.componentRef.setInput('busy', false);
+		fixture.componentRef.setInput('version', { ...version, corners: [] });
+		fixture.detectChanges();
+		expect(canvas().disabled).toBe(true);
+		button('Add corner').click();
+		fixture.detectChanges();
+		button('Remove corner').click();
+		fixture.detectChanges();
+		expect(canvas().disabled).toBe(true);
 		fixture.componentRef.setInput('version', null);
 		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain('Add corner');
-		expect(fixture.nativeElement.querySelector('button')?.disabled).toBe(true);
-		value['removeCorner']();
-		value['setKey'](eventWithValue('unused'));
-		value['setCoordinate'](eventWithValue('-1'), 'entryStart', 'x');
-		value['moveSelected']({
-			key: 'ArrowLeft',
-			shiftKey: false,
-			preventDefault: () => undefined,
-		} as unknown as KeyboardEvent);
-	});
-	it('clamps canvas placement and handles every keyboard direction', () => {
-		const value = component as unknown as Record<
-			string,
-			(...args: unknown[]) => unknown
-		>;
-		const canvas = document.createElement('button');
-		Object.defineProperty(canvas, 'getBoundingClientRect', {
-			value: () => ({ left: 100, top: 100, width: 100, height: 100 }),
-		});
-		value['moveFromCanvas']({
-			currentTarget: canvas,
-			clientX: 0,
-			clientY: 300,
-		} as unknown as MouseEvent);
-		for (const key of ['ArrowLeft', 'ArrowUp', 'ArrowDown']) {
-			value['moveSelected']({
-				key,
-				shiftKey: false,
-				preventDefault: () => undefined,
-			} as unknown as KeyboardEvent);
-		}
-	});
-	it('drives the editor through its semantic controls', () => {
-		const buttons = fixture.nativeElement.querySelectorAll('button');
-		(buttons[0] as HTMLButtonElement).click();
-		(buttons[1] as HTMLButtonElement).click();
-		const selects = fixture.nativeElement.querySelectorAll('select');
-		(selects[0] as HTMLSelectElement).value = 'turn-1';
-		(selects[0] as HTMLSelectElement).dispatchEvent(new Event('change'));
-		(selects[1] as HTMLSelectElement).value = 'exitEnd';
-		(selects[1] as HTMLSelectElement).dispatchEvent(new Event('change'));
-		const inputs = fixture.nativeElement.querySelectorAll('input');
-		for (const input of inputs) {
-			(input as HTMLInputElement).value = '0.4';
-			input.dispatchEvent(new Event('input'));
-		}
-		fixture.nativeElement
-			.querySelector('button.track-canvas-button')
-			?.dispatchEvent(new MouseEvent('click', { clientX: 200, clientY: 100 }));
-		fixture.nativeElement
-			.querySelector('button.alloy-control-primary')
-			?.dispatchEvent(new Event('click'));
-		for (const button of fixture.debugElement.queryAll(By.css('button'))) {
-			button.triggerEventHandler('click', new MouseEvent('click'));
-			button.triggerEventHandler('keydown', {
-				key: 'ArrowDown',
-				shiftKey: false,
-				preventDefault: () => undefined,
-			} as KeyboardEvent);
-		}
-		fixture.detectChanges();
+		expect(button('Add corner').disabled).toBe(true);
 	});
 });

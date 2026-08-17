@@ -46,4 +46,26 @@ describe('track-map rules', () => {
 		});
 		expect(validateTrackCorners([value])).toHaveLength(3);
 	});
+	it('requires a name and canonical stable key', () => {
+		expect(
+			validateTrackCorners([corner({ name: '', key: 'Bad key' })]),
+		).toEqual([
+			'Every Corner needs a name.',
+			'Corner: stable key must use lowercase letters, numbers, and single hyphens.',
+		]);
+	});
+	it('rejects nonfinite coordinates', () => {
+		expect(
+			validateTrackCorners([
+				corner({
+					entryGate: {
+						...corner().entryGate,
+						start: { x: Number.POSITIVE_INFINITY, y: Number.NaN },
+					},
+				}),
+			]),
+		).toEqual([
+			'Turn 1: entry gate must have two distinct points inside the Track view.',
+		]);
+	});
 });

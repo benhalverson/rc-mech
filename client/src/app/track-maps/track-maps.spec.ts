@@ -1,9 +1,7 @@
 import { signal } from '@angular/core';
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { By } from '@angular/platform-browser';
+import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackLayout, TrackMapVersion } from './track-map.models';
-import { TrackMapEditor } from './track-map-editor';
 import { TrackMapStore } from './track-map-store';
 import { TrackMaps } from './track-maps';
 
@@ -36,19 +34,36 @@ const layout: TrackLayout = {
 		},
 	],
 };
-const eventWithValue = (value: string): Event => {
-	const input = document.createElement('input');
-	input.value = value;
-	return { target: input } as unknown as Event;
-};
 
 describe('TrackMaps', () => {
 	let fixture: ComponentFixture<TrackMaps>;
 	let store: Record<string, unknown>;
+
+	const button = (name: string): HTMLButtonElement => {
+		const match = [...fixture.nativeElement.querySelectorAll('button')].find(
+			(item) => item.textContent?.trim().includes(name),
+		) as HTMLButtonElement | undefined;
+		if (!match) throw new Error(`Button not found: ${name}`);
+		return match;
+	};
+	const fill = (selector: string, value: string): void => {
+		const input = fixture.nativeElement.querySelector(
+			selector,
+		) as HTMLInputElement;
+		input.value = value;
+		input.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
+	};
+	const selectMain = (): void => {
+		button('Main').click();
+		fixture.detectChanges();
+	};
+
 	beforeEach(async () => {
 		const selectedLayoutId = signal<string | null>(null);
 		store = {
 			layouts: signal([layout]),
+			canManage: signal(true),
 			selectedLayoutId,
 			version: signal<TrackMapVersion | null>(null),
 			busy: signal(false),
@@ -56,8 +71,7 @@ describe('TrackMaps', () => {
 			message: signal(''),
 			readError: signal(''),
 			loading: signal(false),
-			selectLayout: vi.fn((id: string) => selectedLayoutId.set(id)),
-			loadVersion: vi.fn(),
+			openLayout: vi.fn((id: string) => selectedLayoutId.set(id)),
 			createLayout: vi.fn(),
 			createDraft: vi.fn(),
 			saveDraft: vi.fn(),
@@ -73,39 +87,30 @@ describe('TrackMaps', () => {
 		fixture.detectChanges();
 	});
 	afterEach(() => TestBed.resetTestingModule());
-	it('selects a layout, creates a layout and draft, and renames it', () => {
-		const component = fixture.componentInstance as unknown as Record<
-			string,
-			(...args: unknown[]) => void
-		>;
-		component['chooseLayout']('layout-1');
-		expect(store['selectLayout']).toHaveBeenCalledWith('layout-1');
-		expect(store['loadVersion']).toHaveBeenCalledWith('version-1');
-		component['setNewLayoutName'](eventWithValue(' New layout '));
-		component['createLayout']();
-		component['createDraft']();
-		component['setLayoutName'](eventWithValue('Renamed'));
-		component['renameLayout']();
-		expect(store['createLayout']).toHaveBeenCalledWith('New layout');
-		expect(store['createDraft']).toHaveBeenCalledWith('layout-1', undefined);
+
+	it('creates and selects layouts, then creates a draft and renames it', () => {
+		fill('#new-layout', ' New layout ');
+		button('Create').click();
+		expect(store['createLayout']).toHaveBeenCalledWith({ name: 'New layout' });
+		selectMain();
+		expect(store['openLayout']).toHaveBeenCalledWith(layout.id);
+		button('New draft').click();
+		fill('input[aria-label="Layout name"]', 'Renamed');
+		button('Rename').click();
+		expect(store['createDraft']).toHaveBeenCalledWith({
+			layoutId: layout.id,
+			sourceVersionId: undefined,
+		});
+		expect(store['renameLayout']).toHaveBeenCalledWith({ name: 'Renamed' });
 	});
-	it('renders empty and error states and guards blank commands', () => {
-		const component = fixture.componentInstance as unknown as Record<
-			string,
-			(...args: unknown[]) => void
-		>;
-		component['chooseLayout']('missing');
-		component['createDraft']();
-		component['createLayout']();
-		component['renameLayout']();
-		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Choose a layout to begin',
-		);
-		(component['newLayoutName'] as ReturnType<typeof signal<string>>).set('  ');
-		(component['layoutName'] as ReturnType<typeof signal<string>>).set('  ');
-		component['createLayout']();
-		component['renameLayout']();
+
+	it('renders empty and error states and ignores blank names', () => {
+		button('Create').click();
+		expect(store['createLayout']).not.toHaveBeenCalled();
+		selectMain();
+		fill('input[aria-label="Layout name"]', '  ');
+		button('Rename').click();
+		expect(store['renameLayout']).not.toHaveBeenCalled();
 		const layouts = store['layouts'] as ReturnType<
 			typeof signal<TrackLayout[]>
 		>;
@@ -116,6 +121,9 @@ describe('TrackMaps', () => {
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('map versions');
 		layouts.set([]);
+		(store['selectedLayoutId'] as ReturnType<typeof signal<string | null>>).set(
+			null,
+		);
 		(store['readError'] as ReturnType<typeof signal<string>>).set(
 			'Load failed',
 		);
@@ -124,87 +132,78 @@ describe('TrackMaps', () => {
 			'Mutation failed',
 		);
 		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Choose a layout to begin',
+		);
 		expect(fixture.nativeElement.textContent).toContain('Load failed');
 		expect(fixture.nativeElement.textContent).toContain('Mutation failed');
 	});
+
 	it('starts a new draft from the latest approved version', () => {
-		const approvedLayout = {
-			...layout,
-			mapVersions: [{ ...layout.mapVersions[0], status: 'approved' as const }],
-		};
 		(store['layouts'] as ReturnType<typeof signal<TrackLayout[]>>).set([
-			approvedLayout,
+			{
+				...layout,
+				mapVersions: [
+					{ ...layout.mapVersions[0], status: 'approved' as const },
+				],
+			},
 		]);
-		const component = fixture.componentInstance as unknown as Record<
-			string,
-			(...args: unknown[]) => void
-		>;
-		component['chooseLayout']('layout-1');
-		component['createDraft']();
-		expect(store['createDraft']).toHaveBeenCalledWith('layout-1', version.id);
-	});
-	it('keeps the selected workflow mounted during a layout refresh', () => {
-		const component = fixture.componentInstance as unknown as Record<
-			string,
-			(...args: unknown[]) => void
-		>;
-		component['chooseLayout']('layout-1');
 		fixture.detectChanges();
+		selectMain();
+		button('New draft').click();
+		expect(store['createDraft']).toHaveBeenCalledWith({
+			layoutId: layout.id,
+			sourceVersionId: version.id,
+		});
+	});
+
+	it('keeps the selected workflow mounted during a layout refresh', () => {
+		selectMain();
 		(store['layouts'] as ReturnType<typeof signal<TrackLayout[]>>).set([]);
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Main');
 	});
-	it('drives layout controls from the template', () => {
-		const layoutButton = fixture.nativeElement.querySelector(
-			'aside button',
-		) as HTMLButtonElement;
-		layoutButton.click();
+
+	it('keeps Owner mutation controls private for ordinary users', () => {
+		selectMain();
+		(store['canManage'] as ReturnType<typeof signal<boolean>>).set(false);
 		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Track reference');
+		expect(fixture.nativeElement.textContent).not.toContain('New layout');
+		expect(fixture.nativeElement.textContent).not.toContain('Geometry studio');
+		expect(fixture.nativeElement.textContent).toContain(
+			'Owner draft tools remain private',
+		);
+	});
+
+	it('renders retired layouts as read-only and locks selection while busy', () => {
+		(store['layouts'] as ReturnType<typeof signal<TrackLayout[]>>).set([
+			{ ...layout, status: 'retired' },
+		]);
+		fixture.detectChanges();
+		selectMain();
+		(store['busy'] as ReturnType<typeof signal<boolean>>).set(true);
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Retired Track layouts are read-only.',
+		);
+		expect(fixture.nativeElement.textContent).not.toContain('Geometry studio');
+		expect(button('Main').disabled).toBe(true);
+	});
+
+	it('wires save, retire, and retry intents through rendered controls', () => {
+		selectMain();
 		(store['version'] as ReturnType<typeof signal<TrackMapVersion | null>>).set(
 			version,
 		);
 		fixture.detectChanges();
-		const layoutNameInput = fixture.nativeElement.querySelector(
-			'input[aria-label="Layout name"]',
-		) as HTMLInputElement;
-		layoutNameInput.value = 'Template rename';
-		layoutNameInput.dispatchEvent(new Event('input'));
-		const newInput = fixture.nativeElement.querySelector(
-			'#new-layout',
-		) as HTMLInputElement;
-		newInput.value = 'From template';
-		newInput.dispatchEvent(new Event('input'));
-		fixture.nativeElement
-			.querySelector('#new-layout + button')
-			?.dispatchEvent(new Event('click'));
-		fixture.nativeElement
-			.querySelector('button.alloy-control-secondary')
-			?.dispatchEvent(new Event('click'));
-		fixture.detectChanges();
-		const component = fixture.componentInstance as unknown as Record<
-			string,
-			(...args: unknown[]) => void
-		>;
-		component['setNewLayoutName']({
-			target: document.createElement('div'),
-		} as unknown as Event);
-		component['setLayoutName']({
-			target: document.createElement('div'),
-		} as unknown as Event);
-		for (const button of fixture.debugElement.queryAll(By.css('button'))) {
-			button.triggerEventHandler('click', new Event('click'));
-		}
-		const editor = fixture.debugElement.query(By.directive(TrackMapEditor));
-		(editor.componentInstance as TrackMapEditor).saveRequested.emit(
-			version.corners,
-		);
+		button('Save draft geometry').click();
+		button('Retire layout').click();
+		expect(store['saveDraft']).toHaveBeenCalledWith({ corners: [] });
+		expect(store['retireLayout']).toHaveBeenCalledOnce();
 		(store['readError'] as ReturnType<typeof signal<string>>).set('Retry');
 		fixture.detectChanges();
-		fixture.debugElement
-			.query(By.css('[role="alert"] button'))
-			.triggerEventHandler('click', new Event('click'));
-		expect(store['refresh']).toHaveBeenCalled();
-		expect(store['saveDraft']).toHaveBeenCalledWith(version.corners);
-		fixture.detectChanges();
+		button('Try again').click();
+		expect(store['refresh']).toHaveBeenCalledOnce();
 	});
 });

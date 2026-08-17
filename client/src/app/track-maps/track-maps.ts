@@ -30,38 +30,33 @@ export class TrackMaps {
 				: null),
 	});
 
-	protected chooseLayout(layoutId: string): void {
-		this.store.selectLayout(layoutId);
-		const layout = this.store.layouts().find((item) => item.id === layoutId);
-		this.layoutName.set(layout?.name ?? '');
-		const version = layout?.mapVersions.find((item) => item.status === 'draft');
-		if (version) this.store.loadVersion(version.id);
+	protected chooseLayout(layout: TrackLayout): void {
+		this.layoutName.set(layout.name);
+		this.store.openLayout(layout.id);
 	}
 	protected createLayout(): void {
 		const name = this.newLayoutName().trim();
 		if (name) {
-			this.store.createLayout(name);
+			this.store.createLayout({ name });
 			this.newLayoutName.set('');
 		}
 	}
-	protected createDraft(): void {
-		const layout = this.selectedLayout();
-		if (layout)
-			this.store.createDraft(
-				layout.id,
-				layout.mapVersions.find((version) => version.status === 'approved')?.id,
-			);
+	protected createDraft(layout: TrackLayout): void {
+		this.store.createDraft({
+			layoutId: layout.id,
+			sourceVersionId: layout.mapVersions.find(
+				(version) => version.status === 'approved',
+			)?.id,
+		});
 	}
 	protected renameLayout(): void {
 		const name = this.layoutName().trim();
-		if (name) this.store.renameLayout(name);
+		if (name) this.store.renameLayout({ name });
 	}
-	protected setNewLayoutName(event: Event): void {
-		if (event.target instanceof HTMLInputElement)
-			this.newLayoutName.set(event.target.value);
+	protected setNewLayoutName(value: string): void {
+		this.newLayoutName.set(value);
 	}
-	protected setLayoutName(event: Event): void {
-		if (event.target instanceof HTMLInputElement)
-			this.layoutName.set(event.target.value);
+	protected setLayoutName(value: string): void {
+		this.layoutName.set(value);
 	}
 }

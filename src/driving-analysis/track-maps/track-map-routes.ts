@@ -77,43 +77,31 @@ const loadVersion = async (c: AppContext, versionId: string) => {
 	return publicVersion(version, corners);
 };
 
-const writeCorners = async (
-	database: ReturnType<typeof db>,
+const cornerRows = (
 	versionId: string,
 	corners: TrackCornerInput[],
-) => {
-	const removeExisting = database
-		.delete(trackCorner)
-		.where(eq(trackCorner.mapVersionId, versionId));
-	if (!corners.length) {
-		await removeExisting;
-		return;
-	}
-	const insertReplacement = database.insert(trackCorner).values(
-		corners.map((corner) => ({
-			id: crypto.randomUUID(),
-			mapVersionId: versionId,
-			key: corner.key,
-			name: corner.name,
-			order: corner.order,
-			entryStartX: corner.entryGate.start.x,
-			entryStartY: corner.entryGate.start.y,
-			entryEndX: corner.entryGate.end.x,
-			entryEndY: corner.entryGate.end.y,
-			entryDirection: corner.entryGate.direction,
-			exitStartX: corner.exitGate.start.x,
-			exitStartY: corner.exitGate.start.y,
-			exitEndX: corner.exitGate.end.x,
-			exitEndY: corner.exitGate.end.y,
-			exitDirection: corner.exitGate.direction,
-			viewX: corner.cornerView.x,
-			viewY: corner.cornerView.y,
-			viewWidth: corner.cornerView.width,
-			viewHeight: corner.cornerView.height,
-		})),
-	);
-	await database.batch([removeExisting, insertReplacement]);
-};
+): (typeof trackCorner.$inferInsert)[] =>
+	corners.map((corner) => ({
+		id: crypto.randomUUID(),
+		mapVersionId: versionId,
+		key: corner.key,
+		name: corner.name,
+		order: corner.order,
+		entryStartX: corner.entryGate.start.x,
+		entryStartY: corner.entryGate.start.y,
+		entryEndX: corner.entryGate.end.x,
+		entryEndY: corner.entryGate.end.y,
+		entryDirection: corner.entryGate.direction,
+		exitStartX: corner.exitGate.start.x,
+		exitStartY: corner.exitGate.start.y,
+		exitEndX: corner.exitGate.end.x,
+		exitEndY: corner.exitGate.end.y,
+		exitDirection: corner.exitGate.direction,
+		viewX: corner.cornerView.x,
+		viewY: corner.cornerView.y,
+		viewWidth: corner.cornerView.width,
+		viewHeight: corner.cornerView.height,
+	}));
 
 export const createTrackMapRoutes = () => {
 	const routes = new Hono<AppEnv>();
@@ -150,7 +138,7 @@ export const createTrackMapRoutes = () => {
 				})),
 			});
 		}
-		return c.json({ trackLayouts: result });
+		return c.json({ canManage: ownerUser, trackLayouts: result });
 	});
 
 	routes.get('/track-layouts/:layoutId/map-versions/:versionId', async (c) => {
@@ -218,6 +206,8 @@ export const createTrackMapRoutes = () => {
 			.where(eq(trackLayout.id, c.req.param('layoutId')))
 			.get();
 		if (!existing) return c.json({ error: 'Track layout not found' }, 404);
+		if (existing.status === 'retired')
+			return c.json({ error: 'Retired Track layouts are read-only' }, 409);
 		const updatedAt = now();
 		try {
 			await db(c.env)
@@ -244,6 +234,8 @@ export const createTrackMapRoutes = () => {
 			.where(eq(trackLayout.id, c.req.param('layoutId')))
 			.get();
 		if (!existing) return c.json({ error: 'Track layout not found' }, 404);
+		if (existing.status === 'retired')
+			return c.json({ error: 'Track layout is already retired' }, 409);
 		const retiredAt = now();
 		await db(c.env)
 			.update(trackLayout)
@@ -287,22 +279,28 @@ export const createTrackMapRoutes = () => {
 			.get();
 		const id = crypto.randomUUID();
 		const timestamp = now();
-		await db(c.env)
-			.insert(trackMapVersion)
-			.values({
-				id,
-				layoutId: layout.id,
-				version: (latest?.version ?? 0) + 1,
-				status: 'draft',
-				sourceVersionId: parsed.data.sourceVersionId ?? null,
-				createdBy: c.get('userId'),
-				createdAt: timestamp,
-				updatedAt: timestamp,
-				approvedBy: null,
-				approvedAt: null,
-				retiredAt: null,
-			});
-		if (source) await writeCorners(db(c.env), id, source.corners);
+		const database = db(c.env);
+		const insertVersion = database.insert(trackMapVersion).values({
+			id,
+			layoutId: layout.id,
+			version: (latest?.version ?? 0) + 1,
+			status: 'draft',
+			sourceVersionId: parsed.data.sourceVersionId ?? null,
+			createdBy: c.get('userId'),
+			createdAt: timestamp,
+			updatedAt: timestamp,
+			approvedBy: null,
+			approvedAt: null,
+			retiredAt: null,
+		});
+		if (source?.corners.length) {
+			await database.batch([
+				insertVersion,
+				database.insert(trackCorner).values(cornerRows(id, source.corners)),
+			]);
+		} else {
+			await insertVersion;
+		}
 		const created = await loadVersion(c, id);
 		return c.json({ trackMapVersion: created }, 201);
 	});
@@ -320,11 +318,37 @@ export const createTrackMapRoutes = () => {
 		if (!version) return c.json({ error: 'Track map not found' }, 404);
 		if (version.status !== 'draft')
 			return c.json({ error: 'Only draft Track maps can be edited' }, 409);
-		await writeCorners(db(c.env), version.id, parsed.data.corners);
-		await db(c.env)
+		const layout = await db(c.env)
+			.select({ status: trackLayout.status })
+			.from(trackLayout)
+			.where(eq(trackLayout.id, version.layoutId))
+			.get();
+		if (!layout || layout.status === 'retired')
+			return c.json({ error: 'Retired Track layouts are read-only' }, 409);
+		const database = db(c.env);
+		const updateVersion = database
 			.update(trackMapVersion)
 			.set({ updatedAt: now() })
-			.where(eq(trackMapVersion.id, version.id));
+			.where(
+				and(
+					eq(trackMapVersion.id, version.id),
+					eq(trackMapVersion.status, 'draft'),
+				),
+			);
+		const removeExisting = database
+			.delete(trackCorner)
+			.where(eq(trackCorner.mapVersionId, version.id));
+		if (parsed.data.corners.length) {
+			await database.batch([
+				updateVersion,
+				removeExisting,
+				database
+					.insert(trackCorner)
+					.values(cornerRows(version.id, parsed.data.corners)),
+			]);
+		} else {
+			await database.batch([updateVersion, removeExisting]);
+		}
 		return c.json({ trackMapVersion: await loadVersion(c, version.id) });
 	});
 

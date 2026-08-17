@@ -4,7 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { afterEach, describe, expect, test } from 'vitest';
-import { car, driveSession, owner, trackMapVersion } from '../../schema';
+import {
+	car,
+	driveSession,
+	owner,
+	trackCorner,
+	trackMapVersion,
+} from '../../schema';
 import { createHonoFixture } from '../../testing/hono-fixture';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 
@@ -102,6 +108,7 @@ describe('Track-map routes', () => {
 			.trackLayout;
 		response = await request('/api/v1/track-layouts');
 		expect(await response.json()).toMatchObject({
+			canManage: true,
 			trackLayouts: [{ id: layout.id, mapVersions: [] }],
 		});
 		response = await request(
@@ -125,6 +132,18 @@ describe('Track-map routes', () => {
 		expect(await response.json()).toMatchObject({
 			trackMapVersion: { corners: expect.arrayContaining([corner()]) },
 		});
+		response = await request(
+			`/api/v1/track-map-versions/${first.id}`,
+			json('PATCH', { corners: [] }),
+		);
+		expect(await response.json()).toMatchObject({
+			trackMapVersion: { corners: [] },
+		});
+		response = await request(
+			`/api/v1/track-map-versions/${first.id}`,
+			json('PATCH', { corners: [corner()] }),
+		);
+		expect(response.status).toBe(200);
 		response = await request(`/api/v1/track-map-versions/${first.id}`);
 		expect(response.status).toBe(200);
 		response = await request(
@@ -153,6 +172,52 @@ describe('Track-map routes', () => {
 			method: 'POST',
 		});
 		expect(response.status).toBe(200);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${first.id}`,
+					json('PATCH', { corners: [corner()] }),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await request(
+					`/api/v1/track-layouts/${layout.id}`,
+					json('PATCH', { name: 'Cannot rename' }),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await request(`/api/v1/track-layouts/${layout.id}/retire`, {
+					method: 'POST',
+				})
+			).status,
+		).toBe(409);
+		if (!sqlite) throw new Error('SQLite fixture is unavailable');
+		const database = drizzle(sqlite.database);
+		await expect(
+			database
+				.update(trackMapVersion)
+				.set({ updatedAt: '2026-08-17T00:01:00.000Z' })
+				.where(eq(trackMapVersion.id, first.id)),
+		).rejects.toThrow();
+		await expect(
+			database.insert(trackMapVersion).values({
+				id: '00000000-0000-4000-8000-000000000001',
+				layoutId: layout.id,
+				version: 3,
+				status: 'draft',
+				sourceVersionId: null,
+				createdBy: 'owner-1',
+				createdAt: '2026-08-17T00:01:00.000Z',
+				updatedAt: '2026-08-17T00:01:00.000Z',
+				approvedBy: null,
+				approvedAt: null,
+				retiredAt: null,
+			}),
+		).rejects.toThrow();
 	});
 
 	test('rejects malformed and degenerate draft geometry', async () => {
@@ -322,6 +387,14 @@ describe('Track-map routes', () => {
 			(await response.json()) as { trackMapVersion: { id: string } }
 		).trackMapVersion.id;
 		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}`,
+					json('PATCH', { corners: [corner()] }),
+				)
+			).status,
+		).toBe(200);
+		expect(
 			(await request(`/api/v1/track-layouts/${layoutId}/map-versions/wrong`))
 				.status,
 		).toBe(404);
@@ -344,6 +417,17 @@ describe('Track-map routes', () => {
 			.update(trackMapVersion)
 			.set({ status: 'approved' })
 			.where(eq(trackMapVersion.id, versionId));
+		await expect(
+			drizzle(sqlite.database)
+				.delete(trackCorner)
+				.where(eq(trackCorner.mapVersionId, versionId)),
+		).rejects.toThrow();
+		expect(
+			await drizzle(sqlite.database)
+				.select()
+				.from(trackCorner)
+				.where(eq(trackCorner.mapVersionId, versionId)),
+		).toHaveLength(1);
 		expect(
 			(
 				await request(
@@ -400,13 +484,17 @@ describe('Track-map routes', () => {
 		Object.assign(userFixture.env, { OWNER_EMAIL: 'owner@example.com' });
 		let response = await userFixture.request('/api/v1/track-layouts');
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ trackLayouts: [] });
+		expect(await response.json()).toEqual({
+			canManage: false,
+			trackLayouts: [],
+		});
 		await drizzle(sqlite.database)
 			.update(trackMapVersion)
 			.set({ status: 'approved' })
 			.where(eq(trackMapVersion.id, versionId));
 		response = await userFixture.request('/api/v1/track-layouts');
 		expect(await response.json()).toMatchObject({
+			canManage: false,
 			trackLayouts: [
 				{ id: layoutId, mapVersions: [{ id: versionId, status: 'approved' }] },
 			],

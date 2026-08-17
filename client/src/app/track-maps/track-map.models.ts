@@ -45,7 +45,16 @@ export type TrackLayout = {
 		updatedAt: string;
 	}>;
 };
-export type TrackMapDraftCommand = {
-	readonly versionId: string;
+export type TrackLayoutCollection = {
+	readonly canManage: boolean;
+	readonly trackLayouts: TrackLayout[];
+};
+export type CreateTrackLayoutCommand = { readonly name: string };
+export type RenameTrackLayoutCommand = { readonly name: string };
+export type CreateTrackMapDraftCommand = {
+	readonly layoutId: string;
+	readonly sourceVersionId?: string;
+};
+export type SaveTrackMapDraftCommand = {
 	readonly corners: readonly TrackCorner[];
 };

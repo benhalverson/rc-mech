@@ -58,9 +58,13 @@ describe('TrackMapGateway', () => {
 	it('parses canonical responses and normalizes summaries', () => {
 		expect(
 			parseTrackLayouts({
+				canManage: true,
 				trackLayouts: [{ ...layout, mapVersions: undefined }],
 			}),
-		).toEqual([{ ...layout, mapVersions: [] }]);
+		).toEqual({
+			canManage: true,
+			trackLayouts: [{ ...layout, mapVersions: [] }],
+		});
 		expect(parseTrackLayout({ trackLayout: layout })).toEqual(layout);
 		expect(parseTrackMapVersion({ trackMapVersion: version })).toEqual(version);
 		expect(() => parseTrackLayouts({})).toThrow();
@@ -76,7 +80,7 @@ describe('TrackMapGateway', () => {
 		).toMatchObject({
 			kind: 'rejected-response',
 			status: 409,
-			message: 'Conflict',
+			detail: 'Conflict',
 		});
 		expect(
 			trackMapGatewayFailure(new HttpErrorResponse({ status: 500, error: {} })),
@@ -94,54 +98,66 @@ describe('TrackMapGateway', () => {
 			read = http.expectOne('/api/v1/track-layouts');
 		});
 		if (!read) throw new Error('Track-map list request was not issued.');
-		read.flush({ trackLayouts: [] });
-		gateway.getVersion('version-1').subscribe();
-		http
-			.expectOne(
+		expect(read.request.withCredentials).toBe(true);
+		read.flush({ canManage: true, trackLayouts: [] });
+		gateway.selectVersion('version-1');
+		gateway.version.value();
+		let versionRead: ReturnType<HttpTestingController['expectOne']> | undefined;
+		await vi.waitFor(() => {
+			versionRead = http.expectOne(
 				(request) => request.url === '/api/v1/track-map-versions/version-1',
-			)
-			.flush({ trackMapVersion: version });
+			);
+		});
+		if (!versionRead)
+			throw new Error('Track-map version request was not issued.');
+		expect(versionRead.request.withCredentials).toBe(true);
+		versionRead.flush({ trackMapVersion: version });
 		gateway.createLayout('Main').subscribe();
-		http
-			.expectOne(
-				(request) =>
-					request.method === 'POST' && request.url === '/api/v1/track-layouts',
-			)
-			.flush({ trackLayout: layout });
+		const createLayoutRequest = http.expectOne(
+			(request) =>
+				request.method === 'POST' && request.url === '/api/v1/track-layouts',
+		);
+		expect(createLayoutRequest.request.withCredentials).toBe(true);
+		expect(createLayoutRequest.request.body).toEqual({ name: 'Main' });
+		createLayoutRequest.flush({ trackLayout: layout });
 		gateway.createDraft('layout-1').subscribe();
-		http
-			.expectOne(
-				(request) =>
-					request.method === 'POST' && request.url.includes('/map-versions'),
-			)
-			.flush({ trackMapVersion: version });
+		const createDraftRequest = http.expectOne(
+			(request) =>
+				request.method === 'POST' && request.url.includes('/map-versions'),
+		);
+		expect(createDraftRequest.request.withCredentials).toBe(true);
+		expect(createDraftRequest.request.body).toEqual({});
+		createDraftRequest.flush({ trackMapVersion: version });
 		gateway.saveDraft({ versionId: 'version-1', corners: [] }).subscribe();
-		http
-			.expectOne(
-				(request) =>
-					request.method === 'PATCH' &&
-					request.url.includes('/track-map-versions'),
-			)
-			.flush({ trackMapVersion: version });
+		const saveDraftRequest = http.expectOne(
+			(request) =>
+				request.method === 'PATCH' &&
+				request.url.includes('/track-map-versions'),
+		);
+		expect(saveDraftRequest.request.withCredentials).toBe(true);
+		expect(saveDraftRequest.request.body).toEqual({ corners: [] });
+		saveDraftRequest.flush({ trackMapVersion: version });
 		gateway.renameLayout('layout-1', 'Renamed').subscribe();
-		http
-			.expectOne(
-				(request) =>
-					request.method === 'PATCH' && request.url.includes('/track-layouts'),
-			)
-			.flush({ trackLayout: layout });
+		const renameLayoutRequest = http.expectOne(
+			(request) =>
+				request.method === 'PATCH' && request.url.includes('/track-layouts'),
+		);
+		expect(renameLayoutRequest.request.withCredentials).toBe(true);
+		expect(renameLayoutRequest.request.body).toEqual({ name: 'Renamed' });
+		renameLayoutRequest.flush({ trackLayout: layout });
 		gateway.retireLayout('layout-1').subscribe();
-		http
-			.expectOne(
-				(request) =>
-					request.method === 'POST' && request.url.includes('/retire'),
-			)
-			.flush({ trackLayout: layout });
+		const retireLayoutRequest = http.expectOne(
+			(request) => request.method === 'POST' && request.url.includes('/retire'),
+		);
+		expect(retireLayoutRequest.request.withCredentials).toBe(true);
+		expect(retireLayoutRequest.request.body).toEqual({});
+		retireLayoutRequest.flush({ trackLayout: layout });
 		gateway.refresh();
+		gateway.selectVersion(null);
+		gateway.refreshVersion();
 	});
 	it('maps rejected responses for every gateway operation', () => {
 		const operations: Array<() => Observable<unknown>> = [
-			() => gateway.getVersion('version-1'),
 			() => gateway.createLayout('Main'),
 			() => gateway.createDraft('layout-1', 'version-1'),
 			() => gateway.saveDraft({ versionId: 'version-1', corners: [] }),

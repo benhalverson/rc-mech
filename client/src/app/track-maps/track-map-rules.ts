@@ -16,6 +16,11 @@ export const validateTrackCorners = (
 	const keys = new Set<string>();
 	const orders = new Set<number>();
 	for (const corner of corners) {
+		if (!corner.name.trim()) errors.push('Every Corner needs a name.');
+		if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(corner.key))
+			errors.push(
+				`${corner.name || 'Corner'}: stable key must use lowercase letters, numbers, and single hyphens.`,
+			);
 		if (keys.has(corner.key))
 			errors.push(`Corner key “${corner.key}” is duplicated.`);
 		keys.add(corner.key);

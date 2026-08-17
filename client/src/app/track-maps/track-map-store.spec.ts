@@ -1,9 +1,10 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { of, throwError } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackLayout, TrackMapVersion } from './track-map.models';
 import { TrackMapGateway } from './track-map-gateway';
-import { TrackMapStore } from './track-map-store';
+import { TrackMapStore, trackMapFailureMessage } from './track-map-store';
 
 const version: TrackMapVersion = {
 	id: 'version-1',
@@ -36,21 +37,40 @@ const layout: TrackLayout = {
 };
 
 class FakeGateway {
-	layoutError: unknown;
+	readonly canManage = signal(true);
+	readonly layoutItems = signal<TrackLayout[]>([layout]);
+	readonly layoutsHaveValue = signal(true);
+	readonly layoutsLoading = signal(false);
+	readonly layoutError = signal<unknown>(undefined);
+	readonly versionHasValue = signal(true);
+	readonly versionLoading = signal(false);
+	readonly versionError = signal<unknown>(undefined);
+	readonly loadedVersion = signal<TrackMapVersion>(version);
 	readonly layouts = {
-		hasValue: () => true,
-		value: () => [layout],
-		isLoading: () => false,
-		error: (): unknown => this.layoutError,
+		hasValue: () => this.layoutsHaveValue(),
+		value: () => ({
+			canManage: this.canManage(),
+			trackLayouts: this.layoutItems(),
+		}),
+		isLoading: () => this.layoutsLoading(),
+		error: (): unknown => this.layoutError(),
 		reload: vi.fn(),
 	};
-	readonly getVersion = vi.fn(() => of(version));
+	readonly version = {
+		hasValue: () => this.versionHasValue(),
+		value: () => this.loadedVersion(),
+		isLoading: () => this.versionLoading(),
+		error: (): unknown => this.versionError(),
+		reload: vi.fn(),
+	};
+	readonly selectVersion = vi.fn();
 	readonly createLayout = vi.fn(() => of(layout));
 	readonly createDraft = vi.fn(() => of(version));
 	readonly saveDraft = vi.fn(() => of(version));
 	readonly renameLayout = vi.fn(() => of(layout));
 	readonly retireLayout = vi.fn(() => of(layout));
 	readonly refresh = vi.fn();
+	readonly refreshVersion = vi.fn();
 }
 
 describe('TrackMapStore', () => {
@@ -67,73 +87,132 @@ describe('TrackMapStore', () => {
 		store = TestBed.inject(TrackMapStore);
 	});
 	afterEach(() => TestBed.resetTestingModule());
-	it('projects layout reads and selection', () => {
+
+	it('projects managed reads and opens one current draft without stale data', () => {
 		expect(store.layouts()).toEqual([layout]);
+		expect(store.canManage()).toBe(true);
 		expect(store.loading()).toBe(false);
-		store.selectLayout(layout.id);
+		expect(store.error()).toBe('');
+		expect(store.readError()).toBe('');
+		store.openLayout(layout.id);
 		expect(store.selectedLayoutId()).toBe(layout.id);
-		store.loadVersion(version.id);
-		expect(store.version()).toEqual(version);
 		expect(store.selectedVersionId()).toBe(version.id);
+		expect(store.version()).toEqual(version);
+		expect(gateway.selectVersion).toHaveBeenCalledWith(version.id);
+		gateway.loadedVersion.set({ ...version, id: 'stale-version' });
+		expect(store.version()).toBeNull();
 		store.refresh();
 		expect(gateway.refresh).toHaveBeenCalledOnce();
+		expect(gateway.refreshVersion).toHaveBeenCalledOnce();
 	});
-	it('runs every mutation and publishes success', () => {
-		store.createLayout('New');
-		store.createDraft(layout.id);
-		store.saveDraft([]);
-		store.renameLayout('Renamed');
+
+	it('runs every mutation with immutable commands and refreshes summaries', () => {
+		store.createLayout({ name: 'New' });
+		store.createDraft({ layoutId: layout.id });
+		expect(store.version()).toEqual(version);
+		store.saveDraft({ corners: [] });
+		expect(store.version()).toEqual(version);
+		store.renameLayout({ name: 'Renamed' });
 		store.retireLayout();
 		expect(gateway.createLayout).toHaveBeenCalledWith('New');
 		expect(gateway.createDraft).toHaveBeenCalledWith(layout.id, undefined);
+		expect(gateway.saveDraft).toHaveBeenCalledWith({
+			versionId: version.id,
+			corners: [],
+		});
+		expect(gateway.renameLayout).toHaveBeenCalledWith(layout.id, 'Renamed');
+		expect(gateway.retireLayout).toHaveBeenCalledWith(layout.id);
+		expect(gateway.refresh).toHaveBeenCalled();
+		expect(store.outcome().status).toBe('succeeded');
+		expect(store.message()).toBe('Retire layout saved.');
+	});
+
+	it('guards unavailable commands and concurrent mutations', () => {
+		gateway.canManage.set(false);
+		store.createLayout({ name: 'Nope' });
+		store.createDraft({ layoutId: layout.id });
+		store.saveDraft({ corners: [] });
+		store.renameLayout({ name: 'Nope' });
+		store.retireLayout();
+		expect(gateway.createLayout).not.toHaveBeenCalled();
+
+		gateway.canManage.set(true);
+		const pending = new Subject<TrackLayout>();
+		gateway.createLayout.mockReturnValueOnce(pending);
+		store.createLayout({ name: 'Pending' });
+		store.createLayout({ name: 'Ignored' });
+		store.openLayout(layout.id);
+		expect(store.selectedLayoutId()).toBeNull();
+		store.createDraft({ layoutId: layout.id });
+		store.saveDraft({ corners: [] });
+		store.renameLayout({ name: 'Ignored' });
+		store.retireLayout();
+		expect(gateway.createLayout).toHaveBeenCalledTimes(1);
+		pending.next(layout);
+		pending.complete();
 		expect(store.outcome().status).toBe('succeeded');
 	});
-	it('keeps invalid selections safe and maps failures', () => {
-		store.saveDraft([]);
-		store.renameLayout('No layout');
+
+	it('keeps retired layouts read-only', () => {
+		gateway.layoutItems.set([{ ...layout, status: 'retired' }]);
+		store.openLayout(layout.id);
+		expect(store.selectedLayoutId()).toBe(layout.id);
+		expect(store.selectedVersionId()).toBeNull();
+		store.createDraft({ layoutId: layout.id });
+		store.saveDraft({ corners: [] });
+		store.renameLayout({ name: 'Nope' });
 		store.retireLayout();
-		gateway.getVersion.mockReturnValueOnce(
-			throwError(() => ({ message: 'No access' })),
-		);
-		store.loadVersion('missing');
-		expect(store.error()).toBe('No access');
-		gateway.createLayout.mockReturnValueOnce(
-			throwError(() => ({ message: 'Conflict' })),
-		);
-		store.createLayout('Conflict');
-		expect(store.error()).toBe('Conflict');
+		expect(gateway.createDraft).not.toHaveBeenCalled();
+		expect(gateway.saveDraft).not.toHaveBeenCalled();
+		expect(gateway.renameLayout).not.toHaveBeenCalled();
+		expect(gateway.retireLayout).not.toHaveBeenCalled();
 	});
-	it('handles unavailable reads and failed mutations without throwing', () => {
-		gateway.layouts.hasValue = () => false;
-		gateway.layouts.isLoading = () => true;
+
+	it('maps read and mutation failures into presentation state', () => {
+		gateway.layoutsHaveValue.set(false);
+		gateway.layoutsLoading.set(true);
 		expect(store.layouts()).toEqual([]);
+		expect(store.canManage()).toBe(false);
 		expect(store.loading()).toBe(true);
-		expect(store.readError()).toBe('');
-		gateway.layoutError = new Error('offline');
-		gateway.createLayout.mockReturnValueOnce(
-			throwError(() => ({ message: 'Create failed' })),
-		);
-		store.createLayout('Broken');
+		gateway.layoutError.set(new Error('offline'));
 		expect(store.readError()).toBe('Track maps could not be loaded.');
-		gateway.createDraft.mockReturnValueOnce(
-			throwError(() => ({ message: 'Draft failed' })),
+
+		gateway.layoutsHaveValue.set(true);
+		gateway.layoutError.set(undefined);
+		store.openLayout(layout.id);
+		gateway.versionHasValue.set(false);
+		gateway.versionError.set(new Error('bad version'));
+		expect(store.version()).toBeNull();
+		expect(store.readError()).toBe(
+			'The selected Track map could not be loaded.',
 		);
-		gateway.saveDraft.mockReturnValueOnce(
-			throwError(() => ({ message: 'Save failed' })),
+
+		gateway.createLayout.mockReturnValueOnce(
+			throwError(() => ({ kind: 'rejected-response', detail: 'Conflict' })),
 		);
-		gateway.renameLayout.mockReturnValueOnce(
-			throwError(() => ({ message: 'Rename failed' })),
+		store.createLayout({ name: 'Conflict' });
+		expect(store.error()).toBe('Conflict');
+		expect(store.message()).toBe('');
+	});
+
+	it('covers every transport failure message and empty selections', () => {
+		expect(trackMapFailureMessage({ kind: 'unavailable' })).toContain(
+			'unavailable',
 		);
-		gateway.retireLayout.mockReturnValueOnce(
-			throwError(() => ({ message: 'Retire failed' })),
+		expect(trackMapFailureMessage({ kind: 'invalid-response' })).toContain(
+			'invalid',
 		);
-		store.selectLayout(layout.id);
-		store.createDraft(layout.id);
-		store.loadVersion('missing');
-		store.createDraft(layout.id);
-		store.saveDraft([]);
-		store.renameLayout('Renamed');
+		expect(trackMapFailureMessage({ kind: 'rejected-response' })).toContain(
+			'rejected',
+		);
+		expect(trackMapFailureMessage({ kind: 'http', status: 500 })).toContain(
+			'rejected',
+		);
+		store.openLayout('missing');
+		expect(store.selectedVersionId()).toBeNull();
+		expect(store.version()).toBeNull();
+		store.saveDraft({ corners: [] });
+		store.renameLayout({ name: 'No layout' });
 		store.retireLayout();
-		expect(store.error()).toBe('Retire failed');
 	});
 });

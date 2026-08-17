@@ -1,33 +1,85 @@
 import {
 	Component,
 	computed,
-	effect,
 	input,
 	linkedSignal,
 	output,
 	signal,
-	untracked,
 } from '@angular/core';
-import type { Point, TrackCorner, TrackMapVersion } from './track-map.models';
+import { disabled, FormField, form } from '@angular/forms/signals';
+import type {
+	Point,
+	SaveTrackMapDraftCommand,
+	TrackCorner,
+	TrackMapVersion,
+} from './track-map.models';
 import { validateTrackCorners } from './track-map-rules';
 
 type PointTarget = 'entryStart' | 'entryEnd' | 'exitStart' | 'exitEnd';
+type GeometryTarget = PointTarget | 'viewPosition' | 'viewSize';
+
+const pointLocation = {
+	entryStart: { gate: 'entryGate', edge: 'start' },
+	entryEnd: { gate: 'entryGate', edge: 'end' },
+	exitStart: { gate: 'exitGate', edge: 'start' },
+	exitEnd: { gate: 'exitGate', edge: 'end' },
+} as const;
+
+const isPointTarget = (target: GeometryTarget): target is PointTarget =>
+	target in pointLocation;
 
 @Component({
 	selector: 'app-track-map-editor',
 	host: { class: 'block' },
+	imports: [FormField],
 	templateUrl: './track-map-editor.html',
 })
 export class TrackMapEditor {
 	readonly version = input<TrackMapVersion | null>(null);
 	readonly busy = input(false);
-	readonly saveRequested = output<readonly TrackCorner[]>();
-	protected readonly corners = signal<TrackCorner[]>([]);
-	protected readonly selectedCorner = signal<number | null>(null);
-	private readonly loadedVersionId = signal<string | null>(null);
-	protected readonly selectedPoint = linkedSignal<PointTarget>(
-		() => 'entryStart',
-	);
+	readonly saveRequested = output<SaveTrackMapDraftCommand>();
+	protected readonly corners = linkedSignal<
+		{ id: string; updatedAt: string } | null,
+		TrackCorner[]
+	>({
+		source: () => {
+			const version = this.version();
+			return version ? { id: version.id, updatedAt: version.updatedAt } : null;
+		},
+		computation: (revision, previous) =>
+			revision?.id &&
+			previous?.source?.id === revision.id &&
+			previous.source.updatedAt === revision.updatedAt
+				? previous.value
+				: [...(this.version()?.corners ?? [])],
+	});
+	protected readonly cornerFields = form(this.corners, (path) => {
+		disabled(path, {
+			when: () => (this.busy() ? 'A Track-map save is in progress.' : false),
+		});
+	});
+	protected readonly selectedCorner = linkedSignal<
+		{ id: string; updatedAt: string } | null,
+		number | null
+	>({
+		source: () => {
+			const version = this.version();
+			return version ? { id: version.id, updatedAt: version.updatedAt } : null;
+		},
+		computation: (revision, previous) =>
+			previous &&
+			previous.source?.id === revision?.id &&
+			previous?.source?.updatedAt === revision?.updatedAt
+				? previous.value
+				: this.version()?.corners.length
+					? 0
+					: null,
+	});
+	protected readonly selectedTarget = signal<GeometryTarget>('entryStart');
+	protected readonly selectedPointTarget = computed(() => {
+		const target = this.selectedTarget();
+		return isPointTarget(target) ? target : null;
+	});
 	protected readonly errors = computed(() =>
 		validateTrackCorners(this.corners()),
 	);
@@ -40,26 +92,16 @@ export class TrackMapEditor {
 		'exitStart',
 		'exitEnd',
 	];
-
-	constructor() {
-		effect(() => {
-			const version = this.version();
-			untracked(() => {
-				const versionId = version?.id ?? null;
-				if (versionId === this.loadedVersionId()) return;
-				const corners = version?.corners ?? [];
-				this.loadedVersionId.set(versionId);
-				this.corners.set(corners);
-				this.selectedCorner.set(corners.length ? 0 : null);
-			});
-		});
-	}
+	protected readonly pointLocation = pointLocation;
 
 	protected addCorner(): void {
-		const order = this.corners().length + 1;
-		const key = `turn-${order}`;
+		const corners = this.corners();
+		const order = Math.max(0, ...corners.map((corner) => corner.order)) + 1;
+		const keys = new Set(corners.map((corner) => corner.key));
+		let keyIndex = 1;
+		while (keys.has(`turn-${keyIndex}`)) keyIndex += 1;
 		const next: TrackCorner = {
-			key,
+			key: `turn-${keyIndex}`,
 			name: `Turn ${order}`,
 			order,
 			entryGate: {
@@ -74,13 +116,11 @@ export class TrackMapEditor {
 			},
 			cornerView: { x: 0.15, y: 0.35, width: 0.35, height: 0.3 },
 		};
-		this.corners.set([...this.corners(), next]);
-		this.selectedCorner.set(order - 1);
+		this.corners.set([...corners, next]);
+		this.selectedCorner.set(corners.length);
 	}
 
-	protected removeCorner(): void {
-		const selected = this.selectedCorner();
-		if (selected === null) return;
+	protected removeCorner(selected: number): void {
 		const next = this.corners()
 			.filter((_, index) => index !== selected)
 			.map((corner, index) => ({ ...corner, order: index + 1 }));
@@ -90,58 +130,14 @@ export class TrackMapEditor {
 		);
 	}
 
-	protected selectCorner(key: string): void {
-		const index = this.corners().findIndex((corner) => corner.key === key);
-		if (index >= 0) this.selectedCorner.set(index);
+	protected selectCorner(index: number): void {
+		this.selectedCorner.set(index);
 	}
-	protected selectPoint(target: PointTarget): void {
-		this.selectedPoint.set(target);
-	}
-	protected selectCornerEvent(event: Event): void {
-		if (event.target instanceof HTMLSelectElement)
-			this.selectCorner(event.target.value);
-	}
-	protected selectPointEvent(event: Event): void {
-		if (event.target instanceof HTMLSelectElement)
-			this.selectPoint(event.target.value as PointTarget);
+	protected selectTarget(target: GeometryTarget): void {
+		this.selectedTarget.set(target);
 	}
 
-	protected setName(event: Event): void {
-		const value = this.inputValue(event);
-		this.updateActive((corner) => ({ ...corner, name: value }));
-	}
-
-	protected setKey(event: Event): void {
-		const value = this.inputValue(event)
-			.toLowerCase()
-			.replace(/[^a-z0-9-]/g, '-');
-		this.updateActive((corner) => ({ ...corner, key: value }));
-	}
-
-	protected setCoordinate(
-		event: Event,
-		target: PointTarget,
-		axis: keyof Point,
-	): void {
-		const value = Number(this.inputValue(event));
-		this.updatePoint(target, axis, value);
-	}
-
-	protected setViewCoordinate(
-		event: Event,
-		axis: keyof TrackCorner['cornerView'],
-	): void {
-		const value = Number(this.inputValue(event));
-		this.updateActive((corner) => ({
-			...corner,
-			cornerView: {
-				...corner.cornerView,
-				[axis]: Math.min(1, Math.max(0, value)),
-			},
-		}));
-	}
-
-	protected moveSelected(event: KeyboardEvent): void {
+	protected moveSelected(event: KeyboardEvent, selected: number): void {
 		const delta = event.shiftKey ? 0.01 : 0.0025;
 		const movement: Record<string, Point> = {
 			ArrowLeft: { x: -delta, y: 0 },
@@ -152,36 +148,56 @@ export class TrackMapEditor {
 		const change = movement[event.key];
 		if (!change) return;
 		event.preventDefault();
-		const point = this.activePoint();
-		if (!point) return;
-		this.updatePoint(this.selectedPoint(), 'x', point.x + change.x);
-		this.updatePoint(this.selectedPoint(), 'y', point.y + change.y);
+		const corner = this.corners()[selected] as TrackCorner;
+		const target = this.selectedTarget();
+		if (isPointTarget(target)) {
+			const point = this.point(corner, target);
+			this.updatePoint(selected, target, {
+				x: point.x + change.x,
+				y: point.y + change.y,
+			});
+			return;
+		}
+		const view = corner.cornerView;
+		this.updateView(
+			selected,
+			target === 'viewPosition'
+				? { ...view, x: view.x + change.x, y: view.y + change.y }
+				: {
+						...view,
+						width: view.width + change.x,
+						height: view.height + change.y,
+					},
+		);
 	}
 
-	protected moveFromCanvas(event: MouseEvent): void {
-		const target = event.currentTarget;
-		if (!(target instanceof HTMLElement)) return;
-		const bounds = target.getBoundingClientRect();
-		const x = Math.min(
-			1,
-			Math.max(0, (event.clientX - bounds.left) / bounds.width),
+	protected moveFromCanvas(event: MouseEvent, selected: number): void {
+		const element = event.currentTarget as HTMLElement;
+		const bounds = element.getBoundingClientRect();
+		const point = {
+			x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+			y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+		};
+		const target = this.selectedTarget();
+		if (isPointTarget(target)) {
+			this.updatePoint(selected, target, point);
+			return;
+		}
+		const view = (this.corners()[selected] as TrackCorner).cornerView;
+		this.updateView(
+			selected,
+			target === 'viewPosition'
+				? { ...view, ...point }
+				: { ...view, width: point.x - view.x, height: point.y - view.y },
 		);
-		const y = Math.min(
-			1,
-			Math.max(0, (event.clientY - bounds.top) / bounds.height),
-		);
-		this.updatePoint(this.selectedPoint(), 'x', x);
-		this.updatePoint(this.selectedPoint(), 'y', y);
 	}
 
 	protected saveDraft(): void {
-		if (!this.errors().length) this.saveRequested.emit(this.corners());
+		this.saveRequested.emit({ corners: this.corners() });
 	}
 	protected point(corner: TrackCorner, target: PointTarget): Point {
-		if (target === 'entryStart') return corner.entryGate.start;
-		if (target === 'entryEnd') return corner.entryGate.end;
-		if (target === 'exitStart') return corner.exitGate.start;
-		return corner.exitGate.end;
+		const location = pointLocation[target];
+		return corner[location.gate][location.edge];
 	}
 	protected svgX(point: Point): number {
 		return point.x * 640;
@@ -190,35 +206,34 @@ export class TrackMapEditor {
 		return point.y * 360;
 	}
 
-	private activePoint(): Point | null {
-		const corner = this.activeCorner();
-		return corner ? this.point(corner, this.selectedPoint()) : null;
-	}
-	private inputValue(event: Event): string {
-		return event.target instanceof HTMLInputElement ? event.target.value : '';
-	}
 	private updatePoint(
+		selected: number,
 		target: PointTarget,
-		axis: keyof Point,
-		value: number,
+		point: Point,
 	): void {
-		this.updateActive((corner) => {
-			const current = this.point(corner, target);
-			const next = { ...current, [axis]: Math.min(1, Math.max(0, value)) };
-			if (target === 'entryStart')
-				return { ...corner, entryGate: { ...corner.entryGate, start: next } };
-			if (target === 'entryEnd')
-				return { ...corner, entryGate: { ...corner.entryGate, end: next } };
-			if (target === 'exitStart')
-				return { ...corner, exitGate: { ...corner.exitGate, start: next } };
-			return { ...corner, exitGate: { ...corner.exitGate, end: next } };
+		this.updateActive(selected, (corner) => {
+			const location = pointLocation[target];
+			return {
+				...corner,
+				[location.gate]: {
+					...corner[location.gate],
+					[location.edge]: point,
+				},
+			};
 		});
 	}
-	private updateActive(update: (corner: TrackCorner) => TrackCorner): void {
-		const selected = this.selectedCorner();
-		if (selected === null) return;
-		this.corners.set(
-			this.corners().map((corner, index) =>
+	private updateView(
+		selected: number,
+		cornerView: TrackCorner['cornerView'],
+	): void {
+		this.updateActive(selected, (corner) => ({ ...corner, cornerView }));
+	}
+	private updateActive(
+		selected: number,
+		update: (corner: TrackCorner) => TrackCorner,
+	): void {
+		this.corners.update((corners) =>
+			corners.map((corner, index) =>
 				index === selected ? update(corner) : corner,
 			),
 		);

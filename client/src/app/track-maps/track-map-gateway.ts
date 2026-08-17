@@ -3,7 +3,7 @@ import {
 	HttpErrorResponse,
 	httpResource,
 } from '@angular/common/http';
-import { inject, Service } from '@angular/core';
+import { inject, Service, signal } from '@angular/core';
 import { catchError, map, type Observable, throwError } from 'rxjs';
 import {
 	array,
@@ -19,6 +19,7 @@ import {
 import type {
 	TrackCorner,
 	TrackLayout,
+	TrackLayoutCollection,
 	TrackMapVersion,
 } from './track-map.models';
 
@@ -69,7 +70,10 @@ const layout = object({
 	retiredAt: nullable(string()),
 	mapVersions: optional(array(mapVersionSummary)),
 });
-const layoutsResponse = object({ trackLayouts: array(layout) });
+const layoutsResponse = object({
+	canManage: union([literal(true), literal(false)]),
+	trackLayouts: array(layout),
+});
 const versionResponse = object({ trackMapVersion: version });
 const layoutResponse = object({ trackLayout: layout });
 const apiError = object({ error: string() });
@@ -81,9 +85,8 @@ export type TrackMapGatewayFailure = {
 		| 'invalid-response'
 		| 'rejected-response';
 	readonly status?: number;
-	readonly message: string;
+	readonly detail?: string;
 };
-const invalid = 'The Track-map response was invalid.';
 
 type ParsedLayout = Omit<TrackLayout, 'mapVersions'> & {
 	mapVersions?: TrackLayout['mapVersions'];
@@ -92,8 +95,13 @@ const normalizeLayout = (value: ParsedLayout): TrackLayout => ({
 	...value,
 	mapVersions: value.mapVersions ?? [],
 });
-export const parseTrackLayouts = (value: unknown): TrackLayout[] =>
-	parse(layoutsResponse, value).trackLayouts.map(normalizeLayout);
+export const parseTrackLayouts = (value: unknown): TrackLayoutCollection => {
+	const parsed = parse(layoutsResponse, value);
+	return {
+		canManage: parsed.canManage,
+		trackLayouts: parsed.trackLayouts.map(normalizeLayout),
+	};
+};
 export const parseTrackMapVersion = (value: unknown): TrackMapVersion =>
 	parse(versionResponse, value).trackMapVersion;
 export const parseTrackLayout = (value: unknown): TrackLayout =>
@@ -105,126 +113,116 @@ export const trackMapGatewayFailure = (
 		if (error.status === 0)
 			return {
 				kind: 'unavailable',
-				message: 'Track maps are unavailable. Check your connection.',
 			};
 		const parsed = apiError.safeParse(error.error);
 		if (parsed.success)
 			return {
 				kind: 'rejected-response',
 				status: error.status,
-				message: parsed.data.error,
+				detail: parsed.data.error,
 			};
 		return {
 			kind: 'http',
 			status: error.status,
-			message: 'The Track-map request was rejected.',
 		};
 	}
-	return {
-		kind: 'invalid-response',
-		message:
-			error instanceof Error && error.message.includes('Track-map')
-				? error.message
-				: invalid,
-	};
+	return { kind: 'invalid-response' };
 };
 
 @Service()
 export class TrackMapGateway {
 	private readonly http = inject(HttpClient);
-	readonly layouts = httpResource<TrackLayout[]>(
+	private readonly versionId = signal('');
+	readonly layouts = httpResource<TrackLayoutCollection>(
 		() => ({ url: '/api/v1/track-layouts', withCredentials: true }),
 		{ parse: parseTrackLayouts },
 	);
-	getVersion(versionId: string): Observable<TrackMapVersion> {
-		return this.http
-			.get<unknown>(`/api/v1/track-map-versions/${versionId}`, {
-				withCredentials: true,
-			})
-			.pipe(
-				map(parseTrackMapVersion),
-				catchError((error: unknown) =>
-					throwError(() => trackMapGatewayFailure(error)),
-				),
-			);
+	readonly version = httpResource<TrackMapVersion>(
+		() => {
+			const versionId = this.versionId();
+			return versionId
+				? {
+						url: `/api/v1/track-map-versions/${encodeURIComponent(versionId)}`,
+						withCredentials: true,
+					}
+				: undefined;
+		},
+		{ parse: parseTrackMapVersion },
+	);
+	selectVersion(versionId: string | null): void {
+		this.versionId.set(versionId ?? '');
 	}
 	createLayout(name: string): Observable<TrackLayout> {
-		return this.http
-			.post<unknown>(
+		return this.parseMutation(
+			this.http.post<unknown>(
 				'/api/v1/track-layouts',
 				{ name },
 				{ withCredentials: true },
-			)
-			.pipe(
-				map(parseTrackLayout),
-				catchError((error: unknown) =>
-					throwError(() => trackMapGatewayFailure(error)),
-				),
-			);
+			),
+			parseTrackLayout,
+		);
 	}
 	createDraft(
 		layoutId: string,
 		sourceVersionId?: string,
 	): Observable<TrackMapVersion> {
-		return this.http
-			.post<unknown>(
+		return this.parseMutation(
+			this.http.post<unknown>(
 				`/api/v1/track-layouts/${layoutId}/map-versions`,
 				sourceVersionId ? { sourceVersionId } : {},
 				{ withCredentials: true },
-			)
-			.pipe(
-				map(parseTrackMapVersion),
-				catchError((error: unknown) =>
-					throwError(() => trackMapGatewayFailure(error)),
-				),
-			);
+			),
+			parseTrackMapVersion,
+		);
 	}
 	saveDraft(command: {
 		versionId: string;
 		corners: readonly TrackCorner[];
 	}): Observable<TrackMapVersion> {
-		return this.http
-			.patch<unknown>(
+		return this.parseMutation(
+			this.http.patch<unknown>(
 				`/api/v1/track-map-versions/${command.versionId}`,
 				{ corners: command.corners },
 				{ withCredentials: true },
-			)
-			.pipe(
-				map(parseTrackMapVersion),
-				catchError((error: unknown) =>
-					throwError(() => trackMapGatewayFailure(error)),
-				),
-			);
+			),
+			parseTrackMapVersion,
+		);
 	}
 	renameLayout(layoutId: string, name: string): Observable<TrackLayout> {
-		return this.http
-			.patch<unknown>(
+		return this.parseMutation(
+			this.http.patch<unknown>(
 				`/api/v1/track-layouts/${layoutId}`,
 				{ name },
 				{ withCredentials: true },
-			)
-			.pipe(
-				map(parseTrackLayout),
-				catchError((error: unknown) =>
-					throwError(() => trackMapGatewayFailure(error)),
-				),
-			);
+			),
+			parseTrackLayout,
+		);
 	}
 	retireLayout(layoutId: string): Observable<TrackLayout> {
-		return this.http
-			.post<unknown>(
+		return this.parseMutation(
+			this.http.post<unknown>(
 				`/api/v1/track-layouts/${layoutId}/retire`,
 				{},
 				{ withCredentials: true },
-			)
-			.pipe(
-				map(parseTrackLayout),
-				catchError((error: unknown) =>
-					throwError(() => trackMapGatewayFailure(error)),
-				),
-			);
+			),
+			parseTrackLayout,
+		);
 	}
 	refresh(): void {
 		this.layouts.reload();
+	}
+	refreshVersion(): void {
+		this.version.reload();
+	}
+	private parseMutation<T>(
+		request: Observable<unknown>,
+		parser: (value: unknown) => T,
+	): Observable<T> {
+		return request.pipe(
+			map(parser),
+			catchError((error: unknown) =>
+				throwError(() => trackMapGatewayFailure(error)),
+			),
+		);
 	}
 }

@@ -56,3 +56,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS track_corner_version_key_idx
 	ON track_corner(map_version_id, corner_key);
 CREATE UNIQUE INDEX IF NOT EXISTS track_corner_version_order_idx
 	ON track_corner(map_version_id, corner_order);
+
+CREATE TRIGGER IF NOT EXISTS track_map_version_insert_active_layout_only
+	BEFORE INSERT ON track_map_version
+	WHEN COALESCE((SELECT status FROM track_layout WHERE id = NEW.layout_id), '') <> 'active'
+	BEGIN
+		SELECT RAISE(ABORT, 'Retired Track layouts are read-only');
+	END;
+
+CREATE TRIGGER IF NOT EXISTS track_map_version_update_active_layout_only
+	BEFORE UPDATE ON track_map_version
+	WHEN COALESCE((SELECT status FROM track_layout WHERE id = NEW.layout_id), '') <> 'active'
+	BEGIN
+		SELECT RAISE(ABORT, 'Retired Track layouts are read-only');
+	END;
+
+CREATE TRIGGER IF NOT EXISTS track_corner_insert_draft_only
+	BEFORE INSERT ON track_corner
+	WHEN (SELECT status FROM track_map_version WHERE id = NEW.map_version_id) <> 'draft'
+		OR COALESCE((SELECT track_layout.status FROM track_layout JOIN track_map_version ON track_map_version.layout_id = track_layout.id WHERE track_map_version.id = NEW.map_version_id), '') <> 'active'
+	BEGIN
+		SELECT RAISE(ABORT, 'Only draft Track maps can be edited');
+	END;
+
+CREATE TRIGGER IF NOT EXISTS track_corner_update_draft_only
+	BEFORE UPDATE ON track_corner
+	WHEN (SELECT status FROM track_map_version WHERE id = OLD.map_version_id) <> 'draft'
+		OR (SELECT status FROM track_map_version WHERE id = NEW.map_version_id) <> 'draft'
+		OR COALESCE((SELECT track_layout.status FROM track_layout JOIN track_map_version ON track_map_version.layout_id = track_layout.id WHERE track_map_version.id = OLD.map_version_id), '') <> 'active'
+		OR COALESCE((SELECT track_layout.status FROM track_layout JOIN track_map_version ON track_map_version.layout_id = track_layout.id WHERE track_map_version.id = NEW.map_version_id), '') <> 'active'
+	BEGIN
+		SELECT RAISE(ABORT, 'Only draft Track maps can be edited');
+	END;
+
+CREATE TRIGGER IF NOT EXISTS track_corner_delete_draft_only
+	BEFORE DELETE ON track_corner
+	WHEN (SELECT status FROM track_map_version WHERE id = OLD.map_version_id) <> 'draft'
+		OR COALESCE((SELECT track_layout.status FROM track_layout JOIN track_map_version ON track_map_version.layout_id = track_layout.id WHERE track_map_version.id = OLD.map_version_id), '') <> 'active'
+	BEGIN
+		SELECT RAISE(ABORT, 'Only draft Track maps can be edited');
+	END;

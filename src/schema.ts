@@ -1,4 +1,5 @@
 import {
+	type AnySQLiteColumn,
 	index,
 	integer,
 	primaryKey,
@@ -270,7 +271,9 @@ export const trackMapVersion = sqliteTable(
 		status: text('status', { enum: ['draft', 'approved', 'retired'] })
 			.notNull()
 			.default('draft'),
-		sourceVersionId: text('source_version_id'),
+		sourceVersionId: text('source_version_id').references(
+			(): AnySQLiteColumn => trackMapVersion.id,
+		),
 		createdBy: text('created_by')
 			.notNull()
 			.references(() => owner.id),

@@ -55,6 +55,14 @@ test('creates, edits, reopens, renames, and retires a draft Track map accessibly
 	await page.getByLabel('View Y').fill('0.32');
 	await page.getByLabel('Width').fill('0.42');
 	await page.getByLabel('Height').fill('0.36');
+	await page.getByLabel('Entry').selectOption('reverse');
+	await page.getByLabel('Exit').selectOption('forward');
+	await page.getByLabel('View X').fill('1.2');
+	await expect(page.getByRole('alert')).toContainText(
+		'Corner view must be a positive rectangle inside the Track view.',
+	);
+	expect(await scan(page)).toEqual([]);
+	await page.getByLabel('View X').fill('0.12');
 	const cornerName = page.getByLabel('Name', { exact: true });
 	await expect(cornerName).toHaveValue('Hairpin');
 	const canvas = page.getByRole('button', {
@@ -66,6 +74,14 @@ test('creates, edits, reopens, renames, and retires a draft Track map accessibly
 	await expect(cornerName).toHaveValue('Hairpin');
 	await canvas.click({ position: { x: 120, y: 170 } });
 	await expect(cornerName).toHaveValue('Hairpin');
+	await page
+		.getByLabel('Geometry target', { exact: true })
+		.selectOption('viewPosition');
+	await canvas.press('ArrowRight');
+	await page
+		.getByLabel('Geometry target', { exact: true })
+		.selectOption('viewSize');
+	await canvas.press('ArrowLeft');
 	await page.getByRole('button', { name: 'Save draft geometry' }).click();
 	await expect(
 		page.getByText('Save draft saved.', { exact: true }),
@@ -75,6 +91,12 @@ test('creates, edits, reopens, renames, and retires a draft Track map accessibly
 	await page.reload();
 	await page.getByRole('button', { name: /Browser circuit/ }).click();
 	await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Hairpin');
+	await expect(page.getByLabel('Entry')).toHaveValue('reverse');
+	await expect(page.getByLabel('Exit')).toHaveValue('forward');
+	await expect(page.getByLabel('View X')).toHaveValue('0.1225');
+	await expect(page.getByLabel('View Y')).toHaveValue('0.32');
+	await expect(page.getByLabel('Width')).toHaveValue('0.4175');
+	await expect(page.getByLabel('Height')).toHaveValue('0.36');
 	await page.getByLabel('Layout name').fill('Browser circuit revised');
 	await page.getByRole('button', { name: 'Rename' }).click();
 	await expect(
@@ -89,5 +111,12 @@ test('creates, edits, reopens, renames, and retires a draft Track map accessibly
 	await expect(
 		page.getByRole('button', { name: /Browser circuit revised.*retired/i }),
 	).toBeVisible();
+	await page
+		.getByRole('button', { name: /Browser circuit revised.*retired/i })
+		.click();
+	await expect(
+		page.getByText('Retired Track layouts are read-only.'),
+	).toBeVisible();
+	await expect(page.getByRole('button', { name: 'New draft' })).toHaveCount(0);
 	expect(await scan(page)).toEqual([]);
 });
