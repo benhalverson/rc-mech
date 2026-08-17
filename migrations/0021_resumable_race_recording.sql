@@ -74,18 +74,16 @@ END;
 CREATE TRIGGER race_video_owner_quota
 BEFORE INSERT ON race_video
 BEGIN
-  SELECT CASE WHEN (
+  SELECT RAISE(ABORT, 'race_video owner quota exceeded') WHERE (
     SELECT COUNT(*) FROM race_video
     WHERE owner_id = NEW.owner_id AND status IN ('uploading', 'completing')
-  ) >= 2 THEN RAISE(ABORT, 'race_video owner quota exceeded') END;
-  SELECT CASE WHEN COALESCE((
+  ) >= 2;
+  SELECT RAISE(ABORT, 'race_video owner quota exceeded') WHERE COALESCE((
     SELECT SUM(declared_size) FROM race_video
     WHERE owner_id = NEW.owner_id AND status IN ('uploading', 'completing')
-  ), 0) + NEW.declared_size > 21474836480
-  THEN RAISE(ABORT, 'race_video owner quota exceeded') END;
-  SELECT CASE WHEN COALESCE((
+  ), 0) + NEW.declared_size > 21474836480;
+  SELECT RAISE(ABORT, 'race_video owner quota exceeded') WHERE COALESCE((
     SELECT SUM(declared_size) FROM race_video
     WHERE owner_id = NEW.owner_id
-  ), 0) + NEW.declared_size > 107374182400
-  THEN RAISE(ABORT, 'race_video owner quota exceeded') END;
+  ), 0) + NEW.declared_size > 107374182400;
 END;

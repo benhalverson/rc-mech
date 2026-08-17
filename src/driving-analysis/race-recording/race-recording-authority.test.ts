@@ -33,6 +33,10 @@ const migrationDirectory = resolve(
 	dirname(fileURLToPath(import.meta.url)),
 	'../../../migrations',
 );
+const raceRecordingMigration = readFileSync(
+	resolve(migrationDirectory, '0021_resumable_race_recording.sql'),
+	'utf8',
+);
 const migrations = readdirSync(migrationDirectory)
 	.filter((name) => /^\d+.*\.sql$/.test(name))
 	.sort()
@@ -166,6 +170,18 @@ const withoutSelectionRows = (
 };
 
 describe('RaceRecordingAuthority', () => {
+	test('keeps quota triggers compatible with the remote D1 migration parser', () => {
+		const quotaTrigger = raceRecordingMigration.split(
+			'CREATE TRIGGER race_video_owner_quota',
+		)[1];
+		expect(quotaTrigger).not.toContain('CASE');
+		expect(
+			quotaTrigger?.match(
+				/SELECT RAISE\(ABORT, 'race_video owner quota exceeded'\) WHERE/g,
+			),
+		).toHaveLength(3);
+	});
+
 	test('uses Worker time and UUID capabilities by default', async () => {
 		sqlite = createSqliteD1();
 		sqlite.exec(migrations);
