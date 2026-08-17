@@ -1,5 +1,5 @@
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackCorner } from './track-map.models';
 import { TrackMapGeometry } from './track-map-geometry';
 
@@ -31,7 +31,10 @@ describe('TrackMapGeometry', () => {
 		fixture.componentRef.setInput('label', 'Reviewed geometry');
 		fixture.detectChanges();
 	});
-	afterEach(() => TestBed.resetTestingModule());
+	afterEach(() => {
+		vi.restoreAllMocks();
+		TestBed.resetTestingModule();
+	});
 
 	it('renders canonical gates, Corner views, labels, and active handles', () => {
 		fixture.componentRef.setInput('activeCorner', corner);
@@ -55,5 +58,20 @@ describe('TrackMapGeometry', () => {
 		expect(svg.getAttribute('aria-hidden')).toBe('true');
 		expect(svg.hasAttribute('aria-label')).toBe(false);
 		expect(svg.querySelectorAll('circle')).toHaveLength(0);
+	});
+
+	it('renders temporary duplicate keys without unstable-tracking diagnostics', () => {
+		const error = vi
+			.spyOn(console, 'error')
+			.mockImplementation(() => undefined);
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		fixture.componentRef.setInput('corners', [
+			corner,
+			{ ...corner, name: 'Duplicate under correction' },
+		]);
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelectorAll('line')).toHaveLength(4);
+		expect(error).not.toHaveBeenCalled();
+		expect(warn).not.toHaveBeenCalled();
 	});
 });
