@@ -6,6 +6,7 @@ import {
 	defaultAppDependencies,
 } from './app-dependencies';
 import { isAllowedOrigin } from './auth-policy';
+import { createTrackMapRoutes } from './driving-analysis/track-maps/track-map-routes';
 import { openApi } from './openapi';
 import { createAuthRoutes } from './routes/auth';
 import { createCarsRoutes } from './routes/cars';
@@ -64,6 +65,7 @@ export const createApp = (
 	app.route('/api/v1', createPhotosRoutes());
 	app.route('/api/v1', createMaintenanceRoutes(dependencies));
 	app.route('/api/v1', createVoiceRoutes(dependencies));
+	app.route('/api/v1', createTrackMapRoutes());
 
 	app.all('/api', (c) => c.json({ error: 'Not found' }, 404));
 	app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));

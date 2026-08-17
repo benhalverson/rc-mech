@@ -2094,3 +2094,98 @@ voicePaths['/api/v1/voice-updates/{voiceUpdateId}/results'] = {
 		},
 	},
 };
+
+const trackMapPaths = openApi.paths as Record<string, unknown>;
+trackMapPaths['/api/v1/track-layouts'] = {
+	get: {
+		summary: 'List Track layouts visible to the authenticated user',
+		responses: { 200: { description: 'Track layouts and version summaries' } },
+	},
+	post: {
+		summary: 'Owner-only create a Track layout',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['name'],
+						properties: { name: { type: 'string', maxLength: 160 } },
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Track layout created' },
+			400: { description: 'Invalid name' },
+			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}'] = {
+	patch: {
+		summary: 'Owner-only rename a Track layout',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['name'],
+						properties: { name: { type: 'string' } },
+					},
+				},
+			},
+		},
+		responses: {
+			200: { description: 'Track layout renamed' },
+			404: { description: 'Track layout not found' },
+			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/retire'] = {
+	post: {
+		summary: 'Owner-only retire a Track layout',
+		responses: {
+			200: { description: 'Track layout retired' },
+			404: { description: 'Track layout not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions'] = {
+	post: {
+		summary: 'Owner-only create or clone a draft Track map version',
+		responses: {
+			201: { description: 'Draft Track map created' },
+			404: { description: 'Layout or source map not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions/{versionId}'] = {
+	get: {
+		summary: 'Owner-only read a Track map version and corners',
+		responses: {
+			200: { description: 'Track map geometry' },
+			404: { description: 'Track map not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}'] = {
+	get: {
+		summary: 'Owner-only read a Track map version and corners',
+		responses: {
+			200: { description: 'Track map geometry' },
+			404: { description: 'Track map not found' },
+		},
+	},
+	patch: {
+		summary: 'Owner-only replace draft Track map corners',
+		responses: {
+			200: { description: 'Draft geometry saved' },
+			400: { description: 'Invalid or degenerate geometry' },
+			409: { description: 'Only drafts are editable' },
+			404: { description: 'Track map not found' },
+		},
+	},
+};

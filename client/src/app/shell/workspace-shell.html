@@ -49,6 +49,7 @@
 						<a class="command-link alloy-focus-ring flex min-h-12 items-center px-5 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/garage" routerLinkActive="active-nav" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page">Garage</a>
 						<a class="command-link alloy-focus-ring flex min-h-12 items-center px-5 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/maintenance" routerLinkActive="active-nav" ariaCurrentWhenActive="page">Maintenance</a>
 						<a class="command-link alloy-focus-ring flex min-h-12 items-center px-5 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/settings" routerLinkActive="active-nav" ariaCurrentWhenActive="page">Settings</a>
+						<a class="command-link alloy-focus-ring flex min-h-12 items-center px-5 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/track-maps" routerLinkActive="active-nav" ariaCurrentWhenActive="page">Track maps</a>
 					</nav>
 					<div class="command-account ml-auto flex min-w-0 items-center gap-4 border-l border-alloy-command-separator pl-6">
 						<span class="owner-email max-w-64 truncate text-[13px] text-alloy-command-secondary" [title]="ownerEmail()">{{ ownerEmail() }}</span>
@@ -130,6 +131,7 @@
 				<a class="drawer-link alloy-focus-ring flex min-h-12 items-center border-l-2 border-transparent px-3 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/garage" routerLinkActive="active-nav" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" (click)="selectNav()">Garage</a>
 				<a class="drawer-link alloy-focus-ring flex min-h-12 items-center border-l-2 border-transparent px-3 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/maintenance" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="selectNav()">Maintenance</a>
 				<a class="drawer-link alloy-focus-ring flex min-h-12 items-center border-l-2 border-transparent px-3 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/settings" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="selectNav()">Settings</a>
+				<a class="drawer-link alloy-focus-ring flex min-h-12 items-center border-l-2 border-transparent px-3 text-sm font-semibold text-alloy-command-secondary no-underline" routerLink="/track-maps" routerLinkActive="active-nav" ariaCurrentWhenActive="page" (click)="selectNav()">Track maps</a>
 			</nav>
 			<div class="mt-auto border-t border-alloy-command-separator p-3">
 				<a class="drawer-utility alloy-focus-ring flex min-h-12 items-center px-3 text-sm font-semibold text-alloy-command-accent no-underline" href="/api/docs">API notes</a>
