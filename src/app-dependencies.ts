@@ -1,4 +1,6 @@
 import { createAuth } from './auth';
+import { DrivingAnalysisAuthority } from './driving-analysis/analysis/driving-analysis-authority';
+import type { DrivingAnalysisWorkflowPayload } from './driving-analysis/analysis/driving-analysis-contracts';
 import { RaceRecordingAuthority } from './driving-analysis/race-recording/race-recording-authority';
 import type { RaceVideoValidationWorkflowPayload } from './driving-analysis/race-recording/race-video-validation-contracts';
 import {
@@ -13,6 +15,36 @@ export type AppDependencies = {
 	handleAuth(env: Env, request: Request): Promise<Response>;
 	voiceProcessor(env: Env): VoiceProcessor;
 	raceRecordingAuthority(env: Env): RaceRecordingAuthority;
+	drivingAnalysisAuthority(env: Env): DrivingAnalysisAuthority;
+};
+
+export const startDrivingAnalysisCreation = async (
+	workflow: Env['DRIVING_ANALYSIS_WORKFLOW'],
+	payload: DrivingAnalysisWorkflowPayload,
+): Promise<void> => {
+	try {
+		const created = await workflow.createBatch([
+			{ id: payload.analysisId, params: payload },
+		]);
+		if (created.some((instance) => instance.id === payload.analysisId)) return;
+	} catch {
+		// A deterministic instance may already exist; inspect it below.
+	}
+	try {
+		const existing = await workflow.get(payload.analysisId);
+		const status = await existing.status();
+		if (status.status === 'errored' || status.status === 'terminated')
+			await existing.restart();
+		else if (status.status === 'unknown')
+			throw new Error('Driving-analysis creation Workflow is unavailable');
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			error.message === 'Driving-analysis creation Workflow is unavailable'
+		)
+			throw error;
+		throw new Error('Driving-analysis creation Workflow is unavailable');
+	}
 };
 
 export const startRaceVideoValidation = async (
@@ -41,5 +73,10 @@ export const defaultAppDependencies: AppDependencies = {
 		new RaceRecordingAuthority(env.DB, env.ANALYSIS_MEDIA, {
 			startValidation: (payload) =>
 				startRaceVideoValidation(env.RACE_VIDEO_VALIDATION_WORKFLOW, payload),
+		}),
+	drivingAnalysisAuthority: (env) =>
+		new DrivingAnalysisAuthority(env.DB, {
+			startProcessing: (payload) =>
+				startDrivingAnalysisCreation(env.DRIVING_ANALYSIS_WORKFLOW, payload),
 		}),
 };

@@ -1392,6 +1392,241 @@ Object.assign(raceRecordingPaths, {
 	},
 });
 
+const drivingAnalysisBoxSchema = {
+	type: 'object',
+	additionalProperties: false,
+	description:
+		'A finite, nondegenerate normalized rectangle fully contained in the fixed Track-view crop; x + width and y + height must each be at most 1, and area must be at least 1e-12',
+	required: ['x', 'y', 'width', 'height'],
+	properties: {
+		x: {
+			type: 'number',
+			minimum: 0,
+			exclusiveMaximum: 1,
+			description: 'Normalized left edge in bottom-two-thirds Track-view space',
+		},
+		y: {
+			type: 'number',
+			minimum: 0,
+			exclusiveMaximum: 1,
+			description: 'Normalized top edge in bottom-two-thirds Track-view space',
+		},
+		width: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+		height: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+	},
+};
+const drivingAnalysisWindowSchema = {
+	type: 'object',
+	additionalProperties: false,
+	description:
+		'An absolute half-open recording interval where endTimestampMs is after startTimestampMs and duration is at most 900000 ms',
+	required: ['startTimestampMs', 'endTimestampMs'],
+	properties: {
+		startTimestampMs: {
+			type: 'integer',
+			minimum: 0,
+			description: 'Absolute start timestamp on the uploaded recording',
+		},
+		endTimestampMs: {
+			type: 'integer',
+			minimum: 1,
+			description:
+				'Absolute exclusive end timestamp; it must be after start and the window must be at most 15 minutes',
+		},
+	},
+};
+const drivingAnalysisSchema = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'id',
+		'requestId',
+		'carId',
+		'driveSessionId',
+		'raceVideoId',
+		'raceWindow',
+		'approvedTrackMapVersionId',
+		'subjectSeed',
+		'sourceLayout',
+		'status',
+		'stage',
+		'progress',
+		'stateVersion',
+		'createdAt',
+		'updatedAt',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		requestId: { type: 'string', format: 'uuid' },
+		carId: { type: 'string' },
+		driveSessionId: { type: 'string' },
+		raceVideoId: { type: 'string', format: 'uuid' },
+		raceWindow: drivingAnalysisWindowSchema,
+		approvedTrackMapVersionId: { type: 'string', format: 'uuid' },
+		subjectSeed: {
+			type: 'object',
+			additionalProperties: false,
+			description:
+				'The initial Subject observation; timestampMs must fall inside the half-open Race window',
+			required: ['timestampMs', 'box'],
+			properties: {
+				timestampMs: {
+					type: 'integer',
+					minimum: 0,
+					description:
+						'Absolute recording timestamp at or after the Race-window start and before its end',
+				},
+				box: drivingAnalysisBoxSchema,
+			},
+		},
+		sourceLayout: {
+			type: 'object',
+			additionalProperties: false,
+			required: ['version', 'digest', 'width', 'height', 'trackView'],
+			properties: {
+				version: { type: 'string', const: 'fixed-track-view.v1' },
+				digest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+				width: { type: 'integer', minimum: 1 },
+				height: { type: 'integer', minimum: 1 },
+				trackView: {
+					type: 'object',
+					additionalProperties: false,
+					required: ['x', 'y', 'width', 'height'],
+					properties: {
+						x: { type: 'number', const: 0 },
+						y: { type: 'number', const: 1 / 3 },
+						width: { type: 'number', const: 1 },
+						height: { type: 'number', const: 2 / 3 },
+					},
+				},
+			},
+		},
+		status: {
+			type: 'string',
+			enum: [
+				'queued',
+				'running',
+				'awaiting-reidentification',
+				'completed',
+				'failed',
+				'cancelled',
+				'deleting',
+				'deleted',
+			],
+		},
+		stage: {
+			type: 'string',
+			enum: [
+				'preparation',
+				'tracking',
+				'measurement',
+				'clip-rendering',
+				'finalization',
+			],
+		},
+		progress: { type: 'integer', minimum: 0, maximum: 100 },
+		stateVersion: { type: 'integer', minimum: 1 },
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+	},
+};
+const drivingAnalysisResponse = {
+	type: 'object',
+	required: ['drivingAnalysis'],
+	properties: { drivingAnalysis: drivingAnalysisSchema },
+};
+const drivingAnalysisPaths = openApi.paths as Record<string, unknown>;
+drivingAnalysisPaths['/api/v1/cars/{carId}/drives/{driveId}/driving-analyses'] =
+	{
+		parameters: [
+			{
+				name: 'carId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+			{
+				name: 'driveId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+		],
+		post: {
+			summary:
+				'Create or replay a Driving analysis from a ready Race recording',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							additionalProperties: false,
+							required: [
+								'requestId',
+								'raceVideoId',
+								'approvedTrackMapVersionId',
+								'raceWindow',
+								'subjectSeed',
+							],
+							properties: {
+								requestId: { type: 'string', format: 'uuid' },
+								raceVideoId: { type: 'string', format: 'uuid' },
+								approvedTrackMapVersionId: {
+									type: 'string',
+									format: 'uuid',
+								},
+								raceWindow: drivingAnalysisWindowSchema,
+								subjectSeed: drivingAnalysisSchema.properties.subjectSeed,
+							},
+						},
+					},
+				},
+			},
+			responses: {
+				202: {
+					description:
+						'Stable queued or running analysis accepted without waiting for processing',
+					content: {
+						'application/json': { schema: drivingAnalysisResponse },
+					},
+				},
+				400: { description: 'Invalid Race window or Subject seed' },
+				404: {
+					description: 'Owned Car, Drive session, or Race video not found',
+				},
+				409: {
+					description:
+						'Request identity reuse with different input, source readiness, Track-map, or active-analysis quota conflict',
+				},
+				429: { description: 'Driving-analysis creation rate limit reached' },
+				503: { description: 'Durable processing Workflow unavailable' },
+			},
+		},
+	};
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}'] = {
+	parameters: [
+		{
+			name: 'analysisId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	get: {
+		summary: 'Read owner-authorized authoritative Driving-analysis progress',
+		responses: {
+			200: {
+				description: 'Current immutable input and monotonic D1 lifecycle',
+				content: {
+					'application/json': { schema: drivingAnalysisResponse },
+				},
+			},
+			404: { description: 'Driving analysis not found' },
+		},
+	},
+};
+
 const setupPaths = openApi.paths as Record<string, unknown>;
 const setupSchema = {
 	type: 'object',

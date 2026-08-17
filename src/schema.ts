@@ -251,6 +251,79 @@ export const raceVideoValidation = sqliteTable(
 		index('race_video_validation_status').on(table.status, table.updatedAt),
 	],
 );
+export const drivingAnalysis = sqliteTable(
+	'driving_analysis',
+	{
+		id: id('id'),
+		ownerId: text('owner_id')
+			.notNull()
+			.references(() => owner.id),
+		requestId: text('request_id').notNull(),
+		requestDigest: text('request_digest').notNull(),
+		carId: text('car_id')
+			.notNull()
+			.references(() => car.id),
+		driveSessionId: text('drive_session_id')
+			.notNull()
+			.references(() => driveSession.id),
+		raceVideoId: text('race_video_id').notNull(),
+		raceWindowStartMs: integer('race_window_start_ms').notNull(),
+		raceWindowEndMs: integer('race_window_end_ms').notNull(),
+		approvedTrackMapVersionId: text('approved_track_map_version_id')
+			.notNull()
+			.references(() => trackMapVersion.id),
+		subjectSeedTimestampMs: integer('subject_seed_timestamp_ms').notNull(),
+		subjectBoxX: real('subject_box_x').notNull(),
+		subjectBoxY: real('subject_box_y').notNull(),
+		subjectBoxWidth: real('subject_box_width').notNull(),
+		subjectBoxHeight: real('subject_box_height').notNull(),
+		sourceLayoutVersion: text('source_layout_version').notNull(),
+		sourceLayoutDigest: text('source_layout_digest').notNull(),
+		sourceWidth: integer('source_width').notNull(),
+		sourceHeight: integer('source_height').notNull(),
+		workflowId: text('workflow_id').notNull().unique(),
+		status: text('status', {
+			enum: [
+				'queued',
+				'running',
+				'awaiting-reidentification',
+				'completed',
+				'failed',
+				'cancelled',
+				'deleting',
+				'deleted',
+			],
+		})
+			.notNull()
+			.default('queued'),
+		stage: text('stage', {
+			enum: [
+				'preparation',
+				'tracking',
+				'measurement',
+				'clip-rendering',
+				'finalization',
+			],
+		})
+			.notNull()
+			.default('preparation'),
+		progress: integer('progress').notNull().default(0),
+		stateVersion: integer('state_version').notNull().default(1),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+	},
+	(table) => [
+		uniqueIndex('driving_analysis_owner_request_idx').on(
+			table.ownerId,
+			table.requestId,
+		),
+		index('driving_analysis_owner_drive_idx').on(
+			table.ownerId,
+			table.driveSessionId,
+			table.createdAt,
+		),
+	],
+);
 export const raceVideoUploadPart = sqliteTable(
 	'race_video_upload_part',
 	{

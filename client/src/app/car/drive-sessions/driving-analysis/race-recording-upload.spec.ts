@@ -57,6 +57,18 @@ class FakeDrivingAnalysisStore {
 	readonly recordings = signal<readonly RaceRecording[]>([]);
 	readonly transfer = signal<RaceRecordingTransferState>(idleTransfer());
 	readonly pending = signal(false);
+	readonly approvedTrackMaps = signal([]);
+	readonly trackMapsLoading = signal(false);
+	readonly trackMapsFailure = signal<unknown>(null);
+	readonly selectedTrackMap = signal(null);
+	readonly selectedTrackMapLoading = signal(false);
+	readonly analysisCreation = signal({
+		status: 'idle' as 'idle' | 'creating' | 'accepted' | 'failed',
+		driveSessionId: null as string | null,
+		analysis: null,
+		error: null,
+	});
+	readonly analysisError = signal('Analysis failed.');
 	readonly error = signal('Upload failed.');
 	readonly removal = signal<{
 		status: 'idle' | 'removing' | 'failed';
@@ -80,6 +92,9 @@ class FakeDrivingAnalysisStore {
 	readonly resumeUpload = vi.fn();
 	readonly removeRecording = vi.fn();
 	readonly retry = vi.fn();
+	readonly createAnalysis = vi.fn();
+	readonly refreshAnalysis = vi.fn();
+	readonly selectTrackMap = vi.fn();
 	readonly hasSelectedFile = vi.fn(() => this.selectedFile());
 	readonly selectedFileName = vi.fn(() => this.selectedFileNameValue());
 }

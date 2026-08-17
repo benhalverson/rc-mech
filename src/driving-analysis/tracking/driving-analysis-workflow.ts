@@ -4,6 +4,16 @@ import {
 	type WorkflowStep,
 } from 'cloudflare:workers';
 import { z } from 'zod';
+import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
+import {
+	type DrivingAnalysisWorkflowPayload,
+	drivingAnalysisWorkflowPayloadSchema,
+} from '../analysis/driving-analysis-contracts';
+import {
+	type DrivingAnalysisCreationWorkflowResult,
+	DrivingAnalysisCreationWorkflowRunner,
+	FakeDrivingAnalysisContainerPort,
+} from '../analysis/driving-analysis-creation-workflow';
 import {
 	GPU_LEASE_COORDINATOR_OBJECT_NAME,
 	GPU_MAX_DEADLINE_MS,
@@ -83,6 +93,15 @@ export const firstTrackingWorkflowPayloadSchema = z.strictObject({
 export type FirstTrackingWorkflowPayload = z.infer<
 	typeof firstTrackingWorkflowPayloadSchema
 >;
+
+export const drivingAnalysisWorkflowEventPayloadSchema = z.union([
+	drivingAnalysisWorkflowPayloadSchema,
+	firstTrackingWorkflowPayloadSchema,
+]);
+
+export type DrivingAnalysisWorkflowEventPayload =
+	| DrivingAnalysisWorkflowPayload
+	| FirstTrackingWorkflowPayload;
 
 export type FirstTrackingWorkflowResult = {
 	state: PublicTrackingState;
@@ -534,12 +553,27 @@ export class FirstTrackingSegmentWorkflow {
 
 export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 	DrivingAnalysisWorkflowEnvironment,
-	FirstTrackingWorkflowPayload
+	DrivingAnalysisWorkflowEventPayload
 > {
 	async run(
-		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
+		event: Readonly<WorkflowEvent<DrivingAnalysisWorkflowEventPayload>>,
 		step: WorkflowStep,
-	): Promise<FirstTrackingWorkflowResult> {
+	): Promise<
+		FirstTrackingWorkflowResult | DrivingAnalysisCreationWorkflowResult
+	> {
+		const payload = drivingAnalysisWorkflowEventPayloadSchema.parse(
+			event.payload,
+		);
+		if ('kind' in payload)
+			return new DrivingAnalysisCreationWorkflowRunner(
+				new DrivingAnalysisAuthority(this.env.DB),
+				new FakeDrivingAnalysisContainerPort(),
+			).run(
+				{ ...event, payload } as Readonly<
+					WorkflowEvent<DrivingAnalysisWorkflowPayload>
+				>,
+				step,
+			);
 		const coordinator = this.env.GPU_LEASE_COORDINATOR.getByName(
 			GPU_LEASE_COORDINATOR_OBJECT_NAME,
 		);
@@ -553,7 +587,12 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 			}),
 			r2TransferGrantAuthority(this.env),
 			trackingArtifactPublication(this.env),
-		).run(event, step);
+		).run(
+			{ ...event, payload } as Readonly<
+				WorkflowEvent<FirstTrackingWorkflowPayload>
+			>,
+			step,
+		);
 	}
 }
 
