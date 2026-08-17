@@ -10,10 +10,13 @@ const version: TrackMapVersion = {
 	id: 'version-1',
 	layoutId: 'layout-1',
 	version: 1,
+	stateVersion: 1,
 	status: 'draft',
 	sourceVersionId: null,
+	createdBy: 'owner-1',
 	createdAt: '2026-01-01',
 	updatedAt: '2026-01-01',
+	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
 	corners: [
@@ -163,6 +166,7 @@ describe('TrackMapEditor', () => {
 		expect(fixture.nativeElement.textContent).toContain('Turn 2');
 		fixture.componentRef.setInput('version', {
 			...version,
+			stateVersion: 2,
 			updatedAt: '2026-01-02',
 			corners: [{ ...version.corners[0], name: 'Canonical name' }],
 		});
@@ -178,6 +182,37 @@ describe('TrackMapEditor', () => {
 		});
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).not.toContain('Canonical name');
+	});
+
+	it('approves only saved, nonempty, valid draft geometry', () => {
+		let approvals = 0;
+		const saved = savedCommands();
+		component.approveRequested.subscribe(() => (approvals += 1));
+		expect(button('Approve version').disabled).toBe(false);
+		button('Approve version').click();
+		expect(approvals).toBe(1);
+		fill('#corner-name', 'Unsaved name');
+		expect(button('Approve version').disabled).toBe(true);
+		expect(fixture.nativeElement.textContent).toContain(
+			'Save the current geometry before approval.',
+		);
+		button('Save draft geometry').click();
+		fixture.componentRef.setInput('version', {
+			...version,
+			stateVersion: 2,
+			updatedAt: '2026-01-02',
+			corners: saved[0]?.corners ?? [],
+		});
+		fixture.detectChanges();
+		expect(button('Approve version').disabled).toBe(false);
+		button('Approve version').click();
+		expect(approvals).toBe(2);
+		fixture.componentRef.setInput('version', {
+			...version,
+			status: 'approved',
+		});
+		fixture.detectChanges();
+		expect(button('Approve version').disabled).toBe(true);
 	});
 
 	it('allocates unused keys and ordered positions after rendered removal', () => {
@@ -275,6 +310,9 @@ describe('TrackMapEditor', () => {
 		fixture.componentRef.setInput('busy', false);
 		fixture.componentRef.setInput('version', { ...version, corners: [] });
 		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Add and save at least one valid Corner before approval.',
+		);
 		expect(canvas().disabled).toBe(true);
 		button('Add corner').click();
 		fixture.detectChanges();

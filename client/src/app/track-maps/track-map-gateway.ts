@@ -46,10 +46,13 @@ const version = object({
 	id: string(),
 	layoutId: string(),
 	version: number(),
+	stateVersion: number(),
 	status: union([literal('draft'), literal('approved'), literal('retired')]),
 	sourceVersionId: nullable(string()),
+	createdBy: string(),
 	createdAt: string(),
 	updatedAt: string(),
+	approvedBy: nullable(string()),
 	approvedAt: nullable(string()),
 	retiredAt: nullable(string()),
 	corners: array(corner),
@@ -57,8 +60,12 @@ const version = object({
 const mapVersionSummary = object({
 	id: string(),
 	version: number(),
+	stateVersion: number(),
 	status: union([literal('draft'), literal('approved'), literal('retired')]),
+	createdAt: string(),
 	updatedAt: string(),
+	approvedAt: nullable(string()),
+	retiredAt: nullable(string()),
 });
 const layout = object({
 	id: string(),
@@ -177,16 +184,32 @@ export class TrackMapGateway {
 	}
 	saveDraft(command: {
 		versionId: string;
+		expectedStateVersion: number;
 		corners: readonly TrackCorner[];
 	}): Observable<TrackMapVersion> {
 		return this.parseMutation(
 			this.http.patch<unknown>(
 				`/api/v1/track-map-versions/${command.versionId}`,
-				{ corners: command.corners },
+				{
+					expectedStateVersion: command.expectedStateVersion,
+					corners: command.corners,
+				},
 				{ withCredentials: true },
 			),
 			parseTrackMapVersion,
 		);
+	}
+	approveVersion(
+		versionId: string,
+		expectedStateVersion: number,
+	): Observable<TrackMapVersion> {
+		return this.decideVersion(versionId, 'approve', expectedStateVersion);
+	}
+	retireVersion(
+		versionId: string,
+		expectedStateVersion: number,
+	): Observable<TrackMapVersion> {
+		return this.decideVersion(versionId, 'retire', expectedStateVersion);
 	}
 	renameLayout(layoutId: string, name: string): Observable<TrackLayout> {
 		return this.parseMutation(
@@ -213,6 +236,20 @@ export class TrackMapGateway {
 	}
 	refreshVersion(): void {
 		this.version.reload();
+	}
+	private decideVersion(
+		versionId: string,
+		action: 'approve' | 'retire',
+		expectedStateVersion: number,
+	): Observable<TrackMapVersion> {
+		return this.parseMutation(
+			this.http.post<unknown>(
+				`/api/v1/track-map-versions/${versionId}/${action}`,
+				{ expectedStateVersion },
+				{ withCredentials: true },
+			),
+			parseTrackMapVersion,
+		);
 	}
 	private parseMutation<T>(
 		request: Observable<unknown>,

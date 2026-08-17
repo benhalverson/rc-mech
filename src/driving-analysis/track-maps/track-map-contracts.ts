@@ -72,7 +72,10 @@ export const trackCornerInputSchema = z
 	});
 
 export const trackMapDraftInputSchema = z
-	.object({ corners: z.array(trackCornerInputSchema).max(100) })
+	.object({
+		expectedStateVersion: z.number().int().positive(),
+		corners: z.array(trackCornerInputSchema).max(100),
+	})
 	.strict()
 	.superRefine((draft, context) => {
 		const keys = new Set<string>();
@@ -104,4 +107,7 @@ export const trackLayoutCreateSchema = z
 export const trackLayoutRenameSchema = trackLayoutCreateSchema;
 export const trackMapVersionCreateSchema = z
 	.object({ sourceVersionId: z.string().uuid().optional() })
+	.strict();
+export const trackMapVersionDecisionSchema = z
+	.object({ expectedStateVersion: z.number().int().positive() })
 	.strict();

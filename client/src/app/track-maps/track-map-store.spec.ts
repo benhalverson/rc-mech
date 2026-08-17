@@ -6,17 +6,36 @@ import type { TrackLayout, TrackMapVersion } from './track-map.models';
 import { TrackMapGateway } from './track-map-gateway';
 import { TrackMapStore, trackMapFailureMessage } from './track-map-store';
 
+const corner = {
+	key: 'turn-1',
+	name: 'Turn 1',
+	order: 1,
+	entryGate: {
+		start: { x: 0.1, y: 0.2 },
+		end: { x: 0.2, y: 0.2 },
+		direction: 'forward' as const,
+	},
+	exitGate: {
+		start: { x: 0.3, y: 0.4 },
+		end: { x: 0.4, y: 0.4 },
+		direction: 'forward' as const,
+	},
+	cornerView: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 },
+};
 const version: TrackMapVersion = {
 	id: 'version-1',
 	layoutId: 'layout-1',
 	version: 1,
+	stateVersion: 1,
 	status: 'draft',
 	sourceVersionId: null,
+	createdBy: 'owner-1',
 	createdAt: '2026-01-01',
 	updatedAt: '2026-01-01',
+	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
-	corners: [],
+	corners: [corner],
 };
 const layout: TrackLayout = {
 	id: 'layout-1',
@@ -30,8 +49,12 @@ const layout: TrackLayout = {
 		{
 			id: version.id,
 			version: 1,
+			stateVersion: 1,
 			status: 'draft',
+			createdAt: version.createdAt,
 			updatedAt: version.updatedAt,
+			approvedAt: null,
+			retiredAt: null,
 		},
 	],
 };
@@ -67,6 +90,12 @@ class FakeGateway {
 	readonly createLayout = vi.fn(() => of(layout));
 	readonly createDraft = vi.fn(() => of(version));
 	readonly saveDraft = vi.fn(() => of(version));
+	readonly approveVersion = vi.fn(() =>
+		of({ ...version, status: 'approved' as const, stateVersion: 2 }),
+	);
+	readonly retireVersion = vi.fn(() =>
+		of({ ...version, status: 'retired' as const, stateVersion: 3 }),
+	);
 	readonly renameLayout = vi.fn(() => of(layout));
 	readonly retireLayout = vi.fn(() => of(layout));
 	readonly refresh = vi.fn();
@@ -99,11 +128,32 @@ describe('TrackMapStore', () => {
 		expect(store.selectedVersionId()).toBe(version.id);
 		expect(store.version()).toEqual(version);
 		expect(gateway.selectVersion).toHaveBeenCalledWith(version.id);
+		store.openVersion('missing');
+		expect(store.selectedVersionId()).toBe(version.id);
+		store.openVersion(version.id);
+		expect(gateway.selectVersion).toHaveBeenLastCalledWith(version.id);
 		gateway.loadedVersion.set({ ...version, id: 'stale-version' });
 		expect(store.version()).toBeNull();
 		store.refresh();
 		expect(gateway.refresh).toHaveBeenCalledOnce();
 		expect(gateway.refreshVersion).toHaveBeenCalledOnce();
+	});
+
+	it('opens the approved version exposed to an ordinary user', () => {
+		const approved = { ...version, status: 'approved' as const };
+		gateway.canManage.set(false);
+		gateway.loadedVersion.set(approved);
+		gateway.layoutItems.set([
+			{
+				...layout,
+				mapVersions: [
+					{ ...layout.mapVersions[0], status: 'approved' as const },
+				],
+			},
+		]);
+		store.openLayout(layout.id);
+		expect(store.selectedVersionId()).toBe(version.id);
+		expect(store.version()).toEqual(approved);
 	});
 
 	it('runs every mutation with immutable commands and refreshes summaries', () => {
@@ -112,14 +162,21 @@ describe('TrackMapStore', () => {
 		expect(store.version()).toEqual(version);
 		store.saveDraft({ corners: [] });
 		expect(store.version()).toEqual(version);
+		store.approveVersion();
+		expect(store.version()?.status).toBe('approved');
+		store.retireVersion();
+		expect(store.version()?.status).toBe('retired');
 		store.renameLayout({ name: 'Renamed' });
 		store.retireLayout();
 		expect(gateway.createLayout).toHaveBeenCalledWith('New');
 		expect(gateway.createDraft).toHaveBeenCalledWith(layout.id, undefined);
 		expect(gateway.saveDraft).toHaveBeenCalledWith({
 			versionId: version.id,
+			expectedStateVersion: 1,
 			corners: [],
 		});
+		expect(gateway.approveVersion).toHaveBeenCalledWith(version.id, 1);
+		expect(gateway.retireVersion).toHaveBeenCalledWith(version.id, 2);
 		expect(gateway.renameLayout).toHaveBeenCalledWith(layout.id, 'Renamed');
 		expect(gateway.retireLayout).toHaveBeenCalledWith(layout.id);
 		expect(gateway.refresh).toHaveBeenCalled();
@@ -132,6 +189,8 @@ describe('TrackMapStore', () => {
 		store.createLayout({ name: 'Nope' });
 		store.createDraft({ layoutId: layout.id });
 		store.saveDraft({ corners: [] });
+		store.approveVersion();
+		store.retireVersion();
 		store.renameLayout({ name: 'Nope' });
 		store.retireLayout();
 		expect(gateway.createLayout).not.toHaveBeenCalled();
@@ -142,12 +201,15 @@ describe('TrackMapStore', () => {
 		store.createLayout({ name: 'Pending' });
 		store.createLayout({ name: 'Ignored' });
 		store.openLayout(layout.id);
+		store.openVersion(version.id);
 		expect(store.selectedLayoutId()).toBeNull();
 		store.createDraft({ layoutId: layout.id });
 		store.saveDraft({ corners: [] });
 		store.renameLayout({ name: 'Ignored' });
 		store.retireLayout();
 		expect(gateway.createLayout).toHaveBeenCalledTimes(1);
+		expect(gateway.approveVersion).not.toHaveBeenCalled();
+		expect(gateway.retireVersion).not.toHaveBeenCalled();
 		pending.next(layout);
 		pending.complete();
 		expect(store.outcome().status).toBe('succeeded');
@@ -157,15 +219,19 @@ describe('TrackMapStore', () => {
 		gateway.layoutItems.set([{ ...layout, status: 'retired' }]);
 		store.openLayout(layout.id);
 		expect(store.selectedLayoutId()).toBe(layout.id);
-		expect(store.selectedVersionId()).toBeNull();
+		expect(store.selectedVersionId()).toBe(version.id);
 		store.createDraft({ layoutId: layout.id });
 		store.saveDraft({ corners: [] });
+		store.approveVersion();
+		store.retireVersion();
 		store.renameLayout({ name: 'Nope' });
 		store.retireLayout();
 		expect(gateway.createDraft).not.toHaveBeenCalled();
 		expect(gateway.saveDraft).not.toHaveBeenCalled();
 		expect(gateway.renameLayout).not.toHaveBeenCalled();
 		expect(gateway.retireLayout).not.toHaveBeenCalled();
+		expect(gateway.approveVersion).not.toHaveBeenCalled();
+		expect(gateway.retireVersion).not.toHaveBeenCalled();
 	});
 
 	it('maps read and mutation failures into presentation state', () => {
@@ -212,6 +278,8 @@ describe('TrackMapStore', () => {
 		expect(store.selectedVersionId()).toBeNull();
 		expect(store.version()).toBeNull();
 		store.saveDraft({ corners: [] });
+		store.approveVersion();
+		store.retireVersion();
 		store.renameLayout({ name: 'No layout' });
 		store.retireLayout();
 	});

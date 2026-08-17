@@ -2127,6 +2127,8 @@ const trackGateSchema = {
 } as const;
 const trackCornerSchema = {
 	type: 'object',
+	description:
+		'One ordered Corner expressed in normalized 0–1 coordinates relative to the fixed Track view.',
 	required: ['key', 'name', 'order', 'entryGate', 'exitGate', 'cornerView'],
 	properties: {
 		key: {
@@ -2151,10 +2153,152 @@ const trackCornerSchema = {
 		},
 	},
 } as const;
+const trackMapStatusSchema = {
+	type: 'string',
+	enum: ['draft', 'approved', 'retired'],
+	description:
+		'Drafts are Owner-editable, approved versions are immutable and selectable, and retired versions remain historical but cannot be newly selected.',
+} as const;
+const trackMapVersionSchema = {
+	type: 'object',
+	required: [
+		'id',
+		'layoutId',
+		'version',
+		'stateVersion',
+		'status',
+		'sourceVersionId',
+		'createdBy',
+		'createdAt',
+		'updatedAt',
+		'approvedBy',
+		'approvedAt',
+		'retiredAt',
+		'corners',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		layoutId: { type: 'string', format: 'uuid' },
+		version: {
+			type: 'integer',
+			minimum: 1,
+			description:
+				'Immutable, monotonically increasing version within a layout.',
+		},
+		stateVersion: {
+			type: 'integer',
+			minimum: 1,
+			description:
+				'Observed revision required for conflict-safe save, approval, and retirement decisions.',
+		},
+		status: trackMapStatusSchema,
+		sourceVersionId: { type: 'string', format: 'uuid', nullable: true },
+		createdBy: { type: 'string' },
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+		approvedBy: { type: 'string', nullable: true },
+		approvedAt: { type: 'string', format: 'date-time', nullable: true },
+		retiredAt: { type: 'string', format: 'date-time', nullable: true },
+		corners: { type: 'array', maxItems: 100, items: trackCornerSchema },
+	},
+} as const;
+const trackMapVersionResponse = {
+	description: 'Track-map version, provenance, lifecycle state, and geometry',
+	content: {
+		'application/json': {
+			schema: {
+				type: 'object',
+				required: ['trackMapVersion'],
+				properties: { trackMapVersion: trackMapVersionSchema },
+			},
+		},
+	},
+} as const;
+const trackMapDecisionBody = {
+	required: true,
+	content: {
+		'application/json': {
+			schema: {
+				type: 'object',
+				required: ['expectedStateVersion'],
+				properties: {
+					expectedStateVersion: { type: 'integer', minimum: 1 },
+				},
+			},
+		},
+	},
+} as const;
+const trackMapVersionSummarySchema = {
+	type: 'object',
+	required: [
+		'id',
+		'version',
+		'stateVersion',
+		'status',
+		'createdAt',
+		'updatedAt',
+		'approvedAt',
+		'retiredAt',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		version: { type: 'integer', minimum: 1 },
+		stateVersion: { type: 'integer', minimum: 1 },
+		status: trackMapStatusSchema,
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+		approvedAt: { type: 'string', format: 'date-time', nullable: true },
+		retiredAt: { type: 'string', format: 'date-time', nullable: true },
+	},
+} as const;
+const trackLayoutSummarySchema = {
+	type: 'object',
+	required: [
+		'id',
+		'name',
+		'status',
+		'createdBy',
+		'createdAt',
+		'updatedAt',
+		'retiredAt',
+		'mapVersions',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		name: { type: 'string' },
+		status: { type: 'string', enum: ['active', 'retired'] },
+		createdBy: { type: 'string' },
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+		retiredAt: { type: 'string', format: 'date-time', nullable: true },
+		mapVersions: { type: 'array', items: trackMapVersionSummarySchema },
+	},
+} as const;
 trackMapPaths['/api/v1/track-layouts'] = {
 	get: {
 		summary: 'List Track layouts visible to the authenticated user',
-		responses: { 200: { description: 'Track layouts and version summaries' } },
+		description:
+			'Owners receive all states. Ordinary authenticated users receive active layouts with approved, non-retired versions only.',
+		responses: {
+			200: {
+				description: 'Track layouts and version summaries',
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							required: ['canManage', 'trackLayouts'],
+							properties: {
+								canManage: { type: 'boolean' },
+								trackLayouts: {
+									type: 'array',
+									items: trackLayoutSummarySchema,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	},
 	post: {
 		summary: 'Owner-only create a Track layout',
@@ -2232,17 +2376,20 @@ trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions'] = {
 			},
 		},
 		responses: {
-			201: { description: 'Draft Track map created' },
+			201: trackMapVersionResponse,
 			404: { description: 'Layout or source map not found' },
+			409: { description: 'Concurrent version creation conflict' },
 		},
 	},
 };
 trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions/{versionId}'] = {
 	parameters: [trackLayoutIdParameter, trackMapVersionIdParameter],
 	get: {
-		summary: 'Owner-only read a Track map version and corners',
+		summary: 'Read a visible Track map version and normalized geometry',
+		description:
+			'Owners may inspect every state. Ordinary authenticated users may inspect approved versions on active layouts only.',
 		responses: {
-			200: { description: 'Track map geometry' },
+			200: trackMapVersionResponse,
 			404: { description: 'Track map not found' },
 		},
 	},
@@ -2250,9 +2397,11 @@ trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions/{versionId}'] = {
 trackMapPaths['/api/v1/track-map-versions/{versionId}'] = {
 	parameters: [trackMapVersionIdParameter],
 	get: {
-		summary: 'Owner-only read a Track map version and corners',
+		summary: 'Read a visible Track map version and normalized geometry',
+		description:
+			'Owners may inspect every state. Ordinary authenticated users may inspect approved versions on active layouts only.',
 		responses: {
-			200: { description: 'Track map geometry' },
+			200: trackMapVersionResponse,
 			404: { description: 'Track map not found' },
 		},
 	},
@@ -2264,8 +2413,9 @@ trackMapPaths['/api/v1/track-map-versions/{versionId}'] = {
 				'application/json': {
 					schema: {
 						type: 'object',
-						required: ['corners'],
+						required: ['expectedStateVersion', 'corners'],
 						properties: {
+							expectedStateVersion: { type: 'integer', minimum: 1 },
 							corners: {
 								type: 'array',
 								maxItems: 100,
@@ -2277,10 +2427,45 @@ trackMapPaths['/api/v1/track-map-versions/{versionId}'] = {
 			},
 		},
 		responses: {
-			200: { description: 'Draft geometry saved' },
+			200: trackMapVersionResponse,
 			400: { description: 'Invalid or degenerate geometry' },
-			409: { description: 'Only drafts are editable' },
+			409: {
+				description: 'Only drafts are editable or the observed state is stale',
+			},
 			404: { description: 'Track map not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}/approve'] = {
+	parameters: [trackMapVersionIdParameter],
+	post: {
+		summary: 'Owner-only approve complete draft geometry as immutable',
+		requestBody: trackMapDecisionBody,
+		responses: {
+			200: trackMapVersionResponse,
+			400: { description: 'Invalid observed state revision' },
+			404: { description: 'Track map not found' },
+			409: {
+				description: 'Draft geometry is invalid or the observed state is stale',
+			},
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}/retire'] = {
+	parameters: [trackMapVersionIdParameter],
+	post: {
+		summary: 'Owner-only retire an approved Track-map version',
+		description:
+			'Retirement prevents future selection without changing historical references or immutable geometry.',
+		requestBody: trackMapDecisionBody,
+		responses: {
+			200: trackMapVersionResponse,
+			400: { description: 'Invalid observed state revision' },
+			404: { description: 'Track map not found' },
+			409: {
+				description:
+					'Only approved versions can retire or the observed state is stale',
+			},
 		},
 	},
 };

@@ -14,21 +14,7 @@
 		<div class="track-canvas-wrap border border-alloy-command-separator bg-alloy-command-control p-2">
 			<div class="mb-2 flex flex-wrap gap-4 text-xs font-semibold text-alloy-command-text" aria-hidden="true"><span>━ Entry gate</span><span>┅ Exit gate</span><span>┄ Corner view</span></div>
 			<button class="alloy-focus-ring track-canvas-button block w-full border-0 bg-transparent p-0 text-left" type="button" aria-label="Track map geometry editor. Click to place the selected geometry target, or use arrow keys." (click)="moveFromCanvas($event, selectedCorner()!)" (keydown)="moveSelected($event, selectedCorner()!)" [disabled]="busy() || !version() || !activeCorner()">
-				<svg class="track-canvas block w-full" viewBox="0 0 640 360" role="img" aria-hidden="true">
-					<rect class="fill-alloy-command-control" width="640" height="360" />
-					<path class="stroke-alloy-command-separator" d="M160 0V360M320 0V360M480 0V360M0 90H640M0 180H640M0 270H640" fill="none" stroke-width="1" opacity=".6" />
-					@for (corner of corners(); track $index) {
-						<line class="stroke-alloy-command-accent" [attr.x1]="svgX(corner.entryGate.start)" [attr.y1]="svgY(corner.entryGate.start)" [attr.x2]="svgX(corner.entryGate.end)" [attr.y2]="svgY(corner.entryGate.end)" stroke-width="4" />
-						<line class="stroke-alloy-command-secondary" [attr.x1]="svgX(corner.exitGate.start)" [attr.y1]="svgY(corner.exitGate.start)" [attr.x2]="svgX(corner.exitGate.end)" [attr.y2]="svgY(corner.exitGate.end)" stroke-width="4" stroke-dasharray="8 5" />
-						<rect class="stroke-alloy-command-text" [attr.x]="corner.cornerView.x * 640" [attr.y]="corner.cornerView.y * 360" [attr.width]="corner.cornerView.width * 640" [attr.height]="corner.cornerView.height * 360" fill="none" stroke-dasharray="4 4" />
-						<text class="fill-alloy-command-text" [attr.x]="corner.cornerView.x * 640 + 6" [attr.y]="corner.cornerView.y * 360 + 18" font-size="13">{{ corner.order }} · {{ corner.name }}</text>
-					}
-					@if (activeCorner(); as active) {
-						@for (target of pointTargets; track target) {
-							<circle class="fill-alloy-command-text stroke-alloy-command-accent" [attr.cx]="svgX(point(active, target))" [attr.cy]="svgY(point(active, target))" r="7" stroke-width="3" />
-						}
-					}
-				</svg>
+				<app-track-map-geometry [corners]="corners()" [activeCorner]="activeCorner()" label="Editable Track map geometry" [decorative]="true" />
 			</button>
 		</div>
 		<div class="grid content-start gap-3">
@@ -74,7 +60,10 @@
 				</fieldset>
 			}
 			@if (errors().length) { <div class="alloy-state alloy-error-state" role="alert"><strong>Geometry needs attention</strong><ul class="mt-2 list-disc pl-5">@for (error of errors(); track error) { <li>{{ error }}</li> }</ul></div> }
-			<button class="alloy-control alloy-control-primary" type="button" (click)="saveDraft()" [disabled]="busy() || !version() || errors().length > 0" [attr.aria-busy]="busy()">{{ busy() ? 'Saving…' : 'Save draft geometry' }}</button>
+			<div class="grid gap-2 border-t border-alloy-separator pt-3">
+				<button class="alloy-control alloy-control-primary" type="button" (click)="saveDraft()" [disabled]="busy() || !version() || errors().length > 0" [attr.aria-busy]="busy()">{{ busy() ? 'Saving…' : 'Save draft geometry' }}</button>
+				<app-track-map-approval [version]="version()" [corners]="corners()" [busy]="busy()" [valid]="errors().length === 0" (approveRequested)="approveRequested.emit()" />
+			</div>
 		</div>
 	</div>
 </section>

@@ -18,10 +18,13 @@ const version = {
 	id: 'version-1',
 	layoutId: 'layout-1',
 	version: 1,
+	stateVersion: 1,
 	status: 'draft',
 	sourceVersionId: null,
+	createdBy: 'owner-1',
 	createdAt: '2026-01-01',
 	updatedAt: '2026-01-01',
+	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
 	corners: [],
@@ -128,15 +131,33 @@ describe('TrackMapGateway', () => {
 		expect(createDraftRequest.request.withCredentials).toBe(true);
 		expect(createDraftRequest.request.body).toEqual({});
 		createDraftRequest.flush({ trackMapVersion: version });
-		gateway.saveDraft({ versionId: 'version-1', corners: [] }).subscribe();
+		gateway
+			.saveDraft({
+				versionId: 'version-1',
+				expectedStateVersion: 1,
+				corners: [],
+			})
+			.subscribe();
 		const saveDraftRequest = http.expectOne(
 			(request) =>
 				request.method === 'PATCH' &&
 				request.url.includes('/track-map-versions'),
 		);
 		expect(saveDraftRequest.request.withCredentials).toBe(true);
-		expect(saveDraftRequest.request.body).toEqual({ corners: [] });
+		expect(saveDraftRequest.request.body).toEqual({
+			expectedStateVersion: 1,
+			corners: [],
+		});
 		saveDraftRequest.flush({ trackMapVersion: version });
+		for (const action of ['approve', 'retire'] as const) {
+			gateway[`${action}Version`]('version-1', 1).subscribe();
+			const decisionRequest = http.expectOne(
+				(request) =>
+					request.method === 'POST' && request.url.endsWith(`/${action}`),
+			);
+			expect(decisionRequest.request.body).toEqual({ expectedStateVersion: 1 });
+			decisionRequest.flush({ trackMapVersion: version });
+		}
 		gateway.renameLayout('layout-1', 'Renamed').subscribe();
 		const renameLayoutRequest = http.expectOne(
 			(request) =>
@@ -160,7 +181,14 @@ describe('TrackMapGateway', () => {
 		const operations: Array<() => Observable<unknown>> = [
 			() => gateway.createLayout('Main'),
 			() => gateway.createDraft('layout-1', 'version-1'),
-			() => gateway.saveDraft({ versionId: 'version-1', corners: [] }),
+			() =>
+				gateway.saveDraft({
+					versionId: 'version-1',
+					expectedStateVersion: 1,
+					corners: [],
+				}),
+			() => gateway.approveVersion('version-1', 1),
+			() => gateway.retireVersion('version-1', 1),
 			() => gateway.renameLayout('layout-1', 'Renamed'),
 			() => gateway.retireLayout('layout-1'),
 		];

@@ -1,10 +1,104 @@
 <div class="grid gap-8">
-	<header class="flex flex-wrap items-end justify-between gap-4 border-b border-alloy-separator pb-6"><div><p class="alloy-section-heading m-0">{{ store.canManage() ? 'Owner tools' : 'Track reference' }}</p><h1 class="mt-2 text-3xl font-semibold tracking-[-0.03em]">Track maps</h1><p class="alloy-supporting-text mt-2 max-w-2xl">Draw reusable corner geometry once. Approved versions become shared reference data for every analysis on this layout.</p></div><span class="border-l-2 border-alloy-accent pl-3 text-xs font-semibold uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">Fixed camera · normalized coordinates</span></header>
-	@if (store.readError()) { <div class="alloy-state alloy-error-state" role="alert">{{ store.readError() }} <button class="alloy-control alloy-control-secondary mt-3" type="button" (click)="store.refresh()">Try again</button></div> }
+	<header class="flex flex-wrap items-end justify-between gap-4 border-b border-alloy-separator pb-6">
+		<div>
+			<p class="alloy-section-heading m-0">{{ store.canManage() ? 'Owner tools' : 'Track reference' }}</p>
+			<h1 class="mt-2 text-3xl font-semibold tracking-[-0.03em]">Track maps</h1>
+			<p class="alloy-supporting-text mt-2 max-w-2xl">Draw reusable corner geometry once. Approved versions become shared reference data for every analysis on this layout.</p>
+		</div>
+		<span class="border-l-2 border-alloy-accent pl-3 text-xs font-semibold uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">Fixed camera · normalized coordinates</span>
+	</header>
+
+	@if (store.readError()) {
+		<div class="alloy-state alloy-error-state" role="alert">
+			{{ store.readError() }}
+			<button class="alloy-control alloy-control-secondary mt-3" type="button" (click)="store.refresh()">Try again</button>
+		</div>
+	}
+
 	<section class="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]" aria-label="Track layouts">
-		<aside class="border border-alloy-separator bg-alloy-canvas p-4"><div class="flex items-center justify-between"><h2 class="m-0 text-base font-semibold">Layouts</h2><span class="text-xs text-alloy-text-on-canvas-secondary">{{ store.layouts().length }}</span></div><div class="mt-4 grid gap-2">@for (layout of store.layouts(); track layout.id) { <button class="alloy-focus-ring flex min-h-12 items-center justify-between border-l-2 px-3 text-left text-sm" [class.border-alloy-accent]="layout.id === store.selectedLayoutId()" [class.border-transparent]="layout.id !== store.selectedLayoutId()" type="button" (click)="chooseLayout(layout)" [disabled]="store.busy()"><span><strong class="block">{{ layout.name }}</strong><span class="text-xs text-alloy-text-on-canvas-secondary">{{ layout.mapVersions.length }} map version{{ layout.mapVersions.length === 1 ? '' : 's' }}</span></span><span class="text-xs uppercase tracking-[0.08em]">{{ layout.status }}</span></button> } @empty { <p class="alloy-empty-state text-alloy-text">No layouts yet. Start with the camera view you use at the track.</p> }</div>@if (store.canManage()) { <div class="mt-5 border-t border-alloy-separator pt-4"><label class="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em]" for="new-layout">New layout</label><div class="mt-2 flex gap-2"><input id="new-layout" class="alloy-control min-w-0" [value]="newLayoutName()" (input)="setNewLayoutName($any($event.target).value)" placeholder="e.g. West circuit" /><button class="alloy-control alloy-control-primary shrink-0" type="button" (click)="createLayout()" [disabled]="store.busy()">Create</button></div></div> }</aside>
-			<div class="grid content-start gap-5">@if (selectedLayout() !== null) { @let layout = selectedLayout()!; <header class="flex flex-wrap items-end justify-between gap-3"><div><p class="alloy-section-heading m-0">{{ layout.status }}</p><h2 class="mt-1 text-2xl font-semibold">{{ layout.name }}</h2></div>@if (store.canManage() && layout.status === 'active') { <div class="flex flex-wrap gap-2"><input class="alloy-control" aria-label="Layout name" [value]="layoutName()" (input)="setLayoutName($any($event.target).value)" /><button class="alloy-control alloy-control-secondary" type="button" (click)="renameLayout()" [disabled]="store.busy()">Rename</button><button class="alloy-control alloy-control-secondary" type="button" (click)="createDraft(layout)" [disabled]="store.busy()">New draft</button><button class="alloy-control alloy-control-secondary" type="button" (click)="store.retireLayout()" [disabled]="store.busy()">Retire layout</button></div> }</header>@if (store.canManage() && layout.status === 'active') { <div class="text-sm text-alloy-text-on-canvas-secondary">Draft versions can be edited repeatedly. Approval is the next review step.</div><app-track-map-editor [version]="store.version()" [busy]="store.busy()" (saveRequested)="store.saveDraft($event)" /> } @else if (store.canManage()) { <p class="alloy-supporting-text m-0">Retired Track layouts are read-only.</p> } @else { <p class="alloy-supporting-text m-0">Only approved Track-map versions are visible. Owner draft tools remain private.</p> } } @else { <div class="alloy-empty-state border border-alloy-separator p-8 text-alloy-text"><h2 class="m-0 text-xl font-semibold">Choose a layout to begin</h2><p class="mt-2">Create a layout, then open a draft to place entry gates, exit gates, and Corner views.</p></div> }</div>
+		<aside class="border border-alloy-separator bg-alloy-canvas p-4">
+			<div class="flex items-center justify-between">
+				<h2 class="m-0 text-base font-semibold">Layouts</h2>
+				<span class="text-xs text-alloy-text-on-canvas-secondary">{{ store.layouts().length }}</span>
+			</div>
+			<div class="mt-4 grid gap-2">
+				@for (layout of store.layouts(); track layout.id) {
+					<button class="alloy-focus-ring flex min-h-12 items-center justify-between border-l-2 px-3 text-left text-sm" [class.border-alloy-accent]="layout.id === store.selectedLayoutId()" [class.border-transparent]="layout.id !== store.selectedLayoutId()" type="button" (click)="chooseLayout(layout)" [disabled]="store.busy()">
+						<span><strong class="block">{{ layout.name }}</strong><span class="text-xs text-alloy-text-on-canvas-secondary">{{ layout.mapVersions.length }} map version{{ layout.mapVersions.length === 1 ? '' : 's' }}</span></span>
+						<span class="text-xs uppercase tracking-[0.08em]">{{ layout.status }}</span>
+					</button>
+				} @empty {
+					<p class="alloy-empty-state text-alloy-text">No layouts yet. Start with the camera view you use at the track.</p>
+				}
+			</div>
+			@if (store.canManage()) {
+				<div class="mt-5 border-t border-alloy-separator pt-4">
+					<label class="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em]" for="new-layout">New layout</label>
+					<div class="mt-2 flex gap-2">
+						<input id="new-layout" class="alloy-control min-w-0" [value]="newLayoutName()" (input)="setNewLayoutName($any($event.target).value)" placeholder="e.g. West circuit" />
+						<button class="alloy-control alloy-control-primary shrink-0" type="button" (click)="createLayout()" [disabled]="store.busy()">Create</button>
+					</div>
+				</div>
+			}
+		</aside>
+
+		<div class="grid content-start gap-5">
+			@if (selectedLayout() !== null) {
+				@let layout = selectedLayout()!;
+				<header class="flex flex-wrap items-end justify-between gap-3">
+					<div><p class="alloy-section-heading m-0">{{ layout.status }}</p><h2 class="mt-1 text-2xl font-semibold">{{ layout.name }}</h2></div>
+					@if (store.canManage() && layout.status === 'active') {
+						<div class="flex flex-wrap gap-2">
+							<input class="alloy-control" aria-label="Layout name" [value]="layoutName()" (input)="setLayoutName($any($event.target).value)" />
+							<button class="alloy-control alloy-control-secondary" type="button" (click)="renameLayout()" [disabled]="store.busy()">Rename</button>
+							<button class="alloy-control alloy-control-secondary" type="button" (click)="createDraft(layout)" [disabled]="store.busy()">Blank draft</button>
+							<button class="alloy-control alloy-control-secondary" type="button" (click)="store.retireLayout()" [disabled]="store.busy()">Retire layout</button>
+						</div>
+					}
+				</header>
+
+				@if (layout.mapVersions.length) {
+					<nav class="border-y border-alloy-separator py-3" aria-label="Track-map versions">
+						<h3 class="m-0 text-xs font-semibold uppercase tracking-[0.08em] text-alloy-text-on-canvas-secondary">Versions</h3>
+						<div class="mt-2 flex flex-wrap gap-2">
+							@for (summary of layout.mapVersions; track summary.id) {
+								<button class="alloy-control text-left" [class.alloy-control-primary]="summary.id === store.selectedVersionId()" [class.alloy-control-secondary]="summary.id !== store.selectedVersionId()" type="button" (click)="store.openVersion(summary.id)" [disabled]="store.busy()" [attr.aria-pressed]="summary.id === store.selectedVersionId()">
+									<span class="font-semibold">Version {{ summary.version }}</span><span class="ml-2 text-xs uppercase tracking-[0.08em]">{{ summary.status }}</span>
+								</button>
+							}
+						</div>
+					</nav>
+				}
+
+				@if (store.version(); as version) {
+					@if (version.status === 'draft' && store.canManage() && layout.status === 'active') {
+						<p class="alloy-supporting-text m-0">Review and save the complete geometry before approval. Approval locks the saved revision.</p>
+						<app-track-map-editor [version]="version" [busy]="store.busy()" (saveRequested)="store.saveDraft($event)" (approveRequested)="store.approveVersion()" />
+					} @else {
+						@if (store.canManage() && layout.status === 'active' && version.status === 'approved') {
+							<div class="flex flex-wrap gap-2">
+								<button class="alloy-control alloy-control-primary" type="button" (click)="createDraft(layout, version.id)" [disabled]="store.busy()">Edit as new draft</button>
+								<button class="alloy-control alloy-control-secondary" type="button" (click)="store.retireVersion()" [disabled]="store.busy()">Retire version {{ version.version }}</button>
+							</div>
+						}
+						<app-track-map-review [version]="version" />
+					}
+				} @else if (layout.status === 'retired') {
+					<p class="alloy-supporting-text m-0">Retired Track layouts are read-only.</p>
+				} @else if (store.canManage()) {
+					<p class="alloy-empty-state text-alloy-text">Choose a version or create a blank draft.</p>
+				} @else {
+					<p class="alloy-supporting-text m-0">Only approved, non-retired Track-map versions are available for inspection and analysis selection. Owner draft tools remain private.</p>
+				}
+			} @else {
+				<div class="alloy-empty-state border border-alloy-separator p-8 text-alloy-text">
+					<h2 class="m-0 text-xl font-semibold">Choose a layout to begin</h2>
+					<p class="mt-2">Create a layout, then open a draft to place entry gates, exit gates, and Corner views.</p>
+				</div>
+			}
+		</div>
 	</section>
+
 	@if (store.message()) { <p class="text-sm font-semibold text-alloy-accent" role="status">{{ store.message() }}</p> }
 	@if (store.error()) { <p class="alloy-state alloy-error-state" role="alert">{{ store.error() }}</p> }
 </div>

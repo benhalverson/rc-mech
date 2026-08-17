@@ -9,13 +9,33 @@ const version: TrackMapVersion = {
 	id: 'version-1',
 	layoutId: 'layout-1',
 	version: 1,
+	stateVersion: 1,
 	status: 'draft',
 	sourceVersionId: null,
+	createdBy: 'owner-1',
 	createdAt: '2026-01-01',
 	updatedAt: '2026-01-01',
+	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
-	corners: [],
+	corners: [
+		{
+			key: 'turn-1',
+			name: 'Turn 1',
+			order: 1,
+			entryGate: {
+				start: { x: 0.1, y: 0.2 },
+				end: { x: 0.2, y: 0.2 },
+				direction: 'forward',
+			},
+			exitGate: {
+				start: { x: 0.3, y: 0.4 },
+				end: { x: 0.4, y: 0.4 },
+				direction: 'forward',
+			},
+			cornerView: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 },
+		},
+	],
 };
 const layout: TrackLayout = {
 	id: 'layout-1',
@@ -29,8 +49,12 @@ const layout: TrackLayout = {
 		{
 			id: version.id,
 			version: 1,
+			stateVersion: 1,
 			status: 'draft',
+			createdAt: version.createdAt,
 			updatedAt: version.updatedAt,
+			approvedAt: null,
+			retiredAt: null,
 		},
 	],
 };
@@ -61,10 +85,12 @@ describe('TrackMaps', () => {
 
 	beforeEach(async () => {
 		const selectedLayoutId = signal<string | null>(null);
+		const selectedVersionId = signal<string | null>(null);
 		store = {
 			layouts: signal([layout]),
 			canManage: signal(true),
 			selectedLayoutId,
+			selectedVersionId,
 			version: signal<TrackMapVersion | null>(null),
 			busy: signal(false),
 			error: signal(''),
@@ -72,9 +98,12 @@ describe('TrackMaps', () => {
 			readError: signal(''),
 			loading: signal(false),
 			openLayout: vi.fn((id: string) => selectedLayoutId.set(id)),
+			openVersion: vi.fn((id: string) => selectedVersionId.set(id)),
 			createLayout: vi.fn(),
 			createDraft: vi.fn(),
 			saveDraft: vi.fn(),
+			approveVersion: vi.fn(),
+			retireVersion: vi.fn(),
 			renameLayout: vi.fn(),
 			retireLayout: vi.fn(),
 			refresh: vi.fn(),
@@ -94,7 +123,7 @@ describe('TrackMaps', () => {
 		expect(store['createLayout']).toHaveBeenCalledWith({ name: 'New layout' });
 		selectMain();
 		expect(store['openLayout']).toHaveBeenCalledWith(layout.id);
-		button('New draft').click();
+		button('Blank draft').click();
 		fill('input[aria-label="Layout name"]', 'Renamed');
 		button('Rename').click();
 		expect(store['createDraft']).toHaveBeenCalledWith({
@@ -139,7 +168,13 @@ describe('TrackMaps', () => {
 		expect(fixture.nativeElement.textContent).toContain('Mutation failed');
 	});
 
-	it('starts a new draft from the latest approved version', () => {
+	it('derives an editable draft from the selected approved version', () => {
+		const approved = {
+			...version,
+			status: 'approved' as const,
+			approvedBy: 'owner-1',
+			approvedAt: '2026-01-02',
+		};
 		(store['layouts'] as ReturnType<typeof signal<TrackLayout[]>>).set([
 			{
 				...layout,
@@ -148,13 +183,25 @@ describe('TrackMaps', () => {
 				],
 			},
 		]);
+		(store['version'] as ReturnType<typeof signal<TrackMapVersion | null>>).set(
+			approved,
+		);
 		fixture.detectChanges();
 		selectMain();
-		button('New draft').click();
+		button('Version 1').click();
+		button('Edit as new draft').click();
 		expect(store['createDraft']).toHaveBeenCalledWith({
 			layoutId: layout.id,
 			sourceVersionId: version.id,
 		});
+		button('Retire version').click();
+		expect(store['retireVersion']).toHaveBeenCalledOnce();
+		expect(fixture.nativeElement.textContent).toContain('Immutable geometry');
+		(store['canManage'] as ReturnType<typeof signal<boolean>>).set(false);
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Edit as new draft',
+		);
 	});
 
 	it('keeps the selected workflow mounted during a layout refresh', () => {
@@ -198,8 +245,12 @@ describe('TrackMaps', () => {
 		);
 		fixture.detectChanges();
 		button('Save draft geometry').click();
+		button('Approve version').click();
 		button('Retire layout').click();
-		expect(store['saveDraft']).toHaveBeenCalledWith({ corners: [] });
+		expect(store['saveDraft']).toHaveBeenCalledWith({
+			corners: version.corners,
+		});
+		expect(store['approveVersion']).toHaveBeenCalledOnce();
 		expect(store['retireLayout']).toHaveBeenCalledOnce();
 		(store['readError'] as ReturnType<typeof signal<string>>).set('Retry');
 		fixture.detectChanges();
