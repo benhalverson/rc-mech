@@ -118,13 +118,19 @@ describe('Track-map routes', () => {
 		expect(response.status).toBe(201);
 		const first = (
 			(await response.json()) as {
-				trackMapVersion: { id: string; version: number };
+				trackMapVersion: {
+					id: string;
+					version: number;
+					stateVersion: number;
+				};
 			}
 		).trackMapVersion;
 		expect(first.version).toBe(1);
+		expect(first.stateVersion).toBe(1);
 		response = await request(
 			`/api/v1/track-map-versions/${first.id}`,
 			json('PATCH', {
+				expectedStateVersion: 1,
 				corners: [corner(), { ...corner('turn-2'), name: 'Turn 2', order: 2 }],
 			}),
 		);
@@ -134,16 +140,30 @@ describe('Track-map routes', () => {
 		});
 		response = await request(
 			`/api/v1/track-map-versions/${first.id}`,
-			json('PATCH', { corners: [] }),
+			json('PATCH', { expectedStateVersion: 2, corners: [] }),
 		);
 		expect(await response.json()).toMatchObject({
 			trackMapVersion: { corners: [] },
 		});
 		response = await request(
 			`/api/v1/track-map-versions/${first.id}`,
-			json('PATCH', { corners: [corner()] }),
+			json('PATCH', { expectedStateVersion: 3, corners: [corner()] }),
 		);
 		expect(response.status).toBe(200);
+		response = await request(
+			`/api/v1/track-map-versions/${first.id}/approve`,
+			json('POST', { expectedStateVersion: 4 }),
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			trackMapVersion: {
+				stateVersion: 5,
+				status: 'approved',
+				createdBy: 'owner-1',
+				approvedBy: 'owner-1',
+				approvedAt: expect.any(String),
+			},
+		});
 		response = await request(`/api/v1/track-map-versions/${first.id}`);
 		expect(response.status).toBe(200);
 		response = await request(
@@ -157,11 +177,18 @@ describe('Track-map routes', () => {
 			json('POST', { sourceVersionId: first.id }),
 		);
 		expect(response.status).toBe(201);
-		expect(await response.json()).toMatchObject({
-			trackMapVersion: {
-				version: 2,
-				corners: expect.arrayContaining([corner()]),
-			},
+		const second = (
+			(await response.json()) as {
+				trackMapVersion: {
+					id: string;
+					version: number;
+					corners: unknown[];
+				};
+			}
+		).trackMapVersion;
+		expect(second).toMatchObject({
+			version: 2,
+			corners: expect.arrayContaining([corner()]),
 		});
 		response = await request(
 			`/api/v1/track-layouts/${layout.id}`,
@@ -176,7 +203,15 @@ describe('Track-map routes', () => {
 			(
 				await request(
 					`/api/v1/track-map-versions/${first.id}`,
-					json('PATCH', { corners: [corner()] }),
+					json('PATCH', { expectedStateVersion: 5, corners: [corner()] }),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${second.id}`,
+					json('PATCH', { expectedStateVersion: 1, corners: [] }),
 				)
 			).status,
 		).toBe(409);
@@ -196,6 +231,15 @@ describe('Track-map routes', () => {
 			).status,
 		).toBe(409);
 		if (!sqlite) throw new Error('SQLite fixture is unavailable');
+		const userFixture = createHonoFixture({
+			database: sqlite.database,
+			userId: 'user-1',
+		});
+		Object.assign(userFixture.env, { OWNER_EMAIL: 'owner@example.com' });
+		expect(
+			(await userFixture.request(`/api/v1/track-map-versions/${first.id}`))
+				.status,
+		).toBe(404);
 		const database = drizzle(sqlite.database);
 		await expect(
 			database
@@ -243,15 +287,7 @@ describe('Track-map routes', () => {
 			(
 				await request(
 					`/api/v1/track-map-versions/${versionId}`,
-					json('PATCH', { corners: [invalid] }),
-				)
-			).status,
-		).toBe(400);
-		expect(
-			(
-				await request(
-					`/api/v1/track-map-versions/${versionId}`,
-					json('PATCH', { corners: [{ ...corner(), key: 'bad key' }] }),
+					json('PATCH', { expectedStateVersion: 1, corners: [invalid] }),
 				)
 			).status,
 		).toBe(400);
@@ -260,6 +296,18 @@ describe('Track-map routes', () => {
 				await request(
 					`/api/v1/track-map-versions/${versionId}`,
 					json('PATCH', {
+						expectedStateVersion: 1,
+						corners: [{ ...corner(), key: 'bad key' }],
+					}),
+				)
+			).status,
+		).toBe(400);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}`,
+					json('PATCH', {
+						expectedStateVersion: 1,
 						corners: [corner(), { ...corner(), key: 'turn-2', order: 1 }],
 					}),
 				)
@@ -269,7 +317,10 @@ describe('Track-map routes', () => {
 			(
 				await request(
 					`/api/v1/track-map-versions/${versionId}`,
-					json('PATCH', { corners: [corner(), { ...corner(), order: 2 }] }),
+					json('PATCH', {
+						expectedStateVersion: 1,
+						corners: [corner(), { ...corner(), order: 2 }],
+					}),
 				)
 			).status,
 		).toBe(400);
@@ -278,6 +329,7 @@ describe('Track-map routes', () => {
 				await request(
 					`/api/v1/track-map-versions/${versionId}`,
 					json('PATCH', {
+						expectedStateVersion: 1,
 						corners: [
 							{
 								...corner(),
@@ -293,6 +345,7 @@ describe('Track-map routes', () => {
 				await request(
 					`/api/v1/track-map-versions/${versionId}`,
 					json('PATCH', {
+						expectedStateVersion: 1,
 						corners: [
 							{ ...corner(), cornerView: { ...corner().cornerView, width: 0 } },
 						],
@@ -389,11 +442,67 @@ describe('Track-map routes', () => {
 		expect(
 			(
 				await request(
+					`/api/v1/track-map-versions/${versionId}/approve`,
+					json('POST', { expectedStateVersion: 1 }),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/approve`,
+					json('POST', {}),
+				)
+			).status,
+		).toBe(400);
+		expect(
+			(
+				await request(
 					`/api/v1/track-map-versions/${versionId}`,
-					json('PATCH', { corners: [corner()] }),
+					json('PATCH', { expectedStateVersion: 1, corners: [corner()] }),
 				)
 			).status,
 		).toBe(200);
+		expect(
+			(
+				await request(
+					`/api/v1/track-layouts/${layoutId}/map-versions`,
+					json('POST', { sourceVersionId: versionId }),
+				)
+			).status,
+		).toBe(404);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/retire`,
+					json('POST', { expectedStateVersion: 2 }),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await request(
+					'/api/v1/track-map-versions/missing/approve',
+					json('POST', { expectedStateVersion: 1 }),
+				)
+			).status,
+		).toBe(404);
+		expect(
+			(
+				await request(
+					'/api/v1/track-map-versions/missing/retire',
+					json('POST', { expectedStateVersion: 1 }),
+				)
+			).status,
+		).toBe(404);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/retire`,
+					json('POST', {}),
+				)
+			).status,
+		).toBe(400);
 		expect(
 			(await request(`/api/v1/track-layouts/${layoutId}/map-versions/wrong`))
 				.status,
@@ -405,18 +514,30 @@ describe('Track-map routes', () => {
 			(
 				await request(
 					'/api/v1/track-map-versions/missing',
-					json('PATCH', { corners: [] }),
+					json('PATCH', { expectedStateVersion: 1, corners: [] }),
 				)
 			).status,
 		).toBe(404);
 		expect(
 			(await request(`/api/v1/track-map-versions/${versionId}`)).status,
 		).toBe(200);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/approve`,
+					json('POST', { expectedStateVersion: 2 }),
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/approve`,
+					json('POST', { expectedStateVersion: 3 }),
+				)
+			).status,
+		).toBe(409);
 		if (!sqlite) throw new Error('SQLite fixture is unavailable');
-		await drizzle(sqlite.database)
-			.update(trackMapVersion)
-			.set({ status: 'approved' })
-			.where(eq(trackMapVersion.id, versionId));
 		await expect(
 			drizzle(sqlite.database)
 				.delete(trackCorner)
@@ -428,11 +549,27 @@ describe('Track-map routes', () => {
 				.from(trackCorner)
 				.where(eq(trackCorner.mapVersionId, versionId)),
 		).toHaveLength(1);
+		await expect(
+			drizzle(sqlite.database)
+				.update(trackMapVersion)
+				.set({
+					version: 99,
+					status: 'retired',
+					stateVersion: 4,
+					retiredAt: '2026-08-17T00:02:00.000Z',
+				})
+				.where(eq(trackMapVersion.id, versionId)),
+		).rejects.toThrow();
+		await expect(
+			drizzle(sqlite.database)
+				.delete(trackMapVersion)
+				.where(eq(trackMapVersion.id, versionId)),
+		).rejects.toThrow();
 		expect(
 			(
 				await request(
 					`/api/v1/track-map-versions/${versionId}`,
-					json('PATCH', { corners: [] }),
+					json('PATCH', { expectedStateVersion: 3, corners: [] }),
 				)
 			).status,
 		).toBe(409);
@@ -444,6 +581,22 @@ describe('Track-map routes', () => {
 				)
 			).status,
 		).toBe(201);
+		sqlite.exec(`
+			CREATE TRIGGER reject_next_track_map
+			BEFORE INSERT ON track_map_version
+			BEGIN
+				SELECT RAISE(ABORT, 'simulated concurrent create');
+			END;
+		`);
+		expect(
+			(
+				await request(
+					`/api/v1/track-layouts/${layoutId}/map-versions`,
+					json('POST', {}),
+				)
+			).status,
+		).toBe(409);
+		sqlite.exec('DROP TRIGGER reject_next_track_map;');
 		await request(`/api/v1/track-layouts/${layoutId}/retire`, {
 			method: 'POST',
 		});
@@ -474,7 +627,7 @@ describe('Track-map routes', () => {
 		).trackMapVersion.id;
 		await ownerFixture.request(
 			`/api/v1/track-map-versions/${versionId}`,
-			json('PATCH', { corners: [corner()] }),
+			json('PATCH', { expectedStateVersion: 1, corners: [corner()] }),
 		);
 		if (!sqlite) throw new Error('SQLite fixture is unavailable');
 		const userFixture = createHonoFixture({
@@ -488,10 +641,18 @@ describe('Track-map routes', () => {
 			canManage: false,
 			trackLayouts: [],
 		});
-		await drizzle(sqlite.database)
-			.update(trackMapVersion)
-			.set({ status: 'approved' })
-			.where(eq(trackMapVersion.id, versionId));
+		expect(
+			(await userFixture.request(`/api/v1/track-map-versions/${versionId}`))
+				.status,
+		).toBe(404);
+		expect(
+			(
+				await ownerFixture.request(
+					`/api/v1/track-map-versions/${versionId}/approve`,
+					json('POST', { expectedStateVersion: 2 }),
+				)
+			).status,
+		).toBe(200);
 		response = await userFixture.request('/api/v1/track-layouts');
 		expect(await response.json()).toMatchObject({
 			canManage: false,
@@ -513,11 +674,11 @@ describe('Track-map routes', () => {
 					`/api/v1/track-layouts/${layoutId}/map-versions/${versionId}`,
 				)
 			).status,
-		).toBe(404);
+		).toBe(200);
 		expect(
 			(await userFixture.request(`/api/v1/track-map-versions/${versionId}`))
 				.status,
-		).toBe(404);
+		).toBe(200);
 		expect(
 			(
 				await userFixture.request(
@@ -545,9 +706,130 @@ describe('Track-map routes', () => {
 			(
 				await userFixture.request(
 					`/api/v1/track-map-versions/${versionId}`,
-					json('PATCH', { corners: [] }),
+					json('PATCH', { expectedStateVersion: 3, corners: [] }),
 				)
 			).status,
 		).toBe(404);
+		for (const action of ['approve', 'retire']) {
+			expect(
+				(
+					await userFixture.request(
+						`/api/v1/track-map-versions/${versionId}/${action}`,
+						json('POST', { expectedStateVersion: 3 }),
+					)
+				).status,
+			).toBe(404);
+		}
+		expect(
+			(
+				await ownerFixture.request(
+					`/api/v1/track-map-versions/${versionId}/retire`,
+					json('POST', { expectedStateVersion: 3 }),
+				)
+			).status,
+		).toBe(200);
+		expect(
+			await (await userFixture.request('/api/v1/track-layouts')).json(),
+		).toEqual({ canManage: false, trackLayouts: [] });
+		expect(
+			(await userFixture.request(`/api/v1/track-map-versions/${versionId}`))
+				.status,
+		).toBe(404);
+		expect(
+			await drizzle(sqlite.database)
+				.select()
+				.from(trackMapVersion)
+				.where(eq(trackMapVersion.id, versionId)),
+		).toMatchObject([{ status: 'retired', stateVersion: 4 }]);
+		expect(
+			await drizzle(sqlite.database)
+				.select()
+				.from(trackCorner)
+				.where(eq(trackCorner.mapVersionId, versionId)),
+		).toHaveLength(1);
+	});
+
+	test('stale saves, approvals, and retirements conflict without partial writes', async () => {
+		const { request } = await fixture();
+		const created = await request(
+			'/api/v1/track-layouts',
+			json('POST', { name: 'Concurrent track' }),
+		);
+		const layoutId = ((await created.json()) as { trackLayout: { id: string } })
+			.trackLayout.id;
+		const draft = await request(
+			`/api/v1/track-layouts/${layoutId}/map-versions`,
+			json('POST', {}),
+		);
+		const versionId = (
+			(await draft.json()) as { trackMapVersion: { id: string } }
+		).trackMapVersion.id;
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}`,
+					json('PATCH', { expectedStateVersion: 1, corners: [corner()] }),
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}`,
+					json('PATCH', {
+						expectedStateVersion: 1,
+						corners: [{ ...corner(), name: 'Stale overwrite' }],
+					}),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			await (await request(`/api/v1/track-map-versions/${versionId}`)).json(),
+		).toMatchObject({
+			trackMapVersion: {
+				stateVersion: 2,
+				corners: [{ name: 'Turn 1' }],
+			},
+		});
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/approve`,
+					json('POST', { expectedStateVersion: 1 }),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/approve`,
+					json('POST', { expectedStateVersion: 2 }),
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/retire`,
+					json('POST', { expectedStateVersion: 2 }),
+				)
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/retire`,
+					json('POST', { expectedStateVersion: 3 }),
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await request(
+					`/api/v1/track-map-versions/${versionId}/retire`,
+					json('POST', { expectedStateVersion: 4 }),
+				)
+			).status,
+		).toBe(409);
 	});
 });

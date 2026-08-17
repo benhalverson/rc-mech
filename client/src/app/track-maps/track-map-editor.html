@@ -74,7 +74,11 @@
 				</fieldset>
 			}
 			@if (errors().length) { <div class="alloy-state alloy-error-state" role="alert"><strong>Geometry needs attention</strong><ul class="mt-2 list-disc pl-5">@for (error of errors(); track error) { <li>{{ error }}</li> }</ul></div> }
-			<button class="alloy-control alloy-control-primary" type="button" (click)="saveDraft()" [disabled]="busy() || !version() || errors().length > 0" [attr.aria-busy]="busy()">{{ busy() ? 'Saving…' : 'Save draft geometry' }}</button>
+			<div class="grid gap-2 border-t border-alloy-separator pt-3">
+				<button class="alloy-control alloy-control-primary" type="button" (click)="saveDraft()" [disabled]="busy() || !version() || errors().length > 0" [attr.aria-busy]="busy()">{{ busy() ? 'Saving…' : 'Save draft geometry' }}</button>
+				<button class="alloy-control alloy-control-secondary" type="button" (click)="approveDraft()" [disabled]="busy() || !canApprove()" aria-describedby="approval-help">Approve version {{ version()?.version }}</button>
+				<p id="approval-help" class="m-0 text-xs text-alloy-text-on-canvas-secondary">@if (!corners().length) { Add and save at least one valid Corner before approval. } @else if (dirty()) { Save the current geometry before approval. } @else if (errors().length) { Resolve every geometry error before approval. } @else { Approval locks this exact geometry as an immutable shared reference. }</p>
+			</div>
 		</div>
 	</div>
 </section>

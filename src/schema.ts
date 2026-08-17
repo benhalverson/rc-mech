@@ -268,6 +268,7 @@ export const trackMapVersion = sqliteTable(
 			.notNull()
 			.references(() => trackLayout.id),
 		version: integer('version').notNull(),
+		stateVersion: integer('state_version').notNull().default(1),
 		status: text('status', { enum: ['draft', 'approved', 'retired'] })
 			.notNull()
 			.default('draft'),

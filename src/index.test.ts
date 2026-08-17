@@ -129,6 +129,12 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	).toBeDefined();
 	expect(document.paths['/api/v1/race-videos/{raceVideoId}']).toBeDefined();
 	expect(
+		document.paths['/api/v1/track-map-versions/{versionId}/approve'],
+	).toBeDefined();
+	expect(
+		document.paths['/api/v1/track-map-versions/{versionId}/retire'],
+	).toBeDefined();
+	expect(
 		document.paths[
 			'/api/v1/race-videos/{raceVideoId}/upload-parts/{partNumber}'
 		],

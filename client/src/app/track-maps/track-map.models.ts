@@ -22,10 +22,13 @@ export type TrackMapVersion = {
 	id: string;
 	layoutId: string;
 	version: number;
+	stateVersion: number;
 	status: 'draft' | 'approved' | 'retired';
 	sourceVersionId: string | null;
+	createdBy: string;
 	createdAt: string;
 	updatedAt: string;
+	approvedBy: string | null;
 	approvedAt: string | null;
 	retiredAt: string | null;
 	corners: TrackCorner[];
@@ -41,8 +44,12 @@ export type TrackLayout = {
 	mapVersions: Array<{
 		id: string;
 		version: number;
+		stateVersion: number;
 		status: TrackMapVersion['status'];
+		createdAt: string;
 		updatedAt: string;
+		approvedAt: string | null;
+		retiredAt: string | null;
 	}>;
 };
 export type TrackLayoutCollection = {

@@ -1,11 +1,12 @@
 import { Component, inject, linkedSignal, signal } from '@angular/core';
 import type { TrackLayout } from './track-map.models';
 import { TrackMapEditor } from './track-map-editor';
+import { TrackMapReview } from './track-map-review';
 import { TrackMapStore } from './track-map-store';
 
 @Component({
 	selector: 'app-track-maps',
-	imports: [TrackMapEditor],
+	imports: [TrackMapEditor, TrackMapReview],
 	templateUrl: './track-maps.html',
 })
 export class TrackMaps {
@@ -41,12 +42,10 @@ export class TrackMaps {
 			this.newLayoutName.set('');
 		}
 	}
-	protected createDraft(layout: TrackLayout): void {
+	protected createDraft(layout: TrackLayout, sourceVersionId?: string): void {
 		this.store.createDraft({
 			layoutId: layout.id,
-			sourceVersionId: layout.mapVersions.find(
-				(version) => version.status === 'approved',
-			)?.id,
+			sourceVersionId,
 		});
 	}
 	protected renameLayout(): void {

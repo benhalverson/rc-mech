@@ -24,6 +24,8 @@ type TrackMapOperation =
 	| 'Create layout'
 	| 'Create draft'
 	| 'Save draft'
+	| 'Approve map'
+	| 'Retire map'
 	| 'Rename layout'
 	| 'Retire layout';
 
@@ -144,10 +146,10 @@ export const TrackMapStore = signalStore(
 			openLayout(layoutId: string): void {
 				if (store.busy()) return;
 				const layout = store.layouts().find((item) => item.id === layoutId);
-				const version =
-					layout?.status === 'active'
-						? layout.mapVersions.find((item) => item.status === 'draft')
-						: undefined;
+				const version = store.canManage()
+					? (layout?.mapVersions.find((item) => item.status === 'draft') ??
+						layout?.mapVersions.at(0))
+					: layout?.mapVersions.find((item) => item.status === 'approved');
 				patchState(store, {
 					selectedLayoutId: layoutId,
 					selectedVersionId: version?.id ?? null,
@@ -155,6 +157,20 @@ export const TrackMapStore = signalStore(
 					outcome: { status: 'idle' },
 				});
 				store.gateway.selectVersion(version?.id ?? null);
+			},
+			openVersion(versionId: string): void {
+				if (store.busy()) return;
+				const layout = store
+					.layouts()
+					.find((item) => item.id === store.selectedLayoutId());
+				if (!layout?.mapVersions.some((version) => version.id === versionId))
+					return;
+				patchState(store, {
+					selectedVersionId: versionId,
+					localVersion: null,
+					outcome: { status: 'idle' },
+				});
+				store.gateway.selectVersion(versionId);
 			},
 			refresh(): void {
 				store.gateway.refresh();
@@ -202,9 +218,9 @@ export const TrackMapStore = signalStore(
 				);
 			},
 			saveDraft(command: SaveTrackMapDraftCommand): void {
-				const versionId = store.selectedVersionId();
+				const version = store.version();
 				if (
-					!versionId ||
+					version?.status !== 'draft' ||
 					store.busy() ||
 					!store.canManage() ||
 					!activeLayout(store.selectedLayoutId())
@@ -214,10 +230,51 @@ export const TrackMapStore = signalStore(
 					'Save draft',
 					() =>
 						store.gateway.saveDraft({
-							versionId,
+							versionId: version.id,
+							expectedStateVersion: version.stateVersion,
 							corners: command.corners,
 						}),
-					(version) => patchState(store, { localVersion: version }),
+					(saved) => {
+						patchState(store, { localVersion: saved });
+						store.gateway.refresh();
+					},
+				);
+			},
+			approveVersion(): void {
+				const version = store.version();
+				if (
+					version?.status !== 'draft' ||
+					version.corners.length === 0 ||
+					store.busy() ||
+					!store.canManage() ||
+					!activeLayout(store.selectedLayoutId())
+				)
+					return;
+				run(
+					'Approve map',
+					() => store.gateway.approveVersion(version.id, version.stateVersion),
+					(approved) => {
+						patchState(store, { localVersion: approved });
+						store.gateway.refresh();
+					},
+				);
+			},
+			retireVersion(): void {
+				const version = store.version();
+				if (
+					version?.status !== 'approved' ||
+					store.busy() ||
+					!store.canManage() ||
+					!activeLayout(store.selectedLayoutId())
+				)
+					return;
+				run(
+					'Retire map',
+					() => store.gateway.retireVersion(version.id, version.stateVersion),
+					(retired) => {
+						patchState(store, { localVersion: retired });
+						store.gateway.refresh();
+					},
 				);
 			},
 			renameLayout(command: RenameTrackLayoutCommand): void {

@@ -38,6 +38,7 @@ export class TrackMapEditor {
 	readonly version = input<TrackMapVersion | null>(null);
 	readonly busy = input(false);
 	readonly saveRequested = output<SaveTrackMapDraftCommand>();
+	readonly approveRequested = output<void>();
 	protected readonly corners = linkedSignal<
 		{ id: string; updatedAt: string } | null,
 		TrackCorner[]
@@ -82,6 +83,18 @@ export class TrackMapEditor {
 	});
 	protected readonly errors = computed(() =>
 		validateTrackCorners(this.corners()),
+	);
+	protected readonly dirty = computed(
+		() =>
+			JSON.stringify(this.corners()) !==
+			JSON.stringify(this.version()?.corners ?? []),
+	);
+	protected readonly canApprove = computed(
+		() =>
+			this.version()?.status === 'draft' &&
+			this.corners().length > 0 &&
+			this.errors().length === 0 &&
+			!this.dirty(),
 	);
 	protected readonly activeCorner = computed(
 		() => this.corners().at(this.selectedCorner() ?? -1) ?? null,
@@ -194,6 +207,9 @@ export class TrackMapEditor {
 
 	protected saveDraft(): void {
 		this.saveRequested.emit({ corners: this.corners() });
+	}
+	protected approveDraft(): void {
+		this.approveRequested.emit();
 	}
 	protected point(corner: TrackCorner, target: PointTarget): Point {
 		const location = pointLocation[target];
