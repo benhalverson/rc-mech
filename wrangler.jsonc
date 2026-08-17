@@ -41,20 +41,43 @@
 	],
 	"durable_objects": {
 		"bindings": [
-			{ "name": "GPU_LEASE_COORDINATOR", "class_name": "GpuLeaseCoordinator" }
+			{ "name": "GPU_LEASE_COORDINATOR", "class_name": "GpuLeaseCoordinator" },
+			{
+				"name": "RACE_VIDEO_MEDIA_CONTAINER",
+				"class_name": "RaceVideoMediaContainer"
+			}
 		]
 	},
+	"containers": [
+		{
+			"name": "rc-mech-driving-analysis-media",
+			"class_name": "RaceVideoMediaContainer",
+			"image": "./containers/driving-analysis/Dockerfile",
+			"image_build_context": "./containers/driving-analysis",
+			"instance_type": "standard-4",
+			"max_instances": 2
+		}
+	],
 	"workflows": [
 		{
 			"binding": "DRIVING_ANALYSIS_WORKFLOW",
 			"name": "rc-mech-driving-analysis",
 			"class_name": "DrivingAnalysisWorkflow"
+		},
+		{
+			"binding": "RACE_VIDEO_VALIDATION_WORKFLOW",
+			"name": "rc-mech-race-video-validation",
+			"class_name": "RaceVideoValidationWorkflow"
 		}
 	],
 	"migrations": [
 		{
 			"tag": "v1-gpu-lease-coordinator",
 			"new_sqlite_classes": ["GpuLeaseCoordinator"]
+		},
+		{
+			"tag": "v2-race-video-media-container",
+			"new_sqlite_classes": ["RaceVideoMediaContainer"]
 		}
 	],
 	"vars": {
@@ -87,20 +110,43 @@
 					{
 						"name": "GPU_LEASE_COORDINATOR",
 						"class_name": "GpuLeaseCoordinator"
+					},
+					{
+						"name": "RACE_VIDEO_MEDIA_CONTAINER",
+						"class_name": "RaceVideoMediaContainer"
 					}
 				]
 			},
+			"containers": [
+				{
+					"name": "rc-mech-driving-analysis-media-local",
+					"class_name": "RaceVideoMediaContainer",
+					"image": "./containers/driving-analysis/Dockerfile",
+					"image_build_context": "./containers/driving-analysis",
+					"instance_type": "standard-4",
+					"max_instances": 2
+				}
+			],
 			"workflows": [
 				{
 					"binding": "DRIVING_ANALYSIS_WORKFLOW",
 					"name": "rc-mech-driving-analysis-local",
 					"class_name": "DrivingAnalysisWorkflow"
+				},
+				{
+					"binding": "RACE_VIDEO_VALIDATION_WORKFLOW",
+					"name": "rc-mech-race-video-validation-local",
+					"class_name": "RaceVideoValidationWorkflow"
 				}
 			],
 			"migrations": [
 				{
 					"tag": "v1-gpu-lease-coordinator",
 					"new_sqlite_classes": ["GpuLeaseCoordinator"]
+				},
+				{
+					"tag": "v2-race-video-media-container",
+					"new_sqlite_classes": ["RaceVideoMediaContainer"]
 				}
 			],
 			"vars": {

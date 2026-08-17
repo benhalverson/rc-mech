@@ -1,0 +1,14 @@
+<figure class="m-0 grid gap-2">
+	<video
+		class="aspect-video w-full rounded border border-alloy-separator bg-black"
+		controls
+		preload="metadata"
+		[src]="recording().playbackUrl"
+		[attr.aria-label]="'Private playback of ' + recording().fileName"
+	>
+		<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
+	</video>
+	<figcaption class="text-sm text-alloy-text-secondary">
+		Private recording · {{ recording().media?.width }} × {{ recording().media?.height }} · {{ recording().media?.durationMs }} ms
+	</figcaption>
+</figure>

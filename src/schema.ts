@@ -211,6 +211,46 @@ export const raceVideo = sqliteTable(
 		uniqueIndex('race_video_owner_request').on(table.ownerId, table.requestId),
 	],
 );
+export const raceVideoValidation = sqliteTable(
+	'race_video_validation',
+	{
+		raceVideoId: text('race_video_id')
+			.primaryKey()
+			.references(() => raceVideo.id, { onDelete: 'cascade' }),
+		validationId: text('validation_id').notNull().unique(),
+		status: text('status', { enum: ['pending', 'ready', 'invalid'] })
+			.notNull()
+			.default('pending'),
+		stateVersion: integer('state_version').notNull().default(1),
+		byteCount: integer('byte_count'),
+		durationMs: integer('duration_ms'),
+		width: integer('width'),
+		height: integer('height'),
+		videoCodec: text('video_codec'),
+		audioCodecsJson: text('audio_codecs_json'),
+		containerFormatsJson: text('container_formats_json'),
+		decodedFrameCount: integer('decoded_frame_count'),
+		averageFrameRateNumerator: integer('average_frame_rate_numerator'),
+		averageFrameRateDenominator: integer('average_frame_rate_denominator'),
+		timeBaseNumerator: integer('time_base_numerator'),
+		timeBaseDenominator: integer('time_base_denominator'),
+		sampleAspectRatioNumerator: integer('sample_aspect_ratio_numerator'),
+		sampleAspectRatioDenominator: integer('sample_aspect_ratio_denominator'),
+		displayAspectRatioNumerator: integer('display_aspect_ratio_numerator'),
+		displayAspectRatioDenominator: integer('display_aspect_ratio_denominator'),
+		startTimeMs: integer('start_time_ms'),
+		checksumSha256: text('checksum_sha256'),
+		errorCode: text('error_code'),
+		errorStage: text('error_stage'),
+		errorMessage: text('error_message'),
+		startedAt: text('started_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		completedAt: text('completed_at'),
+	},
+	(table) => [
+		index('race_video_validation_status').on(table.status, table.updatedAt),
+	],
+);
 export const raceVideoUploadPart = sqliteTable(
 	'race_video_upload_part',
 	{

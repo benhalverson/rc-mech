@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
 let authentication = 0;
+const playableRaceVideo = readFileSync(
+	new URL('./support/race-video.mp4', import.meta.url),
+);
 
 const authenticateOwner = async (page: Page): Promise<void> => {
 	authentication += 1;
@@ -222,11 +226,12 @@ test('resumes a Race recording from authoritative multipart progress without ret
 		driveSession: { id: string };
 	};
 	const uploadUrl = `/api/v1/cars/${created.car.id}/drives/${driveBody.driveSession.id}/race-videos`;
+	const displaySize = playableRaceVideo.length.toLocaleString();
 	const createResponse = await page.request.post(uploadUrl, {
 		data: {
 			fileName: 'Final.mp4',
 			contentType: 'video/mp4',
-			sizeBytes: 3,
+			sizeBytes: playableRaceVideo.length,
 			requestId: '00000000-0000-4000-8000-000000000234',
 		},
 	});
@@ -239,11 +244,11 @@ test('resumes a Race recording from authoritative multipart progress without ret
 		`/api/v1/race-videos/${recordingId}/upload-parts/1`,
 		{
 			headers: {
-				'content-length': '3',
+				'content-length': String(playableRaceVideo.length),
 				'content-type': 'application/octet-stream',
 				'x-transfer-request-id': 'browser-seeded-part-1',
 			},
-			data: Buffer.from('abc'),
+			data: playableRaceVideo,
 		},
 	);
 	expect(seededPart.ok()).toBe(true);
@@ -256,30 +261,159 @@ test('resumes a Race recording from authoritative multipart progress without ret
 			browserPartRequests += 1;
 	});
 	await page.goto(`/garage/${created.car.id}/drive-sessions`);
-	await expect(page.getByText('Final.mp4 · 3 bytes')).toBeVisible();
+	await expect(
+		page.getByText(`Final.mp4 · ${displaySize} bytes`),
+	).toBeVisible();
 	await expect(page.getByText('Upload paused')).toBeVisible();
 	await expect(page.getByRole('progressbar')).toHaveAttribute('value', '100');
 	await page.locator('input[type="file"]').setInputFiles({
 		name: 'Final.mp4',
 		mimeType: 'video/mp4',
-		buffer: Buffer.from('abc'),
+		buffer: playableRaceVideo,
 	});
-	await expect(page.getByText('Upload complete')).toBeVisible();
+	await expect(page.getByText('Validating recording…')).toBeVisible();
 	expect(browserPartRequests).toBe(0);
 	expect(await scan(page)).toEqual([]);
 
+	const validationResponse = await page.request.get(
+		`/api/v1/race-videos/${recordingId}`,
+	);
+	const validationBody = (await validationResponse.json()) as {
+		raceVideo: Record<string, unknown>;
+	};
+	const collectionUrl = `**/api/v1/cars/${created.car.id}/race-videos`;
+	await page.route(collectionUrl, (route) =>
+		route.fulfill({
+			status: 200,
+			json: {
+				raceVideos: [
+					{
+						...validationBody.raceVideo,
+						status: 'ready',
+						validationStateVersion: 2,
+						media: {
+							byteCount: playableRaceVideo.length,
+							durationMs: 1000,
+							width: 160,
+							height: 90,
+							videoCodec: 'h264',
+							audioCodecs: [],
+							containerFormats: ['mp4'],
+							decodedFrameCount: 10,
+							averageFrameRate: { numerator: 10, denominator: 1 },
+							timeBase: { numerator: 1, denominator: 10240 },
+							sampleAspectRatio: { numerator: 1, denominator: 1 },
+							displayAspectRatio: { numerator: 16, denominator: 9 },
+							startTimeMs: 0,
+							checksumSha256: 'a'.repeat(64),
+						},
+						validationError: null,
+						validatedAt: '2026-08-16T18:01:00.000Z',
+						playbackUrl: `/api/v1/race-videos/${recordingId}/content`,
+					},
+				],
+			},
+		}),
+	);
+	const mediaRangeRequests: string[] = [];
+	await page.route(`**/api/v1/race-videos/${recordingId}/content`, (route) => {
+		const range = route.request().headers()['range'];
+		const match = range ? /^bytes=(\d+)-(\d*)$/.exec(range) : null;
+		const start = match ? Number(match[1]) : 0;
+		const requestedEnd = match?.[2] ? Number(match[2]) : null;
+		const end = Math.min(
+			requestedEnd ?? playableRaceVideo.length - 1,
+			playableRaceVideo.length - 1,
+		);
+		if (range) mediaRangeRequests.push(range);
+		return route.fulfill({
+			status: match ? 206 : 200,
+			headers: {
+				'accept-ranges': 'bytes',
+				'content-length': String(end - start + 1),
+				'content-type': 'video/mp4',
+				...(match
+					? {
+							'content-range': `bytes ${start}-${end}/${playableRaceVideo.length}`,
+						}
+					: {}),
+			},
+			body: playableRaceVideo.subarray(start, end + 1),
+		});
+	});
 	await page.reload();
 	const completedSection = page.locator(
 		`section[aria-labelledby="race-recording-title-${driveBody.driveSession.id}"]`,
 	);
-	await expect(completedSection.getByText('Final.mp4 · 3 bytes')).toBeVisible();
-	await expect(completedSection.getByText('Upload complete')).toBeVisible();
+	await expect(
+		completedSection.getByText(`Final.mp4 · ${displaySize} bytes`),
+	).toBeVisible();
+	await expect(completedSection.getByText('Ready for analysis')).toBeVisible();
+	const player = completedSection.locator('video');
+	await expect(player).toHaveAttribute(
+		'src',
+		`/api/v1/race-videos/${recordingId}/content`,
+	);
+	await expect(player).toHaveAttribute('controls', '');
+	await expect(player).toHaveAttribute('preload', 'metadata');
+	const playback = await player.evaluate(async (video: HTMLVideoElement) => {
+		if (video.readyState < HTMLMediaElement.HAVE_METADATA)
+			await new Promise<void>((resolve, reject) => {
+				const timeout = window.setTimeout(
+					() => reject(new Error('Video metadata timed out')),
+					5_000,
+				);
+				video.addEventListener(
+					'loadedmetadata',
+					() => {
+						window.clearTimeout(timeout);
+						resolve();
+					},
+					{ once: true },
+				);
+			});
+		video.muted = true;
+		await video.play();
+		const played = !video.paused;
+		video.pause();
+		const target = Math.min(0.5, video.duration / 2);
+		await new Promise<void>((resolve, reject) => {
+			const timeout = window.setTimeout(
+				() => reject(new Error('Video seek timed out')),
+				5_000,
+			);
+			video.addEventListener(
+				'seeked',
+				() => {
+					window.clearTimeout(timeout);
+					resolve();
+				},
+				{ once: true },
+			);
+			video.currentTime = target;
+		});
+		return {
+			played,
+			paused: video.paused,
+			currentTime: video.currentTime,
+			duration: video.duration,
+		};
+	});
+	expect(playback.played).toBe(true);
+	expect(playback.paused).toBe(true);
+	expect(playback.currentTime).toBeGreaterThan(0);
+	expect(playback.currentTime).toBeLessThanOrEqual(playback.duration);
+	expect(mediaRangeRequests.some((range) => range.startsWith('bytes='))).toBe(
+		true,
+	);
+	expect(await scan(page)).toEqual([]);
+	await page.unroute(collectionUrl);
 	await completedSection
 		.getByRole('button', { name: 'Delete recording permanently' })
 		.click();
-	await expect(completedSection.getByText('Final.mp4 · 3 bytes')).toHaveCount(
-		0,
-	);
+	await expect(
+		completedSection.getByText(`Final.mp4 · ${displaySize} bytes`),
+	).toHaveCount(0);
 	await expect(completedSection.locator('input[type="file"]')).toBeFocused();
 
 	const cancellableDrive = await page.request.post(

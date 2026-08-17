@@ -1,4 +1,5 @@
 import { computed, inject } from '@angular/core';
+import { toObservable } from '@angular/core/rxjs-interop';
 import {
 	patchState,
 	signalStore,
@@ -20,7 +21,9 @@ import {
 	switchMap,
 	takeUntil,
 	tap,
+	timer,
 } from 'rxjs';
+import { PageVisibilityCapability } from './page-visibility';
 import {
 	idleRaceRecordingTransfer,
 	type RaceRecordingGatewayFailure,
@@ -91,11 +94,16 @@ export const DrivingAnalysisStore = signalStore(
 		transfer: idleRaceRecordingTransfer(),
 		removal: idleRaceRecordingRemoval(),
 	}),
-	withProps(() => ({
-		gateway: inject(RaceRecordingGateway),
-		files: inject(RaceRecordingFileCapability),
-		stopTransfer: new Subject<void>(),
-	})),
+	withProps(() => {
+		const visibility = inject(PageVisibilityCapability);
+		return {
+			gateway: inject(RaceRecordingGateway),
+			files: inject(RaceRecordingFileCapability),
+			visibility,
+			visibilityChanges: toObservable(visibility.hidden),
+			stopTransfer: new Subject<void>(),
+		};
+	}),
 	withComputed((store) => ({
 		recordings: computed(() =>
 			store.gateway.collection.hasValue()
@@ -120,6 +128,27 @@ export const DrivingAnalysisStore = signalStore(
 		}),
 	})),
 	withMethods((store) => {
+		const monitorValidation = rxMethod<string>((carIds$) =>
+			carIds$.pipe(
+				switchMap(() =>
+					store.visibilityChanges.pipe(
+						switchMap((hidden) => {
+							const interval = hidden ? 30_000 : 3_000;
+							return timer(interval, interval);
+						}),
+						tap(() => {
+							if (
+								store.gateway.collection.hasValue() &&
+								store.gateway.collection
+									.value()
+									.some((recording) => recording.status === 'validating')
+							)
+								store.gateway.refresh();
+						}),
+					),
+				),
+			),
+		);
 		const upload = rxMethod<StartRaceRecordingCommand>((commands$) =>
 			commands$.pipe(
 				exhaustMap((command) => {
@@ -246,7 +275,9 @@ export const DrivingAnalysisStore = signalStore(
 							}),
 							takeUntil(store.stopTransfer),
 							tap((recording) => {
-								if (recording.status !== 'validating')
+								if (
+									!['validating', 'ready', 'invalid'].includes(recording.status)
+								)
 									throw {
 										kind: 'rejected-response',
 										status: 409,
@@ -342,6 +373,7 @@ export const DrivingAnalysisStore = signalStore(
 					removal: idleRaceRecordingRemoval(),
 				});
 				store.gateway.selectCar(carId);
+				monitorValidation(carId);
 			},
 			startUpload(command: StartRaceRecordingCommand): void {
 				if (!command.carId || command.carId !== store.carId()) return;
