@@ -227,6 +227,9 @@ describe('TrackMaps', () => {
 		(store['layouts'] as ReturnType<typeof signal<TrackLayout[]>>).set([
 			{ ...layout, status: 'retired' },
 		]);
+		(store['version'] as ReturnType<typeof signal<TrackMapVersion | null>>).set(
+			{ ...version, status: 'approved' },
+		);
 		fixture.detectChanges();
 		selectMain();
 		(store['busy'] as ReturnType<typeof signal<boolean>>).set(true);
@@ -234,6 +237,7 @@ describe('TrackMaps', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Retired Track layouts are read-only.',
 		);
+		expect(fixture.nativeElement.textContent).toContain('Immutable geometry');
 		expect(fixture.nativeElement.textContent).not.toContain('Geometry studio');
 		expect(button('Main').disabled).toBe(true);
 	});
