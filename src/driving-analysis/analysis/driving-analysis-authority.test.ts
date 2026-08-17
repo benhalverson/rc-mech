@@ -37,6 +37,10 @@ const migrationDirectory = resolve(
 	dirname(fileURLToPath(import.meta.url)),
 	'../../../migrations',
 );
+const drivingAnalysisMigration = readFileSync(
+	resolve(migrationDirectory, '0026_driving_analysis_creation.sql'),
+	'utf8',
+);
 const migrations = readdirSync(migrationDirectory)
 	.filter((name) => /^\d+.*\.sql$/.test(name))
 	.sort()
@@ -213,6 +217,14 @@ const expectCode = async (
 };
 
 describe('DrivingAnalysisAuthority', () => {
+	test('keeps lifecycle triggers compatible with the remote D1 migration parser', () => {
+		const lifecycleTrigger = drivingAnalysisMigration.split(
+			'CREATE TRIGGER driving_analysis_lifecycle_transition',
+		)[1];
+		expect(lifecycleTrigger).toBeDefined();
+		expect(lifecycleTrigger).not.toContain('CASE');
+	});
+
 	test('pins immutable creation inputs and replays one client request identity', async () => {
 		const { authority, startProcessing } = await fixture();
 		const created = await authority.create(command());

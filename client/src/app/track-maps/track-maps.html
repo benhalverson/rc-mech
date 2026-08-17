@@ -69,6 +69,9 @@
 						</div>
 					</nav>
 				}
+				@if (layout.status === 'retired') {
+					<p class="alloy-supporting-text m-0">Retired Track layouts are read-only.</p>
+				}
 
 				@if (store.version(); as version) {
 					@if (version.status === 'draft' && store.canManage() && layout.status === 'active') {
@@ -83,11 +86,9 @@
 						}
 						<app-track-map-review [version]="version" />
 					}
-				} @else if (layout.status === 'retired') {
-					<p class="alloy-supporting-text m-0">Retired Track layouts are read-only.</p>
-				} @else if (store.canManage()) {
+				} @else if (layout.status === 'active' && store.canManage()) {
 					<p class="alloy-empty-state text-alloy-text">Choose a version or create a blank draft.</p>
-				} @else {
+				} @else if (layout.status === 'active') {
 					<p class="alloy-supporting-text m-0">Only approved, non-retired Track-map versions are available for inspection and analysis selection. Owner draft tools remain private.</p>
 				}
 			} @else {

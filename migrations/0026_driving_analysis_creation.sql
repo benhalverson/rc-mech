@@ -131,14 +131,12 @@ BEGIN
   SELECT RAISE(ABORT, 'driving_analysis progress cannot decrease')
   WHERE NEW.progress < OLD.progress;
   SELECT RAISE(ABORT, 'driving_analysis stage cannot regress')
-  WHERE CASE NEW.stage
-    WHEN 'preparation' THEN 0 WHEN 'tracking' THEN 1
-    WHEN 'measurement' THEN 2 WHEN 'clip-rendering' THEN 3
-    WHEN 'finalization' THEN 4 END <
-    CASE OLD.stage
-    WHEN 'preparation' THEN 0 WHEN 'tracking' THEN 1
-    WHEN 'measurement' THEN 2 WHEN 'clip-rendering' THEN 3
-    WHEN 'finalization' THEN 4 END;
+  WHERE (OLD.stage = 'tracking' AND NEW.stage = 'preparation')
+    OR (OLD.stage = 'measurement' AND
+      NEW.stage IN ('preparation', 'tracking'))
+    OR (OLD.stage = 'clip-rendering' AND
+      NEW.stage IN ('preparation', 'tracking', 'measurement'))
+    OR (OLD.stage = 'finalization' AND NEW.stage != 'finalization');
   SELECT RAISE(ABORT, 'driving_analysis terminal state is immutable')
   WHERE OLD.status = 'deleted';
   SELECT RAISE(ABORT, 'driving_analysis lifecycle transition is invalid')
