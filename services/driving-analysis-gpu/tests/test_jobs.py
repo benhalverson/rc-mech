@@ -68,6 +68,7 @@ class _Executor:
         self.artifact_factory = artifact_factory
         self.calls: list[tuple[TrackingJobSubmission, ExecutionInput]] = []
         self.fail = False
+        self.fail_unexpectedly = False
         self.cancel_during_execution = False
 
     def execute(
@@ -82,6 +83,8 @@ class _Executor:
             cancelled.set()
         if self.fail:
             raise TrackingExecutionError
+        if self.fail_unexpectedly:
+            raise TypeError
         output = job_root / "executor-output.json.gz"
         output.write_bytes(OUTPUT_BYTES)
         return ExecutionOutput(self.artifact_factory(submission), output)
@@ -525,6 +528,26 @@ def test_execution_failure_after_cancellation_finishes_cancelled(
     result = manager.deliver_grant(_grant(submission, second))
 
     assert result.state == "cancelled"
+    assert manager.capacity == "available"
+
+
+def test_unexpected_execution_failure_fails_safely_and_releases_capacity(
+    worker_settings: WorkerSettings,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+) -> None:
+    submission = submission_factory()
+    executor = _Executor(artifact_factory)
+    executor.fail_unexpectedly = True
+    manager = _manager(worker_settings, executor, _Transfers())
+    first = manager.submit(submission)
+    second = manager.deliver_grant(_grant(submission, first))
+
+    result = manager.deliver_grant(_grant(submission, second))
+
+    assert result.state == "failed"
+    assert result.error is not None
+    assert result.error.code == "TRACKING_FAILED"
     assert manager.capacity == "available"
 
 

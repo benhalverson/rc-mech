@@ -394,7 +394,9 @@ class JobManager:
                 )
                 self._worker_running = False
                 self._persist()
-        except (OSError, TrackingExecutionError, ValueError):
+        # The executor is a third-party model boundary. No model exception may
+        # strand physical GPU capacity or leave an active journal indefinitely.
+        except Exception:  # noqa: BLE001
             with self._lock:
                 if self._cancelled.is_set():
                     self._finish_cancelled_or_interrupted()
