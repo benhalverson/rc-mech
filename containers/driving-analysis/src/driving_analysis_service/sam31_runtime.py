@@ -1,8 +1,10 @@
 import importlib
+import inspect
 import math
 import threading
 import time
 from collections.abc import Callable, Generator, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
@@ -23,6 +25,15 @@ class _Predictor(Protocol):
 
 
 type _PredictorFactory = Callable[[Path], _Predictor]
+type _InitState = Callable[..., object]
+
+
+class _StateModel(Protocol):
+    init_state: _InitState
+
+
+class _BuiltPredictor(_Predictor, Protocol):
+    model: _StateModel
 
 
 @runtime_checkable
@@ -36,6 +47,14 @@ class _Cuda(Protocol):
 
 class _Torch(Protocol):
     cuda: _Cuda
+    bfloat16: object
+
+    def autocast(
+        self,
+        *,
+        device_type: str,
+        dtype: object,
+    ) -> AbstractContextManager[object]: ...
 
 
 class Sam31CudaRuntime:
@@ -46,6 +65,9 @@ class Sam31CudaRuntime:
         predictor_factory: _PredictorFactory | None = None,
     ) -> None:
         self._predictor = (predictor_factory or _build_predictor)(checkpoint)
+        self._inference_context_factory = (
+            _cuda_autocast if predictor_factory is None else nullcontext
+        )
         self._lock = threading.Lock()
 
     def ready(self) -> bool:
@@ -63,7 +85,7 @@ class Sam31CudaRuntime:
         deadline = (
             None if timeout_seconds is None else time.monotonic() + timeout_seconds
         )
-        with self._lock:
+        with self._lock, self._inference_context_factory():
             _check_deadline(deadline)
             session = _mapping(
                 self._predictor.handle_request(
@@ -132,16 +154,38 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
     builder = getattr(builder_module, "build_sam3_multiplex_video_predictor", None)
     if not callable(builder):
         raise TypeError
-    predictor = builder(
-        checkpoint_path=str(checkpoint),
-        max_num_objects=1,
-        use_fa3=False,
-        use_rope_real=False,
-        compile=False,
-        warm_up=False,
-        async_loading_frames=False,
+    predictor = cast(
+        "_BuiltPredictor",
+        builder(
+            checkpoint_path=str(checkpoint),
+            max_num_objects=1,
+            use_fa3=False,
+            use_rope_real=False,
+            compile=False,
+            warm_up=False,
+            async_loading_frames=False,
+        ),
     )
-    return cast("_Predictor", predictor)
+    predictor.model.init_state = _filter_init_state_arguments(
+        predictor.model.init_state
+    )
+    return predictor
+
+
+def _cuda_autocast() -> AbstractContextManager[object]:
+    torch = cast("_Torch", importlib.import_module("torch"))
+    return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+
+
+def _filter_init_state_arguments(init_state: _InitState) -> _InitState:
+    accepted = inspect.signature(init_state).parameters
+
+    def compatible_init_state(**kwargs: object) -> object:
+        return init_state(
+            **{key: value for key, value in kwargs.items() if key in accepted}
+        )
+
+    return compatible_init_state
 
 
 def _frame_result(outputs: Mapping[str, object]) -> Sam31FrameResult:
