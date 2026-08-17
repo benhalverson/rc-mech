@@ -8,8 +8,12 @@
 				<p class="m-0 mt-1 text-sm text-alloy-text-secondary">Attach private static-camera race footage for later analysis.</p>
 			}
 		</div>
-		@if (status() === 'complete') {
-			<span class="inline-flex items-center gap-2 text-sm font-semibold text-alloy-text" role="status"><svg lucideCheckCircle2 size="17" strokeWidth="1.8" aria-hidden="true"></svg>Upload complete</span>
+		@if (status() === 'ready') {
+			<span class="inline-flex items-center gap-2 text-sm font-semibold text-alloy-text" role="status"><svg lucideCheckCircle2 size="17" strokeWidth="1.8" aria-hidden="true"></svg>Ready for analysis</span>
+		} @else if (status() === 'validating') {
+			<span class="text-sm font-semibold text-alloy-text-secondary" role="status">Validating recording…</span>
+		} @else if (status() === 'invalid') {
+			<span class="inline-flex items-center gap-2 text-sm font-semibold text-alloy-danger" role="status"><svg lucideTriangleAlert size="17" strokeWidth="1.8" aria-hidden="true"></svg>Recording can’t be analyzed</span>
 		} @else if (status() === 'removing') {
 			<span class="text-sm font-semibold text-alloy-text-secondary" role="status">Removing recording…</span>
 		}
@@ -41,6 +45,21 @@
 			<span class="alloy-state-heading"><svg lucideTriangleAlert size="17" strokeWidth="1.8" aria-hidden="true"></svg><strong>Removal stopped</strong></span>
 			<span>{{ store.removalError() }}</span>
 		</p>
+	}
+	@if (status() === 'invalid' && recording()?.validationError; as validationError) {
+		<p class="alloy-state alloy-error-state mt-0" role="alert">
+			<span class="alloy-state-heading"><svg lucideTriangleAlert size="17" strokeWidth="1.8" aria-hidden="true"></svg><strong>Validation stopped</strong></span>
+			<span>{{ validationError.message }}</span>
+		</p>
+	}
+	@if (status() === 'validating') {
+		<div class="alloy-state mt-0" role="status">
+			<span>Checking the private recording before analysis. You can leave this page safely.</span>
+			<button class="alloy-control alloy-control-secondary alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="store.retry()"><svg lucideRefreshCw size="17" strokeWidth="1.8" aria-hidden="true"></svg>Check status</button>
+		</div>
+	}
+	@if (status() === 'ready' && recording(); as readyRecording) {
+		<app-race-recording-player [recording]="readyRecording" />
 	}
 	@if (store.readFailure() && !recording()) {
 		<div class="alloy-state alloy-error-state mt-0" role="alert">

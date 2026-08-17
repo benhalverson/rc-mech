@@ -1033,6 +1033,93 @@ export const openApi = {
 };
 
 const raceRecordingPaths = openApi.paths as Record<string, unknown>;
+const raceVideoRationalSchema = {
+	type: 'object',
+	required: ['numerator', 'denominator'],
+	properties: {
+		numerator: { type: 'integer' },
+		denominator: { type: 'integer', minimum: 1 },
+	},
+};
+const raceVideoMediaSchema = {
+	type: ['object', 'null'],
+	required: [
+		'byteCount',
+		'durationMs',
+		'width',
+		'height',
+		'videoCodec',
+		'audioCodecs',
+		'containerFormats',
+		'decodedFrameCount',
+		'averageFrameRate',
+		'timeBase',
+		'sampleAspectRatio',
+		'displayAspectRatio',
+		'startTimeMs',
+		'checksumSha256',
+	],
+	properties: {
+		byteCount: { type: 'integer', minimum: 1 },
+		durationMs: { type: 'integer', minimum: 1 },
+		width: { type: 'integer', minimum: 1 },
+		height: { type: 'integer', minimum: 1 },
+		videoCodec: { type: 'string', minLength: 1, maxLength: 32 },
+		audioCodecs: {
+			type: 'array',
+			maxItems: 8,
+			items: { type: 'string', minLength: 1, maxLength: 32 },
+		},
+		containerFormats: {
+			type: 'array',
+			minItems: 1,
+			maxItems: 8,
+			items: { type: 'string', minLength: 1, maxLength: 32 },
+		},
+		decodedFrameCount: { type: 'integer', minimum: 1 },
+		averageFrameRate: raceVideoRationalSchema,
+		timeBase: raceVideoRationalSchema,
+		sampleAspectRatio: raceVideoRationalSchema,
+		displayAspectRatio: raceVideoRationalSchema,
+		startTimeMs: { type: 'integer' },
+		checksumSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+	},
+};
+const raceVideoValidationErrorSchema = {
+	type: ['object', 'null'],
+	required: ['code', 'stage', 'message'],
+	properties: {
+		code: {
+			type: 'string',
+			enum: [
+				'INVALID_REQUEST',
+				'SERVICE_UNAVAILABLE',
+				'STAGED_MEDIA_NOT_FOUND',
+				'STAGED_MEDIA_MISMATCH',
+				'CORRUPT_MEDIA',
+				'UNSUPPORTED_MEDIA',
+				'MEDIA_OVER_LIMIT',
+				'PROCESS_TIMEOUT',
+				'INCOMPATIBLE_LAYOUT',
+				'INTERNAL_ERROR',
+				'SERVICE_BUSY',
+			],
+		},
+		stage: {
+			type: 'string',
+			enum: [
+				'request',
+				'claim',
+				'inspect',
+				'probe',
+				'decode',
+				'cleanup',
+				'admission',
+			],
+		},
+		message: { type: 'string', minLength: 1, maxLength: 160 },
+	},
+};
 const raceRecordingSchema = {
 	type: 'object',
 	required: [
@@ -1046,6 +1133,11 @@ const raceRecordingSchema = {
 		'status',
 		'uploadedBytes',
 		'uploadedPartNumbers',
+		'validationStateVersion',
+		'media',
+		'validationError',
+		'validatedAt',
+		'playbackUrl',
 		'createdAt',
 		'updatedAt',
 		'expiresAt',
@@ -1062,12 +1154,20 @@ const raceRecordingSchema = {
 		},
 		sizeBytes: { type: 'integer', minimum: 1, maximum: 10_737_418_240 },
 		partSizeBytes: { type: 'integer', enum: [10_485_760] },
-		status: { type: 'string', enum: ['uploading', 'validating'] },
+		status: {
+			type: 'string',
+			enum: ['uploading', 'validating', 'ready', 'invalid'],
+		},
 		uploadedBytes: { type: 'integer', minimum: 0 },
 		uploadedPartNumbers: {
 			type: 'array',
 			items: { type: 'integer', minimum: 1, maximum: 1024 },
 		},
+		validationStateVersion: { type: ['integer', 'null'], minimum: 1 },
+		media: raceVideoMediaSchema,
+		validationError: raceVideoValidationErrorSchema,
+		validatedAt: { type: ['string', 'null'], format: 'date-time' },
+		playbackUrl: { type: ['string', 'null'] },
 		createdAt: { type: 'string', format: 'date-time' },
 		updatedAt: { type: 'string', format: 'date-time' },
 		expiresAt: { type: 'string', format: 'date-time' },
@@ -1244,6 +1344,48 @@ Object.assign(raceRecordingPaths, {
 				},
 				404: { description: 'Race recording not found' },
 				409: { description: 'Parts missing or lifecycle conflict' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+	},
+	'/api/v1/race-videos/{raceVideoId}/content': {
+		parameters: [raceVideoIdParameter],
+		get: {
+			summary: 'Stream an owner-authorized ready Race recording',
+			parameters: [
+				{
+					name: 'Range',
+					in: 'header',
+					required: false,
+					schema: { type: 'string', example: 'bytes=0-1048575' },
+				},
+			],
+			responses: {
+				200: {
+					description: 'Complete private Race recording stream',
+					content: {
+						'video/*': { schema: { type: 'string', format: 'binary' } },
+					},
+				},
+				206: { description: 'Requested single byte range' },
+				304: { description: 'Recording has not changed' },
+				404: { description: 'Race recording not found' },
+				409: { description: 'Race recording is not ready' },
+				412: { description: 'Request precondition failed' },
+				416: { description: 'Byte range is unsatisfiable' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+		head: {
+			summary: 'Read owner-authorized Race recording content metadata',
+			responses: {
+				200: { description: 'Private recording metadata' },
+				206: { description: 'Requested range metadata' },
+				304: { description: 'Recording has not changed' },
+				404: { description: 'Race recording not found' },
+				409: { description: 'Race recording is not ready' },
+				412: { description: 'Request precondition failed' },
+				416: { description: 'Byte range is unsatisfiable' },
 				503: { description: 'Private storage unavailable' },
 			},
 		},

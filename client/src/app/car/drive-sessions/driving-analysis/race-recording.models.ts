@@ -35,6 +35,73 @@ export const uploadedRaceRecordingPartNumberSchema = int().check(
 	maximum(MAX_RACE_RECORDING_PARTS),
 );
 
+const rationalValueSchema = object({
+	numerator: int(),
+	denominator: int().check(positive()),
+});
+
+const raceVideoMediaFactsSchema = object({
+	byteCount: int().check(positive(), maximum(MAX_RACE_RECORDING_BYTES)),
+	durationMs: int().check(positive()),
+	width: int().check(positive()),
+	height: int().check(positive()),
+	videoCodec: string().check(minLength(1), maxLength(32)),
+	audioCodecs: array(string().check(minLength(1), maxLength(32))).check(
+		maxLength(8),
+	),
+	containerFormats: array(string().check(minLength(1), maxLength(32))).check(
+		minLength(1),
+		maxLength(8),
+	),
+	decodedFrameCount: int().check(positive()),
+	averageFrameRate: rationalValueSchema,
+	timeBase: rationalValueSchema,
+	sampleAspectRatio: rationalValueSchema,
+	displayAspectRatio: rationalValueSchema,
+	startTimeMs: int(),
+	checksumSha256: string().check(
+		refine((value) => /^[0-9a-f]{64}$/.test(value)),
+	),
+});
+
+const raceVideoValidationErrorSchema = object({
+	code: union([
+		literal('INVALID_REQUEST'),
+		literal('SERVICE_UNAVAILABLE'),
+		literal('STAGED_MEDIA_NOT_FOUND'),
+		literal('STAGED_MEDIA_MISMATCH'),
+		literal('CORRUPT_MEDIA'),
+		literal('UNSUPPORTED_MEDIA'),
+		literal('MEDIA_OVER_LIMIT'),
+		literal('PROCESS_TIMEOUT'),
+		literal('INCOMPATIBLE_LAYOUT'),
+		literal('INTERNAL_ERROR'),
+		literal('SERVICE_BUSY'),
+	]),
+	stage: union([
+		literal('request'),
+		literal('claim'),
+		literal('inspect'),
+		literal('probe'),
+		literal('decode'),
+		literal('cleanup'),
+		literal('admission'),
+	]),
+	message: string().check(
+		minLength(1),
+		maxLength(160),
+		refine(
+			(value) =>
+				!value.includes('://') &&
+				!value.toLowerCase().includes('www.') &&
+				![...value].some((character) => {
+					const code = character.charCodeAt(0);
+					return code < 0x20 || code === 0x7f;
+				}),
+		),
+	),
+});
+
 export const raceRecordingSchema = readonly(
 	object({
 		id: string().check(minLength(1)),
@@ -48,12 +115,22 @@ export const raceRecordingSchema = readonly(
 		]),
 		sizeBytes: int().check(positive(), maximum(MAX_RACE_RECORDING_BYTES)),
 		partSizeBytes: literal(RACE_RECORDING_PART_SIZE),
-		status: union([literal('uploading'), literal('validating')]),
+		status: union([
+			literal('uploading'),
+			literal('validating'),
+			literal('ready'),
+			literal('invalid'),
+		]),
 		uploadedBytes: int().check(
 			nonnegative(),
 			maximum(MAX_RACE_RECORDING_BYTES),
 		),
 		uploadedPartNumbers: array(uploadedRaceRecordingPartNumberSchema),
+		validationStateVersion: nullable(int().check(positive())),
+		media: nullable(raceVideoMediaFactsSchema),
+		validationError: nullable(raceVideoValidationErrorSchema),
+		validatedAt: nullable(string().check(minLength(1))),
+		playbackUrl: nullable(string().check(minLength(1))),
 		createdAt: string().check(minLength(1)),
 		updatedAt: string().check(minLength(1)),
 		expiresAt: string().check(minLength(1)),
@@ -79,12 +156,42 @@ export const raceRecordingSchema = readonly(
 						: recording.sizeBytes - recording.partSizeBytes * (partCount - 1)),
 				0,
 			);
+			if (uploadedBytes !== recording.uploadedBytes) return false;
+			if (recording.status === 'uploading')
+				return (
+					recording.completedAt === null &&
+					recording.validationStateVersion === null &&
+					recording.media === null &&
+					recording.validationError === null &&
+					recording.validatedAt === null &&
+					recording.playbackUrl === null
+				);
+			if (
+				uploadedBytes !== recording.sizeBytes ||
+				recording.completedAt === null ||
+				recording.validationStateVersion === null
+			)
+				return false;
+			if (recording.status === 'validating')
+				return (
+					recording.media === null &&
+					recording.validationError === null &&
+					recording.validatedAt === null &&
+					recording.playbackUrl === null
+				);
+			if (recording.status === 'ready')
+				return (
+					recording.media !== null &&
+					recording.validationError === null &&
+					recording.validatedAt !== null &&
+					recording.playbackUrl ===
+						`/api/v1/race-videos/${encodeURIComponent(recording.id)}/content`
+				);
 			return (
-				uploadedBytes === recording.uploadedBytes &&
-				(recording.status === 'validating'
-					? uploadedBytes === recording.sizeBytes &&
-						recording.completedAt !== null
-					: recording.completedAt === null)
+				recording.media === null &&
+				recording.validationError !== null &&
+				recording.validatedAt !== null &&
+				recording.playbackUrl === null
 			);
 		}),
 	),

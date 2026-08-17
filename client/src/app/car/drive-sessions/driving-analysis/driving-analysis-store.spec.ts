@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { concat, NEVER, Observable, of, Subject, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DrivingAnalysisStore } from './driving-analysis-store';
+import { PageVisibilityCapability } from './page-visibility';
 import type {
 	RaceRecording,
 	RaceRecordingGatewayFailure,
@@ -22,6 +23,11 @@ const recording = (overrides: Partial<RaceRecording> = {}): RaceRecording => ({
 	status: 'uploading',
 	uploadedBytes: 0,
 	uploadedPartNumbers: [],
+	validationStateVersion: null,
+	media: null,
+	validationError: null,
+	validatedAt: null,
+	playbackUrl: null,
 	createdAt: '2026-08-16T20:00:00.000Z',
 	updatedAt: '2026-08-16T20:00:00.000Z',
 	expiresAt: '2026-08-23T20:00:00.000Z',
@@ -64,9 +70,11 @@ describe('DrivingAnalysisStore', () => {
 	let store: InstanceType<typeof DrivingAnalysisStore>;
 	let gateway: FakeRaceRecordingGateway;
 	let files: RaceRecordingFileCapability;
+	let hidden: ReturnType<typeof signal<boolean>>;
 
 	beforeEach(() => {
 		gateway = new FakeRaceRecordingGateway();
+		hidden = signal(false);
 		let uploadedBytes = 0;
 		const parts: number[] = [];
 		gateway.uploadPart.mockImplementation((command) => {
@@ -92,6 +100,7 @@ describe('DrivingAnalysisStore', () => {
 				DrivingAnalysisStore,
 				RaceRecordingFileCapability,
 				{ provide: RaceRecordingGateway, useValue: gateway },
+				{ provide: PageVisibilityCapability, useValue: { hidden } },
 			],
 		});
 		store = TestBed.inject(DrivingAnalysisStore);
@@ -122,6 +131,57 @@ describe('DrivingAnalysisStore', () => {
 		expect(store.recordings()).toEqual([]);
 		store.retry();
 		expect(gateway.refresh).toHaveBeenCalledOnce();
+	});
+
+	it('refreshes validating recordings until authoritative state becomes terminal', async () => {
+		vi.useFakeTimers();
+		try {
+			store.selectCar('car-1');
+			gateway.collectionHasValue.set(false);
+			await vi.advanceTimersByTimeAsync(3_000);
+			expect(gateway.refresh).not.toHaveBeenCalled();
+
+			gateway.collectionHasValue.set(true);
+			gateway.collectionValue.set([recording()]);
+			await vi.advanceTimersByTimeAsync(3_000);
+			expect(gateway.refresh).not.toHaveBeenCalled();
+
+			gateway.collectionValue.set([
+				recording({
+					status: 'validating',
+					uploadedBytes: 3,
+					completedAt: 'now',
+					validationStateVersion: 1,
+				}),
+			]);
+			await vi.advanceTimersByTimeAsync(3_000);
+			expect(gateway.refresh).toHaveBeenCalledOnce();
+
+			hidden.set(true);
+			await vi.advanceTimersByTimeAsync(3_000);
+			expect(gateway.refresh).toHaveBeenCalledOnce();
+			await vi.advanceTimersByTimeAsync(27_000);
+			expect(gateway.refresh).toHaveBeenCalledTimes(2);
+
+			gateway.collectionValue.set([
+				recording({
+					status: 'invalid',
+					uploadedBytes: 3,
+					completedAt: 'now',
+					validationStateVersion: 2,
+					validatedAt: 'later',
+					validationError: {
+						code: 'CORRUPT_MEDIA',
+						stage: 'probe',
+						message: 'The recording is corrupt.',
+					},
+				}),
+			]);
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(gateway.refresh).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('fails closed when a selected File has no creation-request identity', () => {
@@ -206,6 +266,25 @@ describe('DrivingAnalysisStore', () => {
 		expect(store.error()).toContain('completion was not confirmed');
 		expect(files.file('drive-1')).not.toBeNull();
 	});
+
+	it.each(['ready', 'invalid'] as const)(
+		'accepts a fast terminal %s validation after upload completion',
+		async (status) => {
+			gateway.completeUpload.mockReturnValue(
+				of(
+					recording({ status, uploadedBytes: 3, uploadedPartNumbers: [1, 2] }),
+				),
+			);
+			store.selectCar('car-1');
+			store.startUpload({
+				carId: 'car-1',
+				driveSessionId: 'drive-1',
+				file: new File(['abc'], 'Race.mp4', { type: 'video/mp4' }),
+			});
+			await vi.waitFor(() => expect(store.transfer().status).toBe('complete'));
+			expect(files.file('drive-1')).toBeNull();
+		},
+	);
 
 	it('pauses an active request and resumes with the retained private File', async () => {
 		gateway.uploadPart.mockReturnValueOnce(NEVER);

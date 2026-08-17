@@ -1,6 +1,9 @@
 import { Scalar } from '@scalar/hono-api-reference';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+
+export { ContainerProxy } from '@cloudflare/containers';
+
 import {
 	type AppDependencies,
 	defaultAppDependencies,
@@ -23,6 +26,8 @@ export {
 	GpuLeaseCoordinator,
 	getGpuLeaseCoordinator,
 } from './driving-analysis/gpu-lease-coordinator';
+export { RaceVideoMediaContainer } from './driving-analysis/race-recording/race-video-media-container';
+export { RaceVideoValidationWorkflow } from './driving-analysis/race-recording/race-video-validation-workflow';
 export { DrivingAnalysisWorkflow } from './driving-analysis/tracking/driving-analysis-workflow';
 export {
 	preparedTrackViewStore,

@@ -30,6 +30,7 @@
 	"dependencies": {
 		"@better-auth/drizzle-adapter": "^1.6.26",
 		"@better-auth/passkey": "^1.6.26",
+		"@cloudflare/containers": "0.3.7",
 		"@scalar/hono-api-reference": "^0.11.13",
 		"aws4fetch": "1.0.20",
 		"better-auth": "^1.6.26",

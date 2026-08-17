@@ -76,7 +76,9 @@ const MOCK_ENV = {
 	ENVIRONMENT: 'local',
 	GPU_PROVIDER_ORIGIN: 'https://gpu.invalid',
 	GPU_LEASE_COORDINATOR: {} as Env['GPU_LEASE_COORDINATOR'],
+	RACE_VIDEO_MEDIA_CONTAINER: {} as Env['RACE_VIDEO_MEDIA_CONTAINER'],
 	DRIVING_ANALYSIS_WORKFLOW: {} as Env['DRIVING_ANALYSIS_WORKFLOW'],
+	RACE_VIDEO_VALIDATION_WORKFLOW: {} as Env['RACE_VIDEO_VALIDATION_WORKFLOW'],
 } satisfies Env;
 
 const request = (path: string, init?: RequestInit) =>
@@ -141,6 +143,9 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	).toBeDefined();
 	expect(
 		document.paths['/api/v1/race-videos/{raceVideoId}/complete'],
+	).toBeDefined();
+	expect(
+		document.paths['/api/v1/race-videos/{raceVideoId}/content'],
 	).toBeDefined();
 	const syncOperation = document.paths[
 		'/api/v1/sync/operations/{operationId}'

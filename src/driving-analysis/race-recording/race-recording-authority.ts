@@ -1,4 +1,14 @@
-import { and, asc, eq, isNull, lte, notExists, or, sql } from 'drizzle-orm';
+import {
+	and,
+	asc,
+	eq,
+	exists,
+	isNull,
+	lte,
+	notExists,
+	or,
+	sql,
+} from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import {
 	authRateLimit,
@@ -6,6 +16,9 @@ import {
 	driveSession,
 	raceVideo,
 	raceVideoUploadPart,
+	raceVideoValidation,
+	trackingRun,
+	trackingRunInput,
 } from '../../schema';
 import {
 	type CreateRaceRecordingInput,
@@ -18,6 +31,11 @@ import {
 	RACE_RECORDING_PART_SIZE,
 	RACE_RECORDING_UPLOAD_TTL_MS,
 } from './race-recording-contracts';
+import { RaceVideoValidationAuthority } from './race-video-validation-authority';
+import {
+	type RaceVideoValidationWorkflowPayload,
+	raceVideoPlaybackContentType,
+} from './race-video-validation-contracts';
 
 type RaceVideoRecord = typeof raceVideo.$inferSelect;
 type RaceVideoPartRecord = typeof raceVideoUploadPart.$inferSelect;
@@ -67,7 +85,20 @@ export type RaceRecordingAuthorityOptions = Readonly<{
 	clock?: () => Date;
 	id?: () => string;
 	claimId?: () => string;
+	startValidation?: (
+		payload: RaceVideoValidationWorkflowPayload,
+	) => Promise<void>;
 }>;
+
+export type RaceRecordingContentMetadata = Readonly<{
+	size: number;
+	contentType: PublicRaceRecording['contentType'];
+	etag: string;
+	uploaded: Date;
+}>;
+
+export type RaceRecordingContent = RaceRecordingContentMetadata &
+	Readonly<{ body: ReadableStream }>;
 
 const authorityError = (
 	code: RaceRecordingAuthorityErrorCode,
@@ -107,6 +138,10 @@ export class RaceRecordingAuthority {
 	private readonly clock: () => Date;
 	private readonly id: () => string;
 	private readonly claimId: () => string;
+	private readonly validationAuthority: RaceVideoValidationAuthority;
+	private readonly startValidation: (
+		payload: RaceVideoValidationWorkflowPayload,
+	) => Promise<void>;
 
 	constructor(
 		binding: D1Database,
@@ -117,6 +152,8 @@ export class RaceRecordingAuthority {
 		this.clock = options.clock ?? (() => new Date());
 		this.id = options.id ?? (() => crypto.randomUUID());
 		this.claimId = options.claimId ?? (() => crypto.randomUUID());
+		this.validationAuthority = new RaceVideoValidationAuthority(binding);
+		this.startValidation = options.startValidation ?? (async () => undefined);
 	}
 
 	async list(ownerId: string, carId: string): Promise<PublicRaceRecording[]> {
@@ -474,7 +511,8 @@ export class RaceRecordingAuthority {
 		identity: RaceRecordingIdentity,
 	): Promise<PublicRaceRecording> {
 		let recording = await this.requireRecording(identity);
-		if (recording.status === 'validating') return this.public(recording);
+		if (recording.status === 'validating')
+			return this.ensureValidation(recording);
 		let ownsCompletion = false;
 		if (recording.status === 'uploading') {
 			const claimed = await this.database
@@ -505,7 +543,8 @@ export class RaceRecordingAuthority {
 				ownsCompletion = true;
 			} else recording = await this.requireRecording(identity);
 		}
-		if (recording.status === 'validating') return this.public(recording);
+		if (recording.status === 'validating')
+			return this.ensureValidation(recording);
 		if (recording.status !== 'completing')
 			throw authorityError('CONFLICT', 'Race recording cannot be completed');
 		return this.finishCompletion(recording, identity.ownerId, ownsCompletion);
@@ -604,30 +643,44 @@ export class RaceRecordingAuthority {
 		knownParts?: RaceVideoPartRecord[],
 	): Promise<PublicRaceRecording> {
 		const completedAt = this.clock().toISOString();
-		const finalized = await this.database
-			.update(raceVideo)
-			.set({
-				status: 'validating',
-				actualSize: completed.size,
-				completedAt,
-				updatedAt: completedAt,
-			})
-			.where(
-				and(
-					eq(raceVideo.id, recording.id),
-					eq(raceVideo.ownerId, ownerId),
-					eq(raceVideo.status, 'completing'),
-				),
-			)
-			.returning()
-			.get();
-		if (finalized) return this.public(finalized, knownParts);
+		const [finalizedRows] = await this.database.batch([
+			this.database
+				.update(raceVideo)
+				.set({
+					status: 'validating',
+					actualSize: completed.size,
+					completedAt,
+					updatedAt: completedAt,
+				})
+				.where(
+					and(
+						eq(raceVideo.id, recording.id),
+						eq(raceVideo.ownerId, ownerId),
+						eq(raceVideo.status, 'completing'),
+					),
+				)
+				.returning(),
+			this.database
+				.insert(raceVideoValidation)
+				.values({
+					raceVideoId: recording.id,
+					validationId: recording.id,
+					status: 'pending',
+					stateVersion: 1,
+					startedAt: completedAt,
+					updatedAt: completedAt,
+					completedAt: null,
+				})
+				.onConflictDoNothing({ target: raceVideoValidation.raceVideoId }),
+		]);
+		const finalized = finalizedRows?.[0];
+		if (finalized) return this.ensureValidation(finalized, knownParts);
 		const current = await this.requireRecording({
 			ownerId,
 			recordingId: recording.id,
 		});
 		if (current.status === 'validating')
-			return this.public(current, knownParts);
+			return this.ensureValidation(current, knownParts);
 		throw authorityError(
 			'CONFLICT',
 			'Race recording changed while completion was being persisted',
@@ -637,6 +690,11 @@ export class RaceRecordingAuthority {
 	async remove(identity: RaceRecordingIdentity): Promise<void> {
 		const recording = await this.findRecording(identity);
 		if (!recording) return;
+		if (await this.validationAuthority.hasActiveAnalysis(recording.id))
+			throw authorityError(
+				'CONFLICT',
+				'Race recording cannot be deleted during an active analysis',
+			);
 		if (recording.status === 'completing')
 			throw authorityError(
 				'CONFLICT',
@@ -647,6 +705,65 @@ export class RaceRecordingAuthority {
 				'CONFLICT',
 				'Race recording changed while deletion was starting',
 			);
+	}
+
+	async contentMetadata(
+		identity: RaceRecordingIdentity,
+	): Promise<RaceRecordingContentMetadata> {
+		const { recording, contentType } =
+			await this.requireReadyRecording(identity);
+		let object: R2Object | null;
+		try {
+			object = await this.bucket.head(recording.objectKey);
+		} catch {
+			throw authorityError(
+				'STORAGE_UNAVAILABLE',
+				'Private Race recording playback is unavailable',
+			);
+		}
+		if (!this.isCompletedObject(recording, object))
+			throw authorityError(
+				'STORAGE_UNAVAILABLE',
+				'Private Race recording playback is unavailable',
+			);
+		return {
+			size: object.size,
+			contentType,
+			etag: object.httpEtag,
+			uploaded: object.uploaded,
+		};
+	}
+
+	async content(
+		identity: RaceRecordingIdentity,
+		range?: Readonly<{ offset: number; length: number }>,
+	): Promise<RaceRecordingContent> {
+		const { recording, contentType } =
+			await this.requireReadyRecording(identity);
+		let object: R2ObjectBody | null;
+		try {
+			object = await this.bucket.get(
+				recording.objectKey,
+				range ? { range } : undefined,
+			);
+		} catch {
+			throw authorityError(
+				'STORAGE_UNAVAILABLE',
+				'Private Race recording playback is unavailable',
+			);
+		}
+		if (!object || !this.isCompletedObject(recording, object))
+			throw authorityError(
+				'STORAGE_UNAVAILABLE',
+				'Private Race recording playback is unavailable',
+			);
+		return {
+			size: object.size,
+			contentType,
+			etag: object.httpEtag,
+			uploaded: object.uploaded,
+			body: object.body,
+		};
 	}
 
 	async cleanupExpired(ownerId?: string, limit = 25): Promise<number> {
@@ -692,6 +809,39 @@ export class RaceRecordingAuthority {
 						lte(raceVideo.updatedAt, staleCutoff),
 					),
 					eq(raceVideo.status, 'deleting'),
+					and(
+						eq(raceVideo.status, 'validating'),
+						or(
+							notExists(
+								this.database
+									.select({ id: raceVideoValidation.raceVideoId })
+									.from(raceVideoValidation)
+									.where(eq(raceVideoValidation.raceVideoId, raceVideo.id)),
+							),
+							exists(
+								this.database
+									.select({ id: raceVideoValidation.raceVideoId })
+									.from(raceVideoValidation)
+									.where(
+										and(
+											eq(raceVideoValidation.raceVideoId, raceVideo.id),
+											eq(raceVideoValidation.status, 'pending'),
+										),
+									),
+							),
+							exists(
+								this.database
+									.select({ id: raceVideoValidation.raceVideoId })
+									.from(raceVideoValidation)
+									.where(
+										and(
+											eq(raceVideoValidation.raceVideoId, raceVideo.id),
+											eq(raceVideoValidation.status, 'invalid'),
+										),
+									),
+							),
+						),
+					),
 				),
 			)
 			.orderBy(asc(raceVideo.updatedAt))
@@ -701,7 +851,14 @@ export class RaceRecordingAuthority {
 			try {
 				if (recording.status === 'completing')
 					await this.finishCompletion(recording, recording.ownerId, true);
-				else await this.discard(recording);
+				else if (recording.status === 'validating') {
+					const validation = await this.validationAuthority.public(
+						recording.id,
+					);
+					if (validation?.status === 'invalid') await this.discard(recording);
+					else if (!validation || validation.status === 'validating')
+						await this.ensureValidation(recording);
+				} else await this.discard(recording);
 			} catch {
 				// Every state remains eligible for a later bounded recovery pass.
 			} finally {
@@ -980,6 +1137,10 @@ export class RaceRecordingAuthority {
 		knownParts?: RaceVideoPartRecord[],
 	): Promise<PublicRaceRecording> {
 		const parts = knownParts ?? (await this.parts(recording.id));
+		const validation =
+			recording.status === 'validating'
+				? await this.validationAuthority.public(recording.id)
+				: null;
 		return {
 			id: recording.id,
 			carId: recording.carId,
@@ -988,14 +1149,69 @@ export class RaceRecordingAuthority {
 			contentType: recording.contentType as PublicRaceRecording['contentType'],
 			sizeBytes: recording.declaredSize,
 			partSizeBytes: recording.partSize,
-			status: recording.status === 'validating' ? 'validating' : 'uploading',
+			status:
+				validation?.status ??
+				(recording.status === 'validating' ? 'validating' : 'uploading'),
 			uploadedBytes: parts.reduce((total, part) => total + part.byteCount, 0),
 			uploadedPartNumbers: parts.map(({ partNumber }) => partNumber),
+			validationStateVersion: validation?.stateVersion ?? null,
+			media: validation?.media ?? null,
+			validationError: validation?.error ?? null,
+			validatedAt: validation?.validatedAt ?? null,
+			playbackUrl:
+				validation?.status === 'ready'
+					? `/api/v1/race-videos/${encodeURIComponent(recording.id)}/content`
+					: null,
 			createdAt: recording.createdAt,
 			updatedAt: recording.updatedAt,
 			expiresAt: recording.expiresAt,
 			completedAt: recording.completedAt,
 		};
+	}
+
+	private async ensureValidation(
+		recording: RaceVideoRecord,
+		knownParts?: RaceVideoPartRecord[],
+	): Promise<PublicRaceRecording> {
+		let payload: RaceVideoValidationWorkflowPayload;
+		try {
+			payload = await this.validationAuthority.ensure(
+				recording.id,
+				/* c8 ignore next -- validating-row D1 constraint requires completed_at. */
+				recording.completedAt ?? this.clock().toISOString(),
+			);
+			await this.startValidation(payload);
+		} catch {
+			throw authorityError(
+				'STORAGE_UNAVAILABLE',
+				'Race-recording validation could not be started',
+			);
+		}
+		return this.public(recording, knownParts);
+	}
+
+	private async requireReadyRecording(identity: RaceRecordingIdentity): Promise<
+		Readonly<{
+			recording: RaceVideoRecord;
+			contentType: PublicRaceRecording['contentType'];
+		}>
+	> {
+		const recording = await this.requireRecording(identity);
+		const validation = await this.validationAuthority.public(recording.id);
+		if (recording.status !== 'validating' || validation?.status !== 'ready')
+			throw authorityError(
+				'CONFLICT',
+				'Race recording is not ready for playback',
+			);
+		const contentType = validation.media
+			? raceVideoPlaybackContentType(validation.media)
+			: null;
+		if (!contentType)
+			throw authorityError(
+				'STORAGE_UNAVAILABLE',
+				'Validated Race recording content metadata is unavailable',
+			);
+		return { recording, contentType };
 	}
 
 	private async discard(recording: RaceVideoRecord): Promise<boolean> {
@@ -1009,6 +1225,21 @@ export class RaceRecordingAuthority {
 						eq(raceVideo.id, recording.id),
 						eq(raceVideo.ownerId, recording.ownerId),
 						eq(raceVideo.status, recording.status),
+						notExists(
+							this.database
+								.select({ id: trackingRun.id })
+								.from(trackingRunInput)
+								.innerJoin(
+									trackingRun,
+									eq(trackingRun.id, trackingRunInput.runId),
+								)
+								.where(
+									and(
+										eq(trackingRunInput.raceVideoId, recording.id),
+										eq(trackingRun.status, 'active'),
+									),
+								),
+						),
 					),
 				)
 				.returning()

@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import type {
+	RaceVideoMediaFacts,
+	RaceVideoValidationSafeError,
+} from './race-video-validation-contracts';
 
 export const RACE_RECORDING_PART_SIZE = 10 * 1024 * 1024;
 export const MAX_RACE_RECORDING_BYTES = 10 * 1024 * 1024 * 1024;
@@ -45,9 +49,14 @@ export type PublicRaceRecording = Readonly<{
 	contentType: (typeof supportedRaceRecordingContentTypes)[number];
 	sizeBytes: number;
 	partSizeBytes: number;
-	status: 'uploading' | 'validating';
+	status: 'uploading' | 'validating' | 'ready' | 'invalid';
 	uploadedBytes: number;
 	uploadedPartNumbers: readonly number[];
+	validationStateVersion: number | null;
+	media: RaceVideoMediaFacts | null;
+	validationError: RaceVideoValidationSafeError | null;
+	validatedAt: string | null;
+	playbackUrl: string | null;
 	createdAt: string;
 	updatedAt: string;
 	expiresAt: string;

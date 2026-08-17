@@ -23,6 +23,7 @@ import {
 	MAX_RACE_RECORDING_BYTES,
 	SUPPORTED_RACE_RECORDING_TYPES,
 } from './race-recording.models';
+import { RaceRecordingPlayer } from './race-recording-player';
 
 type DisplayStatus =
 	| 'idle'
@@ -31,7 +32,9 @@ type DisplayStatus =
 	| 'cancelling'
 	| 'removing'
 	| 'removal-failed'
-	| 'complete'
+	| 'validating'
+	| 'ready'
+	| 'invalid'
 	| 'failed';
 
 @Component({
@@ -44,6 +47,7 @@ type DisplayStatus =
 		LucideTriangleAlert,
 		LucideUpload,
 		LucideX,
+		RaceRecordingPlayer,
 	],
 	templateUrl: './race-recording-upload.html',
 	host: { class: 'block border-t border-alloy-separator pb-4 pt-3' },
@@ -78,15 +82,19 @@ export class RaceRecordingUpload {
 		const removal = this.removal();
 		if (removal?.status === 'removing') return 'removing';
 		if (removal?.status === 'failed') return 'removal-failed';
-		const transfer = this.transfer();
-		if (transfer) return transfer.status;
 		const recording = this.recording();
-		if (recording?.status === 'validating') return 'complete';
+		if (recording?.status === 'validating') return 'validating';
+		if (recording?.status === 'ready') return 'ready';
+		if (recording?.status === 'invalid') return 'invalid';
+		const transfer = this.transfer();
+		if (transfer?.status === 'complete') return 'validating';
+		if (transfer) return transfer.status;
 		return recording?.status === 'uploading' ? 'paused' : 'idle';
 	});
 	protected readonly completedRecording = computed(
 		() =>
-			this.recording()?.status === 'validating' ||
+			(this.recording() !== undefined &&
+				this.recording()?.status !== 'uploading') ||
 			this.transfer()?.status === 'complete',
 	);
 	protected readonly displayFileName = computed(
@@ -127,7 +135,7 @@ export class RaceRecordingUpload {
 		() =>
 			!this.carArchived() &&
 			!this.driveSession().deletedAt &&
-			this.status() !== 'complete' &&
+			['idle', 'paused', 'failed'].includes(this.status()) &&
 			!this.store.pending(),
 	);
 	constructor() {

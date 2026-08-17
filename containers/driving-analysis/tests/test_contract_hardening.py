@@ -1,4 +1,6 @@
+import json
 import math
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -22,7 +24,18 @@ from driving_analysis_service.contracts import (
     SubjectSafeError,
     SubjectSeed,
     TrackingGap,
+    ValidationResponse,
 )
+
+VALIDATION_FIXTURES = Path(__file__).parent / "fixtures" / "race-video-validation"
+
+
+@pytest.mark.parametrize("name", ["accepted.json", "rejected.json"])
+def test_shared_validation_response_fixtures_match_pydantic(name: str) -> None:
+    raw = (VALIDATION_FIXTURES / name).read_text(encoding="utf-8")
+    value = json.loads(raw)
+    parsed = TypeAdapter(ValidationResponse).validate_json(raw)
+    assert parsed.model_dump(mode="json", by_alias=True) == value
 
 
 def test_normalized_box_rejects_zero_area_underflow_but_keeps_documented_minimum() -> (
