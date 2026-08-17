@@ -1,4 +1,5 @@
 import {
+	type AnySQLiteColumn,
 	index,
 	integer,
 	primaryKey,
@@ -239,6 +240,98 @@ export const raceVideoUploadPart = sqliteTable(
 		uniqueIndex('race_video_part_claim_transfer').on(
 			table.raceVideoId,
 			table.claimTransferRequestId,
+		),
+	],
+);
+export const trackLayout = sqliteTable(
+	'track_layout',
+	{
+		id: id('id'),
+		name: text('name').notNull(),
+		status: text('status', { enum: ['active', 'retired'] })
+			.notNull()
+			.default('active'),
+		createdBy: text('created_by')
+			.notNull()
+			.references(() => owner.id),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		retiredAt: text('retired_at'),
+	},
+	(table) => [uniqueIndex('track_layout_name_idx').on(table.name)],
+);
+export const trackMapVersion = sqliteTable(
+	'track_map_version',
+	{
+		id: id('id'),
+		layoutId: text('layout_id')
+			.notNull()
+			.references(() => trackLayout.id),
+		version: integer('version').notNull(),
+		status: text('status', { enum: ['draft', 'approved', 'retired'] })
+			.notNull()
+			.default('draft'),
+		sourceVersionId: text('source_version_id').references(
+			(): AnySQLiteColumn => trackMapVersion.id,
+		),
+		createdBy: text('created_by')
+			.notNull()
+			.references(() => owner.id),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		approvedBy: text('approved_by').references(() => owner.id),
+		approvedAt: text('approved_at'),
+		retiredAt: text('retired_at'),
+	},
+	(table) => [
+		uniqueIndex('track_map_version_layout_version_idx').on(
+			table.layoutId,
+			table.version,
+		),
+		index('track_map_version_layout_status_idx').on(
+			table.layoutId,
+			table.status,
+			table.version,
+		),
+	],
+);
+export const trackCorner = sqliteTable(
+	'track_corner',
+	{
+		id: id('id'),
+		mapVersionId: text('map_version_id')
+			.notNull()
+			.references(() => trackMapVersion.id, { onDelete: 'cascade' }),
+		key: text('corner_key').notNull(),
+		name: text('corner_name').notNull(),
+		order: integer('corner_order').notNull(),
+		entryStartX: real('entry_start_x').notNull(),
+		entryStartY: real('entry_start_y').notNull(),
+		entryEndX: real('entry_end_x').notNull(),
+		entryEndY: real('entry_end_y').notNull(),
+		entryDirection: text('entry_direction', {
+			enum: ['forward', 'reverse'],
+		}).notNull(),
+		exitStartX: real('exit_start_x').notNull(),
+		exitStartY: real('exit_start_y').notNull(),
+		exitEndX: real('exit_end_x').notNull(),
+		exitEndY: real('exit_end_y').notNull(),
+		exitDirection: text('exit_direction', {
+			enum: ['forward', 'reverse'],
+		}).notNull(),
+		viewX: real('view_x').notNull(),
+		viewY: real('view_y').notNull(),
+		viewWidth: real('view_width').notNull(),
+		viewHeight: real('view_height').notNull(),
+	},
+	(table) => [
+		uniqueIndex('track_corner_version_key_idx').on(
+			table.mapVersionId,
+			table.key,
+		),
+		uniqueIndex('track_corner_version_order_idx').on(
+			table.mapVersionId,
+			table.order,
 		),
 	],
 );

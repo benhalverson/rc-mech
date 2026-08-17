@@ -2094,3 +2094,193 @@ voicePaths['/api/v1/voice-updates/{voiceUpdateId}/results'] = {
 		},
 	},
 };
+
+const trackMapPaths = openApi.paths as Record<string, unknown>;
+const trackLayoutIdParameter = {
+	in: 'path',
+	name: 'layoutId',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+} as const;
+const trackMapVersionIdParameter = {
+	in: 'path',
+	name: 'versionId',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+} as const;
+const trackPointSchema = {
+	type: 'object',
+	required: ['x', 'y'],
+	properties: {
+		x: { type: 'number', minimum: 0, maximum: 1 },
+		y: { type: 'number', minimum: 0, maximum: 1 },
+	},
+} as const;
+const trackGateSchema = {
+	type: 'object',
+	required: ['start', 'end', 'direction'],
+	properties: {
+		start: trackPointSchema,
+		end: trackPointSchema,
+		direction: { type: 'string', enum: ['forward', 'reverse'] },
+	},
+} as const;
+const trackCornerSchema = {
+	type: 'object',
+	required: ['key', 'name', 'order', 'entryGate', 'exitGate', 'cornerView'],
+	properties: {
+		key: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 80,
+			pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
+		},
+		name: { type: 'string', minLength: 1, maxLength: 120 },
+		order: { type: 'integer', minimum: 1 },
+		entryGate: trackGateSchema,
+		exitGate: trackGateSchema,
+		cornerView: {
+			type: 'object',
+			required: ['x', 'y', 'width', 'height'],
+			properties: {
+				x: { type: 'number', minimum: 0, maximum: 1 },
+				y: { type: 'number', minimum: 0, maximum: 1 },
+				width: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+				height: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+			},
+		},
+	},
+} as const;
+trackMapPaths['/api/v1/track-layouts'] = {
+	get: {
+		summary: 'List Track layouts visible to the authenticated user',
+		responses: { 200: { description: 'Track layouts and version summaries' } },
+	},
+	post: {
+		summary: 'Owner-only create a Track layout',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['name'],
+						properties: {
+							name: { type: 'string', minLength: 1, maxLength: 160 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Track layout created' },
+			400: { description: 'Invalid name' },
+			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}'] = {
+	parameters: [trackLayoutIdParameter],
+	patch: {
+		summary: 'Owner-only rename a Track layout',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['name'],
+						properties: {
+							name: { type: 'string', minLength: 1, maxLength: 160 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			200: { description: 'Track layout renamed' },
+			404: { description: 'Track layout not found' },
+			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/retire'] = {
+	parameters: [trackLayoutIdParameter],
+	post: {
+		summary: 'Owner-only retire a Track layout',
+		responses: {
+			200: { description: 'Track layout retired' },
+			404: { description: 'Track layout not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions'] = {
+	parameters: [trackLayoutIdParameter],
+	post: {
+		summary: 'Owner-only create or clone a draft Track map version',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						properties: {
+							sourceVersionId: { type: 'string', format: 'uuid' },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Draft Track map created' },
+			404: { description: 'Layout or source map not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions/{versionId}'] = {
+	parameters: [trackLayoutIdParameter, trackMapVersionIdParameter],
+	get: {
+		summary: 'Owner-only read a Track map version and corners',
+		responses: {
+			200: { description: 'Track map geometry' },
+			404: { description: 'Track map not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}'] = {
+	parameters: [trackMapVersionIdParameter],
+	get: {
+		summary: 'Owner-only read a Track map version and corners',
+		responses: {
+			200: { description: 'Track map geometry' },
+			404: { description: 'Track map not found' },
+		},
+	},
+	patch: {
+		summary: 'Owner-only replace draft Track map corners',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['corners'],
+						properties: {
+							corners: {
+								type: 'array',
+								maxItems: 100,
+								items: trackCornerSchema,
+							},
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			200: { description: 'Draft geometry saved' },
+			400: { description: 'Invalid or degenerate geometry' },
+			409: { description: 'Only drafts are editable' },
+			404: { description: 'Track map not found' },
+		},
+	},
+};

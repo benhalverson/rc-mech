@@ -1,0 +1,80 @@
+<section class="grid gap-5" aria-labelledby="geometry-title">
+	<div class="flex flex-wrap items-end justify-between gap-3">
+		<div>
+			<p class="alloy-section-heading m-0">Geometry studio</p>
+			<h2 id="geometry-title" class="mt-1 text-xl font-semibold">Draw the corners the camera can see</h2>
+			<p class="alloy-supporting-text mt-2 max-w-2xl">Coordinates use the fixed bottom-two-thirds Track view. Select a gate point or Corner-view target, then click the canvas or use arrow keys to adjust it. Hold Shift for larger keyboard steps.</p>
+		</div>
+		<div class="flex gap-2">
+			<button class="alloy-control alloy-control-secondary" type="button" (click)="addCorner()" [disabled]="busy() || !version()">Add corner</button>
+			<button class="alloy-control alloy-control-secondary" type="button" (click)="removeCorner(selectedCorner()!)" [disabled]="busy() || !version() || !activeCorner()">Remove corner</button>
+		</div>
+	</div>
+	<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+		<div class="track-canvas-wrap border border-alloy-command-separator bg-alloy-command-control p-2">
+			<div class="mb-2 flex flex-wrap gap-4 text-xs font-semibold text-alloy-command-text" aria-hidden="true"><span>━ Entry gate</span><span>┅ Exit gate</span><span>┄ Corner view</span></div>
+			<button class="alloy-focus-ring track-canvas-button block w-full border-0 bg-transparent p-0 text-left" type="button" aria-label="Track map geometry editor. Click to place the selected geometry target, or use arrow keys." (click)="moveFromCanvas($event, selectedCorner()!)" (keydown)="moveSelected($event, selectedCorner()!)" [disabled]="busy() || !version() || !activeCorner()">
+				<svg class="track-canvas block w-full" viewBox="0 0 640 360" role="img" aria-hidden="true">
+					<rect class="fill-alloy-command-control" width="640" height="360" />
+					<path class="stroke-alloy-command-separator" d="M160 0V360M320 0V360M480 0V360M0 90H640M0 180H640M0 270H640" fill="none" stroke-width="1" opacity=".6" />
+					@for (corner of corners(); track $index) {
+						<line class="stroke-alloy-command-accent" [attr.x1]="svgX(corner.entryGate.start)" [attr.y1]="svgY(corner.entryGate.start)" [attr.x2]="svgX(corner.entryGate.end)" [attr.y2]="svgY(corner.entryGate.end)" stroke-width="4" />
+						<line class="stroke-alloy-command-secondary" [attr.x1]="svgX(corner.exitGate.start)" [attr.y1]="svgY(corner.exitGate.start)" [attr.x2]="svgX(corner.exitGate.end)" [attr.y2]="svgY(corner.exitGate.end)" stroke-width="4" stroke-dasharray="8 5" />
+						<rect class="stroke-alloy-command-text" [attr.x]="corner.cornerView.x * 640" [attr.y]="corner.cornerView.y * 360" [attr.width]="corner.cornerView.width * 640" [attr.height]="corner.cornerView.height * 360" fill="none" stroke-dasharray="4 4" />
+						<text class="fill-alloy-command-text" [attr.x]="corner.cornerView.x * 640 + 6" [attr.y]="corner.cornerView.y * 360 + 18" font-size="13">{{ corner.order }} · {{ corner.name }}</text>
+					}
+					@if (activeCorner(); as active) {
+						@for (target of pointTargets; track target) {
+							<circle class="fill-alloy-command-text stroke-alloy-command-accent" [attr.cx]="svgX(point(active, target))" [attr.cy]="svgY(point(active, target))" r="7" stroke-width="3" />
+						}
+					}
+				</svg>
+			</button>
+		</div>
+		<div class="grid content-start gap-3">
+			<label class="grid gap-1 text-sm font-semibold" for="corner-select">Corner</label>
+			<select id="corner-select" class="alloy-control w-full" [value]="activeCorner()?.key ?? ''" (change)="selectCorner($any($event.target).selectedIndex)" [disabled]="busy()">
+				@for (corner of corners(); track $index) { <option [value]="corner.key">{{ corner.order }} · {{ corner.name }}</option> }
+			</select>
+			@if (selectedCorner() !== null) {
+				@let fields = cornerFields[selectedCorner()!];
+				<label class="grid gap-1 text-sm font-semibold" for="corner-name">Name</label>
+				<input id="corner-name" class="alloy-control" [formField]="fields.name" />
+				<label class="grid gap-1 text-sm font-semibold" for="corner-key">Stable key</label>
+				<input id="corner-key" class="alloy-control" [formField]="fields.key" aria-describedby="corner-key-help" />
+				<span id="corner-key-help" class="text-xs text-alloy-text-on-canvas-secondary">Use lowercase letters, numbers, and single hyphens.</span>
+				<fieldset class="grid gap-2 border-t border-alloy-separator pt-3">
+					<legend class="text-sm font-semibold">Geometry target</legend>
+					<select class="alloy-control" aria-label="Geometry target" [value]="selectedTarget()" (change)="selectTarget($any($event.target).value)" [disabled]="busy()">
+						<option value="entryStart">Entry start</option><option value="entryEnd">Entry end</option><option value="exitStart">Exit start</option><option value="exitEnd">Exit end</option><option value="viewPosition">Corner-view position</option><option value="viewSize">Corner-view size</option>
+					</select>
+					@if (selectedPointTarget(); as target) {
+						<div class="grid grid-cols-2 gap-2">
+							<label class="grid gap-1 text-xs font-semibold">X<input class="alloy-control" type="number" step="0.001" [formField]="fields[pointLocation[target].gate][pointLocation[target].edge].x" /></label>
+							<label class="grid gap-1 text-xs font-semibold">Y<input class="alloy-control" type="number" step="0.001" [formField]="fields[pointLocation[target].gate][pointLocation[target].edge].y" /></label>
+						</div>
+					}
+				</fieldset>
+				<fieldset class="grid gap-2 border-t border-alloy-separator pt-3">
+					<legend class="text-sm font-semibold">Gate directions</legend>
+					<div class="grid grid-cols-2 gap-2">
+						<label class="grid gap-1 text-xs font-semibold">Entry<select class="alloy-control" [formField]="fields.entryGate.direction"><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
+						<label class="grid gap-1 text-xs font-semibold">Exit<select class="alloy-control" [formField]="fields.exitGate.direction"><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
+					</div>
+				</fieldset>
+				<fieldset class="grid gap-2 border-t border-alloy-separator pt-3">
+					<legend class="text-sm font-semibold">Corner view rectangle</legend>
+					<p class="m-0 text-xs text-alloy-text-on-canvas-secondary">Set the normalized top-left position and size captured for this Corner. Values outside 0–1 remain visible for correction.</p>
+					<div class="grid grid-cols-2 gap-2">
+						<label class="grid gap-1 text-xs font-semibold">View X<input class="alloy-control" type="number" step="0.001" [formField]="fields.cornerView.x" /></label>
+						<label class="grid gap-1 text-xs font-semibold">View Y<input class="alloy-control" type="number" step="0.001" [formField]="fields.cornerView.y" /></label>
+						<label class="grid gap-1 text-xs font-semibold">Width<input class="alloy-control" type="number" step="0.001" [formField]="fields.cornerView.width" /></label>
+						<label class="grid gap-1 text-xs font-semibold">Height<input class="alloy-control" type="number" step="0.001" [formField]="fields.cornerView.height" /></label>
+					</div>
+				</fieldset>
+			}
+			@if (errors().length) { <div class="alloy-state alloy-error-state" role="alert"><strong>Geometry needs attention</strong><ul class="mt-2 list-disc pl-5">@for (error of errors(); track error) { <li>{{ error }}</li> }</ul></div> }
+			<button class="alloy-control alloy-control-primary" type="button" (click)="saveDraft()" [disabled]="busy() || !version() || errors().length > 0" [attr.aria-busy]="busy()">{{ busy() ? 'Saving…' : 'Save draft geometry' }}</button>
+		</div>
+	</div>
+</section>

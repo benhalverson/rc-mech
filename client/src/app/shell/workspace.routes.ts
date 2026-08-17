@@ -34,6 +34,10 @@ const loadMaintenanceRoutes = () =>
 	import('../maintenance/maintenance.routes').then(
 		({ MAINTENANCE_ROUTES }) => MAINTENANCE_ROUTES,
 	);
+const loadTrackMapRoutes = () =>
+	import('../track-maps/track-maps.routes').then(
+		({ TRACK_MAP_ROUTES }) => TRACK_MAP_ROUTES,
+	);
 const loadWorkspaceShell = () =>
 	import('./workspace-shell').then(({ WorkspaceShell }) => WorkspaceShell);
 
@@ -83,6 +87,10 @@ export const workspaceRoutes: Routes = [
 	{
 		path: 'settings',
 		loadChildren: loadSettingsRoutes,
+	},
+	{
+		path: 'track-maps',
+		loadChildren: loadTrackMapRoutes,
 	},
 ];
 

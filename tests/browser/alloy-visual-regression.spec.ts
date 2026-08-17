@@ -3,6 +3,11 @@ import { getViolations, injectAxe } from 'axe-playwright';
 
 test.use({ serviceWorkers: 'allow' });
 
+const browserClientPort = Number(
+	process.env['RC_MECH_BROWSER_CLIENT_PORT'] ?? 4201,
+);
+const browserBaseURL = `http://127.0.0.1:${browserClientPort}`;
+
 let authentication = 0;
 
 const authenticateOwner = async (page: Page): Promise<void> => {
@@ -240,7 +245,7 @@ test('keeps the authenticated Garage loading composition explicit and accessible
 	browser,
 }) => {
 	const context = await browser.newContext({
-		baseURL: 'http://127.0.0.1:4201',
+		baseURL: browserBaseURL,
 		serviceWorkers: 'block',
 		viewport: { width: 390, height: 844 },
 	});

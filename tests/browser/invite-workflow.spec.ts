@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
-const baseURL = 'http://127.0.0.1:4201';
+const browserClientPort = Number(
+	process.env['RC_MECH_BROWSER_CLIENT_PORT'] ?? 4201,
+);
+const baseURL = `http://127.0.0.1:${browserClientPort}`;
 
 const builtRouteChunk = (routeExport: string): string => {
 	const index = readFileSync('public/index.html', 'utf8');
@@ -61,7 +64,7 @@ const seedOwnerInvites = (workerIdentity: string) => {
 			'tsx',
 			'scripts/invite-cli.ts',
 			'--url',
-			'http://127.0.0.1:8787',
+			baseURL,
 			'--owner-email',
 			'owner@example.com',
 			'--code',
