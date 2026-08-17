@@ -26,7 +26,9 @@ model_digest=$(sha256sum "$model_path" | cut -d ' ' -f 1)
 unit=/etc/systemd/system/chassis-notes-gpu.service
 grep -Eq -- '--network host' "$unit" || fail 'worker network mode changed'
 grep -Eq -- '--read-only' "$unit" || fail 'worker root is writable'
-docker image inspect chassis-notes-driving-analysis-gpu:current --format '{{json .Config.Cmd}}' | grep -Eq '127\\.0\\.0\\.1.*8080' || fail 'worker is not loopback-only'
+docker image inspect chassis-notes-driving-analysis-gpu:current --format '{{json .Config.Cmd}}' \
+  | grep -Eq -- '"--host","127\.0\.0\.1".*"--port","8080"' \
+  || fail 'worker is not loopback-only'
 for flag in '--gpus all' '--cap-drop ALL' '--security-opt no-new-privileges:true' '--pids-limit 512' '--memory 32g' '--memory-swap 32g' '--user 10001:10001' '--tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m'; do
   grep -Fq -- "$flag" "$unit" || fail "worker security flag is missing: $flag"
 done

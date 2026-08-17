@@ -19,7 +19,7 @@ COPY services/driving-analysis-gpu services/driving-analysis-gpu
 WORKDIR /workspace/services/driving-analysis-gpu
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra sam31 --python /usr/bin/python3.12
+    uv sync --frozen --no-dev --no-editable --extra sam31 --python /usr/bin/python3.12
 
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04@sha256:ac55d124da4882b497f732d8dfd9a702d5447a5f29d08d56da6f64f0a1eb34bc AS runtime
 
@@ -34,8 +34,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -m 0700 -o 10001 -g 10001 /var/lib/chassis-notes-gpu
 
+RUN printf 'chassis-notes:x:10001:10001::/service:/usr/sbin/nologin\n' >> /etc/passwd \
+    && printf 'chassis-notes:x:10001:\n' >> /etc/group
+
 WORKDIR /service
 COPY --from=build /workspace/services/driving-analysis-gpu/.venv /service/.venv
 USER 10001:10001
 
-CMD ["uvicorn", "--factory", "chassis_notes_gpu_worker.api:create_app", "--host", "127.0.0.1", "--port", "8080", "--no-server-header", "--no-access-log"]
+CMD ["python", "-m", "uvicorn", "--factory", "chassis_notes_gpu_worker.api:create_app", "--host", "127.0.0.1", "--port", "8080", "--no-server-header", "--no-access-log"]
