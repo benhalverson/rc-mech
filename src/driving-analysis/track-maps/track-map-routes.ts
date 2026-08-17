@@ -14,6 +14,15 @@ import {
 } from './track-map-contracts';
 
 const now = (): string => new Date().toISOString();
+const trackMapConflictPattern =
+	/Track-map version changed since it was observed|Track-map versions must be the next draft for their layout|Retired Track layouts are read-only/;
+const isTrackMapConflict = (error: unknown): boolean =>
+	error instanceof Error &&
+	(trackMapConflictPattern.test(error.message) ||
+		isTrackMapConflict(error.cause));
+const assertTrackMapConflict = (error: unknown): void => {
+	if (!isTrackMapConflict(error)) throw error;
+};
 const isOwner = async (c: AppContext): Promise<boolean> => {
 	const value = await db(c.env)
 		.select({ email: owner.email })
@@ -329,7 +338,8 @@ export const createTrackMapRoutes = () => {
 			} else {
 				await insertVersion;
 			}
-		} catch {
+		} catch (error) {
+			assertTrackMapConflict(error);
 			return c.json(
 				{ error: 'Track-map version changed while the draft was created' },
 				409,
@@ -385,7 +395,8 @@ export const createTrackMapRoutes = () => {
 			} else {
 				await database.batch([updateVersion, removeExisting]);
 			}
-		} catch {
+		} catch (error) {
+			assertTrackMapConflict(error);
 			return c.json(
 				{ error: 'Track-map version changed since it was observed' },
 				409,
@@ -426,7 +437,8 @@ export const createTrackMapRoutes = () => {
 					approvedAt,
 				})
 				.where(eq(trackMapVersion.id, version.id));
-		} catch {
+		} catch (error) {
+			assertTrackMapConflict(error);
 			return c.json(
 				{ error: 'Track-map version changed since it was observed' },
 				409,
@@ -455,7 +467,8 @@ export const createTrackMapRoutes = () => {
 					retiredAt,
 				})
 				.where(eq(trackMapVersion.id, version.id));
-		} catch {
+		} catch (error) {
+			assertTrackMapConflict(error);
 			return c.json(
 				{ error: 'Track-map version changed since it was observed' },
 				409,

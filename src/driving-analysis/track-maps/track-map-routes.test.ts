@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	car,
 	driveSession,
@@ -27,6 +27,7 @@ const migrations = readdirSync(migrationDirectory)
 let sqlite: SqliteD1Fixture | undefined;
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	sqlite?.close();
 	sqlite = undefined;
 });
@@ -585,7 +586,7 @@ describe('Track-map routes', () => {
 			CREATE TRIGGER reject_next_track_map
 			BEFORE INSERT ON track_map_version
 			BEGIN
-				SELECT RAISE(ABORT, 'simulated concurrent create');
+				SELECT RAISE(ABORT, 'Track-map versions must be the next draft for their layout');
 			END;
 		`);
 		expect(
@@ -596,6 +597,26 @@ describe('Track-map routes', () => {
 				)
 			).status,
 		).toBe(409);
+		sqlite.exec('DROP TRIGGER reject_next_track_map;');
+		sqlite.exec(`
+			CREATE TRIGGER reject_next_track_map
+			BEFORE INSERT ON track_map_version
+			BEGIN
+				SELECT RAISE(ABORT, 'simulated database outage');
+			END;
+		`);
+		const errorLog = vi
+			.spyOn(console, 'error')
+			.mockImplementation(() => undefined);
+		expect(
+			(
+				await request(
+					`/api/v1/track-layouts/${layoutId}/map-versions`,
+					json('POST', {}),
+				)
+			).status,
+		).toBe(500);
+		expect(errorLog).toHaveBeenCalled();
 		sqlite.exec('DROP TRIGGER reject_next_track_map;');
 		await request(`/api/v1/track-layouts/${layoutId}/retire`, {
 			method: 'POST',

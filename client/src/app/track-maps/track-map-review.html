@@ -13,17 +13,7 @@
 	</dl>
 	<div class="border border-alloy-command-separator bg-alloy-command-control p-2">
 		<div class="mb-2 flex flex-wrap gap-4 text-xs font-semibold text-alloy-command-text" aria-hidden="true"><span>━ Entry gate</span><span>┅ Exit gate</span><span>┄ Corner view</span></div>
-		<svg class="block w-full" viewBox="0 0 640 360" role="img" [attr.aria-label]="'Read-only Track map geometry for version ' + version().version">
-			<title>Read-only Track map geometry for version {{ version().version }}</title>
-			<rect class="fill-alloy-command-control" width="640" height="360" />
-			<path class="stroke-alloy-command-separator" d="M160 0V360M320 0V360M480 0V360M0 90H640M0 180H640M0 270H640" fill="none" stroke-width="1" opacity=".6" />
-			@for (corner of version().corners; track corner.key) {
-				<line class="stroke-alloy-command-accent" [attr.x1]="svgX(corner.entryGate.start)" [attr.y1]="svgY(corner.entryGate.start)" [attr.x2]="svgX(corner.entryGate.end)" [attr.y2]="svgY(corner.entryGate.end)" stroke-width="4" />
-				<line class="stroke-alloy-command-secondary" [attr.x1]="svgX(corner.exitGate.start)" [attr.y1]="svgY(corner.exitGate.start)" [attr.x2]="svgX(corner.exitGate.end)" [attr.y2]="svgY(corner.exitGate.end)" stroke-width="4" stroke-dasharray="8 5" />
-				<rect class="stroke-alloy-command-text" [attr.x]="corner.cornerView.x * 640" [attr.y]="corner.cornerView.y * 360" [attr.width]="corner.cornerView.width * 640" [attr.height]="corner.cornerView.height * 360" fill="none" stroke-dasharray="4 4" />
-				<text class="fill-alloy-command-text" [attr.x]="corner.cornerView.x * 640 + 6" [attr.y]="corner.cornerView.y * 360 + 18" font-size="13">{{ corner.order }} · {{ corner.name }}</text>
-			}
-		</svg>
+		<app-track-map-geometry [corners]="version().corners" [label]="'Read-only Track map geometry for version ' + version().version" />
 	</div>
 	<ol class="grid gap-3 p-0" aria-label="Normalized Corner geometry">
 		@for (corner of version().corners; track corner.key) {

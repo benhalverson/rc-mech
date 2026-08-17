@@ -13,6 +13,8 @@ import type {
 	TrackCorner,
 	TrackMapVersion,
 } from './track-map.models';
+import { TrackMapApproval } from './track-map-approval';
+import { TrackMapGeometry } from './track-map-geometry';
 import { validateTrackCorners } from './track-map-rules';
 
 type PointTarget = 'entryStart' | 'entryEnd' | 'exitStart' | 'exitEnd';
@@ -31,7 +33,7 @@ const isPointTarget = (target: GeometryTarget): target is PointTarget =>
 @Component({
 	selector: 'app-track-map-editor',
 	host: { class: 'block' },
-	imports: [FormField],
+	imports: [FormField, TrackMapApproval, TrackMapGeometry],
 	templateUrl: './track-map-editor.html',
 })
 export class TrackMapEditor {
@@ -40,17 +42,19 @@ export class TrackMapEditor {
 	readonly saveRequested = output<SaveTrackMapDraftCommand>();
 	readonly approveRequested = output<void>();
 	protected readonly corners = linkedSignal<
-		{ id: string; updatedAt: string } | null,
+		{ id: string; stateVersion: number } | null,
 		TrackCorner[]
 	>({
 		source: () => {
 			const version = this.version();
-			return version ? { id: version.id, updatedAt: version.updatedAt } : null;
+			return version
+				? { id: version.id, stateVersion: version.stateVersion }
+				: null;
 		},
 		computation: (revision, previous) =>
 			revision?.id &&
 			previous?.source?.id === revision.id &&
-			previous.source.updatedAt === revision.updatedAt
+			previous.source.stateVersion === revision.stateVersion
 				? previous.value
 				: [...(this.version()?.corners ?? [])],
 	});
@@ -60,17 +64,19 @@ export class TrackMapEditor {
 		});
 	});
 	protected readonly selectedCorner = linkedSignal<
-		{ id: string; updatedAt: string } | null,
+		{ id: string; stateVersion: number } | null,
 		number | null
 	>({
 		source: () => {
 			const version = this.version();
-			return version ? { id: version.id, updatedAt: version.updatedAt } : null;
+			return version
+				? { id: version.id, stateVersion: version.stateVersion }
+				: null;
 		},
 		computation: (revision, previous) =>
 			previous &&
 			previous.source?.id === revision?.id &&
-			previous?.source?.updatedAt === revision?.updatedAt
+			previous?.source?.stateVersion === revision?.stateVersion
 				? previous.value
 				: this.version()?.corners.length
 					? 0
@@ -84,27 +90,9 @@ export class TrackMapEditor {
 	protected readonly errors = computed(() =>
 		validateTrackCorners(this.corners()),
 	);
-	protected readonly dirty = computed(
-		() =>
-			JSON.stringify(this.corners()) !==
-			JSON.stringify(this.version()?.corners ?? []),
-	);
-	protected readonly canApprove = computed(
-		() =>
-			this.version()?.status === 'draft' &&
-			this.corners().length > 0 &&
-			this.errors().length === 0 &&
-			!this.dirty(),
-	);
 	protected readonly activeCorner = computed(
 		() => this.corners().at(this.selectedCorner() ?? -1) ?? null,
 	);
-	protected readonly pointTargets: readonly PointTarget[] = [
-		'entryStart',
-		'entryEnd',
-		'exitStart',
-		'exitEnd',
-	];
 	protected readonly pointLocation = pointLocation;
 
 	protected addCorner(): void {
@@ -208,20 +196,10 @@ export class TrackMapEditor {
 	protected saveDraft(): void {
 		this.saveRequested.emit({ corners: this.corners() });
 	}
-	protected approveDraft(): void {
-		this.approveRequested.emit();
-	}
 	protected point(corner: TrackCorner, target: PointTarget): Point {
 		const location = pointLocation[target];
 		return corner[location.gate][location.edge];
 	}
-	protected svgX(point: Point): number {
-		return point.x * 640;
-	}
-	protected svgY(point: Point): number {
-		return point.y * 360;
-	}
-
 	private updatePoint(
 		selected: number,
 		target: PointTarget,

@@ -166,6 +166,7 @@ describe('TrackMapEditor', () => {
 		expect(fixture.nativeElement.textContent).toContain('Turn 2');
 		fixture.componentRef.setInput('version', {
 			...version,
+			stateVersion: 2,
 			updatedAt: '2026-01-02',
 			corners: [{ ...version.corners[0], name: 'Canonical name' }],
 		});
@@ -321,6 +322,5 @@ describe('TrackMapEditor', () => {
 		fixture.componentRef.setInput('version', null);
 		fixture.detectChanges();
 		expect(button('Add corner').disabled).toBe(true);
-		expect(component['dirty']()).toBe(false);
 	});
 });
