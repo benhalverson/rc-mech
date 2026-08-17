@@ -10,6 +10,16 @@ grep -q -- '--mount type=bind,src=/opt/chassis-notes-gpu/models/sam3.1.pt,dst=/m
 grep -q -- '--network host' "$root/systemd/chassis-notes-gpu.service"
 grep -q -- '--read-only' "$root/systemd/chassis-notes-gpu.service"
 grep -q -- '--host", "127.0.0.1"' "$root/../Dockerfile"
+grep -Fq -- 'CMD ["python", "-m", "uvicorn"' "$root/../Dockerfile"
+grep -Fq -- "chassis-notes:x:10001:10001" "$root/../Dockerfile"
+grep -q -- 'uv sync --frozen --no-dev --no-editable --extra sam31' "$root/../Dockerfile"
+grep -Fq -- '"einops==0.8.1"' "$root/../pyproject.toml"
+grep -Fq -- '"psutil==7.0.0"' "$root/../pyproject.toml"
+grep -Fq -- '"pycocotools==2.0.11"' "$root/../pyproject.toml"
+loopback_pattern='"--host","127\.0\.0\.1".*"--port","8080"'
+grep -Fq -- "$loopback_pattern" "$root/scripts/preflight.sh"
+printf '%s\n' '["uvicorn","--host","127.0.0.1","--port","8080"]' \
+  | grep -Eq -- "$loopback_pattern"
 if grep -Eiq '^[A-Z_]*(ACCESS|R2|D1|WORKFLOW|TOKEN|SECRET|CREDENTIAL)' "$root/config/worker.env.example"; then
   printf 'worker.env.example contains forbidden credential material\n' >&2
   exit 1
