@@ -2,6 +2,19 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { concat, NEVER, Observable, of, Subject, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+	TrackLayoutCollection,
+	TrackMapVersion,
+} from '../../../track-maps/track-map.models';
+import { TrackMapGateway } from '../../../track-maps/track-map-gateway';
+import type {
+	CreateDrivingAnalysisCommand,
+	DrivingAnalysis,
+	DrivingAnalysisGatewayFailure,
+	StartDrivingAnalysisCommand,
+} from './driving-analysis.models';
+import { DrivingAnalysisGateway } from './driving-analysis-gateway';
+import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
 import { DrivingAnalysisStore } from './driving-analysis-store';
 import { PageVisibilityCapability } from './page-visibility';
 import type {
@@ -66,14 +79,176 @@ class FakeRaceRecordingGateway {
 	);
 }
 
+const analysis = (
+	overrides: Partial<DrivingAnalysis> = {},
+): DrivingAnalysis => ({
+	id: '66666666-6666-4666-8666-666666666666',
+	requestId: '55555555-5555-4555-8555-555555555555',
+	carId: 'car-1',
+	driveSessionId: 'drive-1',
+	raceVideoId: '33333333-3333-4333-8333-333333333333',
+	raceWindow: { startTimestampMs: 120_000, endTimestampMs: 720_000 },
+	approvedTrackMapVersionId: '44444444-4444-4444-8444-444444444444',
+	subjectSeed: {
+		timestampMs: 180_000,
+		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
+	},
+	sourceLayout: {
+		version: 'fixed-track-view.v1',
+		digest: 'a'.repeat(64),
+		width: 1920,
+		height: 1080,
+		trackView: { x: 0, y: 1 / 3, width: 1, height: 2 / 3 },
+	},
+	status: 'queued',
+	stage: 'preparation',
+	progress: 0,
+	stateVersion: 1,
+	createdAt: '2026-08-17T18:00:00.000Z',
+	updatedAt: '2026-08-17T18:00:00.000Z',
+	...overrides,
+});
+
+const analysisCommand = (): StartDrivingAnalysisCommand => ({
+	carId: 'car-1',
+	driveSessionId: 'drive-1',
+	raceVideoId: '33333333-3333-4333-8333-333333333333',
+	approvedTrackMapVersionId: '44444444-4444-4444-8444-444444444444',
+	raceWindow: { startTimestampMs: 120_000, endTimestampMs: 720_000 },
+	subjectSeed: {
+		timestampMs: 180_000,
+		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
+	},
+});
+
+class FakeDrivingAnalysisGateway {
+	readonly analysisValue = signal<DrivingAnalysis>(analysis());
+	readonly analysisHasValue = signal(false);
+	readonly analysisLoading = signal(false);
+	readonly analysisError = signal<DrivingAnalysisGatewayFailure | null>(null);
+	readonly analysis = {
+		hasValue: () => this.analysisHasValue(),
+		value: () => this.analysisValue(),
+		isLoading: () => this.analysisLoading(),
+	};
+	readonly analysisFailure = () => this.analysisError();
+	readonly selectAnalysis = vi.fn((analysisId: string | null) => {
+		if (analysisId === null) {
+			this.analysisHasValue.set(false);
+			this.analysisError.set(null);
+		}
+	});
+	readonly refresh = vi.fn();
+	readonly create = vi.fn<
+		(_command: CreateDrivingAnalysisCommand) => Observable<DrivingAnalysis>
+	>(() => of(analysis()));
+}
+
+class FakeTrackMapGateway {
+	readonly value = signal<TrackLayoutCollection>({
+		canManage: false,
+		trackLayouts: [
+			{
+				id: 'layout-1',
+				name: 'Indoor clay',
+				status: 'active',
+				createdBy: 'owner-1',
+				createdAt: '2026-08-17T18:00:00.000Z',
+				updatedAt: '2026-08-17T18:00:00.000Z',
+				retiredAt: null,
+				mapVersions: [
+					{
+						id: 'map-approved',
+						version: 2,
+						stateVersion: 2,
+						status: 'approved',
+						createdAt: '2026-08-17T18:00:00.000Z',
+						updatedAt: '2026-08-17T18:00:00.000Z',
+						approvedAt: '2026-08-17T18:00:00.000Z',
+						retiredAt: null,
+					},
+					{
+						id: 'map-draft',
+						version: 3,
+						stateVersion: 1,
+						status: 'draft',
+						createdAt: '2026-08-17T18:00:00.000Z',
+						updatedAt: '2026-08-17T18:00:00.000Z',
+						approvedAt: null,
+						retiredAt: null,
+					},
+				],
+			},
+			{
+				id: 'layout-retired',
+				name: 'Old layout',
+				status: 'retired',
+				createdBy: 'owner-1',
+				createdAt: '2026-08-17T18:00:00.000Z',
+				updatedAt: '2026-08-17T18:00:00.000Z',
+				retiredAt: '2026-08-17T18:00:00.000Z',
+				mapVersions: [
+					{
+						id: 'map-retired-layout',
+						version: 1,
+						stateVersion: 2,
+						status: 'approved',
+						createdAt: '2026-08-17T18:00:00.000Z',
+						updatedAt: '2026-08-17T18:00:00.000Z',
+						approvedAt: '2026-08-17T18:00:00.000Z',
+						retiredAt: null,
+					},
+				],
+			},
+		],
+	});
+	readonly hasValue = signal(true);
+	readonly loading = signal(false);
+	readonly error = signal<unknown>(null);
+	readonly versionValue = signal<TrackMapVersion>({
+		id: 'map-approved',
+		layoutId: 'layout-1',
+		version: 2,
+		stateVersion: 2,
+		status: 'approved',
+		sourceVersionId: null,
+		createdBy: 'owner-1',
+		createdAt: '2026-08-17T18:00:00.000Z',
+		updatedAt: '2026-08-17T18:00:00.000Z',
+		approvedBy: 'owner-1',
+		approvedAt: '2026-08-17T18:00:00.000Z',
+		retiredAt: null,
+		corners: [],
+	});
+	readonly versionHasValue = signal(false);
+	readonly versionLoading = signal(false);
+	readonly layouts = {
+		hasValue: () => this.hasValue(),
+		value: () => this.value(),
+		isLoading: () => this.loading(),
+		error: () => this.error(),
+	};
+	readonly version = {
+		hasValue: () => this.versionHasValue(),
+		value: () => this.versionValue(),
+		isLoading: () => this.versionLoading(),
+	};
+	readonly selectVersion = vi.fn();
+	readonly refresh = vi.fn();
+}
+
 describe('DrivingAnalysisStore', () => {
 	let store: InstanceType<typeof DrivingAnalysisStore>;
 	let gateway: FakeRaceRecordingGateway;
+	let analyses: FakeDrivingAnalysisGateway;
+	let trackMaps: FakeTrackMapGateway;
 	let files: RaceRecordingFileCapability;
 	let hidden: ReturnType<typeof signal<boolean>>;
 
 	beforeEach(() => {
 		gateway = new FakeRaceRecordingGateway();
+		analyses = new FakeDrivingAnalysisGateway();
+		trackMaps = new FakeTrackMapGateway();
 		hidden = signal(false);
 		let uploadedBytes = 0;
 		const parts: number[] = [];
@@ -99,7 +274,16 @@ describe('DrivingAnalysisStore', () => {
 			providers: [
 				DrivingAnalysisStore,
 				RaceRecordingFileCapability,
+				{
+					provide: DrivingAnalysisRequestIdentityCapability,
+					useValue: {
+						requestId: vi.fn(() => '55555555-5555-4555-8555-555555555555'),
+						clear: vi.fn(),
+					},
+				},
 				{ provide: RaceRecordingGateway, useValue: gateway },
+				{ provide: DrivingAnalysisGateway, useValue: analyses },
+				{ provide: TrackMapGateway, useValue: trackMaps },
 				{ provide: PageVisibilityCapability, useValue: { hidden } },
 			],
 		});
@@ -118,6 +302,14 @@ describe('DrivingAnalysisStore', () => {
 		expect(store.error()).toBe('');
 		expect(store.removalError()).toBe('');
 		expect(store.selectedFileName('missing')).toBe('');
+		expect(store.selectedTrackMap()).toBeNull();
+		expect(store.selectedTrackMapLoading()).toBe(false);
+		trackMaps.versionHasValue.set(true);
+		trackMaps.versionLoading.set(true);
+		expect(store.selectedTrackMap()).toEqual(trackMaps.versionValue());
+		expect(store.selectedTrackMapLoading()).toBe(true);
+		store.selectTrackMap('map-approved');
+		expect(trackMaps.selectVersion).toHaveBeenCalledWith('map-approved');
 		store.selectCar('car-1');
 		store.selectCar('car-1');
 		expect(gateway.selectCar).toHaveBeenCalledOnce();
@@ -131,6 +323,148 @@ describe('DrivingAnalysisStore', () => {
 		expect(store.recordings()).toEqual([]);
 		store.retry();
 		expect(gateway.refresh).toHaveBeenCalledOnce();
+	});
+
+	it('polls nonterminal analyses with visible and hidden-tab backoff', async () => {
+		vi.useFakeTimers();
+		try {
+			store.selectCar('car-1');
+			store.createAnalysis(analysisCommand());
+			TestBed.flushEffects();
+			await vi.advanceTimersByTimeAsync(0);
+			await vi.advanceTimersByTimeAsync(3_000);
+			expect(analyses.refresh).toHaveBeenCalledOnce();
+
+			analyses.analysisValue.set(
+				analysis({
+					status: 'completed',
+					stage: 'finalization',
+					progress: 100,
+					stateVersion: 2,
+				}),
+			);
+			analyses.analysisHasValue.set(true);
+			TestBed.flushEffects();
+			await vi.advanceTimersByTimeAsync(3_000);
+			expect(analyses.refresh).toHaveBeenCalledOnce();
+
+			analyses.analysisValue.set(
+				analysis({
+					status: 'running',
+					stage: 'tracking',
+					progress: 20,
+					stateVersion: 3,
+				}),
+			);
+			TestBed.flushEffects();
+			hidden.set(true);
+			await vi.advanceTimersByTimeAsync(29_999);
+			expect(analyses.refresh).toHaveBeenCalledOnce();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(analyses.refresh).toHaveBeenCalledTimes(2);
+
+			store.selectCar('car-2');
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(analyses.refresh).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('creates, refreshes, and presents one analysis with approved active maps', async () => {
+		expect(store.approvedTrackMaps()).toEqual([
+			{
+				id: 'map-approved',
+				layoutId: 'layout-1',
+				layoutName: 'Indoor clay',
+				version: 2,
+				approvedAt: '2026-08-17T18:00:00.000Z',
+			},
+		]);
+		expect(store.trackMapsLoading()).toBe(false);
+		expect(store.trackMapsFailure()).toBeNull();
+		trackMaps.loading.set(true);
+		expect(store.trackMapsLoading()).toBe(true);
+		trackMaps.error.set('invalid maps');
+		expect(store.trackMapsFailure()).toEqual({ kind: 'invalid-response' });
+		trackMaps.loading.set(false);
+		trackMaps.error.set(null);
+		trackMaps.hasValue.set(false);
+		expect(store.approvedTrackMaps()).toEqual([]);
+		trackMaps.hasValue.set(true);
+
+		store.createAnalysis(analysisCommand());
+		expect(analyses.create).not.toHaveBeenCalled();
+		store.selectCar('car-1');
+		store.createAnalysis({ ...analysisCommand(), carId: 'other-car' });
+		expect(analyses.create).not.toHaveBeenCalled();
+		const creation = new Subject<DrivingAnalysis>();
+		analyses.create.mockReturnValueOnce(creation);
+		store.createAnalysis(analysisCommand());
+		expect(store.analysisCreation().status).toBe('creating');
+		expect(store.pending()).toBe(true);
+		creation.next(analysis());
+		creation.complete();
+		await vi.waitFor(() =>
+			expect(store.analysisCreation().status).toBe('accepted'),
+		);
+		expect(store.analysis()).toEqual(analysis());
+		expect(store.analysisError()).toBe('');
+		expect(analyses.create).toHaveBeenCalledWith({
+			...analysisCommand(),
+			requestId: '55555555-5555-4555-8555-555555555555',
+		});
+
+		store.refreshAnalysis();
+		analyses.analysisValue.set(
+			analysis({ status: 'running', progress: 15, stateVersion: 3 }),
+		);
+		analyses.analysisHasValue.set(true);
+		await vi.waitFor(() => expect(store.analysis()?.progress).toBe(15));
+		expect(analyses.refresh).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		[
+			{ kind: 'http', status: 401 } as DrivingAnalysisGatewayFailure,
+			'session has expired',
+		],
+		[
+			{
+				kind: 'rejected-response',
+				status: 409,
+				message: 'Request identity changed.',
+			} as DrivingAnalysisGatewayFailure,
+			'Request identity changed',
+		],
+		[
+			{ kind: 'unavailable' } as DrivingAnalysisGatewayFailure,
+			'could not be started',
+		],
+	])('presents safe analysis creation failure %#', async (failure, copy) => {
+		analyses.create.mockReturnValue(throwError(() => failure));
+		store.selectCar('car-1');
+		store.createAnalysis(analysisCommand());
+		await vi.waitFor(() =>
+			expect(store.analysisCreation().status).toBe('failed'),
+		);
+		expect(store.analysisError()).toContain(copy);
+	});
+
+	it('ignores refresh without an analysis and retains facts on refresh failure', async () => {
+		store.refreshAnalysis();
+		expect(analyses.refresh).not.toHaveBeenCalled();
+		store.selectCar('car-1');
+		store.createAnalysis(analysisCommand());
+		await vi.waitFor(() => expect(store.analysis()).not.toBeNull());
+		analyses.analysisHasValue.set(false);
+		analyses.analysisError.set({ kind: 'http', status: 503 });
+		store.refreshAnalysis();
+		await vi.waitFor(() =>
+			expect(store.analysisCreation().status).toBe('failed'),
+		);
+		expect(store.analysis()).toEqual(analysis());
+		expect(store.analysisError()).toContain('could not be started');
 	});
 
 	it('refreshes validating recordings until authoritative state becomes terminal', async () => {

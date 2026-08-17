@@ -18,12 +18,12 @@ import {
 	LucideX,
 } from '@lucide/angular';
 import type { DriveSession } from '../drive-session.models';
+import { DrivingAnalysisCreator } from './driving-analysis-creator';
 import { DrivingAnalysisStore } from './driving-analysis-store';
 import {
 	MAX_RACE_RECORDING_BYTES,
 	SUPPORTED_RACE_RECORDING_TYPES,
 } from './race-recording.models';
-import { RaceRecordingPlayer } from './race-recording-player';
 
 type DisplayStatus =
 	| 'idle'
@@ -47,7 +47,7 @@ type DisplayStatus =
 		LucideTriangleAlert,
 		LucideUpload,
 		LucideX,
-		RaceRecordingPlayer,
+		DrivingAnalysisCreator,
 	],
 	templateUrl: './race-recording-upload.html',
 	host: { class: 'block border-t border-alloy-separator pb-4 pt-3' },

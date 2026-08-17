@@ -59,7 +59,7 @@
 		</div>
 	}
 	@if (status() === 'ready' && recording(); as readyRecording) {
-		<app-race-recording-player [recording]="readyRecording" />
+		<app-driving-analysis-creator [carId]="carId()" [driveSessionId]="driveSession().id" [recording]="readyRecording" />
 	}
 	@if (store.readFailure() && !recording()) {
 		<div class="alloy-state alloy-error-state mt-0" role="alert">

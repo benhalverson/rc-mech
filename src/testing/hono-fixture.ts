@@ -1,4 +1,5 @@
 import { expect } from 'vitest';
+import { DrivingAnalysisAuthority } from '../driving-analysis/analysis/driving-analysis-authority';
 import { RaceRecordingAuthority } from '../driving-analysis/race-recording/race-recording-authority';
 import { type AppDependencies, createApp } from '../index';
 import type { VoiceProcessor } from '../voice-processing';
@@ -471,6 +472,7 @@ type HonoFixtureOptions = {
 	voiceProcessor?: VoiceProcessor;
 	database?: D1Database;
 	raceRecordingAuthority?: AppDependencies['raceRecordingAuthority'];
+	drivingAnalysisAuthority?: AppDependencies['drivingAnalysisAuthority'];
 };
 
 export const createHonoFixture = (
@@ -551,6 +553,9 @@ export const createHonoFixture = (
 			fixtureOptions.raceRecordingAuthority ??
 			((environment) =>
 				new RaceRecordingAuthority(environment.DB, environment.ANALYSIS_MEDIA)),
+		drivingAnalysisAuthority:
+			fixtureOptions.drivingAnalysisAuthority ??
+			((environment) => new DrivingAnalysisAuthority(environment.DB)),
 	};
 	const app = createApp(auth);
 	return {

@@ -31,6 +31,60 @@ const createCar = async (page: Page, name: string) => {
 	return (await response.json()) as { car: { id: string } };
 };
 
+const createApprovedTrackMap = async (page: Page, name: string) => {
+	const layoutResponse = await page.request.post('/api/v1/track-layouts', {
+		data: { name },
+	});
+	expect(layoutResponse.status()).toBe(201);
+	const layout = (await layoutResponse.json()) as {
+		trackLayout: { id: string };
+	};
+	const draftResponse = await page.request.post(
+		`/api/v1/track-layouts/${layout.trackLayout.id}/map-versions`,
+		{ data: {} },
+	);
+	expect(draftResponse.status()).toBe(201);
+	const draft = (await draftResponse.json()) as {
+		trackMapVersion: { id: string; stateVersion: number };
+	};
+	const geometryResponse = await page.request.patch(
+		`/api/v1/track-map-versions/${draft.trackMapVersion.id}`,
+		{
+			data: {
+				expectedStateVersion: draft.trackMapVersion.stateVersion,
+				corners: [
+					{
+						key: 'browser-turn',
+						name: 'Browser turn',
+						order: 1,
+						entryGate: {
+							start: { x: 0.2, y: 0.7 },
+							end: { x: 0.35, y: 0.6 },
+							direction: 'forward',
+						},
+						exitGate: {
+							start: { x: 0.5, y: 0.4 },
+							end: { x: 0.6, y: 0.5 },
+							direction: 'forward',
+						},
+						cornerView: { x: 0.15, y: 0.3, width: 0.5, height: 0.4 },
+					},
+				],
+			},
+		},
+	);
+	expect(geometryResponse.ok()).toBe(true);
+	const geometry = (await geometryResponse.json()) as {
+		trackMapVersion: { stateVersion: number };
+	};
+	const approvalResponse = await page.request.post(
+		`/api/v1/track-map-versions/${draft.trackMapVersion.id}/approve`,
+		{ data: { expectedStateVersion: geometry.trackMapVersion.stateVersion } },
+	);
+	expect(approvalResponse.ok()).toBe(true);
+	return { id: draft.trackMapVersion.id, name };
+};
+
 const scan = async (page: Page) => {
 	await injectAxe(page);
 	return getViolations(page);
@@ -206,6 +260,156 @@ test('keeps dark Drive session editing, history, and archive states accessible',
 	expect(await scan(page)).toEqual([]);
 });
 
+test('creates a queued Driving analysis from a ready private Race recording', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await createCar(page, 'Driving analysis browser fixture');
+	const trackMap = await createApprovedTrackMap(
+		page,
+		'Analysis browser circuit',
+	);
+	const driveResponse = await page.request.post(
+		`/api/v1/cars/${created.car.id}/drives`,
+		{
+			data: {
+				startedAt: '2026-08-17T18:00:00.000Z',
+				durationMinutes: 10,
+				conditions: 'Dry',
+			},
+		},
+	);
+	expect(driveResponse.ok()).toBe(true);
+	const drive = (await driveResponse.json()) as {
+		driveSession: { id: string };
+	};
+	const collectionUrl = `/api/v1/cars/${created.car.id}/drives/${drive.driveSession.id}/race-videos`;
+	const createResponse = await page.request.post(collectionUrl, {
+		data: {
+			fileName: 'Analysis.mp4',
+			contentType: 'video/mp4',
+			sizeBytes: playableRaceVideo.length,
+			requestId: '00000000-0000-4000-8000-000000000236',
+		},
+	});
+	expect(createResponse.status()).toBe(201);
+	const recording = (await createResponse.json()) as {
+		raceVideo: { id: string };
+	};
+	const partResponse = await page.request.put(
+		`/api/v1/race-videos/${recording.raceVideo.id}/upload-parts/1`,
+		{
+			headers: {
+				'content-length': String(playableRaceVideo.length),
+				'content-type': 'application/octet-stream',
+				'x-transfer-request-id': 'analysis-browser-part-1',
+			},
+			data: playableRaceVideo,
+		},
+	);
+	expect(partResponse.ok()).toBe(true);
+	const completionResponse = await page.request.post(
+		`/api/v1/race-videos/${recording.raceVideo.id}/complete`,
+	);
+	expect(completionResponse.ok()).toBe(true);
+	expect(await completionResponse.json()).toMatchObject({
+		raceVideo: { status: 'ready' },
+	});
+
+	await page.goto(`/garage/${created.car.id}/drive-sessions`);
+	const section = page.locator(
+		`section[aria-labelledby="race-recording-title-${drive.driveSession.id}"]`,
+	);
+	await expect(section.getByText('Ready for analysis')).toBeVisible();
+	const creator = section.locator('app-driving-analysis-creator');
+	const mapSelector = creator.getByLabel('Approved Track map');
+	await mapSelector.selectOption(trackMap.id);
+	await expect(mapSelector).toHaveValue(trackMap.id);
+	await expect(
+		creator.getByText(`Immutable approved version 1 for ${trackMap.name}`, {
+			exact: false,
+		}),
+	).toBeVisible();
+	await creator
+		.locator('summary', { hasText: 'Inspect immutable Track-map geometry' })
+		.click();
+	await expect(
+		creator.getByRole('img', {
+			name: `Approved geometry for ${trackMap.name} version 1`,
+		}),
+	).toBeVisible();
+	const playback = creator.getByRole('button', {
+		name: 'Play private Race recording',
+	});
+	await playback.click();
+	await expect(
+		creator.getByRole('button', { name: 'Pause private Race recording' }),
+	).toBeVisible();
+	await creator
+		.getByRole('button', { name: 'Pause private Race recording' })
+		.click();
+	await creator.getByLabel('Race start').fill('100');
+	await creator.getByLabel('Race end').fill('900');
+	await creator.getByLabel('Subject frame').fill('500');
+	const subjectBox = creator.locator('[data-subject-box]');
+	await subjectBox.focus();
+	await subjectBox.press('ArrowRight');
+	await creator.getByLabel('Width').fill('');
+	await expect(
+		creator.getByText('Enter all four normalized Subject-box coordinates.'),
+	).toBeVisible();
+	await creator.getByLabel('Width').fill('0.12');
+	await expect(subjectBox).toHaveAttribute(
+		'aria-label',
+		/45\.2% from the left/,
+	);
+	const invalidControls = await creator.locator('form').evaluate((form) =>
+		Array.from((form as HTMLFormElement).elements)
+			.filter((control) => !(control as HTMLInputElement).checkValidity())
+			.map((control) => ({
+				name: (control as HTMLInputElement).name,
+				message: (control as HTMLInputElement).validationMessage,
+			})),
+	);
+	expect(invalidControls).toEqual([]);
+
+	const requestPromise = page.waitForRequest(
+		(request) =>
+			request.method() === 'POST' &&
+			request
+				.url()
+				.endsWith(
+					`/api/v1/cars/${created.car.id}/drives/${drive.driveSession.id}/driving-analyses`,
+				),
+	);
+	const responsePromise = page.waitForResponse(
+		(response) =>
+			response.request().method() === 'POST' &&
+			response
+				.url()
+				.endsWith(
+					`/api/v1/cars/${created.car.id}/drives/${drive.driveSession.id}/driving-analyses`,
+				),
+	);
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	const analysisRequest = await requestPromise;
+	expect(analysisRequest.postDataJSON()).toMatchObject({
+		raceVideoId: recording.raceVideo.id,
+		approvedTrackMapVersionId: trackMap.id,
+		raceWindow: { startTimestampMs: 100, endTimestampMs: 900 },
+		subjectSeed: {
+			timestampMs: 500,
+			box: { x: 0.452, y: 0.45, width: 0.12, height: 0.08 },
+		},
+	});
+	expect((await responsePromise).status()).toBe(202);
+	await expect(creator.getByText('Analysis queued')).toBeVisible();
+	await expect(creator.getByText('Preparation · 0%')).toBeVisible();
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(creator.getByText('Preparation · 0%')).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+});
+
 test('resumes a Race recording from authoritative multipart progress without retransmitting completed parts', async ({
 	page,
 }) => {
@@ -271,7 +475,7 @@ test('resumes a Race recording from authoritative multipart progress without ret
 		mimeType: 'video/mp4',
 		buffer: playableRaceVideo,
 	});
-	await expect(page.getByText('Validating recording…')).toBeVisible();
+	await expect(page.getByText('Ready for analysis')).toBeVisible();
 	expect(browserPartRequests).toBe(0);
 	expect(await scan(page)).toEqual([]);
 
@@ -354,7 +558,11 @@ test('resumes a Race recording from authoritative multipart progress without ret
 		'src',
 		`/api/v1/race-videos/${recordingId}/content`,
 	);
-	await expect(player).toHaveAttribute('controls', '');
+	await expect(
+		completedSection.getByRole('button', {
+			name: 'Play private Race recording',
+		}),
+	).toBeVisible();
 	await expect(player).toHaveAttribute('preload', 'metadata');
 	const playback = await player.evaluate(async (video: HTMLVideoElement) => {
 		if (video.readyState < HTMLMediaElement.HAVE_METADATA)

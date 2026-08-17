@@ -1,0 +1,45 @@
+<section class="grid gap-3" [attr.aria-labelledby]="editorId() + '-subject-box-title'">
+	<div>
+		<h5 class="m-0 text-sm font-semibold" [id]="editorId() + '-subject-box-title'">Subject car</h5>
+		<p class="m-0 mt-1 text-xs text-alloy-text-secondary">Draw only in the outlined bottom-two-thirds Track view. The coordinates below provide the same precise keyboard path.</p>
+	</div>
+	<div class="relative min-h-32 overflow-hidden rounded bg-black">
+		<ng-content />
+		<div
+			#surface
+			data-box-surface
+			class="absolute inset-x-0 bottom-0 h-2/3 touch-none border-2 border-dashed border-alloy-accent bg-black/10"
+			role="group"
+			[attr.aria-label]="'Track-view Subject-box drawing surface. ' + description()"
+			(pointerdown)="pointerDown($event)"
+			(pointermove)="pointerMove($event)"
+			(pointerup)="pointerUp($event)"
+			(pointercancel)="pointerUp($event)"
+		>
+			<button
+				data-subject-box
+				class="alloy-focus-ring absolute border-2 border-white bg-alloy-accent/25 p-0 shadow-[0_0_0_1px_rgba(0,0,0,0.8)]"
+				type="button"
+				[style.left.%]="box().x * 100"
+				[style.top.%]="box().y * 100"
+				[style.width.%]="box().width * 100"
+				[style.height.%]="box().height * 100"
+				[attr.aria-label]="description() + ' Use arrow keys to move; hold Shift for larger steps.'"
+				(pointerdown)="$event.stopPropagation()"
+				(keydown)="move($event)"
+			></button>
+		</div>
+	</div>
+	<p class="m-0 text-xs text-alloy-text-secondary" [id]="editorId() + '-subject-box-description'" aria-live="polite">{{ description() }}</p>
+	<div class="grid grid-cols-2 gap-2 sm:grid-cols-4" [attr.aria-describedby]="editorId() + '-box-error'">
+		<label class="grid gap-1 text-xs font-semibold" [for]="editorId() + '-box-x'">Left<input data-box-x class="alloy-control" [id]="editorId() + '-box-x'" type="number" min="0" max="1" step="0.002" required [attr.aria-invalid]="fieldInvalid('x')" [value]="box().x" (input)="update('x', $event)" /></label>
+		<label class="grid gap-1 text-xs font-semibold" [for]="editorId() + '-box-y'">Top<input data-box-y class="alloy-control" [id]="editorId() + '-box-y'" type="number" min="0" max="1" step="0.002" required [attr.aria-invalid]="fieldInvalid('y')" [value]="box().y" (input)="update('y', $event)" /></label>
+		<label class="grid gap-1 text-xs font-semibold" [for]="editorId() + '-box-width'">Width<input data-box-width class="alloy-control" [id]="editorId() + '-box-width'" type="number" min="0.005" max="1" step="0.001" required [attr.aria-invalid]="fieldInvalid('width')" [value]="box().width" (input)="update('width', $event)" /></label>
+		<label class="grid gap-1 text-xs font-semibold" [for]="editorId() + '-box-height'">Height<input data-box-height class="alloy-control" [id]="editorId() + '-box-height'" type="number" min="0.005" max="1" step="0.001" required [attr.aria-invalid]="fieldInvalid('height')" [value]="box().height" (input)="update('height', $event)" /></label>
+	</div>
+	@if (!valid()) {
+		<p class="alloy-state alloy-error-state m-0" [id]="editorId() + '-box-error'" role="alert">Enter all four normalized Subject-box coordinates.</p>
+	} @else {
+		<span class="sr-only" [id]="editorId() + '-box-error'">All Subject-box coordinates are valid.</span>
+	}
+</section>

@@ -1,0 +1,91 @@
+<section class="grid gap-4 rounded border border-alloy-separator bg-alloy-surface-subtle p-3" [attr.aria-labelledby]="'analysis-title-' + driveSessionId()">
+	<div>
+		<h5 class="m-0 text-base font-semibold" [id]="'analysis-title-' + driveSessionId()">Start Driving analysis</h5>
+		<p class="m-0 mt-1 text-sm text-alloy-text-secondary">Mark the Race window with absolute timestamps, pause on the selected Car, then box it in the fixed Track view.</p>
+		<p class="alloy-technical m-0 mt-1 text-xs text-alloy-text-secondary">Private recording · {{ recording().media?.width }} × {{ recording().media?.height }} · {{ recording().media?.durationMs }} ms</p>
+	</div>
+	<form class="grid gap-4" (submit)="submit($event)">
+		<div class="grid gap-2">
+			<label class="text-sm font-semibold" [for]="'analysis-map-' + driveSessionId()">Approved Track map</label>
+			<select class="alloy-control" [id]="'analysis-map-' + driveSessionId()" [formField]="fields.approvedTrackMapVersionId">
+				<option value="">Choose a Track map</option>
+				@for (map of store.approvedTrackMaps(); track map.id) {
+					<option [value]="map.id">{{ map.layoutName }} · version {{ map.version }}</option>
+				}
+			</select>
+			@if (selectedMap(); as map) {
+				<p class="m-0 text-xs text-alloy-text-secondary">Immutable approved version {{ map.version }} for {{ map.layoutName }}. Approved {{ map.approvedAt ?? 'previously' }}.</p>
+				@if (store.selectedTrackMap(); as version) {
+					<details class="rounded border border-alloy-separator p-2">
+						<summary class="alloy-focus-ring cursor-pointer text-sm font-semibold">Inspect immutable Track-map geometry</summary>
+						<div class="mt-2 border border-alloy-command-separator bg-alloy-command-control p-2">
+							<app-track-map-geometry [corners]="version.corners" [label]="'Approved geometry for ' + map.layoutName + ' version ' + map.version" />
+						</div>
+					</details>
+				} @else if (store.selectedTrackMapLoading()) {
+					<p class="m-0 text-xs text-alloy-text-secondary" role="status">Loading immutable Track-map geometry…</p>
+				}
+			} @else if (store.trackMapsLoading()) {
+				<p class="m-0 text-xs text-alloy-text-secondary" role="status">Loading approved Track maps…</p>
+			} @else if (store.trackMapsFailure()) {
+				<p class="alloy-state alloy-error-state m-0" role="alert">Approved Track maps are unavailable.</p>
+			} @else {
+				<p class="alloy-state m-0">No approved Track-map version is available yet.</p>
+			}
+		</div>
+
+		<app-subject-box-editor [editorId]="'analysis-' + driveSessionId()" [(box)]="box" [(valid)]="boxValid">
+			<video
+				#player
+				class="aspect-video w-full bg-black"
+				preload="metadata"
+				[src]="recording().playbackUrl"
+				[attr.aria-label]="'Private analysis playback of ' + recording().fileName"
+				(timeupdate)="updateCurrentTime(player.currentTime)"
+				(play)="playing.set(true)"
+				(pause)="playing.set(false)"
+			>
+				<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
+			</video>
+		</app-subject-box-editor>
+
+		<div class="grid gap-2">
+			<button data-toggle-playback class="alloy-control alloy-control-secondary w-fit" type="button" (click)="togglePlayback(player)" [attr.aria-label]="playing() ? 'Pause private Race recording' : 'Play private Race recording'">{{ playing() ? 'Pause recording' : 'Play recording' }}</button>
+			<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+				<label class="font-semibold" [for]="'analysis-seek-' + driveSessionId()">Absolute recording timestamp</label>
+				<output class="alloy-technical" [for]="'analysis-seek-' + driveSessionId()">{{ currentTimestampMs() }} ms</output>
+			</div>
+			<input data-race-seek class="w-full accent-alloy-accent" [id]="'analysis-seek-' + driveSessionId()" type="range" min="0" [max]="durationMs()" step="1" [value]="currentTimestampMs()" (input)="seek($event, player)" />
+			<div class="flex flex-wrap gap-2" role="group" aria-label="Race-window timestamp markers">
+				<button data-mark-start class="alloy-control alloy-control-secondary" type="button" (click)="mark('startTimestampMs')">Mark Race start</button>
+				<button data-mark-end class="alloy-control alloy-control-secondary" type="button" (click)="mark('endTimestampMs')">Mark Race end</button>
+				<button data-mark-seed class="alloy-control alloy-control-secondary" type="button" (click)="mark('seedTimestampMs')">Mark Subject frame</button>
+			</div>
+		</div>
+
+		<fieldset class="grid gap-2 sm:grid-cols-3">
+			<legend class="col-span-full text-sm font-semibold">Exact absolute timestamps (milliseconds)</legend>
+			<label class="grid gap-1 text-xs font-semibold">Race start<input class="alloy-control" data-window-start type="number" step="1" [formField]="fields.startTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Race end<input class="alloy-control" data-window-end type="number" step="1" [formField]="fields.endTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Subject frame<input class="alloy-control" data-seed-timestamp type="number" step="1" [formField]="fields.seedTimestampMs" /></label>
+		</fieldset>
+
+		@if (formError()) {
+			<p class="alloy-state alloy-error-state m-0" role="alert">{{ formError() }}</p>
+		}
+		@if (creation()?.status === 'failed') {
+			<p class="alloy-state alloy-error-state m-0" role="alert">{{ store.analysisError() }}</p>
+		}
+		@if (analysis(); as current) {
+			<div class="alloy-state m-0" role="status">
+				<strong>Analysis {{ current.status }}</strong>
+				<span>{{ stageLabel(current.stage) }} · {{ current.progress }}%</span>
+				<progress class="mt-2 h-2 w-full accent-alloy-accent" max="100" [value]="current.progress" [attr.aria-label]="'Driving analysis ' + current.progress + ' percent complete'"></progress>
+				<button data-refresh-analysis class="alloy-control alloy-control-secondary mt-2 w-fit" type="button" (click)="store.refreshAnalysis()">Check status</button>
+			</div>
+		}
+		<button data-create-analysis class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.pending() || creation()?.status === 'creating'" [attr.aria-busy]="creation()?.status === 'creating'">
+			{{ creation()?.status === 'creating' ? 'Starting…' : 'Start analysis' }}
+		</button>
+	</form>
+</section>

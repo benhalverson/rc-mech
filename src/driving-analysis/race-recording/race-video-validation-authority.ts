@@ -1,6 +1,7 @@
-import { and, eq, exists } from 'drizzle-orm';
+import { and, eq, exists, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import {
+	drivingAnalysis,
 	raceVideo,
 	raceVideoValidation,
 	trackingRun,
@@ -296,6 +297,21 @@ export class RaceVideoValidationAuthority {
 	}
 
 	async hasActiveAnalysis(raceVideoId: string): Promise<boolean> {
+		const analysis = await this.database
+			.select({ analysisId: drivingAnalysis.id })
+			.from(drivingAnalysis)
+			.where(
+				and(
+					eq(drivingAnalysis.raceVideoId, raceVideoId),
+					inArray(drivingAnalysis.status, [
+						'queued',
+						'running',
+						'awaiting-reidentification',
+					]),
+				),
+			)
+			.get();
+		if (analysis) return true;
 		const active = await this.database
 			.select({ runId: trackingRun.id })
 			.from(trackingRunInput)
