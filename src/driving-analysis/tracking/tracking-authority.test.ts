@@ -129,6 +129,12 @@ const segmentCommand = (
 	...overrides,
 });
 
+const firstSegmentCommand = () => ({
+	...segmentCommand(),
+	analysisId: ANALYSIS_ID,
+	workflowId: WORKFLOW_ID,
+});
+
 const attemptCommand = (
 	overrides: Partial<ActivateTrackingAttemptCommand> = {},
 ): ActivateTrackingAttemptCommand => ({
@@ -388,6 +394,9 @@ describe('TrackingAuthority', () => {
 			createdAt: LATER,
 		});
 		expect((await authority.activateAttempt(replacement)).state).toBe('active');
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'running', progress: 25 });
 		await expectAuthorityError(
 			authority.transitionAttempt({
 				...attemptWitness(),
@@ -689,6 +698,12 @@ describe('TrackingAuthority', () => {
 			RUN_ID,
 		);
 		expect(provenance.segments[0]?.gap).toEqual(gap);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'awaiting-reidentification',
+			progress: 99,
+		});
 	});
 
 	test('requires one granted output transfer before publication', async () => {
@@ -1135,6 +1150,162 @@ describe('TrackingAuthority', () => {
 			seedKind: 'reidentification',
 			seedSourceId: REIDENTIFICATION_ID,
 			profileDigest: PROFILE_DIGEST,
+		});
+	});
+
+	test('creates and reloads only the Workflow-owned initial segment', async () => {
+		const value = authorityFixture();
+		await value.authority.createRun(runCommand());
+		await seedPreparedTrackView(value);
+		expect(
+			await value.authority.createFirstSegment(firstSegmentCommand()),
+		).toMatchObject({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			attempt: null,
+			outputTransferRequestId: null,
+		});
+		await expect(
+			value.authority.createFirstSegment({
+				...firstSegmentCommand(),
+				workflowId: 'stale-workflow',
+			}),
+		).rejects.toMatchObject({ code: 'STALE_AUTHORITY' });
+		await expect(
+			value.authority.workflowContext({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				runId: RUN_ID,
+				workflowId: 'stale-workflow',
+				segmentId: SEGMENT_ID,
+			}),
+		).rejects.toMatchObject({ code: 'STALE_AUTHORITY' });
+		await expect(
+			value.authority.workflowContext({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				runId: RUN_ID,
+				workflowId: WORKFLOW_ID,
+				segmentId: SECOND_SEGMENT_ID,
+			}),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await expect(
+			value.authority.createFirstSegment({
+				...firstSegmentCommand(),
+				order: 1,
+				segmentId: SECOND_SEGMENT_ID,
+				seed: {
+					kind: 'reidentification',
+					sourceId: REIDENTIFICATION_ID,
+					value: submissionFixture().trackingRequest.subjectSeed,
+				},
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+	});
+
+	test('projects D1-owned queued, running, and cancelled public lifecycle', async () => {
+		const value = authorityFixture();
+		await value.authority.createRun(runCommand());
+		expect(
+			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'queued',
+			progress: 0,
+			waitReason: 'waiting-for-provider',
+		});
+		await expect(
+			value.authority.publicState(OWNER_ID, 'other-analysis', RUN_ID),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await seedPreparedTrackView(value);
+		await value.authority.createFirstSegment(firstSegmentCommand());
+		expect(
+			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'queued',
+			waitReason: 'waiting-for-capacity',
+		});
+		await value.authority.activateAttempt(attemptCommand());
+		await value.authority.transitionAttempt({
+			...attemptWitness(),
+			expectedState: 'active',
+			nextState: 'active',
+			progress: 17,
+			safeFailureCode: null,
+			updatedAt: LATER,
+		});
+		expect(
+			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'running', progress: 17, waitReason: null });
+		await value.authority.fenceRun({
+			ownerId: OWNER_ID,
+			runId: RUN_ID,
+			expectedVersion: 1,
+			status: 'cancelled',
+			completedAt: LATER,
+		});
+		expect(
+			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'cancelled', progress: 17 });
+	});
+
+	test('projects replacement as cancellation and run failure without leaking detail', async () => {
+		const replaced = authorityFixture();
+		await replaced.authority.createRun(runCommand());
+		await replaced.authority.fenceRun({
+			ownerId: OWNER_ID,
+			runId: RUN_ID,
+			expectedVersion: 1,
+			status: 'replaced',
+			completedAt: LATER,
+		});
+		expect(
+			await replaced.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'cancelled', safeFailureCode: null });
+
+		fixture?.close();
+		fixture = undefined;
+		const failed = authorityFixture();
+		await failed.authority.createRun(runCommand());
+		await failed.authority.fenceRun({
+			ownerId: OWNER_ID,
+			runId: RUN_ID,
+			expectedVersion: 1,
+			status: 'failed',
+			completedAt: LATER,
+		});
+		expect(
+			await failed.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			safeFailureCode: 'TRACKING_PROVIDER_FAILED',
+		});
+	});
+
+	test.each([
+		'TRACKING_PROVIDER_UNAVAILABLE',
+		'TRACKING_PROVIDER_FAILED',
+		'TRACKING_ARTIFACT_INVALID',
+		'PRIVATE_PROVIDER_DETAIL',
+	])('normalizes failed-attempt public code %s', async (safeFailureCode) => {
+		const value = await createAttemptAuthority();
+		await value.authority.transitionAttempt({
+			...attemptWitness(),
+			expectedState: 'active',
+			nextState: 'failed',
+			progress: 23,
+			safeFailureCode,
+			updatedAt: LATER,
+		});
+		expect(
+			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			progress: 23,
+			safeFailureCode: safeFailureCode.startsWith('TRACKING_')
+				? safeFailureCode
+				: 'TRACKING_PROVIDER_FAILED',
 		});
 	});
 });

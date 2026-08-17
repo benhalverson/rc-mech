@@ -527,7 +527,9 @@ export const createHonoFixture = (
 		ASSETS: assets,
 		APP_URL: 'http://localhost:8787',
 		ENVIRONMENT: 'local',
+		GPU_PROVIDER_ORIGIN: 'https://gpu.invalid',
 		GPU_LEASE_COORDINATOR: {} as Env['GPU_LEASE_COORDINATOR'],
+		DRIVING_ANALYSIS_WORKFLOW: {} as Env['DRIVING_ANALYSIS_WORKFLOW'],
 	} satisfies Env;
 	const auth: AppDependencies = {
 		getSession: async () =>

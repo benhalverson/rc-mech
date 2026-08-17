@@ -61,6 +61,18 @@ describe('GpuLeaseCoordinator', () => {
 		if (second.status === 'acquired') expect(second.segmentId).toBe('two');
 	});
 
+	test('lets a Workflow claim only its own FIFO-head segment', async () => {
+		const stub = coordinator();
+		await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });
+		await stub.enqueue({ segmentId: 'two', deadlineAt, kind: 'initial' });
+		expect(await stub.acquire({ segmentId: 'two', now })).toEqual({
+			status: 'busy',
+		});
+		const first = await stub.acquire({ segmentId: 'one', now });
+		expect(first.status).toBe('acquired');
+		if (first.status === 'acquired') expect(first.segmentId).toBe('one');
+	});
+
 	test('requires current lease and fence witnesses and uses increasing fences', async () => {
 		const stub = coordinator();
 		await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });

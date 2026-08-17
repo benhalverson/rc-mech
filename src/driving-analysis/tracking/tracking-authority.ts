@@ -16,8 +16,10 @@ import {
 	type ActivateTrackingAttemptCommand,
 	acceptTrackingArtifactCommandSchema,
 	activateTrackingAttemptCommandSchema,
+	type CreateFirstTrackingSegmentCommand,
 	type CreateTrackingRunCommand,
 	type CreateTrackingSegmentCommand,
+	createFirstTrackingSegmentCommandSchema,
 	createTrackingRunCommandSchema,
 	createTrackingSegmentCommandSchema,
 	type FenceTrackingRunCommand,
@@ -29,16 +31,20 @@ import {
 	type PrepareTrackingArtifactPublicationCommand,
 	type PrepareTrackingTransferGrantCommand,
 	type PublicTrackingProvenance,
+	type PublicTrackingState,
 	prepareTrackingArtifactPublicationCommandSchema,
 	prepareTrackingTransferGrantCommandSchema,
 	publicTrackingProvenanceSchema,
+	publicTrackingStateSchema,
 	type RecordTrackingArtifactPromotionCommand,
 	type RecordTrackingTransferRequestCommand,
 	recordTrackingArtifactPromotionCommandSchema,
 	recordTrackingTransferRequestCommandSchema,
+	type TrackingWorkflowIdentity,
 	type TransitionTrackingAttemptCommand,
 	type TransitionTrackingTransferRequestCommand,
 	trackingGapSchema,
+	trackingWorkflowIdentitySchema,
 	transitionTrackingAttemptCommandSchema,
 	transitionTrackingTransferRequestCommandSchema,
 } from './authority-contracts';
@@ -93,6 +99,10 @@ export class TrackingAuthorityError extends Error {
 type TrackingRunRecord = typeof trackingRun.$inferSelect;
 type TrackingSegmentRecord = typeof trackingSegment.$inferSelect;
 type TrackingAttemptRecord = typeof trackingExecutionAttempt.$inferSelect;
+type TrackingAttemptSummary = Pick<
+	TrackingAttemptRecord,
+	'id' | 'state' | 'progress' | 'safeFailureCode' | 'createdAt'
+>;
 type TrackingTransferRequestRecord =
 	typeof trackingTransferRequest.$inferSelect;
 export type SubjectObservationArtifactRecord =
@@ -116,6 +126,32 @@ export type TrackingTransferGrantContext = {
 	contentType: string;
 	role: PrepareTrackingTransferGrantCommand['role'];
 	method: PrepareTrackingTransferGrantCommand['method'];
+};
+
+export type TrackingWorkflowContext = {
+	ownerId: string;
+	runId: string;
+	analysisId: string;
+	workflowId: string;
+	profileDigest: string;
+	segmentId: string;
+	preparedMediaId: string;
+	specificationDigest: string;
+	availabilityDeadlineAt: number;
+	outcome: 'completed' | 'tracking-gap' | null;
+	acceptedArtifactId: string | null;
+	outputTransferRequestId: string | null;
+	prepared: PreparedMediaArtifact;
+	profile: InferenceProfile;
+	seed: SubjectSeed;
+	attempt: {
+		attemptId: string;
+		leaseId: string;
+		fence: number;
+		state: TrackingAttemptRecord['state'];
+		progress: number;
+		safeFailureCode: string | null;
+	} | null;
 };
 
 const MUTABLE_ATTEMPT_STATES = [
@@ -365,6 +401,124 @@ export class TrackingAuthority {
 		return stored;
 	}
 
+	async createFirstSegment(
+		commandValue: CreateFirstTrackingSegmentCommand,
+	): Promise<TrackingWorkflowContext> {
+		const command = createFirstTrackingSegmentCommandSchema.parse(commandValue);
+		const run = await this.requireActiveRun(command.ownerId, command.runId);
+		if (
+			run.analysisId !== command.analysisId ||
+			run.workflowId !== command.workflowId
+		)
+			throw stale('Tracking Workflow does not own the current run');
+		if (command.order !== 0 || command.seed.kind !== 'initial')
+			throw conflict('The first Tracking segment must use the initial seed');
+		const {
+			analysisId: _analysisId,
+			workflowId: _workflowId,
+			...segment
+		} = command;
+		await this.createSegment(segment);
+		return this.workflowContext({
+			ownerId: command.ownerId,
+			analysisId: command.analysisId,
+			runId: command.runId,
+			workflowId: command.workflowId,
+			segmentId: command.segmentId,
+		});
+	}
+
+	async workflowContext(
+		identityValue: TrackingWorkflowIdentity,
+	): Promise<TrackingWorkflowContext> {
+		const identity = trackingWorkflowIdentitySchema.parse(identityValue);
+		const run = await this.requireActiveRun(identity.ownerId, identity.runId);
+		if (
+			run.analysisId !== identity.analysisId ||
+			run.workflowId !== identity.workflowId
+		)
+			throw stale('Tracking Workflow does not own the current run');
+		const segment = await this.ownedSegment(identity.runId, identity.segmentId);
+		if (segment?.order !== 0 || segment.seedKind !== 'initial')
+			throw notFound('The first Tracking segment was not found');
+		const [prepared, profile, attempt, outputTransfer] = await Promise.all([
+			this.database
+				.select()
+				.from(preparedTrackingMedia)
+				.where(
+					and(
+						eq(preparedTrackingMedia.id, segment.preparedMediaId),
+						eq(preparedTrackingMedia.runId, identity.runId),
+					),
+				)
+				.get(),
+			this.database
+				.select()
+				.from(inferenceProfileAuthority)
+				.where(
+					eq(inferenceProfileAuthority.profileDigest, segment.profileDigest),
+				)
+				.get(),
+			segment.currentAttemptId === null
+				? Promise.resolve(undefined)
+				: this.database
+						.select()
+						.from(trackingExecutionAttempt)
+						.where(eq(trackingExecutionAttempt.id, segment.currentAttemptId))
+						.get(),
+			segment.currentAttemptId === null
+				? Promise.resolve(undefined)
+				: this.database
+						.select({ id: trackingTransferRequest.id })
+						.from(trackingTransferRequest)
+						.where(
+							and(
+								eq(trackingTransferRequest.attemptId, segment.currentAttemptId),
+								eq(trackingTransferRequest.role, 'observation-artifact'),
+							),
+						)
+						.get(),
+		]);
+		/* c8 ignore next 2 -- accepted prepared and attempt foreign-key authority make these corruption-only states. */
+		if (
+			!prepared ||
+			!profile ||
+			(segment.currentAttemptId !== null && !attempt)
+		)
+			throw conflict('Tracking Workflow authority is inconsistent');
+		return {
+			ownerId: run.ownerId,
+			runId: run.id,
+			analysisId: run.analysisId,
+			workflowId: run.workflowId,
+			profileDigest: segment.profileDigest,
+			segmentId: segment.id,
+			preparedMediaId: segment.preparedMediaId,
+			specificationDigest: segment.specificationDigest,
+			availabilityDeadlineAt: segment.availabilityDeadlineAt,
+			outcome: segment.outcome,
+			acceptedArtifactId: segment.acceptedArtifactId,
+			outputTransferRequestId: outputTransfer?.id ?? null,
+			prepared: preparedMediaArtifactSchema.parse(
+				JSON.parse(prepared.descriptorJson),
+			),
+			profile: inferenceProfileSchema.parse(
+				JSON.parse(profile.configurationJson),
+			),
+			seed: subjectSeedSchema.parse(JSON.parse(segment.seedJson)),
+			attempt: attempt
+				? {
+						attemptId: attempt.id,
+						leaseId: attempt.leaseId,
+						fence: attempt.fence,
+						state: attempt.state,
+						progress: attempt.progress,
+						safeFailureCode: attempt.safeFailureCode,
+					}
+				: null,
+		};
+	}
+
 	async activateAttempt(
 		commandValue: ActivateTrackingAttemptCommand,
 	): Promise<TrackingAttemptRecord> {
@@ -511,7 +665,11 @@ export class TrackingAuthority {
 			return attempt;
 		if (
 			attempt.state !== command.expectedState ||
-			!isAllowedAttemptTransition(command.expectedState, command.nextState) ||
+			(command.expectedState !== command.nextState &&
+				!isAllowedAttemptTransition(
+					command.expectedState,
+					command.nextState,
+				)) ||
 			command.progress < attempt.progress ||
 			(command.nextState === 'failed') !== (command.safeFailureCode !== null)
 		)
@@ -1332,6 +1490,120 @@ export class TrackingAuthority {
 		});
 	}
 
+	async publicState(
+		ownerId: string,
+		analysisId: string,
+		runId: string,
+	): Promise<PublicTrackingState> {
+		const run = await this.requireOwnedRun(ownerId, runId);
+		if (run.analysisId !== analysisId)
+			throw notFound('Tracking run was not found');
+		const [segments, attempts] = await Promise.all([
+			this.database
+				.select()
+				.from(trackingSegment)
+				.where(eq(trackingSegment.runId, runId))
+				.orderBy(asc(trackingSegment.order)),
+			this.database
+				.select({
+					id: trackingExecutionAttempt.id,
+					state: trackingExecutionAttempt.state,
+					progress: trackingExecutionAttempt.progress,
+					safeFailureCode: trackingExecutionAttempt.safeFailureCode,
+					createdAt: trackingExecutionAttempt.createdAt,
+				})
+				.from(trackingExecutionAttempt)
+				.innerJoin(
+					trackingSegment,
+					eq(trackingSegment.id, trackingExecutionAttempt.segmentId),
+				)
+				.where(eq(trackingSegment.runId, runId))
+				.orderBy(
+					asc(trackingExecutionAttempt.createdAt),
+					asc(trackingExecutionAttempt.id),
+				),
+		]);
+		const attemptSummaries = attempts as TrackingAttemptSummary[];
+		const currentAttemptIds = new Set(
+			segments.flatMap((segment) =>
+				segment.currentAttemptId === null ? [] : [segment.currentAttemptId],
+			),
+		);
+		const latestAttempt =
+			attemptSummaries.find((attempt) => currentAttemptIds.has(attempt.id)) ??
+			attemptSummaries.at(-1);
+		const highWater = attemptSummaries.reduce(
+			(progress, attempt) => Math.max(progress, attempt.progress),
+			0,
+		);
+		const acceptedGap = segments.some(
+			(segment) => segment.outcome === 'tracking-gap',
+		);
+		const hasAcceptedEvidence = segments.some(
+			(segment) => segment.acceptedArtifactId !== null,
+		);
+		let state: Omit<PublicTrackingState, 'runId' | 'stage'>;
+		/* c8 ignore next 7 -- final run completion belongs to the later measurement/finalization slice; this projection is reserved for that D1 transition. */
+		if (run.status === 'completed') {
+			state = {
+				lifecycle: 'completed',
+				progress: 100,
+				waitReason: null,
+				safeFailureCode: null,
+			};
+		} else if (run.status === 'cancelled' || run.status === 'replaced') {
+			state = {
+				lifecycle: 'cancelled',
+				progress: Math.min(highWater, 99),
+				waitReason: null,
+				safeFailureCode: null,
+			};
+		} else if (run.status === 'failed' || latestAttempt?.state === 'failed') {
+			state = {
+				lifecycle: 'failed',
+				progress: Math.min(highWater, 99),
+				waitReason: null,
+				safeFailureCode: publicFailureCode(latestAttempt?.safeFailureCode),
+			};
+		} else if (acceptedGap) {
+			state = {
+				lifecycle: 'awaiting-reidentification',
+				progress: 99,
+				waitReason: null,
+				safeFailureCode: null,
+			};
+		} else if (hasAcceptedEvidence) {
+			state = {
+				lifecycle: 'running',
+				progress: 99,
+				waitReason: null,
+				safeFailureCode: null,
+			};
+		} else if (latestAttempt) {
+			state = {
+				lifecycle: 'running',
+				progress: Math.min(highWater, 99),
+				waitReason: null,
+				safeFailureCode: null,
+			};
+		} else {
+			state = {
+				lifecycle: 'queued',
+				progress: 0,
+				waitReason:
+					segments.length === 0
+						? 'waiting-for-provider'
+						: 'waiting-for-capacity',
+				safeFailureCode: null,
+			};
+		}
+		return publicTrackingStateSchema.parse({
+			runId,
+			stage: 'tracking',
+			...state,
+		});
+	}
+
 	private async requireOwnedRun(
 		ownerId: string,
 		runId: string,
@@ -1531,6 +1803,18 @@ const isAllowedAttemptTransition = (current: string, next: string): boolean =>
 	ALLOWED_ATTEMPT_TRANSITIONS[
 		current as (typeof MUTABLE_ATTEMPT_STATES)[number]
 	].includes(next);
+
+const publicFailureCode = (
+	value: string | null | undefined,
+): PublicTrackingState['safeFailureCode'] => {
+	if (
+		value === 'TRACKING_PROVIDER_UNAVAILABLE' ||
+		value === 'TRACKING_PROVIDER_FAILED' ||
+		value === 'TRACKING_ARTIFACT_INVALID'
+	)
+		return value;
+	return 'TRACKING_PROVIDER_FAILED';
+};
 
 const notFound = (message: string): TrackingAuthorityError =>
 	new TrackingAuthorityError('NOT_FOUND', message);

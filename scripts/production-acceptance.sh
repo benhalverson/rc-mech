@@ -20,8 +20,8 @@ if [[ "${RC_MECH_REQUIRE_REMOTE_CONFIG:-0}" == "1" ]]; then
 	: "${RC_MECH_OTHER_OWNER_COOKIE:?RC_MECH_OTHER_OWNER_COOKIE is required for release acceptance}"
 	: "${RC_MECH_R2_PUBLIC_ACCESS_VALIDATED:?Set RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1 after verifying r2.dev and custom-domain access are disabled}"
 	test "$RC_MECH_R2_PUBLIC_ACCESS_VALIDATED" = 1
-	if ! pnpm exec wrangler secret list --json | jq -e 'map(.name) | (["APP_URL", "BETTER_AUTH_SECRET", "OWNER_EMAIL", "EMAIL_FROM", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] - .) == []' >/dev/null; then
-		echo 'production secrets are incomplete; configure application, email, and R2 signing secrets' >&2
+	if ! pnpm exec wrangler secret list --json | jq -e 'map(.name) | (["APP_URL", "BETTER_AUTH_SECRET", "OWNER_EMAIL", "EMAIL_FROM", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "GPU_ACCESS_CLIENT_ID", "GPU_ACCESS_CLIENT_SECRET"] - .) == []' >/dev/null; then
+		echo 'production secrets are incomplete; configure application, email, R2 signing, and GPU Access secrets' >&2
 		exit 1
 	fi
 	if ! pnpm exec wrangler r2 bucket list | grep -q '^name:[[:space:]]*rc-mech-photos$'; then
