@@ -281,12 +281,14 @@ describe('RaceRecordingAuthority', () => {
 			...streamingPart(Uint8Array.of(1, 2, 3).buffer),
 		});
 		expect(progress.uploadedBytes).toBe(RACE_RECORDING_PART_SIZE + 3);
+		const head = vi.spyOn(r2.bucket, 'head');
 		const completed = await authority.complete(identity(created.recording.id));
 		expect(completed).toMatchObject({
 			status: 'validating',
 			uploadedBytes: RACE_RECORDING_PART_SIZE + 3,
 			completedAt: NOW.toISOString(),
 		});
+		expect(head).not.toHaveBeenCalled();
 		expect(await authority.complete(identity(created.recording.id))).toEqual(
 			completed,
 		);
@@ -307,6 +309,128 @@ describe('RaceRecordingAuthority', () => {
 		await authority.remove(identity(created.recording.id));
 		expect(r2.objects.size).toBe(0);
 		expect(await authority.list(OWNER_ID, CAR_ID)).toEqual([]);
+	});
+
+	test.each(['missing', 'wrong-sized', 'wrong-metadata'] as const)(
+		'rejects %s reconciliation witnesses and resets owned completion',
+		async (kind) => {
+			const { authority, database, r2 } = await authorityFixture();
+			const { recording } = await authority.create({
+				...createCommand(),
+				input: { ...createCommand().input, sizeBytes: 1 },
+			});
+			await authority.uploadPart({
+				...identity(recording.id),
+				partNumber: 1,
+				transferRequestId: `reconciliation-${kind}`,
+				...streamingPart(Uint8Array.of(1).buffer),
+			});
+			let committed: R2Object | null = null;
+			const resumed = r2.bucket.resumeMultipartUpload.bind(r2.bucket);
+			vi.spyOn(r2.bucket, 'resumeMultipartUpload').mockImplementationOnce(
+				(key, uploadId) => {
+					const multipart = resumed(key, uploadId);
+					return {
+						...multipart,
+						complete: async (parts) => {
+							committed = await multipart.complete(parts);
+							return Object.assign(committed, { customMetadata: undefined });
+						},
+					};
+				},
+			);
+			const head = vi.spyOn(r2.bucket, 'head').mockImplementation(async () => {
+				if (kind === 'missing' || !committed) return null;
+				if (kind === 'wrong-sized')
+					return Object.assign(committed, { size: 999 });
+				return Object.assign(committed, {
+					customMetadata: { recordingId: 'different-recording' },
+				});
+			});
+
+			await expectCode(
+				authority.complete(identity(recording.id)),
+				'STORAGE_UNAVAILABLE',
+			);
+			expect(head).toHaveBeenCalledTimes(1);
+			expect(
+				await database
+					.select({ status: raceVideo.status })
+					.from(raceVideo)
+					.where(eq(raceVideo.id, recording.id))
+					.get(),
+			).toEqual({ status: 'uploading' });
+		},
+	);
+
+	test('reconciles an object committed before multipart completion throws', async () => {
+		const { authority, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'post-commit-exception',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		const resumed = r2.bucket.resumeMultipartUpload.bind(r2.bucket);
+		vi.spyOn(r2.bucket, 'resumeMultipartUpload').mockImplementationOnce(
+			(key, uploadId) => {
+				const multipart = resumed(key, uploadId);
+				return {
+					...multipart,
+					complete: async (parts) => {
+						await multipart.complete(parts);
+						throw new Error('response lost after commit');
+					},
+				};
+			},
+		);
+		const head = vi.spyOn(r2.bucket, 'head');
+
+		await expect(
+			authority.complete(identity(recording.id)),
+		).resolves.toMatchObject({ status: 'validating' });
+		expect(head).toHaveBeenCalledTimes(1);
+	});
+
+	test('maps a failed reconciliation lookup to storage unavailable', async () => {
+		const { authority, database, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'failed-reconciliation',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		const resumed = r2.bucket.resumeMultipartUpload.bind(r2.bucket);
+		vi.spyOn(r2.bucket, 'resumeMultipartUpload').mockImplementationOnce(
+			(key, uploadId) => ({
+				...resumed(key, uploadId),
+				complete: async () => null,
+			}),
+		);
+		const head = vi
+			.spyOn(r2.bucket, 'head')
+			.mockRejectedValue(new Error('R2 unavailable'));
+
+		await expectCode(
+			authority.complete(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+		expect(head).toHaveBeenCalledTimes(1);
+		expect(
+			await database
+				.select({ status: raceVideo.status })
+				.from(raceVideo)
+				.where(eq(raceVideo.id, recording.id))
+				.get(),
+		).toEqual({ status: 'uploading' });
 	});
 
 	test('rejects invalid, rewritten, missing, expired, and foreign part authority', async () => {

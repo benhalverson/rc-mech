@@ -555,7 +555,14 @@ export class RaceRecordingAuthority {
 				.resumeMultipartUpload(recording.objectKey, recording.multipartUploadId)
 				.complete(orderedParts);
 		} catch {
-			completed = await this.bucket.head(recording.objectKey);
+			completed = null;
+		}
+		if (!this.isCompletedObject(recording, completed)) {
+			try {
+				completed = await this.bucket.head(recording.objectKey);
+			} catch {
+				completed = null;
+			}
 		}
 		if (!this.isCompletedObject(recording, completed)) {
 			if (mayReset)
