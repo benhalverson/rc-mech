@@ -154,6 +154,14 @@ export type DrivingAnalysisWorkflowEnvironment = {
 			prepareTrackView(command: unknown): Promise<unknown>;
 		};
 	};
+	DRIVING_ANALYSIS_WORKFLOW?: {
+		createBatch(
+			instances: readonly Readonly<{
+				id: string;
+				params: FirstTrackingWorkflowPayload;
+			}>[],
+		): Promise<readonly { id: string }[]>;
+	};
 };
 
 type AttemptIdentity = ExecutionIdentity & {
@@ -576,38 +584,65 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 		/* c8 ignore next -- real profile/container wiring is exercised by deployment acceptance. */
 		if ('kind' in payload) {
 			const authority = new DrivingAnalysisAuthority(this.env.DB);
-			return new DrivingAnalysisCreationWorkflowRunner(authority, {
-				startPreparation: async (command) => {
-					if (!this.env.INFERENCE_PROFILE_JSON)
-						throw new Error('INFERENCE_PROFILE_JSON is required for tracking');
-					let profile: ReturnType<typeof inferenceProfileSchema.parse>;
-					try {
-						profile = inferenceProfileSchema.parse(
-							JSON.parse(this.env.INFERENCE_PROFILE_JSON),
-						);
-					} catch {
-						throw new Error('INFERENCE_PROFILE_JSON is invalid');
-					}
-					return new RealDrivingAnalysisContainerPort({
-						authority,
-						tracking: new TrackingAuthority(this.env.DB),
-						prepared: new PreparedTrackViewAuthority(this.env.DB),
-						media: {
-							prepare: (mediaCommand) => {
-								const container =
-									this.env.RACE_VIDEO_MEDIA_CONTAINER?.getByName(
-										'rc-mech-driving-analysis-media',
-									);
-								if (!container)
-									throw new Error('Race-video media container is unavailable');
-								return container.prepareTrackView(mediaCommand);
+			return new DrivingAnalysisCreationWorkflowRunner(
+				authority,
+				{
+					startPreparation: async (command) => {
+						if (!this.env.INFERENCE_PROFILE_JSON)
+							throw new Error(
+								'INFERENCE_PROFILE_JSON is required for tracking',
+							);
+						let profile: ReturnType<typeof inferenceProfileSchema.parse>;
+						try {
+							profile = inferenceProfileSchema.parse(
+								JSON.parse(this.env.INFERENCE_PROFILE_JSON),
+							);
+						} catch {
+							throw new Error('INFERENCE_PROFILE_JSON is invalid');
+						}
+						return new RealDrivingAnalysisContainerPort({
+							authority,
+							tracking: new TrackingAuthority(this.env.DB),
+							prepared: new PreparedTrackViewAuthority(this.env.DB),
+							media: {
+								prepare: (mediaCommand) => {
+									const container =
+										this.env.RACE_VIDEO_MEDIA_CONTAINER?.getByName(
+											'rc-mech-driving-analysis-media',
+										);
+									if (!container)
+										throw new Error(
+											'Race-video media container is unavailable',
+										);
+									return container.prepareTrackView(mediaCommand);
+								},
+							},
+							profile,
+							store: preparedTrackViewStore(this.env),
+						}).startPreparation(command);
+					},
+				},
+				undefined,
+				async (command) => {
+					if (!this.env.DRIVING_ANALYSIS_WORKFLOW)
+						throw new Error('Driving-analysis Workflow binding is unavailable');
+					const result = await this.env.DRIVING_ANALYSIS_WORKFLOW.createBatch([
+						{
+							id: command.segmentId,
+							params: {
+								ownerId: command.ownerId,
+								analysisId: command.analysisId,
+								runId: command.runId,
+								segmentId: command.segmentId,
+								preparedMediaId: command.preparedMediaId,
+								subjectSeed: command.subjectSeed,
 							},
 						},
-						profile,
-						store: preparedTrackViewStore(this.env),
-					}).startPreparation(command);
+					]);
+					if (!result.some((instance) => instance.id === command.segmentId))
+						throw new Error('First tracking Workflow was not created');
 				},
-			}).run(
+			).run(
 				{ ...event, payload } as Readonly<
 					WorkflowEvent<DrivingAnalysisWorkflowPayload>
 				>,

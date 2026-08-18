@@ -39,7 +39,7 @@ export const createDrivingAnalysisInputSchema = z
 			startTimestampMs: timestampSchema,
 			endTimestampMs: timestampSchema.positive(),
 		}),
-		 subjectSeed: z.strictObject({
+		subjectSeed: z.strictObject({
 			timestampMs: timestampSchema,
 			frameIndex: z.number().int().nonnegative(),
 			identity: z.string().trim().min(1).max(128),

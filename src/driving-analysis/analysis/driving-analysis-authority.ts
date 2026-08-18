@@ -359,6 +359,41 @@ export class DrivingAnalysisAuthority {
 		return this.replayedTransition(payload, workflowId, progress);
 	}
 
+	async publishTrackingStart(
+		payloadValue: DrivingAnalysisWorkflowPayload,
+		workflowId: string,
+		expectedStateVersion: number,
+		updatedAt: string,
+	): Promise<DrivingAnalysisTransition> {
+		const payload = drivingAnalysisWorkflowPayloadSchema.parse(payloadValue);
+		if (!(await this.hasCurrentWorkflowInput(payload, workflowId)))
+			return { kind: 'stale' };
+		const published = await this.database
+			.update(drivingAnalysis)
+			.set({
+				status: 'running',
+				stage: 'tracking',
+				progress: 21,
+				stateVersion: expectedStateVersion + 1,
+				updatedAt,
+			})
+			.where(
+				and(
+					eq(drivingAnalysis.id, payload.analysisId),
+					eq(drivingAnalysis.ownerId, payload.ownerId),
+					eq(drivingAnalysis.workflowId, workflowId),
+					eq(drivingAnalysis.stateVersion, expectedStateVersion),
+					eq(drivingAnalysis.status, 'running'),
+					eq(drivingAnalysis.stage, 'preparation'),
+				),
+			)
+			.returning()
+			.get();
+		if (published)
+			return { kind: 'published', analysis: publicAnalysis(published) };
+		return this.replayedTransition(payload, workflowId, 21);
+	}
+
 	private async replay(
 		record: DrivingAnalysisRecord,
 		requestDigest: string,

@@ -460,6 +460,55 @@ describe('DrivingAnalysisAuthority', () => {
 		);
 	});
 
+	test('publishes the transition from preparation into tracking', async () => {
+		const { authority } = await fixture();
+		await authority.create(command());
+		const payload = {
+			kind: 'analysis-creation.v1' as const,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			expectedStateVersion: 1,
+		};
+		await authority.beginPreparation(
+			payload,
+			ANALYSIS_ID,
+			new Date('2026-08-17T18:00:01.000Z').toISOString(),
+		);
+		await authority.publishPreparationProgress(
+			{ ...payload, expectedStateVersion: 2 },
+			ANALYSIS_ID,
+			20,
+			new Date('2026-08-17T18:00:02.000Z').toISOString(),
+		);
+		await expect(
+			authority.publishTrackingStart(
+				{ ...payload, expectedStateVersion: 3 },
+				ANALYSIS_ID,
+				3,
+				new Date('2026-08-17T18:00:03.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { stage: 'tracking', progress: 21, stateVersion: 4 },
+		});
+		await expect(
+			authority.publishTrackingStart(
+				{ ...payload, expectedStateVersion: 3 },
+				ANALYSIS_ID,
+				3,
+				new Date('2026-08-17T18:00:03.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({ kind: 'replayed' });
+		await expect(
+			authority.publishTrackingStart(
+				{ ...payload, expectedStateVersion: 3 },
+				'77777777-7777-4777-8777-777777777777',
+				3,
+				new Date('2026-08-17T18:00:04.000Z').toISOString(),
+			),
+		).resolves.toEqual({ kind: 'stale' });
+	});
+
 	test('enforces active-analysis quota and the atomic D1 quota trigger', async () => {
 		const { authority, database } = await fixture();
 		await authority.create(command());
