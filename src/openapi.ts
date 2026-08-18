@@ -1643,6 +1643,48 @@ drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}'] = {
 		},
 	},
 };
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/retry'] = {
+	parameters: [
+		{
+			name: 'analysisId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	post: {
+		summary: 'Owner-only retry with a fresh Workflow identity',
+		description:
+			'Preserves the recording, request identity, Race window, Subject seed, and approved Track map while fencing prior Tracking work.',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['expectedStateVersion'],
+						properties: {
+							expectedStateVersion: { type: 'integer', minimum: 1 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			202: {
+				description: 'Fresh retry Workflow accepted',
+				content: {
+					'application/json': { schema: drivingAnalysisResponse },
+				},
+			},
+			400: { description: 'Invalid observed state revision' },
+			404: { description: 'Driving analysis not found' },
+			409: { description: 'Analysis is ineligible or changed concurrently' },
+			503: { description: 'Durable processing Workflow unavailable' },
+		},
+	},
+};
 
 const setupPaths = openApi.paths as Record<string, unknown>;
 const setupSchema = {

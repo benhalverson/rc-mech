@@ -284,6 +284,7 @@ export const drivingAnalysis = sqliteTable(
 		sourceWidth: integer('source_width').notNull(),
 		sourceHeight: integer('source_height').notNull(),
 		workflowId: text('workflow_id').notNull().unique(),
+		workflowSequence: integer('workflow_sequence').notNull().default(1),
 		status: text('status', {
 			enum: [
 				'queued',

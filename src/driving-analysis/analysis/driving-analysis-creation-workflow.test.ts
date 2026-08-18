@@ -17,6 +17,7 @@ const payload: DrivingAnalysisWorkflowPayload = {
 	kind: 'analysis-creation.v1',
 	ownerId: 'owner-1',
 	analysisId: ANALYSIS_ID,
+	workflowId: ANALYSIS_ID,
 	expectedStateVersion: 1,
 };
 const event = {

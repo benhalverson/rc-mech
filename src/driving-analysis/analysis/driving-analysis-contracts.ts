@@ -70,6 +70,11 @@ export const drivingAnalysisWorkflowPayloadSchema = z.strictObject({
 	kind: z.literal('analysis-creation.v1'),
 	ownerId: z.string().min(1).max(128),
 	analysisId: uuidV4Schema,
+	workflowId: uuidV4Schema,
+	expectedStateVersion: z.number().int().positive(),
+});
+
+export const retryDrivingAnalysisInputSchema = z.strictObject({
 	expectedStateVersion: z.number().int().positive(),
 });
 

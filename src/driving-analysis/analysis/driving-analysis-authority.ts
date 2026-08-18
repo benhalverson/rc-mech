@@ -10,8 +10,9 @@ import {
 	trackLayout,
 	trackMapVersion,
 } from '../../schema';
-import { trackingRun } from '../tracking/authority-schema';
 import type { PublicTrackingState } from '../tracking/authority-contracts';
+import { trackingRun } from '../tracking/authority-schema';
+import { uuidV4Schema } from '../tracking/contracts';
 import {
 	createDrivingAnalysisInputSchema,
 	DRIVING_ANALYSIS_CREATION_WINDOW_MS,
@@ -56,6 +57,7 @@ export type CreateDrivingAnalysisCommand = Readonly<{
 export type DrivingAnalysisAuthorityOptions = Readonly<{
 	clock?: () => Date;
 	id?: () => string;
+	workflowId?: () => string;
 	startProcessing?: (payload: DrivingAnalysisWorkflowPayload) => Promise<void>;
 }>;
 
@@ -164,6 +166,7 @@ export class DrivingAnalysisAuthority {
 	private readonly database;
 	private readonly clock: () => Date;
 	private readonly id: () => string;
+	private readonly workflowId: () => string;
 	private readonly startProcessing: (
 		payload: DrivingAnalysisWorkflowPayload,
 	) => Promise<void>;
@@ -175,6 +178,8 @@ export class DrivingAnalysisAuthority {
 		this.database = drizzle(binding);
 		this.clock = options.clock ?? (() => new Date());
 		this.id = options.id ?? (() => crypto.randomUUID());
+		/* c8 ignore next -- production UUID generation is exercised by live Workflow retry acceptance. */
+		this.workflowId = options.workflowId ?? (() => crypto.randomUUID());
 		this.startProcessing = options.startProcessing ?? (async () => undefined);
 	}
 
@@ -248,6 +253,7 @@ export class DrivingAnalysisAuthority {
 					sourceWidth: source.width,
 					sourceHeight: source.height,
 					workflowId: analysisId,
+					workflowSequence: 1,
 					status: 'queued',
 					stage: 'preparation',
 					progress: 0,
@@ -278,6 +284,90 @@ export class DrivingAnalysisAuthority {
 		if (!record)
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
 		return publicAnalysis(record);
+	}
+
+	async retry(
+		ownerId: string,
+		analysisId: string,
+		expectedStateVersion: number,
+	): Promise<{ analysis: PublicDrivingAnalysis; retried: boolean }> {
+		if (!Number.isInteger(expectedStateVersion) || expectedStateVersion < 1)
+			throw authorityError('INVALID_INPUT', 'Invalid analysis state revision');
+		const current = await this.find(ownerId, analysisId);
+		if (!current)
+			throw authorityError('NOT_FOUND', 'Driving analysis not found');
+		if (current.stateVersion !== expectedStateVersion)
+			throw authorityError(
+				'CONFLICT',
+				'Driving analysis changed; reload and retry',
+			);
+		if (current.status === 'queued' && current.workflowSequence > 1) {
+			await this.start(current);
+			return { analysis: publicAnalysis(current), retried: false };
+		}
+		if (
+			!(['running', 'awaiting-reidentification', 'failed'] as const).includes(
+				current.status as 'running',
+			)
+		)
+			throw authorityError(
+				'CONFLICT',
+				'Driving analysis is not eligible for retry',
+			);
+		const workflowId = uuidV4Schema.parse(this.workflowId());
+		const timestamp = this.clock().toISOString();
+		let rows: DrivingAnalysisRecord[] | undefined;
+		try {
+			const [, retriedRows] = await this.database.batch([
+				this.database
+					.update(trackingRun)
+					.set({
+						status: 'replaced',
+						version: sql`${trackingRun.version} + 1`,
+						completedAt: timestamp,
+					})
+					.where(
+						and(
+							eq(trackingRun.ownerId, ownerId),
+							eq(trackingRun.analysisId, analysisId),
+							eq(trackingRun.status, 'active'),
+						),
+					),
+				this.database
+					.update(drivingAnalysis)
+					.set({
+						workflowId,
+						workflowSequence: current.workflowSequence + 1,
+						status: 'queued',
+						stage: 'preparation',
+						progress: 0,
+						stateVersion: current.stateVersion + 1,
+						updatedAt: timestamp,
+					})
+					.where(
+						and(
+							eq(drivingAnalysis.id, analysisId),
+							eq(drivingAnalysis.ownerId, ownerId),
+							eq(drivingAnalysis.workflowId, current.workflowId),
+							eq(drivingAnalysis.stateVersion, current.stateVersion),
+						),
+					)
+					.returning(),
+			]);
+			rows = retriedRows;
+		} catch {
+			/* c8 ignore next -- D1 constraint/concurrency failures are normalized to one safe conflict. */
+			throw authorityError('CONFLICT', 'Driving analysis retry conflicted');
+		}
+		const retried = rows?.[0];
+		/* c8 ignore next 5 -- the optimistic write can miss only after a concurrent authority transition. */
+		if (!retried)
+			throw authorityError(
+				'CONFLICT',
+				'Driving analysis changed; reload and retry',
+			);
+		await this.start(retried);
+		return { analysis: publicAnalysis(retried), retried: true };
 	}
 
 	async preparationSource(
@@ -460,7 +550,7 @@ export class DrivingAnalysisAuthority {
 		if (!run) return { kind: 'stale' };
 		const current = await this.find(ownerId, analysisId);
 		/* c8 ignore next -- a Tracking run linked to a missing analysis is corruption defense. */
-		if (!current || current.stage !== 'tracking') return { kind: 'stale' };
+		if (current?.stage !== 'tracking') return { kind: 'stale' };
 		const target = trackingAnalysisTarget(state, current.progress);
 		if (
 			current.status === target.status &&
@@ -515,6 +605,7 @@ export class DrivingAnalysisAuthority {
 				kind: 'analysis-creation.v1',
 				ownerId: record.ownerId,
 				analysisId: record.id,
+				workflowId: record.workflowId,
 				expectedStateVersion: record.stateVersion,
 			});
 		} catch {
@@ -566,6 +657,7 @@ export class DrivingAnalysisAuthority {
 		payload: DrivingAnalysisWorkflowPayload,
 		workflowId: string,
 	): Promise<boolean> {
+		if (payload.workflowId !== workflowId) return false;
 		const record = await this.database
 			.select({ id: drivingAnalysis.id })
 			.from(drivingAnalysis)

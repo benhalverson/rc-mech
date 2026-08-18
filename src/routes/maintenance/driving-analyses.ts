@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
 import type { AppDependencies } from '../../app-dependencies';
 import { DrivingAnalysisAuthorityError } from '../../driving-analysis/analysis/driving-analysis-authority';
-import { createDrivingAnalysisInputSchema } from '../../driving-analysis/analysis/driving-analysis-contracts';
+import {
+	createDrivingAnalysisInputSchema,
+	retryDrivingAnalysisInputSchema,
+} from '../../driving-analysis/analysis/driving-analysis-contracts';
 import type { AppEnv } from '../../types';
 
 const errorStatus = (
@@ -69,6 +72,25 @@ export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 			(analysis) => Response.json({ drivingAnalysis: analysis }),
 		),
 	);
+
+	routes.post('/driving-analyses/:analysisId/retry', async (c) => {
+		const parsed = retryDrivingAnalysisInputSchema.safeParse(
+			await c.req.json().catch(() => undefined),
+		);
+		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+		return handle(
+			() =>
+				dependencies
+					.drivingAnalysisAuthority(c.env)
+					.retry(
+						c.get('userId'),
+						c.req.param('analysisId'),
+						parsed.data.expectedStateVersion,
+					),
+			({ analysis }) =>
+				Response.json({ drivingAnalysis: analysis }, { status: 202 }),
+		);
+	});
 
 	return routes;
 };

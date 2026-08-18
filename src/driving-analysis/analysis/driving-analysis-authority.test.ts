@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -16,6 +17,7 @@ import {
 	trackMapReferenceFrame,
 	trackMapVersion,
 } from '../../schema';
+import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking-fixtures';
 import { MockR2Controller } from '../../testing/hono-fixture';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import { RaceRecordingAuthority } from '../race-recording/race-recording-authority';
@@ -24,7 +26,6 @@ import {
 	inferenceProfileAuthority,
 	trackingRun,
 } from '../tracking/authority-schema';
-import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking-fixtures';
 import {
 	DrivingAnalysisAuthority,
 	DrivingAnalysisAuthorityError,
@@ -37,6 +38,7 @@ const RACE_VIDEO_ID = '33333333-3333-4333-8333-333333333333';
 const MAP_VERSION_ID = '44444444-4444-4444-8444-444444444444';
 const REQUEST_ID = '55555555-5555-4555-8555-555555555555';
 const ANALYSIS_ID = '66666666-6666-4666-8666-666666666666';
+const RETRY_WORKFLOW_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const NOW = new Date('2026-08-17T18:00:00.000Z');
 
 const migrationDirectory = resolve(
@@ -221,6 +223,7 @@ const fixture = async () => {
 	const authority = new DrivingAnalysisAuthority(sqlite.database, {
 		clock: () => NOW,
 		id: () => ANALYSIS_ID,
+		workflowId: () => RETRY_WORKFLOW_ID,
 		startProcessing,
 	});
 	return { authority, startProcessing, database: drizzle(sqlite.database) };
@@ -293,6 +296,7 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'analysis-creation.v1',
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
 			expectedStateVersion: 1,
 		});
 
@@ -340,6 +344,7 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'analysis-creation.v1' as const,
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
 			expectedStateVersion: 1,
 		};
 		await expectCode(
@@ -472,6 +477,7 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'analysis-creation.v1' as const,
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
 			expectedStateVersion: 1,
 		};
 		await authority.beginPreparation(
@@ -625,6 +631,7 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'analysis-creation.v1' as const,
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
 			expectedStateVersion: 1,
 		};
 		await authority.beginPreparation(
@@ -720,6 +727,119 @@ describe('DrivingAnalysisAuthority', () => {
 		).resolves.toEqual({ kind: 'stale' });
 	});
 
+	test('retries with fresh Workflow authority while preserving immutable input', async () => {
+		const { authority, database, startProcessing } = await fixture();
+		await authority.create(command());
+		await expectCode(authority.retry(OWNER_ID, ANALYSIS_ID, 1), 'CONFLICT');
+		const payload = {
+			kind: 'analysis-creation.v1' as const,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			expectedStateVersion: 1,
+		};
+		await authority.beginPreparation(
+			payload,
+			ANALYSIS_ID,
+			new Date('2026-08-17T18:00:01.000Z').toISOString(),
+		);
+		await authority.publishPreparationProgress(
+			{ ...payload, expectedStateVersion: 2 },
+			ANALYSIS_ID,
+			20,
+			new Date('2026-08-17T18:00:02.000Z').toISOString(),
+		);
+		await authority.publishTrackingStart(
+			{ ...payload, expectedStateVersion: 3 },
+			ANALYSIS_ID,
+			3,
+			new Date('2026-08-17T18:00:03.000Z').toISOString(),
+		);
+		const before = await authority.get(OWNER_ID, ANALYSIS_ID);
+		const profile = inferenceProfileFixture();
+		const profileDigest =
+			'5abae405db4372b704fe5c0984d1d8a2ed02363a52fbeac5ea09b0f7ec7a6b58';
+		await database.insert(inferenceProfileAuthority).values({
+			profileDigest,
+			contractVersion: profile.contractVersion,
+			canonicalizationVersion: profile.canonicalizationVersion,
+			configurationJson: JSON.stringify(profile),
+			createdAt: NOW.toISOString(),
+		});
+		await database.insert(trackingRun).values({
+			id: '99999999-9999-4999-8999-999999999999',
+			analysisId: ANALYSIS_ID,
+			ownerId: OWNER_ID,
+			sequence: 1,
+			workflowId: ANALYSIS_ID,
+			profileDigest,
+			inputDigest: 'b'.repeat(64),
+			status: 'active',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			completedAt: null,
+		});
+
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 4),
+		).resolves.toMatchObject({
+			retried: true,
+			analysis: {
+				id: before.id,
+				requestId: before.requestId,
+				raceVideoId: before.raceVideoId,
+				raceWindow: before.raceWindow,
+				subjectSeed: before.subjectSeed,
+				approvedTrackMapVersionId: before.approvedTrackMapVersionId,
+				lifecycle: 'preparation',
+				status: 'queued',
+				stage: 'preparation',
+				progress: 0,
+				stateVersion: 5,
+			},
+		});
+		const persisted = await database
+			.select()
+			.from(drivingAnalysis)
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID))
+			.get();
+		expect(persisted).toMatchObject({
+			workflowId: RETRY_WORKFLOW_ID,
+			workflowSequence: 2,
+			requestId: before.requestId,
+		});
+		expect(
+			await database
+				.select()
+				.from(trackingRun)
+				.where(eq(trackingRun.id, '99999999-9999-4999-8999-999999999999'))
+				.get(),
+		).toMatchObject({ status: 'replaced', version: 2 });
+		expect(startProcessing).toHaveBeenLastCalledWith({
+			kind: 'analysis-creation.v1',
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: RETRY_WORKFLOW_ID,
+			expectedStateVersion: 5,
+		});
+		await expect(
+			authority.beginPreparation(
+				payload,
+				ANALYSIS_ID,
+				new Date('2026-08-17T18:00:04.000Z').toISOString(),
+			),
+		).resolves.toEqual({ kind: 'stale' });
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 5),
+		).resolves.toMatchObject({ retried: false, analysis: { stateVersion: 5 } });
+		await expectCode(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 0),
+			'INVALID_INPUT',
+		);
+		await expectCode(authority.retry('user-1', ANALYSIS_ID, 5), 'NOT_FOUND');
+		await expectCode(authority.retry(OWNER_ID, ANALYSIS_ID, 4), 'CONFLICT');
+	});
+
 	test('enforces active-analysis quota and the atomic D1 quota trigger', async () => {
 		const { authority, database } = await fixture();
 		await authority.create(command());
@@ -801,6 +921,7 @@ describe('DrivingAnalysisAuthority', () => {
 					kind: 'analysis-creation.v1',
 					ownerId: OWNER_ID,
 					analysisId: ANALYSIS_ID,
+					workflowId: ANALYSIS_ID,
 					expectedStateVersion: 1,
 				},
 				ANALYSIS_ID,
@@ -832,6 +953,7 @@ describe('DrivingAnalysisAuthority', () => {
 				kind: 'analysis-creation.v1',
 				ownerId: OWNER_ID,
 				analysisId: ANALYSIS_ID,
+				workflowId: ANALYSIS_ID,
 				expectedStateVersion: 1,
 			},
 			ANALYSIS_ID,

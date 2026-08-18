@@ -24,14 +24,14 @@ export const startDrivingAnalysisCreation = async (
 ): Promise<void> => {
 	try {
 		const created = await workflow.createBatch([
-			{ id: payload.analysisId, params: payload },
+			{ id: payload.workflowId, params: payload },
 		]);
-		if (created.some((instance) => instance.id === payload.analysisId)) return;
+		if (created.some((instance) => instance.id === payload.workflowId)) return;
 	} catch {
 		// A deterministic instance may already exist; inspect it below.
 	}
 	try {
-		const existing = await workflow.get(payload.analysisId);
+		const existing = await workflow.get(payload.workflowId);
 		const status = await existing.status();
 		if (status.status === 'errored' || status.status === 'terminated')
 			await existing.restart();
