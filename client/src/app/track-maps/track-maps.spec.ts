@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
+import { ActivatedRoute } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackLayout, TrackMapVersion } from './track-map.models';
 import { TrackMapStore } from './track-map-store';
@@ -110,7 +111,13 @@ describe('TrackMaps', () => {
 		};
 		await TestBed.configureTestingModule({
 			imports: [TrackMaps],
-			providers: [{ provide: TrackMapStore, useValue: store }],
+			providers: [
+				{ provide: TrackMapStore, useValue: store },
+				{
+					provide: ActivatedRoute,
+					useValue: { snapshot: { queryParamMap: { get: () => null } } },
+				},
+			],
 		}).compileComponents();
 		fixture = TestBed.createComponent(TrackMaps);
 		fixture.detectChanges();
@@ -166,6 +173,17 @@ describe('TrackMaps', () => {
 		);
 		expect(fixture.nativeElement.textContent).toContain('Load failed');
 		expect(fixture.nativeElement.textContent).toContain('Mutation failed');
+	});
+
+	it('opens the selected guided prototype when URL-gated', () => {
+		const prototypeEnabled = fixture.componentInstance as unknown as {
+			prototypeEnabled: ReturnType<typeof signal<boolean>>;
+		};
+		prototypeEnabled.prototypeEnabled.set(true);
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain(
+			'Track-map guided flow',
+		);
 	});
 
 	it('derives an editable draft from the selected approved version', () => {

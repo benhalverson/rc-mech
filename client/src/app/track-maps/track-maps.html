@@ -1,4 +1,8 @@
 <div class="grid gap-8">
+	<!-- istanbul ignore next -- development-only prototype branch is URL gated. -->
+	@if (prototypeEnabled()) {
+		<app-track-map-prototype />
+	}
 	<header class="flex flex-wrap items-end justify-between gap-4 border-b border-alloy-separator pb-6">
 		<div>
 			<p class="alloy-section-heading m-0">{{ store.canManage() ? 'Owner tools' : 'Track reference' }}</p>

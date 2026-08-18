@@ -1,0 +1,31 @@
+<section class="grid gap-6 border border-alloy-command-separator bg-alloy-command-canvas p-5 text-alloy-command-text shadow-sm" aria-labelledby="prototype-title">
+	<header class="border-b border-alloy-command-separator pb-4">
+		<p class="alloy-section-heading m-0">Track-map guided flow · read only</p>
+		<h2 id="prototype-title" class="mt-1 text-2xl font-semibold">Choose the frame before you draw</h2>
+		<p class="mt-2 max-w-2xl text-sm text-alloy-command-text-secondary">This selected design uses in-memory state. It compares the work shape without saving a Track map or changing an analysis.</p>
+	</header>
+
+	<div class="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
+		<ol class="grid content-start gap-3" aria-label="Guided Track-map steps">
+			<li class="border-l-2 border-alloy-command-accent p-3"><strong class="block text-xs uppercase tracking-wider">01 · Recording</strong><select class="alloy-control mt-2 w-full" [value]="recording()" (change)="setRecording($any($event.target).value)">@for (item of recordings; track item) { <option>{{ item }}</option> }</select></li>
+			<li class="border-l-2 border-alloy-command-accent p-3"><strong class="block text-xs uppercase tracking-wider">02 · Frame</strong><label class="mt-2 grid gap-1 text-sm" for="prototype-time-a">Timestamp <input id="prototype-time-a" class="alloy-control" type="number" min="0" [value]="timestamp()" (input)="setTimestamp($any($event.target).value)"></label></li>
+			<li class="border-l-2 border-alloy-command-accent p-3"><strong class="block text-xs uppercase tracking-wider">03 · Geometry</strong><span class="mt-1 block text-sm">Draw {{ target() }} for Corner {{ activeCorner() + 1 }}.</span></li>
+		</ol>
+
+		<div class="grid gap-4">
+			<div class="relative overflow-hidden border border-alloy-command-separator bg-black" aria-label="Selected recording reference frame">
+				<img class="block aspect-video h-auto w-full object-cover" ngSrc="/track-map-prototype-frame.svg" width="1280" height="720" priority alt="Reference frame from the selected race recording">
+				<div class="pointer-events-none absolute inset-0"><app-track-map-geometry [corners]="corners" [activeCorner]="corners[activeCorner()]" label="Track geometry overlay" [decorative]="true" /></div>
+				<div class="absolute left-3 top-3 bg-black/75 px-2 py-1 text-xs text-white">{{ recording() }} · {{ timestamp() }}s</div>
+			</div>
+
+			<div class="grid gap-3 border-t-4 border-alloy-command-accent bg-alloy-command-control p-4 sm:grid-cols-2">
+				<label class="grid gap-1 text-sm font-semibold" for="prototype-corner">Active Corner<select id="prototype-corner" class="alloy-control" [value]="activeCorner()" (change)="selectCorner($any($event.target).value)">@for (corner of corners; track corner.key) { <option [value]="$index">{{ corner.order }} · {{ corner.name }}</option> }</select></label>
+				<label class="grid gap-1 text-sm font-semibold" for="prototype-target">Target<select id="prototype-target" class="alloy-control" [value]="target()" (change)="selectTarget($any($event.target).value)"><option>Entry gate</option><option>Exit gate</option><option>Corner view</option></select></label>
+				<div class="flex flex-wrap gap-2 sm:col-span-2"><button class="alloy-control alloy-control-secondary" type="button">Save draft</button><button class="alloy-control alloy-control-primary" type="button">Approve for analysis</button></div>
+			</div>
+		</div>
+	</div>
+
+	<div class="border-l-2 border-alloy-command-accent bg-alloy-command-control p-3 text-sm"><strong>Approval boundary:</strong> Save draft keeps the work private. Drafts do not appear in the Driving-analysis dropdown until approved. Use Track maps to finish and approve the reference first.</div>
+</section>
