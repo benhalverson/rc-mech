@@ -69,6 +69,14 @@ export class DrivingAnalysisCreator {
 	protected readonly analysis = computed(
 		() => this.creation()?.analysis ?? null,
 	);
+	protected readonly canRetryAnalysis = computed(() => {
+		const status = this.analysis()?.status;
+		return (
+			status === 'running' ||
+			status === 'awaiting-reidentification' ||
+			status === 'failed'
+		);
+	});
 	protected readonly selectedMap = computed(() =>
 		this.store
 			.approvedTrackMaps()

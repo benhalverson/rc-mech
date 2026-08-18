@@ -106,7 +106,7 @@ class FakeStore {
 	readonly selectedTrackMapLoading = signal(false);
 	readonly pending = signal(false);
 	readonly analysisCreation = signal<{
-		status: 'idle' | 'creating' | 'accepted' | 'failed';
+		status: 'idle' | 'creating' | 'retrying' | 'accepted' | 'failed';
 		driveSessionId: string | null;
 		analysis: DrivingAnalysis | null;
 		error: unknown;
@@ -119,6 +119,7 @@ class FakeStore {
 	readonly analysisError = signal('');
 	readonly createAnalysis = vi.fn();
 	readonly refreshAnalysis = vi.fn();
+	readonly retryAnalysis = vi.fn();
 	readonly selectTrackMap = vi.fn();
 }
 
@@ -307,6 +308,34 @@ describe('DrivingAnalysisCreator', () => {
 		expect(root.textContent).toContain('Preparation · 15%');
 		root.querySelector<HTMLButtonElement>('[data-refresh-analysis]')?.click();
 		expect(store.refreshAnalysis).toHaveBeenCalledOnce();
+		root.querySelector<HTMLButtonElement>('[data-retry-analysis]')?.click();
+		expect(store.retryAnalysis).toHaveBeenCalledOnce();
+		expect(root.textContent).toContain('fresh workflow identity');
+		store.analysisCreation.set({
+			status: 'retrying',
+			driveSessionId: 'drive-1',
+			analysis: store.analysisCreation().analysis,
+			error: null,
+		});
+		store.pending.set(true);
+		fixture.detectChanges();
+		expect(
+			root.querySelector<HTMLButtonElement>('[data-retry-analysis]')
+				?.textContent,
+		).toContain('Retrying…');
+		store.analysisCreation.set({
+			status: 'accepted',
+			driveSessionId: 'drive-1',
+			analysis: {
+				...store.analysisCreation().analysis,
+				status: 'completed',
+				stage: 'finalization',
+				progress: 100,
+			} as DrivingAnalysis,
+			error: null,
+		});
+		fixture.detectChanges();
+		expect(root.querySelector('[data-retry-analysis]')).toBeNull();
 	});
 
 	it('covers unavailable maps, validation boundaries, failures, and pending state', async () => {

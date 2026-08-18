@@ -81,7 +81,15 @@
 				<strong>Analysis {{ current.status }}</strong>
 				<span>{{ stageLabel(current.stage) }} · {{ current.progress }}%</span>
 				<progress class="mt-2 h-2 w-full accent-alloy-accent" max="100" [value]="current.progress" [attr.aria-label]="'Driving analysis ' + current.progress + ' percent complete'"></progress>
-				<button data-refresh-analysis class="alloy-control alloy-control-secondary mt-2 w-fit" type="button" (click)="store.refreshAnalysis()">Check status</button>
+				<div class="mt-2 flex flex-wrap gap-2">
+					<button data-refresh-analysis class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.refreshAnalysis()">Check status</button>
+					@if (canRetryAnalysis()) {
+						<button data-retry-analysis class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.retryAnalysis()" [disabled]="store.pending()" [attr.aria-busy]="creation()?.status === 'retrying'">{{ creation()?.status === 'retrying' ? 'Retrying…' : 'Retry workflow' }}</button>
+					}
+				</div>
+				@if (canRetryAnalysis()) {
+					<p class="m-0 mt-2 text-xs text-alloy-text-secondary">Retry keeps the private recording, Race window, Subject seed, and approved Track map, but starts a fresh workflow identity.</p>
+				}
 			</div>
 		}
 		<button data-create-analysis class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.pending() || creation()?.status === 'creating'" [attr.aria-busy]="creation()?.status === 'creating'">

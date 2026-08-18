@@ -166,6 +166,14 @@ describe('DrivingAnalysisGateway', () => {
 		request.flush(response, { status: 202, statusText: 'Accepted' });
 		await expect(created).resolves.toEqual(response.drivingAnalysis);
 
+		const retried = firstValueFrom(gateway.retry('analysis/one', 3));
+		request = http.expectOne('/api/v1/driving-analyses/analysis%2Fone/retry');
+		expect(request.request.method).toBe('POST');
+		expect(request.request.withCredentials).toBe(true);
+		expect(request.request.body).toEqual({ expectedStateVersion: 3 });
+		request.flush(response, { status: 202, statusText: 'Accepted' });
+		await expect(retried).resolves.toEqual(response.drivingAnalysis);
+
 		gateway.selectAnalysis('analysis/one');
 		gateway.analysis.value();
 		await vi.waitFor(() => {

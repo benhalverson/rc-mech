@@ -55,7 +55,7 @@ type RaceRecordingState = {
 };
 
 type DrivingAnalysisCreationState = Readonly<{
-	status: 'idle' | 'creating' | 'accepted' | 'failed';
+	status: 'idle' | 'creating' | 'retrying' | 'accepted' | 'failed';
 	driveSessionId: string | null;
 	analysis: DrivingAnalysis | null;
 	error: DrivingAnalysisGatewayFailure | null;
@@ -114,7 +114,7 @@ const analysisFailureMessage = (
 	if ('status' in failure && failure.status === 401)
 		return 'Your garage session has expired. Sign in again to continue.';
 	if (failure.kind === 'rejected-response') return failure.message;
-	return 'The Driving analysis could not be started.';
+	return 'The Driving analysis could not be started or retried.';
 };
 
 const transferState = (
@@ -196,7 +196,7 @@ export const DrivingAnalysisStore = signalStore(
 			() =>
 				['uploading', 'cancelling'].includes(store.transfer().status) ||
 				store.removal().status === 'removing' ||
-				store.analysisCreation().status === 'creating',
+				['creating', 'retrying'].includes(store.analysisCreation().status),
 		),
 		removalPending: computed(() => store.removal().status === 'removing'),
 		error: computed(() => {
@@ -219,7 +219,7 @@ export const DrivingAnalysisStore = signalStore(
 					const analysis = store.analyses.analysis.value();
 					const current = store.analysisCreation();
 					if (
-						current.status === 'accepted' &&
+						['accepted', 'retrying'].includes(current.status) &&
 						current.analysis?.id === analysis.id &&
 						current.analysis.stateVersion === analysis.stateVersion
 					)
@@ -309,6 +309,50 @@ export const DrivingAnalysisStore = signalStore(
 									status: 'failed',
 									driveSessionId: command.driveSessionId,
 									analysis: null,
+									error,
+								},
+							});
+							return EMPTY;
+						}),
+					);
+				}),
+			),
+		);
+		const retryAnalysis = rxMethod<DrivingAnalysis>((analyses$) =>
+			analyses$.pipe(
+				exhaustMap((analysis) => {
+					const current = store.analysisCreation();
+					if (
+						!['running', 'awaiting-reidentification', 'failed'].includes(
+							analysis.status,
+						)
+					)
+						return EMPTY;
+					patchState(store, {
+						analysisCreation: {
+							...current,
+							status: 'retrying',
+							error: null,
+						},
+					});
+					return store.analyses.retry(analysis.id, analysis.stateVersion).pipe(
+						tap((retried) => {
+							patchState(store, {
+								analysisCreation: {
+									status: 'accepted',
+									driveSessionId: retried.driveSessionId,
+									analysis: retried,
+									error: null,
+								},
+							});
+							store.analyses.selectAnalysis(retried.id);
+							monitorAnalysis(retried.id);
+						}),
+						catchError((error: DrivingAnalysisGatewayFailure) => {
+							patchState(store, {
+								analysisCreation: {
+									...current,
+									status: 'failed',
 									error,
 								},
 							});
@@ -611,6 +655,10 @@ export const DrivingAnalysisStore = signalStore(
 			},
 			refreshAnalysis(): void {
 				if (store.analysisCreation().analysis) store.analyses.refresh();
+			},
+			retryAnalysis(): void {
+				const analysis = store.analysisCreation().analysis;
+				if (analysis) retryAnalysis(analysis);
 			},
 			selectTrackMap(versionId: string | null): void {
 				store.trackMaps.selectVersion(versionId);
