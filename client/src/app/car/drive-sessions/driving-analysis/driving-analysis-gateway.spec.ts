@@ -23,6 +23,8 @@ const response = {
 		approvedTrackMapVersionId: '44444444-4444-4444-8444-444444444444',
 		subjectSeed: {
 			timestampMs: 180_000,
+			frameIndex: 5_400,
+			identity: 'subject-1',
 			box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 		},
 		sourceLayout: {
@@ -32,6 +34,7 @@ const response = {
 			height: 1080,
 			trackView: { x: 0, y: 1 / 3, width: 1, height: 2 / 3 },
 		},
+		lifecycle: 'preparation',
 		status: 'queued',
 		stage: 'preparation',
 		progress: 0,
@@ -165,6 +168,14 @@ describe('DrivingAnalysisGateway', () => {
 		});
 		request.flush(response, { status: 202, statusText: 'Accepted' });
 		await expect(created).resolves.toEqual(response.drivingAnalysis);
+
+		const retried = firstValueFrom(gateway.retry('analysis/one', 3));
+		request = http.expectOne('/api/v1/driving-analyses/analysis%2Fone/retry');
+		expect(request.request.method).toBe('POST');
+		expect(request.request.withCredentials).toBe(true);
+		expect(request.request.body).toEqual({ expectedStateVersion: 3 });
+		request.flush(response, { status: 202, statusText: 'Accepted' });
+		await expect(retried).resolves.toEqual(response.drivingAnalysis);
 
 		gateway.selectAnalysis('analysis/one');
 		gateway.analysis.value();

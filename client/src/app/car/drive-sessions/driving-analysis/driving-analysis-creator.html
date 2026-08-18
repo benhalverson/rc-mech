@@ -63,11 +63,13 @@
 			</div>
 		</div>
 
-		<fieldset class="grid gap-2 sm:grid-cols-3">
-			<legend class="col-span-full text-sm font-semibold">Exact absolute timestamps (milliseconds)</legend>
+		<fieldset class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+			<legend class="col-span-full text-sm font-semibold">Immutable Race window and Subject seed</legend>
 			<label class="grid gap-1 text-xs font-semibold">Race start<input class="alloy-control" data-window-start type="number" step="1" [formField]="fields.startTimestampMs" /></label>
 			<label class="grid gap-1 text-xs font-semibold">Race end<input class="alloy-control" data-window-end type="number" step="1" [formField]="fields.endTimestampMs" /></label>
-			<label class="grid gap-1 text-xs font-semibold">Subject frame<input class="alloy-control" data-seed-timestamp type="number" step="1" [formField]="fields.seedTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Subject timestamp (ms)<input class="alloy-control" data-seed-timestamp type="number" step="1" [formField]="fields.seedTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Source frame index<input class="alloy-control" data-seed-frame-index type="number" step="1" [formField]="fields.seedFrameIndex" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Subject identity<input class="alloy-control" data-subject-identity type="text" autocomplete="off" [formField]="fields.subjectIdentity" /></label>
 		</fieldset>
 
 		@if (formError()) {
@@ -81,7 +83,15 @@
 				<strong>Analysis {{ current.status }}</strong>
 				<span>{{ stageLabel(current.stage) }} · {{ current.progress }}%</span>
 				<progress class="mt-2 h-2 w-full accent-alloy-accent" max="100" [value]="current.progress" [attr.aria-label]="'Driving analysis ' + current.progress + ' percent complete'"></progress>
-				<button data-refresh-analysis class="alloy-control alloy-control-secondary mt-2 w-fit" type="button" (click)="store.refreshAnalysis()">Check status</button>
+				<div class="mt-2 flex flex-wrap gap-2">
+					<button data-refresh-analysis class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.refreshAnalysis()">Check status</button>
+					@if (canRetryAnalysis()) {
+						<button data-retry-analysis class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.retryAnalysis()" [disabled]="store.pending()" [attr.aria-busy]="creation()?.status === 'retrying'">{{ creation()?.status === 'retrying' ? 'Retrying…' : 'Retry workflow' }}</button>
+					}
+				</div>
+				@if (canRetryAnalysis()) {
+					<p class="m-0 mt-2 text-xs text-alloy-text-secondary">Retry keeps the private recording, Race window, Subject seed, and approved Track map, but starts a fresh workflow identity.</p>
+				}
 			</div>
 		}
 		<button data-create-analysis class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.pending() || creation()?.status === 'creating'" [attr.aria-busy]="creation()?.status === 'creating'">

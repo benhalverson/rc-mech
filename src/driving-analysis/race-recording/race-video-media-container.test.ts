@@ -1,8 +1,22 @@
 import { describe, expect, test, vi } from 'vitest';
 import acceptedFixture from '../../../containers/driving-analysis/tests/fixtures/race-video-validation/accepted.json';
 import rejectedFixture from '../../../containers/driving-analysis/tests/fixtures/race-video-validation/rejected.json';
+import { RUN_ID } from '../../testing/driving-analysis-tracking-fixtures';
 import { MockR2Controller } from '../../testing/hono-fixture';
 import {
+	CORRELATION_ID,
+	prepareAcceptedFixture,
+	preparedDescriptorFixture,
+	RACE_VIDEO_ID,
+	SOURCE_SHA,
+} from '../../testing/prepared-track-view-fixtures';
+import type {
+	RaceVideoTrackViewPreparationRuntime,
+	ReferenceFrameExtractionRuntime,
+} from './race-video-media-container';
+import {
+	extractRaceVideoReferenceFrame,
+	prepareRaceVideoTrackView,
 	RaceVideoMediaContainer,
 	validateRaceVideoMedia,
 } from './race-video-media-container';
@@ -29,6 +43,29 @@ if (accepted.outcome !== 'accepted')
 const media = accepted.media;
 const rejected = raceVideoValidationResponseSchema.parse(rejectedFixture);
 
+const preparationRequest = {
+	contractVersion: 'subject-tracking.v1' as const,
+	correlationId: CORRELATION_ID,
+	caseId: RUN_ID,
+	preparedMediaId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+	input: { stagedMediaId: RACE_VIDEO_ID, expectedByteCount: 100 },
+	window: { startTimestampMs: 100, endTimestampMs: 400 },
+	pipelineVersion: 'subject-tracking.v1' as const,
+};
+
+const preparationCommand = {
+	request: preparationRequest,
+	source: {
+		objectKey: 'race-recordings/private/source',
+		byteCount: 100,
+		checksumSha256: SOURCE_SHA,
+	},
+	output: {
+		mediaObjectKey: 'prepared/media.mp4',
+		frameManifestObjectKey: 'prepared/manifest.json.gz',
+	},
+};
+
 const jsonResponse = (value: unknown, init?: ResponseInit) =>
 	new Response(JSON.stringify(value), {
 		...init,
@@ -50,6 +87,263 @@ const fixture = async () => {
 };
 
 describe('Race-video media container adapter', () => {
+	test('extracts and publishes a bounded private reference frame', async () => {
+		const sourceKey =
+			'race-recordings/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+		const output = new Map<string, Uint8Array>();
+		const runtime = {
+			bucket: {
+				get: vi.fn(async (key: string) =>
+					key === sourceKey
+						? {
+								size: 6,
+								checksums: {
+									toJSON: () => ({
+										sha256:
+											'41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d',
+									}),
+								},
+								body: new ReadableStream({
+									start(controller) {
+										controller.enqueue(new TextEncoder().encode('source'));
+										controller.close();
+									},
+								}),
+							}
+						: null,
+				),
+				put: vi.fn(async (key: string, body: Uint8Array) => {
+					output.set(key, body);
+				}),
+			},
+			start: vi.fn(async () => undefined),
+			stage: vi.fn(async () => 0),
+			checksum: vi.fn(
+				async () =>
+					'41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d',
+			),
+			extract: vi.fn(async () => ({
+				body: new ReadableStream({
+					start(controller) {
+						controller.enqueue(Uint8Array.of(1, 2, 3));
+						controller.close();
+					},
+				}),
+				waitForExit: async () => 0,
+			})),
+			cleanup: vi.fn(async () => undefined),
+		};
+		await expect(
+			extractRaceVideoReferenceFrame(
+				{
+					source: {
+						objectKey: sourceKey,
+						byteCount: 6,
+						checksumSha256: '0'.repeat(64),
+					},
+					timestampMs: 250,
+					outputObjectKey:
+						'track-map-reference-frames/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
+				},
+				runtime as unknown as ReferenceFrameExtractionRuntime,
+			),
+		).rejects.toThrow('does not match frame input');
+		runtime.checksum.mockResolvedValueOnce('0'.repeat(64));
+		await expect(
+			extractRaceVideoReferenceFrame(
+				{
+					source: {
+						objectKey: sourceKey,
+						byteCount: 6,
+						checksumSha256:
+							'41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d',
+					},
+					timestampMs: 250,
+					outputObjectKey:
+						'track-map-reference-frames/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
+				},
+				runtime as unknown as ReferenceFrameExtractionRuntime,
+			),
+		).rejects.toThrow('checksum does not match');
+
+		const accepted = await extractRaceVideoReferenceFrame(
+			{
+				source: {
+					objectKey: sourceKey,
+					byteCount: 6,
+					checksumSha256:
+						'41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d',
+				},
+				timestampMs: 250,
+				outputObjectKey:
+					'track-map-reference-frames/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
+			},
+			runtime as unknown as ReferenceFrameExtractionRuntime,
+		);
+		expect(accepted.byteCount).toBe(3);
+		expect(accepted.contentType).toBe('image/jpeg');
+		expect(runtime.extract).toHaveBeenCalledWith(
+			expect.stringContaining('/var/lib/rc-mech/staged/reference-'),
+			250,
+		);
+		expect(output.has(accepted.objectKey)).toBe(true);
+		expect(runtime.cleanup).toHaveBeenCalledTimes(2);
+	});
+
+	test('stages, calls, streams, and cleans up a prepared Track view', async () => {
+		const puts: Array<{ key: string; body: ReadableStream }> = [];
+		const runtime = {
+			bucket: {
+				get: vi.fn(async () => ({
+					size: 100,
+					checksums: { toJSON: () => ({}) },
+					body: new ReadableStream<Uint8Array>(),
+				})),
+				put: vi.fn(async (key: string, body: ReadableStream) => {
+					puts.push({ key, body });
+				}),
+			},
+			start: vi.fn(async () => undefined),
+			stage: vi.fn(async () => 0),
+			checksum: vi.fn(async () => SOURCE_SHA),
+			prepare: vi.fn(async () =>
+				jsonResponse(
+					prepareAcceptedFixture(
+						'9'.repeat(64),
+						preparationRequest.preparedMediaId,
+						CORRELATION_ID,
+					),
+				),
+			),
+			stream: vi.fn(async () => ({
+				body: new ReadableStream<Uint8Array>(),
+				waitForExit: async () => 0,
+			})),
+			cleanup: vi.fn(async () => undefined),
+		};
+		await expect(
+			prepareRaceVideoTrackView(
+				preparationCommand,
+				runtime as unknown as RaceVideoTrackViewPreparationRuntime,
+			),
+		).resolves.toMatchObject({ outcome: 'accepted' });
+		expect(runtime.start).toHaveBeenCalledOnce();
+		expect(runtime.stage).toHaveBeenCalledWith(
+			'/var/lib/rc-mech/staged/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.media',
+			expect.any(ReadableStream),
+		);
+		expect(runtime.prepare).toHaveBeenCalledOnce();
+		expect(puts.map(({ key }) => key)).toEqual([
+			'prepared/media.mp4',
+			'prepared/manifest.json.gz',
+		]);
+		expect(runtime.cleanup).toHaveBeenCalledOnce();
+	});
+
+	test('returns a safe service rejection without publishing artifacts', async () => {
+		const runtime = {
+			bucket: {
+				get: vi.fn(async () => ({
+					size: 100,
+					checksums: { toJSON: () => ({ sha256: SOURCE_SHA }) },
+					body: new ReadableStream<Uint8Array>(),
+				})),
+				put: vi.fn(),
+			},
+			start: vi.fn(async () => undefined),
+			stage: vi.fn(async () => 0),
+			checksum: vi.fn(async () => SOURCE_SHA),
+			prepare: vi.fn(async () =>
+				jsonResponse({
+					contractVersion: 'subject-tracking.v1',
+					correlationId: CORRELATION_ID,
+					outcome: 'rejected',
+					caseId: RUN_ID,
+					error: {
+						code: 'SERVICE_BUSY',
+						stage: 'admission',
+						message: 'processing service is busy',
+					},
+				}),
+			),
+			stream: vi.fn(),
+			cleanup: vi.fn(async () => undefined),
+		};
+		await expect(
+			prepareRaceVideoTrackView(
+				preparationCommand,
+				runtime as unknown as RaceVideoTrackViewPreparationRuntime,
+			),
+		).resolves.toMatchObject({ outcome: 'rejected' });
+		expect(runtime.bucket.put).not.toHaveBeenCalled();
+		expect(runtime.stream).not.toHaveBeenCalled();
+	});
+
+	test('fails closed when the private source or prepared descriptor differs', async () => {
+		const runtime = {
+			bucket: {
+				get: vi.fn(async () => ({
+					size: 99,
+					checksums: { toJSON: () => ({ sha256: SOURCE_SHA }) },
+					body: new ReadableStream<Uint8Array>(),
+				})),
+			},
+			start: vi.fn(async () => undefined),
+			stage: vi.fn(),
+			checksum: vi.fn(async () => SOURCE_SHA),
+			prepare: vi.fn(),
+			stream: vi.fn(),
+			cleanup: vi.fn(),
+		};
+		await expect(
+			prepareRaceVideoTrackView(
+				preparationCommand,
+				runtime as unknown as RaceVideoTrackViewPreparationRuntime,
+			),
+		).rejects.toThrow('does not match preparation input');
+		expect(runtime.stage).not.toHaveBeenCalled();
+
+		const matching = {
+			...runtime,
+			bucket: {
+				...runtime.bucket,
+				get: vi.fn(async () => ({
+					size: 100,
+					checksums: { toJSON: () => ({ sha256: SOURCE_SHA }) },
+					body: new ReadableStream<Uint8Array>(),
+				})),
+			},
+			stage: vi.fn(async () => 0),
+			prepare: vi.fn(async () =>
+				jsonResponse({
+					...prepareAcceptedFixture(
+						'9'.repeat(64),
+						preparationRequest.preparedMediaId,
+					),
+					prepared: {
+						...preparedDescriptorFixture('9'.repeat(64)),
+						sourceByteCount: 99,
+					},
+				}),
+			),
+			cleanup: vi.fn(async () => undefined),
+		};
+		matching.checksum.mockResolvedValueOnce('0'.repeat(64));
+		await expect(
+			prepareRaceVideoTrackView(
+				preparationCommand,
+				matching as unknown as RaceVideoTrackViewPreparationRuntime,
+			),
+		).rejects.toThrow('checksum does not match');
+		matching.checksum.mockResolvedValue(SOURCE_SHA);
+		await expect(
+			prepareRaceVideoTrackView(
+				preparationCommand,
+				matching as unknown as RaceVideoTrackViewPreparationRuntime,
+			),
+		).rejects.toThrow('does not match preparation input');
+		expect(matching.cleanup).toHaveBeenCalledTimes(2);
+	});
 	test('shares approved accepted and rejected fixtures with Python', () => {
 		expect(accepted).toEqual(acceptedFixture);
 		expect(rejected).toEqual(rejectedFixture);

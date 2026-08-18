@@ -21,6 +21,8 @@ type CreationForm = {
 	startTimestampMs: number;
 	endTimestampMs: number;
 	seedTimestampMs: number;
+	seedFrameIndex: number;
+	subjectIdentity: string;
 };
 
 const DEFAULT_BOX: SubjectBox = {
@@ -56,6 +58,8 @@ export class DrivingAnalysisCreator {
 		startTimestampMs: 0,
 		endTimestampMs: 1,
 		seedTimestampMs: 0,
+		seedFrameIndex: 0,
+		subjectIdentity: 'subject-1',
 	});
 	protected readonly fields = form(this.form);
 	protected readonly formError = signal('');
@@ -69,6 +73,10 @@ export class DrivingAnalysisCreator {
 	protected readonly analysis = computed(
 		() => this.creation()?.analysis ?? null,
 	);
+	protected readonly canRetryAnalysis = computed(() => {
+		const status = this.analysis()?.status;
+		return status === 'failed' || status === 'completed';
+	});
 	protected readonly selectedMap = computed(() =>
 		this.store
 			.approvedTrackMaps()
@@ -99,6 +107,17 @@ export class DrivingAnalysisCreator {
 			form.seedTimestampMs >= form.endTimestampMs
 		)
 			errors.push('Subject timestamp must be inside the Race window.');
+		if (
+			!finiteInteger(form.seedFrameIndex) ||
+			form.seedFrameIndex < 0 ||
+			form.seedFrameIndex >= (this.recording().media?.decodedFrameCount ?? 0)
+		)
+			errors.push('Subject frame must identify a decoded recording frame.');
+		if (
+			!form.subjectIdentity.trim() ||
+			form.subjectIdentity.trim().length > 128
+		)
+			errors.push('Subject identity must be between 1 and 128 characters.');
 		if (!this.boxValid())
 			errors.push('Enter a complete normalized Subject box.');
 		return errors;
@@ -126,6 +145,8 @@ export class DrivingAnalysisCreator {
 				startTimestampMs: 0,
 				endTimestampMs: Math.min(duration, MAX_RACE_WINDOW_DURATION_MS),
 				seedTimestampMs: 0,
+				seedFrameIndex: 0,
+				subjectIdentity: 'subject-1',
 			});
 			this.box.set(DEFAULT_BOX);
 			this.boxValid.set(true);
@@ -161,9 +182,13 @@ export class DrivingAnalysisCreator {
 	protected mark(
 		field: 'startTimestampMs' | 'endTimestampMs' | 'seedTimestampMs',
 	): void {
+		const timestampMs = this.currentTimestampMs();
 		this.form.update((current) => ({
 			...current,
-			[field]: this.currentTimestampMs(),
+			[field]: timestampMs,
+			...(field === 'seedTimestampMs'
+				? { seedFrameIndex: this.frameIndexAt(timestampMs) }
+				: {}),
 		}));
 		this.formError.set('');
 	}
@@ -192,10 +217,22 @@ export class DrivingAnalysisCreator {
 			},
 			subjectSeed: {
 				timestampMs: form.seedTimestampMs,
+				frameIndex: form.seedFrameIndex,
+				identity: form.subjectIdentity.trim(),
 				box: this.box(),
 			},
 		};
 		this.formError.set('');
 		this.store.createAnalysis(immutableInput);
+	}
+
+	private frameIndexAt(timestampMs: number): number {
+		const media = this.recording().media;
+		if (!media) return 0;
+		const frameIndex = Math.floor(
+			(timestampMs * media.averageFrameRate.numerator) /
+				(media.averageFrameRate.denominator * 1_000),
+		);
+		return Math.min(media.decodedFrameCount - 1, Math.max(0, frameIndex));
 	}
 }

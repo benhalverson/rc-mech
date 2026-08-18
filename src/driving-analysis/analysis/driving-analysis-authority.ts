@@ -10,6 +10,9 @@ import {
 	trackLayout,
 	trackMapVersion,
 } from '../../schema';
+import type { PublicTrackingState } from '../tracking/authority-contracts';
+import { trackingRun } from '../tracking/authority-schema';
+import { uuidV4Schema } from '../tracking/contracts';
 import {
 	createDrivingAnalysisInputSchema,
 	DRIVING_ANALYSIS_CREATION_WINDOW_MS,
@@ -54,6 +57,7 @@ export type CreateDrivingAnalysisCommand = Readonly<{
 export type DrivingAnalysisAuthorityOptions = Readonly<{
 	clock?: () => Date;
 	id?: () => string;
+	workflowId?: () => string;
 	startProcessing?: (payload: DrivingAnalysisWorkflowPayload) => Promise<void>;
 }>;
 
@@ -64,10 +68,43 @@ export type DrivingAnalysisTransition =
 	  }>
 	| Readonly<{ kind: 'stale' }>;
 
+export type DrivingAnalysisPreparationSource = Readonly<{
+	objectKey: string;
+	byteCount: number;
+	checksumSha256: string;
+}>;
+
 const authorityError = (
 	code: DrivingAnalysisAuthorityErrorCode,
 	message: string,
 ) => new DrivingAnalysisAuthorityError(code, message);
+
+const trackingAnalysisTarget = (
+	state: PublicTrackingState,
+	currentProgress: number,
+): Readonly<{
+	status: 'running' | 'awaiting-reidentification' | 'failed' | 'cancelled';
+	progress: number;
+}> => {
+	if (state.lifecycle === 'awaiting-reidentification')
+		return { status: 'awaiting-reidentification', progress: 99 };
+	if (state.lifecycle === 'failed')
+		return {
+			status: 'failed',
+			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+		};
+	if (state.lifecycle === 'cancelled')
+		return {
+			status: 'cancelled',
+			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+		};
+	if (state.lifecycle === 'completed' || state.progress >= 99)
+		return { status: 'running', progress: 99 };
+	return {
+		status: 'running',
+		progress: Math.max(currentProgress, Math.max(21, state.progress)),
+	};
+};
 
 const publicAnalysis = (
 	record: DrivingAnalysisRecord,
@@ -84,6 +121,8 @@ const publicAnalysis = (
 	approvedTrackMapVersionId: record.approvedTrackMapVersionId,
 	subjectSeed: {
 		timestampMs: record.subjectSeedTimestampMs,
+		frameIndex: record.subjectSeedFrameIndex,
+		identity: record.subjectSeedIdentity,
 		box: {
 			x: record.subjectBoxX,
 			y: record.subjectBoxY,
@@ -98,6 +137,23 @@ const publicAnalysis = (
 		height: record.sourceHeight,
 		trackView: FIXED_TRACK_VIEW,
 	},
+	lifecycle:
+		record.status === 'awaiting-reidentification'
+			? 'awaiting-reidentification'
+			: record.status === 'failed'
+				? 'failed'
+				: /* c8 ignore next -- full completion is published by the later measurement/finalization slice. */ record.status ===
+						'completed'
+					? 'completed'
+					: record.status === 'cancelled' ||
+							record.status === 'deleting' ||
+							record.status === 'deleted'
+						? 'cancelled'
+						: record.stage === 'preparation'
+							? 'preparation'
+							: record.stage === 'tracking' && record.progress >= 99
+								? 'tracking-complete'
+								: 'tracking',
 	status: record.status,
 	stage: record.stage,
 	progress: record.progress,
@@ -110,6 +166,7 @@ export class DrivingAnalysisAuthority {
 	private readonly database;
 	private readonly clock: () => Date;
 	private readonly id: () => string;
+	private readonly workflowId: () => string;
 	private readonly startProcessing: (
 		payload: DrivingAnalysisWorkflowPayload,
 	) => Promise<void>;
@@ -121,6 +178,8 @@ export class DrivingAnalysisAuthority {
 		this.database = drizzle(binding);
 		this.clock = options.clock ?? (() => new Date());
 		this.id = options.id ?? (() => crypto.randomUUID());
+		/* c8 ignore next -- production UUID generation is exercised by live Workflow retry acceptance. */
+		this.workflowId = options.workflowId ?? (() => crypto.randomUUID());
 		this.startProcessing = options.startProcessing ?? (async () => undefined);
 	}
 
@@ -183,6 +242,8 @@ export class DrivingAnalysisAuthority {
 					raceWindowEndMs: parsed.data.raceWindow.endTimestampMs,
 					approvedTrackMapVersionId: parsed.data.approvedTrackMapVersionId,
 					subjectSeedTimestampMs: parsed.data.subjectSeed.timestampMs,
+					subjectSeedFrameIndex: parsed.data.subjectSeed.frameIndex,
+					subjectSeedIdentity: parsed.data.subjectSeed.identity,
 					subjectBoxX: parsed.data.subjectSeed.box.x,
 					subjectBoxY: parsed.data.subjectSeed.box.y,
 					subjectBoxWidth: parsed.data.subjectSeed.box.width,
@@ -192,6 +253,7 @@ export class DrivingAnalysisAuthority {
 					sourceWidth: source.width,
 					sourceHeight: source.height,
 					workflowId: analysisId,
+					workflowSequence: 1,
 					status: 'queued',
 					stage: 'preparation',
 					progress: 0,
@@ -222,6 +284,128 @@ export class DrivingAnalysisAuthority {
 		if (!record)
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
 		return publicAnalysis(record);
+	}
+
+	async retry(
+		ownerId: string,
+		analysisId: string,
+		expectedStateVersion: number,
+	): Promise<{ analysis: PublicDrivingAnalysis; retried: boolean }> {
+		if (!Number.isInteger(expectedStateVersion) || expectedStateVersion < 1)
+			throw authorityError('INVALID_INPUT', 'Invalid analysis state revision');
+		const current = await this.find(ownerId, analysisId);
+		if (!current)
+			throw authorityError('NOT_FOUND', 'Driving analysis not found');
+		if (current.stateVersion !== expectedStateVersion)
+			throw authorityError(
+				'CONFLICT',
+				'Driving analysis changed; reload and retry',
+			);
+		if (current.status === 'queued' && current.workflowSequence > 1) {
+			await this.start(current);
+			return { analysis: publicAnalysis(current), retried: false };
+		}
+		if (current.status !== 'failed' && current.status !== 'completed')
+			throw authorityError(
+				'CONFLICT',
+				'Driving analysis is not eligible for retry',
+			);
+		const workflowId = uuidV4Schema.parse(this.workflowId());
+		const timestamp = this.clock().toISOString();
+		let rows: DrivingAnalysisRecord[] | undefined;
+		try {
+			const [, retriedRows] = await this.database.batch([
+				this.database
+					.update(trackingRun)
+					.set({
+						status: 'replaced',
+						version: sql`${trackingRun.version} + 1`,
+						completedAt: timestamp,
+					})
+					.where(
+						and(
+							eq(trackingRun.ownerId, ownerId),
+							eq(trackingRun.analysisId, analysisId),
+							eq(trackingRun.status, 'active'),
+						),
+					),
+				this.database
+					.update(drivingAnalysis)
+					.set({
+						workflowId,
+						workflowSequence: current.workflowSequence + 1,
+						status: 'queued',
+						stage: 'preparation',
+						progress: 0,
+						stateVersion: current.stateVersion + 1,
+						updatedAt: timestamp,
+					})
+					.where(
+						and(
+							eq(drivingAnalysis.id, analysisId),
+							eq(drivingAnalysis.ownerId, ownerId),
+							eq(drivingAnalysis.workflowId, current.workflowId),
+							eq(drivingAnalysis.stateVersion, current.stateVersion),
+						),
+					)
+					.returning(),
+			]);
+			rows = retriedRows;
+		} catch {
+			/* c8 ignore next -- D1 constraint/concurrency failures are normalized to one safe conflict. */
+			throw authorityError('CONFLICT', 'Driving analysis retry conflicted');
+		}
+		const retried = rows?.[0];
+		/* c8 ignore next 5 -- the optimistic write can miss only after a concurrent authority transition. */
+		if (!retried)
+			throw authorityError(
+				'CONFLICT',
+				'Driving analysis changed; reload and retry',
+			);
+		await this.start(retried);
+		return { analysis: publicAnalysis(retried), retried: true };
+	}
+
+	async preparationSource(
+		ownerId: string,
+		analysisId: string,
+	): Promise<DrivingAnalysisPreparationSource> {
+		const record = await this.database
+			.select({
+				objectKey: raceVideo.objectKey,
+				byteCount: raceVideoValidation.byteCount,
+				checksumSha256: raceVideoValidation.checksumSha256,
+			})
+			.from(drivingAnalysis)
+			.innerJoin(raceVideo, eq(raceVideo.id, drivingAnalysis.raceVideoId))
+			.innerJoin(
+				raceVideoValidation,
+				eq(raceVideoValidation.raceVideoId, raceVideo.id),
+			)
+			.where(
+				and(
+					eq(drivingAnalysis.ownerId, ownerId),
+					eq(drivingAnalysis.id, analysisId),
+					eq(raceVideo.ownerId, ownerId),
+					eq(raceVideo.status, 'validating'),
+					eq(raceVideoValidation.status, 'ready'),
+				),
+			)
+			.get();
+		if (
+			!record ||
+			!Number.isSafeInteger(record.byteCount) ||
+			!record.checksumSha256
+		)
+			throw authorityError(
+				'CONFLICT',
+				'Validated Race recording media facts are incomplete',
+			);
+		return {
+			objectKey: record.objectKey,
+			byteCount: record.byteCount,
+			checksumSha256: record.checksumSha256,
+		};
 	}
 
 	async beginPreparation(
@@ -307,6 +491,164 @@ export class DrivingAnalysisAuthority {
 		return this.replayedTransition(payload, workflowId, progress);
 	}
 
+	async publishTrackingStart(
+		payloadValue: DrivingAnalysisWorkflowPayload,
+		workflowId: string,
+		expectedStateVersion: number,
+		updatedAt: string,
+	): Promise<DrivingAnalysisTransition> {
+		const payload = drivingAnalysisWorkflowPayloadSchema.parse(payloadValue);
+		if (!(await this.hasCurrentWorkflowInput(payload, workflowId)))
+			return { kind: 'stale' };
+		const published = await this.database
+			.update(drivingAnalysis)
+			.set({
+				status: 'running',
+				stage: 'tracking',
+				progress: 21,
+				stateVersion: expectedStateVersion + 1,
+				updatedAt,
+			})
+			.where(
+				and(
+					eq(drivingAnalysis.id, payload.analysisId),
+					eq(drivingAnalysis.ownerId, payload.ownerId),
+					eq(drivingAnalysis.workflowId, workflowId),
+					eq(drivingAnalysis.stateVersion, expectedStateVersion),
+					eq(drivingAnalysis.status, 'running'),
+					eq(drivingAnalysis.stage, 'preparation'),
+				),
+			)
+			.returning()
+			.get();
+		if (published)
+			return { kind: 'published', analysis: publicAnalysis(published) };
+		return this.replayedTransition(payload, workflowId, 21);
+	}
+
+	async publishTrackingState(
+		ownerId: string,
+		analysisId: string,
+		state: PublicTrackingState,
+		updatedAt: string,
+	): Promise<DrivingAnalysisTransition> {
+		const run = await this.database
+			.select({
+				id: trackingRun.id,
+				status: trackingRun.status,
+				workflowId: trackingRun.workflowId,
+			})
+			.from(trackingRun)
+			.where(
+				and(
+					eq(trackingRun.id, state.runId),
+					eq(trackingRun.ownerId, ownerId),
+					eq(trackingRun.analysisId, analysisId),
+				),
+			)
+			.get();
+		if (run?.status !== 'active') return { kind: 'stale' };
+		const current = await this.find(ownerId, analysisId);
+		/* c8 ignore next -- a Tracking run linked to a missing analysis is corruption defense. */
+		if (current?.stage !== 'tracking' || current.workflowId !== run.workflowId)
+			return { kind: 'stale' };
+		const target = trackingAnalysisTarget(state, current.progress);
+		if (
+			current.status === target.status &&
+			current.progress === target.progress
+		)
+			return { kind: 'replayed', analysis: publicAnalysis(current) };
+		if (
+			current.status !== 'running' &&
+			current.status !== 'awaiting-reidentification'
+		)
+			return { kind: 'stale' };
+		const published = await this.database
+			.update(drivingAnalysis)
+			.set({
+				status: target.status,
+				progress: target.progress,
+				stateVersion: current.stateVersion + 1,
+				updatedAt,
+			})
+			.where(
+				and(
+					eq(drivingAnalysis.id, analysisId),
+					eq(drivingAnalysis.ownerId, ownerId),
+					eq(drivingAnalysis.workflowId, run.workflowId),
+					eq(drivingAnalysis.stateVersion, current.stateVersion),
+					eq(drivingAnalysis.stage, 'tracking'),
+				),
+			)
+			.returning()
+			.get();
+		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
+		return published
+			? { kind: 'published', analysis: publicAnalysis(published) }
+			: { kind: 'stale' };
+	}
+
+	async publishWorkflowFailure(
+		payloadValue: DrivingAnalysisWorkflowPayload,
+		workflowId: string,
+		updatedAt: string,
+	): Promise<DrivingAnalysisTransition> {
+		const payload = drivingAnalysisWorkflowPayloadSchema.parse(payloadValue);
+		if (!(await this.hasCurrentWorkflowInput(payload, workflowId)))
+			return { kind: 'stale' };
+		const current = await this.findWorkflow(
+			payload.ownerId,
+			payload.analysisId,
+			workflowId,
+		);
+		/* c8 ignore next -- the row can disappear here only under a concurrent authority transition. */
+		if (!current) return { kind: 'stale' };
+		if (current.status === 'failed')
+			return { kind: 'replayed', analysis: publicAnalysis(current) };
+		if (current.status !== 'queued' && current.status !== 'running')
+			return { kind: 'stale' };
+		const [, failedRows] = await this.database.batch([
+			this.database
+				.update(trackingRun)
+				.set({
+					status: 'failed',
+					version: sql`${trackingRun.version} + 1`,
+					completedAt: updatedAt,
+				})
+				.where(
+					and(
+						eq(trackingRun.ownerId, payload.ownerId),
+						eq(trackingRun.analysisId, payload.analysisId),
+						eq(trackingRun.workflowId, workflowId),
+						eq(trackingRun.status, 'active'),
+					),
+				),
+			this.database
+				.update(drivingAnalysis)
+				.set({
+					status: 'failed',
+					stateVersion: current.stateVersion + 1,
+					updatedAt,
+				})
+				.where(
+					and(
+						eq(drivingAnalysis.id, payload.analysisId),
+						eq(drivingAnalysis.ownerId, payload.ownerId),
+						eq(drivingAnalysis.workflowId, workflowId),
+						eq(drivingAnalysis.workflowSequence, payload.workflowSequence),
+						eq(drivingAnalysis.stateVersion, current.stateVersion),
+						inArray(drivingAnalysis.status, ['queued', 'running']),
+					),
+				)
+				.returning(),
+		]);
+		const failed = failedRows[0];
+		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
+		return failed
+			? { kind: 'published', analysis: publicAnalysis(failed) }
+			: { kind: 'stale' };
+	}
+
 	private async replay(
 		record: DrivingAnalysisRecord,
 		requestDigest: string,
@@ -326,6 +668,8 @@ export class DrivingAnalysisAuthority {
 				kind: 'analysis-creation.v1',
 				ownerId: record.ownerId,
 				analysisId: record.id,
+				workflowId: record.workflowId,
+				workflowSequence: record.workflowSequence,
 				expectedStateVersion: record.stateVersion,
 			});
 		} catch {
@@ -377,6 +721,7 @@ export class DrivingAnalysisAuthority {
 		payload: DrivingAnalysisWorkflowPayload,
 		workflowId: string,
 	): Promise<boolean> {
+		if (payload.workflowId !== workflowId) return false;
 		const record = await this.database
 			.select({ id: drivingAnalysis.id })
 			.from(drivingAnalysis)
@@ -400,6 +745,7 @@ export class DrivingAnalysisAuthority {
 					eq(drivingAnalysis.id, payload.analysisId),
 					eq(drivingAnalysis.ownerId, payload.ownerId),
 					eq(drivingAnalysis.workflowId, workflowId),
+					eq(drivingAnalysis.workflowSequence, payload.workflowSequence),
 					eq(car.ownerId, payload.ownerId),
 					isNull(car.archivedAt),
 					isNull(driveSession.deletedAt),

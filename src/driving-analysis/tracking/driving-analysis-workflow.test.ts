@@ -20,6 +20,7 @@ import {
 	trackingRunInputFixture,
 } from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
+import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
 import type {
 	GpuLeaseAcquireInput,
 	GpuLeaseAcquireResult,
@@ -41,11 +42,13 @@ import type {
 	TransferGrantCommand,
 } from './contracts';
 import {
-	DrivingAnalysisWorkflow,
 	type DrivingAnalysisWorkflowEnvironment,
+	deployedInferenceProfile,
 	deterministicUuidV4,
 	FirstTrackingSegmentWorkflow,
 	type FirstTrackingWorkflowPayload,
+	firstTrackingSegmentWorkflow,
+	raceVideoTrackViewPreparationPort,
 	TrackingWorkflowError,
 } from './driving-analysis-workflow';
 import { inferenceProfileSchema } from './inference-profile';
@@ -544,6 +547,7 @@ const coreWorkflowFixture = (
 		),
 	};
 	const publication = { publish: vi.fn() };
+	const publishAnalysisState = vi.fn(async () => undefined);
 	const workflow = new FirstTrackingSegmentWorkflow(
 		authority as unknown as TrackingAuthority,
 		coordinator as unknown as ConstructorParameters<
@@ -552,6 +556,7 @@ const coreWorkflowFixture = (
 		provider,
 		grants,
 		publication,
+		publishAnalysisState,
 	);
 	return {
 		authority,
@@ -560,6 +565,7 @@ const coreWorkflowFixture = (
 		grants,
 		provider,
 		publication,
+		publishAnalysisState,
 		steps: new WorkflowStepFixture(),
 		workflow,
 	};
@@ -567,6 +573,9 @@ const coreWorkflowFixture = (
 
 describe('DrivingAnalysisWorkflow', () => {
 	test('runs the first immutable segment through LocalSam31Provider and commits evidence before release', async () => {
+		const publishTrackingState = vi
+			.spyOn(DrivingAnalysisAuthority.prototype, 'publishTrackingState')
+			.mockResolvedValue({ kind: 'stale' });
 		const { authority, database } = await prepareAuthority();
 		const r2 = new MockR2Controller();
 		const trace: string[] = [];
@@ -668,10 +677,7 @@ describe('DrivingAnalysisWorkflow', () => {
 			R2_ACCESS_KEY_ID: 'access-key',
 			R2_SECRET_ACCESS_KEY: 'secret-key',
 		};
-		const workflow = new DrivingAnalysisWorkflow(
-			{} as ExecutionContext,
-			environment,
-		);
+		const workflow = firstTrackingSegmentWorkflow(environment);
 		const steps = new WorkflowStepFixture();
 		const result = await workflow.run(
 			workflowEvent(),
@@ -709,6 +715,12 @@ describe('DrivingAnalysisWorkflow', () => {
 			'provider-grant-observation-artifact',
 		]);
 		expect(coordinator.calls.at(-1)).toBe('coordinator-release');
+		expect(publishTrackingState).toHaveBeenCalledWith(
+			OWNER_ID,
+			ANALYSIS_ID,
+			expect.objectContaining({ lifecycle: 'running', progress: 99 }),
+			expect.any(String),
+		);
 		expect(JSON.stringify(result)).not.toMatch(
 			/leaseId|fencingToken|transferRequest|objectKey|gpu\.chassisnotes/i,
 		);
@@ -738,6 +750,32 @@ describe('DrivingAnalysisWorkflow', () => {
 		);
 		expect(await deterministicUuidV4('one immutable lease')).toBe(first);
 		expect(await deterministicUuidV4('another lease')).not.toBe(first);
+	});
+
+	test('loads the pinned deployment profile and addresses media by run', async () => {
+		expect(
+			deployedInferenceProfile(JSON.stringify(inferenceProfileFixture())),
+		).toEqual(inferenceProfileFixture());
+		expect(() => deployedInferenceProfile(undefined)).toThrow(
+			'INFERENCE_PROFILE_JSON is required for tracking',
+		);
+		expect(() => deployedInferenceProfile('{')).toThrow(
+			'INFERENCE_PROFILE_JSON is invalid',
+		);
+		const prepareTrackView = vi.fn(async () => ({ outcome: 'accepted' }));
+		const getByName = vi.fn(() => ({ prepareTrackView }));
+		const port = raceVideoTrackViewPreparationPort({ getByName });
+		const command = {
+			request: { caseId: RUN_ID },
+		} as Parameters<typeof port.prepare>[0];
+		await expect(port.prepare(command)).resolves.toEqual({
+			outcome: 'accepted',
+		});
+		expect(getByName).toHaveBeenCalledWith(RUN_ID);
+		expect(prepareTrackView).toHaveBeenCalledWith(command);
+		expect(() =>
+			raceVideoTrackViewPreparationPort(undefined).prepare(command),
+		).toThrow('Race-video media container is unavailable');
 	});
 
 	test('fails malformed Workflow time before touching authority', async () => {
@@ -818,7 +856,7 @@ describe('DrivingAnalysisWorkflow', () => {
 		const { authority, database } = await prepareAuthority();
 		const coordinator = new CoordinatorFixture(authority);
 		vi.spyOn(coordinator, 'acquire').mockResolvedValue({ status: 'busy' });
-		const workflow = new DrivingAnalysisWorkflow({} as ExecutionContext, {
+		const environment: DrivingAnalysisWorkflowEnvironment = {
 			DB: database,
 			ANALYSIS_MEDIA: new MockR2Controller().bucket,
 			GPU_LEASE_COORDINATOR: { getByName: () => coordinator },
@@ -828,7 +866,8 @@ describe('DrivingAnalysisWorkflow', () => {
 			R2_ACCOUNT_ID: 'a'.repeat(32),
 			R2_ACCESS_KEY_ID: 'access-key',
 			R2_SECRET_ACCESS_KEY: 'secret-key',
-		});
+		};
+		const workflow = firstTrackingSegmentWorkflow(environment);
 		await expect(
 			workflow.run(
 				workflowEvent(),
@@ -1226,16 +1265,7 @@ describe('DrivingAnalysisWorkflow', () => {
 				R2_SECRET_ACCESS_KEY: 'secret-key',
 				...config,
 			};
-			const workflow = new DrivingAnalysisWorkflow(
-				{} as ExecutionContext,
-				environment,
-			);
-			await expect(
-				workflow.run(
-					workflowEvent(),
-					new WorkflowStepFixture() as unknown as WorkflowStep,
-				),
-			).rejects.toThrow(expected);
+			expect(() => firstTrackingSegmentWorkflow(environment)).toThrow(expected);
 		},
 	);
 

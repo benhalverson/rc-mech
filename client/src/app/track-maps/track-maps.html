@@ -76,7 +76,7 @@
 				@if (store.version(); as version) {
 					@if (version.status === 'draft' && store.canManage() && layout.status === 'active') {
 						<p class="alloy-supporting-text m-0">Review and save the complete geometry before approval. Approval locks the saved revision.</p>
-						<app-track-map-editor [version]="version" [busy]="store.busy()" (saveRequested)="store.saveDraft($event)" (approveRequested)="store.approveVersion()" />
+						<app-track-map-editor [version]="version" [recordings]="store.recordings()" [busy]="store.busy()" (frameRequested)="store.selectReferenceFrame($event)" (saveRequested)="store.saveDraft($event)" (approveRequested)="store.approveVersion()" />
 					} @else {
 						@if (store.canManage() && layout.status === 'active' && version.status === 'approved') {
 							<div class="flex flex-wrap gap-2">
@@ -102,4 +102,5 @@
 
 	@if (store.message()) { <p class="text-sm font-semibold text-alloy-accent" role="status">{{ store.message() }}</p> }
 	@if (store.error()) { <p class="alloy-state alloy-error-state" role="alert">{{ store.error() }}</p> }
+	<p class="alloy-supporting-text m-0 text-sm">Driving analysis lists approved Track maps only. If a saved draft is missing there, return here and approve it after checking the frame and Corner geometry.</p>
 </div>

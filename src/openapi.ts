@@ -1448,6 +1448,7 @@ const drivingAnalysisSchema = {
 		'approvedTrackMapVersionId',
 		'subjectSeed',
 		'sourceLayout',
+		'lifecycle',
 		'status',
 		'stage',
 		'progress',
@@ -1468,7 +1469,7 @@ const drivingAnalysisSchema = {
 			additionalProperties: false,
 			description:
 				'The initial Subject observation; timestampMs must fall inside the half-open Race window',
-			required: ['timestampMs', 'box'],
+			required: ['timestampMs', 'frameIndex', 'identity', 'box'],
 			properties: {
 				timestampMs: {
 					type: 'integer',
@@ -1476,6 +1477,8 @@ const drivingAnalysisSchema = {
 					description:
 						'Absolute recording timestamp at or after the Race-window start and before its end',
 				},
+				frameIndex: { type: 'integer', minimum: 0 },
+				identity: { type: 'string', minLength: 1, maxLength: 128 },
 				box: drivingAnalysisBoxSchema,
 			},
 		},
@@ -1500,6 +1503,20 @@ const drivingAnalysisSchema = {
 					},
 				},
 			},
+		},
+		lifecycle: {
+			type: 'string',
+			enum: [
+				'preparation',
+				'tracking',
+				'awaiting-reidentification',
+				'tracking-complete',
+				'failed',
+				'completed',
+				'cancelled',
+			],
+			description:
+				'Analysis-level lifecycle. tracking-complete means initial Tracking evidence is accepted; it is not full Driving-analysis completion.',
 		},
 		status: {
 			type: 'string',
@@ -1623,6 +1640,48 @@ drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}'] = {
 				},
 			},
 			404: { description: 'Driving analysis not found' },
+		},
+	},
+};
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/retry'] = {
+	parameters: [
+		{
+			name: 'analysisId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	post: {
+		summary: 'Owner-only retry with a fresh Workflow identity',
+		description:
+			'Preserves the recording, request identity, Race window, Subject seed, and approved Track map while fencing prior Tracking work.',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['expectedStateVersion'],
+						properties: {
+							expectedStateVersion: { type: 'integer', minimum: 1 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			202: {
+				description: 'Fresh retry Workflow accepted',
+				content: {
+					'application/json': { schema: drivingAnalysisResponse },
+				},
+			},
+			400: { description: 'Invalid observed state revision' },
+			404: { description: 'Driving analysis not found' },
+			409: { description: 'Analysis is ineligible or changed concurrently' },
+			503: { description: 'Durable processing Workflow unavailable' },
 		},
 	},
 };
@@ -2577,6 +2636,28 @@ const trackMapVersionSchema = {
 		approvedAt: { type: 'string', format: 'date-time', nullable: true },
 		retiredAt: { type: 'string', format: 'date-time', nullable: true },
 		corners: { type: 'array', maxItems: 100, items: trackCornerSchema },
+		referenceFrame: {
+			oneOf: [
+				{
+					type: 'object',
+					required: [
+						'raceVideoId',
+						'timestampMs',
+						'byteCount',
+						'checksumSha256',
+						'contentType',
+					],
+					properties: {
+						raceVideoId: { type: 'string', format: 'uuid' },
+						timestampMs: { type: 'integer', minimum: 0 },
+						byteCount: { type: 'integer', minimum: 1 },
+						checksumSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+						contentType: { type: 'string', enum: ['image/jpeg'] },
+					},
+				},
+				{ type: 'null' },
+			],
+		},
 	},
 } as const;
 const trackMapVersionResponse = {
@@ -2697,6 +2778,51 @@ trackMapPaths['/api/v1/track-layouts'] = {
 			201: { description: 'Track layout created' },
 			400: { description: 'Invalid name' },
 			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-recordings'] = {
+	get: {
+		summary: 'Owner-only list validated Race recordings for Track-map frames',
+		description:
+			'Lists recording metadata without exposing private object keys or source URLs.',
+		responses: {
+			200: {
+				description: 'Validated private Race recordings',
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							required: ['raceVideos'],
+							properties: {
+								raceVideos: {
+									type: 'array',
+									items: {
+										type: 'object',
+										required: [
+											'id',
+											'fileName',
+											'byteCount',
+											'durationMs',
+											'width',
+											'height',
+										],
+										properties: {
+											id: { type: 'string', format: 'uuid' },
+											fileName: { type: 'string' },
+											byteCount: { type: 'integer', minimum: 1 },
+											durationMs: { type: 'integer', minimum: 1 },
+											width: { type: 'integer', minimum: 1 },
+											height: { type: 'integer', minimum: 1 },
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			404: { description: 'Track-map management is owner-only' },
 		},
 	},
 };
@@ -2825,6 +2951,45 @@ trackMapPaths['/api/v1/track-map-versions/{versionId}/approve'] = {
 			409: {
 				description: 'Draft geometry is invalid or the observed state is stale',
 			},
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}/reference-frame'] = {
+	parameters: [trackMapVersionIdParameter],
+	post: {
+		summary: 'Owner-only extract and attach a still frame to a draft Track map',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['raceVideoId', 'timestampMs'],
+						properties: {
+							raceVideoId: { type: 'string', format: 'uuid' },
+							timestampMs: { type: 'integer', minimum: 0 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Reference frame extracted and attached' },
+			400: { description: 'Invalid recording or timestamp input' },
+			404: { description: 'Track map or validated recording not found' },
+			409: { description: 'Only a new draft may receive a reference frame' },
+		},
+	},
+};
+trackMapPaths[
+	'/api/v1/track-map-versions/{versionId}/reference-frame/content'
+] = {
+	parameters: [trackMapVersionIdParameter],
+	get: {
+		summary: 'Owner-only read the private Track-map reference frame',
+		responses: {
+			200: { description: 'Private JPEG reference frame' },
+			404: { description: 'Reference frame not found' },
 		},
 	},
 };

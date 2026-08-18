@@ -1,21 +1,83 @@
-<section class="grid gap-5" aria-labelledby="geometry-title">
+<section class="grid gap-6" aria-labelledby="map-editor-title">
+	<header class="border-b border-alloy-separator pb-4">
+		<p class="alloy-section-heading m-0">Guided map editor</p>
+		<h2 id="map-editor-title" class="mt-1 text-xl font-semibold">Anchor the geometry to one race frame</h2>
+		<p class="alloy-supporting-text mt-2 max-w-3xl">Choose a validated recording, capture the frame that best shows the layout, then draw each Corner over that image. Drafts remain private to Owner tools until approval.</p>
+	</header>
+
+	<ol class="grid gap-4 xl:grid-cols-[minmax(15rem,0.7fr)_minmax(15rem,0.7fr)_minmax(0,1.6fr)]">
+		<li class="border-l-4 border-alloy-accent bg-alloy-canvas p-4">
+			<p class="m-0 text-xs font-semibold uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">Step 1 · Recording</p>
+			<h3 class="mt-2 text-base font-semibold">Choose the camera view</h3>
+			@if (version()?.referenceFrame; as frame) {
+				<p class="mt-3 text-sm font-semibold">Frame source locked</p>
+				<p class="mt-1 text-xs text-alloy-text-on-canvas-secondary">Recording {{ frame.raceVideoId }} · {{ frame.timestampMs }} ms</p>
+			} @else {
+				<label class="mt-3 grid gap-1 text-sm font-semibold" for="recording-select">Validated Race recording</label>
+				<select id="recording-select" class="alloy-control mt-1 w-full" [value]="selectedRecordingId()" (change)="selectRecording($any($event.target).value)" [disabled]="busy() || !version()">
+					<option value="">Choose a recording</option>
+					@for (recording of recordings(); track recording.id) {
+						<option [value]="recording.id">{{ recording.fileName }} · {{ recording.width }}×{{ recording.height }}</option>
+					}
+				</select>
+				@if (!recordings().length) {
+					<p class="mt-2 text-xs text-alloy-text-on-canvas-secondary">No validated recordings are ready yet. Finish a Race recording upload and validation first.</p>
+				}
+			}
+		</li>
+
+		<li class="border-l-4 border-alloy-command-secondary bg-alloy-canvas p-4">
+			<p class="m-0 text-xs font-semibold uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">Step 2 · Frame</p>
+			<h3 class="mt-2 text-base font-semibold">Set the reference moment</h3>
+			@if (version()?.referenceFrame; as frame) {
+				<p class="mt-3 text-sm font-semibold">{{ frame.timestampMs }} ms selected</p>
+				<p class="mt-1 text-xs text-alloy-text-on-canvas-secondary">The frame is immutable for this draft. Create another draft to choose a different moment.</p>
+			} @else {
+				<label class="mt-3 grid gap-1 text-sm font-semibold" for="frame-timestamp">Timestamp in milliseconds</label>
+				<input id="frame-timestamp" class="alloy-control mt-1 w-full" type="number" min="0" [attr.max]="selectedRecording() ? selectedRecording()!.durationMs - 1 : null" step="1" [value]="timestampMs()" (input)="setTimestamp($any($event.target).value)" [disabled]="busy() || !selectedRecording()" />
+				@if (selectedRecording(); as recording) {
+					<p class="mt-2 text-xs text-alloy-text-on-canvas-secondary">Recording length: {{ recording.durationMs }} ms</p>
+				}
+				<button class="alloy-control alloy-control-secondary mt-3 w-full" type="button" (click)="selectFrame()" [disabled]="busy() || !selectedRecording() || timestampMs() >= selectedRecording()!.durationMs">{{ busy() ? 'Extracting frame…' : 'Use this frame' }}</button>
+			}
+		</li>
+
+		<li class="border-l-4 border-alloy-command-text bg-alloy-canvas p-4">
+			<p class="m-0 text-xs font-semibold uppercase tracking-[0.12em] text-alloy-text-on-canvas-secondary">Step 3 · Geometry</p>
+			<h3 class="mt-2 text-base font-semibold">Draw what analysis should watch</h3>
+			@if (activeCorner(); as corner) {
+				<p class="mt-3 text-sm"><strong>Active:</strong> {{ corner.order }} · {{ corner.name }}</p>
+				<p class="mt-1 text-xs text-alloy-text-on-canvas-secondary"><strong>Drawing:</strong> {{ targetLabel() }}</p>
+			} @else {
+				<p class="mt-3 text-sm text-alloy-text-on-canvas-secondary">Add a Corner after selecting the frame.</p>
+			}
+		</li>
+	</ol>
+
 	<div class="flex flex-wrap items-end justify-between gap-3">
 		<div>
-			<p class="alloy-section-heading m-0">Geometry studio</p>
-			<h2 id="geometry-title" class="mt-1 text-xl font-semibold">Draw the corners the camera can see</h2>
-			<p class="alloy-supporting-text mt-2 max-w-2xl">Coordinates use the fixed bottom-two-thirds Track view. Select a gate point or Corner-view target, then click the canvas or use arrow keys to adjust it. Hold Shift for larger keyboard steps.</p>
+			<h3 class="m-0 text-lg font-semibold">Corner geometry</h3>
+			<p class="alloy-supporting-text mt-1 max-w-2xl">Select a gate point or Corner-view target, then click the lower Track-view region or use arrow keys. Hold Shift for larger keyboard steps.</p>
 		</div>
 		<div class="flex gap-2">
-			<button class="alloy-control alloy-control-secondary" type="button" (click)="addCorner()" [disabled]="busy() || !version()">Add corner</button>
+			<button class="alloy-control alloy-control-secondary" type="button" (click)="addCorner()" [disabled]="busy() || !version()?.referenceFrame">Add corner</button>
 			<button class="alloy-control alloy-control-secondary" type="button" (click)="removeCorner(selectedCorner()!)" [disabled]="busy() || !version() || !activeCorner()">Remove corner</button>
 		</div>
 	</div>
+
 	<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<div class="track-canvas-wrap border border-alloy-command-separator bg-alloy-command-control p-2">
 			<div class="mb-2 flex flex-wrap gap-4 text-xs font-semibold text-alloy-command-text" aria-hidden="true"><span>━ Entry gate</span><span>┅ Exit gate</span><span>┄ Corner view</span></div>
-			<button class="alloy-focus-ring track-canvas-button block w-full border-0 bg-transparent p-0 text-left" type="button" aria-label="Track map geometry editor. Click to place the selected geometry target, or use arrow keys." (click)="moveFromCanvas($event, selectedCorner()!)" (keydown)="moveSelected($event, selectedCorner()!)" [disabled]="busy() || !version() || !activeCorner()">
-				<app-track-map-geometry [corners]="corners()" [activeCorner]="activeCorner()" label="Editable Track map geometry" [decorative]="true" />
-			</button>
+			@if (version()?.referenceFrame) {
+				<div class="relative aspect-video overflow-hidden bg-black">
+					<img class="absolute inset-0 h-full w-full object-cover" [src]="frameUrl()" width="1920" height="1080" alt="Selected private Race recording reference frame" />
+					<button class="track-canvas-button alloy-focus-ring absolute inset-x-0 bottom-0 h-2/3 w-full border-0 bg-transparent p-0 text-left" type="button" aria-label="Track-view geometry editor. Click to place the selected geometry target, or use arrow keys." (click)="moveFromCanvas($event, selectedCorner()!)" (keydown)="moveSelected($event, selectedCorner()!)" [disabled]="busy() || !activeCorner()">
+						<app-track-map-geometry class="absolute inset-0" [corners]="corners()" [activeCorner]="activeCorner()" [overlay]="true" label="Editable Track map geometry over the selected frame" [decorative]="true" />
+					</button>
+				</div>
+			} @else {
+				<div class="grid aspect-video place-items-center border border-dashed border-alloy-command-separator p-6 text-center text-sm text-alloy-command-text">Select a validated recording and frame to reveal the geometry canvas.</div>
+			}
 		</div>
 		<div class="grid content-start gap-3">
 			<label class="grid gap-1 text-sm font-semibold" for="corner-select">Corner</label>
@@ -61,8 +123,9 @@
 			}
 			@if (errors().length) { <div class="alloy-state alloy-error-state" role="alert"><strong>Geometry needs attention</strong><ul class="mt-2 list-disc pl-5">@for (error of errors(); track error) { <li>{{ error }}</li> }</ul></div> }
 			<div class="grid gap-2 border-t border-alloy-separator pt-3">
-				<button class="alloy-control alloy-control-primary" type="button" (click)="saveDraft()" [disabled]="busy() || !version() || errors().length > 0" [attr.aria-busy]="busy()">{{ busy() ? 'Saving…' : 'Save draft geometry' }}</button>
+				<button class="alloy-control alloy-control-primary" type="button" (click)="saveDraft()" [disabled]="busy() || !version()?.referenceFrame || errors().length > 0" [attr.aria-busy]="busy()">{{ busy() ? 'Saving…' : 'Save draft' }}</button>
 				<app-track-map-approval [version]="version()" [corners]="corners()" [busy]="busy()" [valid]="errors().length === 0" (approveRequested)="approveRequested.emit()" />
+				<p class="m-0 text-xs text-alloy-text-on-canvas-secondary">Saved drafts do not appear in Driving analysis until you approve this version.</p>
 			</div>
 		</div>
 	</div>

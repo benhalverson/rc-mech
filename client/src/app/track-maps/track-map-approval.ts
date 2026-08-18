@@ -20,6 +20,7 @@ export class TrackMapApproval {
 	protected readonly canApprove = computed(
 		() =>
 			this.version()?.status === 'draft' &&
+			this.version()?.referenceFrame !== null &&
 			this.corners().length > 0 &&
 			this.valid() &&
 			!this.dirty(),

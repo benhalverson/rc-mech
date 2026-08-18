@@ -20,6 +20,8 @@ import type {
 	TrackCorner,
 	TrackLayout,
 	TrackLayoutCollection,
+	TrackMapRecording,
+	TrackMapReferenceFrame,
 	TrackMapVersion,
 } from './track-map.models';
 
@@ -42,6 +44,14 @@ const corner = object({
 		height: number(),
 	}),
 });
+const referenceFrame = object({
+	raceVideoId: string(),
+	timestampMs: number(),
+	byteCount: number(),
+	checksumSha256: string(),
+	contentType: literal('image/jpeg'),
+	contentUrl: string(),
+});
 const version = object({
 	id: string(),
 	layoutId: string(),
@@ -56,6 +66,7 @@ const version = object({
 	approvedAt: nullable(string()),
 	retiredAt: nullable(string()),
 	corners: array(corner),
+	referenceFrame: nullable(referenceFrame),
 });
 const mapVersionSummary = object({
 	id: string(),
@@ -82,6 +93,16 @@ const layoutsResponse = object({
 	trackLayouts: array(layout),
 });
 const versionResponse = object({ trackMapVersion: version });
+const referenceFrameResponse = object({ referenceFrame });
+const recording = object({
+	id: string(),
+	fileName: string(),
+	byteCount: number(),
+	durationMs: number(),
+	width: number(),
+	height: number(),
+});
+const recordingsResponse = object({ raceVideos: array(recording) });
 const layoutResponse = object({ trackLayout: layout });
 const apiError = object({ error: string() });
 
@@ -111,6 +132,12 @@ export const parseTrackLayouts = (value: unknown): TrackLayoutCollection => {
 };
 export const parseTrackMapVersion = (value: unknown): TrackMapVersion =>
 	parse(versionResponse, value).trackMapVersion;
+export const parseTrackMapReferenceFrame = (
+	value: unknown,
+): TrackMapReferenceFrame =>
+	parse(referenceFrameResponse, value).referenceFrame;
+export const parseTrackMapRecordings = (value: unknown): TrackMapRecording[] =>
+	parse(recordingsResponse, value).raceVideos;
 export const parseTrackLayout = (value: unknown): TrackLayout =>
 	normalizeLayout(parse(layoutResponse, value).trackLayout);
 export const trackMapGatewayFailure = (
@@ -140,6 +167,7 @@ export const trackMapGatewayFailure = (
 export class TrackMapGateway {
 	private readonly http = inject(HttpClient);
 	private readonly versionId = signal('');
+	private readonly recordingsEnabled = signal(false);
 	readonly layouts = httpResource<TrackLayoutCollection>(
 		() => ({ url: '/api/v1/track-layouts', withCredentials: true }),
 		{ parse: parseTrackLayouts },
@@ -156,6 +184,16 @@ export class TrackMapGateway {
 		},
 		{ parse: parseTrackMapVersion },
 	);
+	readonly recordings = httpResource<TrackMapRecording[]>(
+		() =>
+			this.recordingsEnabled()
+				? { url: '/api/v1/track-map-recordings', withCredentials: true }
+				: undefined,
+		{ parse: parseTrackMapRecordings },
+	);
+	loadRecordings(): void {
+		this.recordingsEnabled.set(true);
+	}
 	selectVersion(versionId: string | null): void {
 		this.versionId.set(versionId ?? '');
 	}
@@ -197,6 +235,23 @@ export class TrackMapGateway {
 				{ withCredentials: true },
 			),
 			parseTrackMapVersion,
+		);
+	}
+	selectReferenceFrame(command: {
+		versionId: string;
+		raceVideoId: string;
+		timestampMs: number;
+	}): Observable<TrackMapReferenceFrame> {
+		return this.parseMutation(
+			this.http.post<unknown>(
+				`/api/v1/track-map-versions/${command.versionId}/reference-frame`,
+				{
+					raceVideoId: command.raceVideoId,
+					timestampMs: command.timestampMs,
+				},
+				{ withCredentials: true },
+			),
+			parseTrackMapReferenceFrame,
 		);
 	}
 	approveVersion(

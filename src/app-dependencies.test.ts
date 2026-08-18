@@ -17,6 +17,8 @@ const analysisPayload: DrivingAnalysisWorkflowPayload = {
 	kind: 'analysis-creation.v1',
 	ownerId: 'owner-1',
 	analysisId: '22222222-2222-4222-8222-222222222222',
+	workflowId: '22222222-2222-4222-8222-222222222222',
+	workflowSequence: 1,
 	expectedStateVersion: 1,
 };
 

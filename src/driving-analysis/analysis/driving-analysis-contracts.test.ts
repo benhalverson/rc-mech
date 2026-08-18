@@ -15,6 +15,8 @@ const input = () => ({
 	raceWindow: { startTimestampMs: 100, endTimestampMs: 1000 },
 	subjectSeed: {
 		timestampMs: 200,
+		frameIndex: 12,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 });
@@ -27,6 +29,8 @@ describe('Driving-analysis creation contracts', () => {
 				kind: 'analysis-creation.v1',
 				ownerId: 'owner-1',
 				analysisId: '66666666-6666-4666-8666-666666666666',
+				workflowId: '66666666-6666-4666-8666-666666666666',
+				workflowSequence: 1,
 				expectedStateVersion: 1,
 			}),
 		).toMatchObject({ ownerId: 'owner-1' });

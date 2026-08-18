@@ -273,6 +273,8 @@ export const drivingAnalysis = sqliteTable(
 			.notNull()
 			.references(() => trackMapVersion.id),
 		subjectSeedTimestampMs: integer('subject_seed_timestamp_ms').notNull(),
+		subjectSeedFrameIndex: integer('subject_seed_frame_index').notNull(),
+		subjectSeedIdentity: text('subject_seed_identity').notNull(),
 		subjectBoxX: real('subject_box_x').notNull(),
 		subjectBoxY: real('subject_box_y').notNull(),
 		subjectBoxWidth: real('subject_box_width').notNull(),
@@ -282,6 +284,7 @@ export const drivingAnalysis = sqliteTable(
 		sourceWidth: integer('source_width').notNull(),
 		sourceHeight: integer('source_height').notNull(),
 		workflowId: text('workflow_id').notNull().unique(),
+		workflowSequence: integer('workflow_sequence').notNull().default(1),
 		status: text('status', {
 			enum: [
 				'queued',
@@ -447,6 +450,28 @@ export const trackCorner = sqliteTable(
 			table.mapVersionId,
 			table.order,
 		),
+	],
+);
+export const trackMapReferenceFrame = sqliteTable(
+	'track_map_reference_frame',
+	{
+		id: id('id'),
+		mapVersionId: text('map_version_id')
+			.notNull()
+			.references(() => trackMapVersion.id, { onDelete: 'cascade' }),
+		raceVideoId: text('race_video_id').notNull(),
+		timestampMs: integer('timestamp_ms').notNull(),
+		objectKey: text('object_key').notNull(),
+		byteCount: integer('byte_count').notNull(),
+		checksumSha256: text('checksum_sha256').notNull(),
+		contentType: text('content_type').notNull(),
+		createdBy: text('created_by')
+			.notNull()
+			.references(() => owner.id),
+		createdAt: text('created_at').notNull(),
+	},
+	(table) => [
+		index('track_map_reference_frame_version_idx').on(table.mapVersionId),
 	],
 );
 export const maintenancePlan = sqliteTable('maintenance_plan', {

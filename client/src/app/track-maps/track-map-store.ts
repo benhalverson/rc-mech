@@ -13,6 +13,7 @@ import type {
 	CreateTrackMapDraftCommand,
 	RenameTrackLayoutCommand,
 	SaveTrackMapDraftCommand,
+	SelectTrackMapFrameCommand,
 	TrackMapVersion,
 } from './track-map.models';
 import {
@@ -24,6 +25,7 @@ type TrackMapOperation =
 	| 'Create layout'
 	| 'Create draft'
 	| 'Save draft'
+	| 'Select frame'
 	| 'Approve map'
 	| 'Retire map'
 	| 'Rename layout'
@@ -82,9 +84,16 @@ export const TrackMapStore = signalStore(
 				store.gateway.layouts.hasValue() &&
 				store.gateway.layouts.value().canManage,
 		),
+		recordings: computed(() =>
+			store.gateway.recordings.hasValue()
+				? store.gateway.recordings.value()
+				: [],
+		),
 		loading: computed(
 			() =>
-				store.gateway.layouts.isLoading() || store.gateway.version.isLoading(),
+				store.gateway.layouts.isLoading() ||
+				store.gateway.version.isLoading() ||
+				store.gateway.recordings.isLoading(),
 		),
 		version: computed(() => {
 			const selectedVersionId = store.selectedVersionId();
@@ -113,6 +122,12 @@ export const TrackMapStore = signalStore(
 				return 'Track maps could not be loaded.';
 			if (store.selectedVersionId() && store.gateway.version.error())
 				return 'The selected Track map could not be loaded.';
+			if (
+				store.gateway.layouts.hasValue() &&
+				store.gateway.layouts.value().canManage &&
+				store.gateway.recordings.error()
+			)
+				return 'Validated Race recordings could not be loaded.';
 			return '';
 		}),
 	})),
@@ -157,6 +172,7 @@ export const TrackMapStore = signalStore(
 					outcome: { status: 'idle' },
 				});
 				store.gateway.selectVersion(version?.id ?? null);
+				if (store.canManage()) store.gateway.loadRecordings();
 			},
 			openVersion(versionId: string): void {
 				if (store.busy()) return;
@@ -240,11 +256,37 @@ export const TrackMapStore = signalStore(
 					},
 				);
 			},
+			selectReferenceFrame(command: SelectTrackMapFrameCommand): void {
+				const version = store.version();
+				if (
+					version?.status !== 'draft' ||
+					version.referenceFrame !== null ||
+					store.busy() ||
+					!store.canManage() ||
+					!activeLayout(store.selectedLayoutId())
+				)
+					return;
+				run(
+					'Select frame',
+					() =>
+						store.gateway.selectReferenceFrame({
+							versionId: version.id,
+							raceVideoId: command.raceVideoId,
+							timestampMs: command.timestampMs,
+						}),
+					(referenceFrame) => {
+						patchState(store, {
+							localVersion: { ...version, referenceFrame },
+						});
+					},
+				);
+			},
 			approveVersion(): void {
 				const version = store.version();
 				if (
 					version?.status !== 'draft' ||
 					version.corners.length === 0 ||
+					version.referenceFrame === null ||
 					store.busy() ||
 					!store.canManage() ||
 					!activeLayout(store.selectedLayoutId())

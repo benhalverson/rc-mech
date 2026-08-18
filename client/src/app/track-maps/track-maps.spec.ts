@@ -1,7 +1,9 @@
 import { signal } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackLayout, TrackMapVersion } from './track-map.models';
+import { TrackMapEditor } from './track-map-editor';
 import { TrackMapStore } from './track-map-store';
 import { TrackMaps } from './track-maps';
 
@@ -18,6 +20,14 @@ const version: TrackMapVersion = {
 	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
+	referenceFrame: {
+		raceVideoId: '33333333-3333-4333-8333-333333333333',
+		timestampMs: 100,
+		byteCount: 100,
+		checksumSha256: 'a'.repeat(64),
+		contentType: 'image/jpeg',
+		contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
+	},
 	corners: [
 		{
 			key: 'turn-1',
@@ -88,6 +98,7 @@ describe('TrackMaps', () => {
 		const selectedVersionId = signal<string | null>(null);
 		store = {
 			layouts: signal([layout]),
+			recordings: signal([]),
 			canManage: signal(true),
 			selectedLayoutId,
 			selectedVersionId,
@@ -102,6 +113,7 @@ describe('TrackMaps', () => {
 			createLayout: vi.fn(),
 			createDraft: vi.fn(),
 			saveDraft: vi.fn(),
+			selectReferenceFrame: vi.fn(),
 			approveVersion: vi.fn(),
 			retireVersion: vi.fn(),
 			renameLayout: vi.fn(),
@@ -248,11 +260,21 @@ describe('TrackMaps', () => {
 			version,
 		);
 		fixture.detectChanges();
-		button('Save draft geometry').click();
+		const editor = fixture.debugElement.query(By.directive(TrackMapEditor))
+			.componentInstance as TrackMapEditor;
+		editor.frameRequested.emit({
+			raceVideoId: 'recording-1',
+			timestampMs: 1_000,
+		});
+		button('Save draft').click();
 		button('Approve version').click();
 		button('Retire layout').click();
 		expect(store['saveDraft']).toHaveBeenCalledWith({
 			corners: version.corners,
+		});
+		expect(store['selectReferenceFrame']).toHaveBeenCalledWith({
+			raceVideoId: 'recording-1',
+			timestampMs: 1_000,
 		});
 		expect(store['approveVersion']).toHaveBeenCalledOnce();
 		expect(store['retireLayout']).toHaveBeenCalledOnce();

@@ -41,6 +41,8 @@ export const createDrivingAnalysisInputSchema = z
 		}),
 		subjectSeed: z.strictObject({
 			timestampMs: timestampSchema,
+			frameIndex: z.number().int().nonnegative(),
+			identity: z.string().trim().min(1).max(128),
 			box: normalizedSubjectBoxSchema,
 		}),
 	})
@@ -68,6 +70,12 @@ export const drivingAnalysisWorkflowPayloadSchema = z.strictObject({
 	kind: z.literal('analysis-creation.v1'),
 	ownerId: z.string().min(1).max(128),
 	analysisId: uuidV4Schema,
+	workflowId: uuidV4Schema,
+	workflowSequence: z.number().int().positive(),
+	expectedStateVersion: z.number().int().positive(),
+});
+
+export const retryDrivingAnalysisInputSchema = z.strictObject({
 	expectedStateVersion: z.number().int().positive(),
 });
 
@@ -91,6 +99,8 @@ export type PublicDrivingAnalysis = Readonly<{
 	approvedTrackMapVersionId: string;
 	subjectSeed: Readonly<{
 		timestampMs: number;
+		frameIndex: number;
+		identity: string;
 		box: Readonly<{ x: number; y: number; width: number; height: number }>;
 	}>;
 	sourceLayout: Readonly<{
@@ -100,6 +110,14 @@ export type PublicDrivingAnalysis = Readonly<{
 		height: number;
 		trackView: typeof FIXED_TRACK_VIEW;
 	}>;
+	lifecycle:
+		| 'preparation'
+		| 'tracking'
+		| 'awaiting-reidentification'
+		| 'tracking-complete'
+		| 'failed'
+		| 'completed'
+		| 'cancelled';
 	status:
 		| 'queued'
 		| 'running'
@@ -153,6 +171,8 @@ export const digestDrivingAnalysisCommand = async (
 				},
 				requestId: command.input.requestId,
 				subjectSeed: {
+					frameIndex: String(command.input.subjectSeed.frameIndex),
+					identity: command.input.subjectSeed.identity,
 					box: {
 						height: float64Token(command.input.subjectSeed.box.height),
 						width: float64Token(command.input.subjectSeed.box.width),

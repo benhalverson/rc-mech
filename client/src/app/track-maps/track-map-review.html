@@ -13,7 +13,16 @@
 	</dl>
 	<div class="border border-alloy-command-separator bg-alloy-command-control p-2">
 		<div class="mb-2 flex flex-wrap gap-4 text-xs font-semibold text-alloy-command-text" aria-hidden="true"><span>━ Entry gate</span><span>┅ Exit gate</span><span>┄ Corner view</span></div>
-		<app-track-map-geometry [corners]="version().corners" [label]="'Read-only Track map geometry for version ' + version().version" />
+		@if (version().referenceFrame; as frame) {
+			<div class="relative aspect-video overflow-hidden bg-black">
+				<img class="absolute inset-0 h-full w-full object-cover" [src]="frame.contentUrl" width="1920" height="1080" [alt]="'Private Race recording reference frame at ' + frame.timestampMs + ' milliseconds'" />
+				<app-track-map-geometry class="pointer-events-none absolute inset-x-0 bottom-0 h-2/3" [corners]="version().corners" [overlay]="true" [label]="'Read-only Track map geometry for version ' + version().version" />
+			</div>
+			<p class="m-0 mt-2 text-xs text-alloy-command-text">Reference frame · {{ frame.timestampMs }} ms · recording {{ frame.raceVideoId }}</p>
+		} @else {
+			<app-track-map-geometry [corners]="version().corners" [label]="'Read-only Track map geometry for version ' + version().version" />
+			<p class="m-0 mt-2 text-xs text-alloy-command-text">This legacy version has no saved reference frame.</p>
+		}
 	</div>
 	<ol class="grid gap-3 p-0" aria-label="Normalized Corner geometry">
 		@for (corner of version().corners; track corner.key) {

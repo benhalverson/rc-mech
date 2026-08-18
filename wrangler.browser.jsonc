@@ -21,5 +21,19 @@
 			"bucket_name": "rc-mech-analysis-media"
 		}
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "RACE_VIDEO_MEDIA_CONTAINER",
+				"class_name": "BrowserRaceVideoMediaContainer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1-race-video-media-container",
+			"new_sqlite_classes": ["BrowserRaceVideoMediaContainer"]
+		}
+	],
 	"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }
 }

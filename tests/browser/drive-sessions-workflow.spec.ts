@@ -31,7 +31,11 @@ const createCar = async (page: Page, name: string) => {
 	return (await response.json()) as { car: { id: string } };
 };
 
-const createApprovedTrackMap = async (page: Page, name: string) => {
+const createApprovedTrackMap = async (
+	page: Page,
+	name: string,
+	raceVideoId: string,
+) => {
 	const layoutResponse = await page.request.post('/api/v1/track-layouts', {
 		data: { name },
 	});
@@ -47,6 +51,11 @@ const createApprovedTrackMap = async (page: Page, name: string) => {
 	const draft = (await draftResponse.json()) as {
 		trackMapVersion: { id: string; stateVersion: number };
 	};
+	const frameResponse = await page.request.post(
+		`/api/v1/track-map-versions/${draft.trackMapVersion.id}/reference-frame`,
+		{ data: { raceVideoId, timestampMs: 250 } },
+	);
+	expect(frameResponse.status()).toBe(201);
 	const geometryResponse = await page.request.patch(
 		`/api/v1/track-map-versions/${draft.trackMapVersion.id}`,
 		{
@@ -265,10 +274,6 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 }) => {
 	await authenticateOwner(page);
 	const created = await createCar(page, 'Driving analysis browser fixture');
-	const trackMap = await createApprovedTrackMap(
-		page,
-		'Analysis browser circuit',
-	);
 	const driveResponse = await page.request.post(
 		`/api/v1/cars/${created.car.id}/drives`,
 		{
@@ -315,6 +320,11 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	expect(await completionResponse.json()).toMatchObject({
 		raceVideo: { status: 'ready' },
 	});
+	const trackMap = await createApprovedTrackMap(
+		page,
+		'Analysis browser circuit',
+		recording.raceVideo.id,
+	);
 
 	await page.goto(`/garage/${created.car.id}/drive-sessions`);
 	const section = page.locator(
@@ -350,7 +360,9 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		.click();
 	await creator.getByLabel('Race start').fill('100');
 	await creator.getByLabel('Race end').fill('900');
-	await creator.getByLabel('Subject frame').fill('500');
+	await creator.getByLabel('Subject timestamp (ms)').fill('500');
+	await creator.getByLabel('Source frame index').fill('5');
+	await creator.getByLabel('Subject identity').fill('car-44');
 	const subjectBox = creator.locator('[data-subject-box]');
 	await subjectBox.focus();
 	await subjectBox.press('ArrowRight');
@@ -399,6 +411,8 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		raceWindow: { startTimestampMs: 100, endTimestampMs: 900 },
 		subjectSeed: {
 			timestampMs: 500,
+			frameIndex: 5,
+			identity: 'car-44',
 			box: { x: 0.452, y: 0.45, width: 0.12, height: 0.08 },
 		},
 	});

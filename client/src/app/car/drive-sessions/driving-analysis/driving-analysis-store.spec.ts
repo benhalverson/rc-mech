@@ -91,6 +91,8 @@ const analysis = (
 	approvedTrackMapVersionId: '44444444-4444-4444-8444-444444444444',
 	subjectSeed: {
 		timestampMs: 180_000,
+		frameIndex: 5_400,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 	sourceLayout: {
@@ -100,6 +102,7 @@ const analysis = (
 		height: 1080,
 		trackView: { x: 0, y: 1 / 3, width: 1, height: 2 / 3 },
 	},
+	lifecycle: 'preparation',
 	status: 'queued',
 	stage: 'preparation',
 	progress: 0,
@@ -117,6 +120,8 @@ const analysisCommand = (): StartDrivingAnalysisCommand => ({
 	raceWindow: { startTimestampMs: 120_000, endTimestampMs: 720_000 },
 	subjectSeed: {
 		timestampMs: 180_000,
+		frameIndex: 5_400,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 });
@@ -142,6 +147,12 @@ class FakeDrivingAnalysisGateway {
 	readonly create = vi.fn<
 		(_command: CreateDrivingAnalysisCommand) => Observable<DrivingAnalysis>
 	>(() => of(analysis()));
+	readonly retry = vi.fn<
+		(
+			_analysisId: string,
+			_expectedStateVersion: number,
+		) => Observable<DrivingAnalysis>
+	>(() => of(analysis({ stateVersion: 2 })));
 }
 
 class FakeTrackMapGateway {
@@ -218,6 +229,14 @@ class FakeTrackMapGateway {
 		approvedBy: 'owner-1',
 		approvedAt: '2026-08-17T18:00:00.000Z',
 		retiredAt: null,
+		referenceFrame: {
+			raceVideoId: '33333333-3333-4333-8333-333333333333',
+			timestampMs: 100,
+			byteCount: 100,
+			checksumSha256: 'a'.repeat(64),
+			contentType: 'image/jpeg',
+			contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
+		},
 		corners: [],
 	});
 	readonly versionHasValue = signal(false);
@@ -417,11 +436,68 @@ describe('DrivingAnalysisStore', () => {
 
 		store.refreshAnalysis();
 		analyses.analysisValue.set(
-			analysis({ status: 'running', progress: 15, stateVersion: 3 }),
+			analysis({ status: 'failed', progress: 15, stateVersion: 3 }),
 		);
 		analyses.analysisHasValue.set(true);
 		await vi.waitFor(() => expect(store.analysis()?.progress).toBe(15));
 		expect(analyses.refresh).toHaveBeenCalledOnce();
+	});
+
+	it('retries an eligible analysis through a fresh monitored workflow', async () => {
+		store.retryAnalysis();
+		expect(analyses.retry).not.toHaveBeenCalled();
+		store.selectCar('car-1');
+		analyses.create.mockReturnValueOnce(
+			of(analysis({ status: 'failed', progress: 15, stateVersion: 3 })),
+		);
+		store.createAnalysis(analysisCommand());
+		await vi.waitFor(() => expect(store.analysis()).not.toBeNull());
+		const retried = new Subject<DrivingAnalysis>();
+		analyses.retry.mockReturnValueOnce(retried);
+		analyses.analysisValue.set(
+			analysis({ status: 'failed', progress: 15, stateVersion: 3 }),
+		);
+		analyses.analysisHasValue.set(true);
+		store.retryAnalysis();
+		expect(store.analysisCreation().status).toBe('retrying');
+		expect(store.pending()).toBe(true);
+		TestBed.flushEffects();
+		expect(store.analysisCreation().status).toBe('retrying');
+		store.retryAnalysis();
+		expect(analyses.retry).toHaveBeenCalledOnce();
+		expect(analyses.retry).toHaveBeenCalledWith(analysis().id, 3);
+		retried.next(analysis({ stateVersion: 4 }));
+		retried.complete();
+		await vi.waitFor(() =>
+			expect(store.analysisCreation().status).toBe('accepted'),
+		);
+		expect(store.analysis()?.stateVersion).toBe(4);
+		expect(analyses.selectAnalysis).toHaveBeenLastCalledWith(analysis().id);
+
+		store.retryAnalysis();
+		expect(analyses.retry).toHaveBeenCalledOnce();
+	});
+
+	it('retains immutable analysis facts when retry is rejected', async () => {
+		const running = analysis({
+			status: 'awaiting-reidentification',
+			stage: 'tracking',
+			progress: 50,
+			stateVersion: 3,
+		});
+		store.selectCar('car-1');
+		analyses.create.mockReturnValueOnce(of(running));
+		store.createAnalysis(analysisCommand());
+		await vi.waitFor(() => expect(store.analysis()).toEqual(running));
+		analyses.retry.mockReturnValueOnce(
+			throwError(() => ({ kind: 'unavailable' })),
+		);
+		store.retryAnalysis();
+		await vi.waitFor(() =>
+			expect(store.analysisCreation().status).toBe('failed'),
+		);
+		expect(store.analysis()).toEqual(running);
+		expect(store.analysisError()).toContain('could not be started or retried');
 	});
 
 	it.each([

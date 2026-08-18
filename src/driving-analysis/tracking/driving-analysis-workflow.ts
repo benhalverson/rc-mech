@@ -12,7 +12,7 @@ import {
 import {
 	type DrivingAnalysisCreationWorkflowResult,
 	DrivingAnalysisCreationWorkflowRunner,
-	FakeDrivingAnalysisContainerPort,
+	RealDrivingAnalysisContainerPort,
 } from '../analysis/driving-analysis-creation-workflow';
 import {
 	GPU_LEASE_COORDINATOR_OBJECT_NAME,
@@ -40,15 +40,19 @@ import {
 	type TrackingJobSubmission,
 	uuidV4Schema,
 } from './contracts';
+import { inferenceProfileSchema } from './inference-profile';
 import {
 	LocalSam31Provider,
 	type TrackingProvider,
 } from './local-sam31-provider';
+import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
+import { preparedTrackViewStore } from './r2-prepared-track-view-store';
 import {
 	type R2TransferGrantAuthority,
 	r2TransferGrantAuthority,
 	TrackingTransferGrantError,
 } from './r2-transfer-grant-authority';
+import type { TrackViewMediaPreparationPort } from './track-view-preparation';
 import {
 	type TrackingArtifactPublication,
 	TrackingArtifactPublicationError,
@@ -94,15 +98,6 @@ export type FirstTrackingWorkflowPayload = z.infer<
 	typeof firstTrackingWorkflowPayloadSchema
 >;
 
-export const drivingAnalysisWorkflowEventPayloadSchema = z.union([
-	drivingAnalysisWorkflowPayloadSchema,
-	firstTrackingWorkflowPayloadSchema,
-]);
-
-export type DrivingAnalysisWorkflowEventPayload =
-	| DrivingAnalysisWorkflowPayload
-	| FirstTrackingWorkflowPayload;
-
 export type FirstTrackingWorkflowResult = {
 	state: PublicTrackingState;
 	provenance: PublicTrackingProvenance;
@@ -145,7 +140,36 @@ export type DrivingAnalysisWorkflowEnvironment = {
 	GPU_PROVIDER_ORIGIN?: string;
 	GPU_ACCESS_CLIENT_ID?: string;
 	GPU_ACCESS_CLIENT_SECRET?: string;
+	INFERENCE_PROFILE_JSON?: string;
+	RACE_VIDEO_MEDIA_CONTAINER?: {
+		getByName(name: string): {
+			prepareTrackView(command: unknown): Promise<unknown>;
+		};
+	};
 };
+
+export const deployedInferenceProfile = (
+	value: string | undefined,
+): ReturnType<typeof inferenceProfileSchema.parse> => {
+	if (!value)
+		throw new Error('INFERENCE_PROFILE_JSON is required for tracking');
+	try {
+		return inferenceProfileSchema.parse(JSON.parse(value));
+	} catch {
+		throw new Error('INFERENCE_PROFILE_JSON is invalid');
+	}
+};
+
+export const raceVideoTrackViewPreparationPort = (
+	binding: DrivingAnalysisWorkflowEnvironment['RACE_VIDEO_MEDIA_CONTAINER'],
+): TrackViewMediaPreparationPort => ({
+	prepare: (command) => {
+		const container = binding?.getByName(command.request.caseId);
+		if (!container)
+			throw new Error('Race-video media container is unavailable');
+		return container.prepareTrackView(command);
+	},
+});
 
 type AttemptIdentity = ExecutionIdentity & {
 	ownerId: string;
@@ -165,6 +189,11 @@ export class FirstTrackingSegmentWorkflow {
 		private readonly provider: TrackingProvider,
 		private readonly grants: Pick<R2TransferGrantAuthority, 'issue'>,
 		private readonly publication: Pick<TrackingArtifactPublication, 'publish'>,
+		private readonly publishAnalysisState: (
+			ownerId: string,
+			analysisId: string,
+			state: PublicTrackingState,
+		) => Promise<void>,
 	) {}
 
 	async run(
@@ -525,74 +554,129 @@ export class FirstTrackingSegmentWorkflow {
 			await step.do('release-failed-tracking-lease', async () =>
 				this.coordinator.release(leaseIdentity(identity)),
 			);
+			const state = await step.do('load-safe-tracking-failure-state', () =>
+				this.authority.publicState(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					workflowIdentity.runId,
+				),
+			);
+			await step.do('publish-safe-tracking-failure', async () => {
+				await this.publishAnalysisState(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					state,
+				);
+				return { published: true };
+			});
 		} catch {
 			throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
 		}
 		throw new TrackingWorkflowError(code);
 	}
 
-	private publicResult(
+	private async publicResult(
 		workflowIdentity: TrackingWorkflowIdentity,
 		step: WorkflowStep,
 		name: string,
 	): Promise<FirstTrackingWorkflowResult> {
-		return step.do(`load-public-tracking-result-${name}`, async () => ({
-			state: await this.authority.publicState(
+		const result = await step.do(
+			`load-public-tracking-result-${name}`,
+			async () => ({
+				state: await this.authority.publicState(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					workflowIdentity.runId,
+				),
+				provenance: await this.authority.publicProvenance(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					workflowIdentity.runId,
+				),
+			}),
+		);
+		await step.do(`publish-analysis-tracking-state-${name}`, async () => {
+			await this.publishAnalysisState(
 				workflowIdentity.ownerId,
 				workflowIdentity.analysisId,
-				workflowIdentity.runId,
-			),
-			provenance: await this.authority.publicProvenance(
-				workflowIdentity.ownerId,
-				workflowIdentity.analysisId,
-				workflowIdentity.runId,
-			),
-		}));
+				result.state,
+			);
+			return { published: true };
+		});
+		return result;
 	}
 }
 
+export const firstTrackingSegmentWorkflow = (
+	environment: DrivingAnalysisWorkflowEnvironment,
+): FirstTrackingSegmentWorkflow =>
+	new FirstTrackingSegmentWorkflow(
+		new TrackingAuthority(environment.DB),
+		environment.GPU_LEASE_COORDINATOR.getByName(
+			GPU_LEASE_COORDINATOR_OBJECT_NAME,
+		),
+		new LocalSam31Provider({
+			origin: environment.GPU_PROVIDER_ORIGIN ?? '',
+			accessClientId: environment.GPU_ACCESS_CLIENT_ID ?? '',
+			accessClientSecret: environment.GPU_ACCESS_CLIENT_SECRET ?? '',
+		}),
+		r2TransferGrantAuthority(environment),
+		trackingArtifactPublication(environment),
+		async (ownerId, analysisId, state) => {
+			await new DrivingAnalysisAuthority(environment.DB).publishTrackingState(
+				ownerId,
+				analysisId,
+				state,
+				new Date().toISOString(),
+			);
+		},
+	);
+
 export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 	DrivingAnalysisWorkflowEnvironment,
-	DrivingAnalysisWorkflowEventPayload
+	DrivingAnalysisWorkflowPayload
 > {
 	async run(
-		event: Readonly<WorkflowEvent<DrivingAnalysisWorkflowEventPayload>>,
+		event: Readonly<WorkflowEvent<DrivingAnalysisWorkflowPayload>>,
 		step: WorkflowStep,
-	): Promise<
-		FirstTrackingWorkflowResult | DrivingAnalysisCreationWorkflowResult
-	> {
-		const payload = drivingAnalysisWorkflowEventPayloadSchema.parse(
-			event.payload,
-		);
-		if ('kind' in payload)
-			return new DrivingAnalysisCreationWorkflowRunner(
-				new DrivingAnalysisAuthority(this.env.DB),
-				new FakeDrivingAnalysisContainerPort(),
-			).run(
-				{ ...event, payload } as Readonly<
-					WorkflowEvent<DrivingAnalysisWorkflowPayload>
-				>,
-				step,
-			);
-		const coordinator = this.env.GPU_LEASE_COORDINATOR.getByName(
-			GPU_LEASE_COORDINATOR_OBJECT_NAME,
-		);
-		return new FirstTrackingSegmentWorkflow(
-			new TrackingAuthority(this.env.DB),
-			coordinator,
-			new LocalSam31Provider({
-				origin: this.env.GPU_PROVIDER_ORIGIN ?? '',
-				accessClientId: this.env.GPU_ACCESS_CLIENT_ID ?? '',
-				accessClientSecret: this.env.GPU_ACCESS_CLIENT_SECRET ?? '',
-			}),
-			r2TransferGrantAuthority(this.env),
-			trackingArtifactPublication(this.env),
-		).run(
-			{ ...event, payload } as Readonly<
-				WorkflowEvent<FirstTrackingWorkflowPayload>
-			>,
-			step,
-		);
+	): Promise<DrivingAnalysisCreationWorkflowResult> {
+		const payload = drivingAnalysisWorkflowPayloadSchema.parse(event.payload);
+		/* c8 ignore next -- real profile/container wiring is exercised by deployment acceptance. */
+		const authority = new DrivingAnalysisAuthority(this.env.DB);
+		return new DrivingAnalysisCreationWorkflowRunner(
+			authority,
+			{
+				startPreparation: async (command) => {
+					return new RealDrivingAnalysisContainerPort({
+						authority,
+						tracking: new TrackingAuthority(this.env.DB),
+						prepared: new PreparedTrackViewAuthority(this.env.DB),
+						media: raceVideoTrackViewPreparationPort(
+							this.env.RACE_VIDEO_MEDIA_CONTAINER,
+						),
+						profile: deployedInferenceProfile(this.env.INFERENCE_PROFILE_JSON),
+						store: preparedTrackViewStore(this.env),
+					}).startPreparation(command);
+				},
+			},
+			undefined,
+			async (command) => {
+				await firstTrackingSegmentWorkflow(this.env).run(
+					{
+						...event,
+						payload: {
+							ownerId: command.ownerId,
+							analysisId: command.analysisId,
+							runId: command.runId,
+							segmentId: command.segmentId,
+							preparedMediaId: command.preparedMediaId,
+							subjectSeed: command.subjectSeed,
+						},
+					} as Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
+					step,
+				);
+			},
+		).run({ ...event, payload }, step);
 	}
 }
 

@@ -14,6 +14,8 @@ const createBody = {
 	raceWindow: { startTimestampMs: 120_000, endTimestampMs: 720_000 },
 	subjectSeed: {
 		timestampMs: 180_000,
+		frameIndex: 1800,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 };
@@ -41,7 +43,12 @@ describe('Driving-analysis routes', () => {
 	test('returns one stable accepted creation without waiting for processing', async () => {
 		const create = vi.fn(async () => ({ analysis, created: true }));
 		const get = vi.fn(async () => analysis);
-		const authority = { create, get } as unknown as DrivingAnalysisAuthority;
+		const retry = vi.fn(async () => ({ analysis, retried: true }));
+		const authority = {
+			create,
+			get,
+			retry,
+		} as unknown as DrivingAnalysisAuthority;
 		const { request } = createHonoFixture({
 			drivingAnalysisAuthority: (() =>
 				authority) satisfies AppDependencies['drivingAnalysisAuthority'],
@@ -81,6 +88,23 @@ describe('Driving-analysis routes', () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ drivingAnalysis: analysis });
 		expect(get).toHaveBeenCalledWith('owner-1', ANALYSIS_ID);
+
+		const retryPath = `/api/v1/driving-analyses/${ANALYSIS_ID}/retry`;
+		expect((await request(retryPath, { ...json({}), body: '{' })).status).toBe(
+			400,
+		);
+		expect((await request(retryPath, json({}))).status).toBe(400);
+		response = await request(
+			retryPath,
+			json({ expectedStateVersion: analysis.stateVersion }),
+		);
+		expect(response.status).toBe(202);
+		expect(await response.json()).toEqual({ drivingAnalysis: analysis });
+		expect(retry).toHaveBeenCalledWith(
+			'owner-1',
+			ANALYSIS_ID,
+			analysis.stateVersion,
+		);
 	});
 
 	test.each([

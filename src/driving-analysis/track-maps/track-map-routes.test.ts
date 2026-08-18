@@ -9,6 +9,7 @@ import {
 	driveSession,
 	owner,
 	trackCorner,
+	trackMapReferenceFrame,
 	trackMapVersion,
 } from '../../schema';
 import { createHonoFixture } from '../../testing/hono-fixture';
@@ -96,6 +97,24 @@ const corner = (key = 'turn-1') => ({
 	cornerView: { x: 0.18, y: 0.35, width: 0.44, height: 0.38 },
 });
 
+const attachReferenceFrame = async (mapVersionId: string): Promise<void> => {
+	if (!sqlite) throw new Error('SQLite fixture is unavailable');
+	await drizzle(sqlite.database)
+		.insert(trackMapReferenceFrame)
+		.values({
+			id: crypto.randomUUID(),
+			mapVersionId,
+			raceVideoId: '33333333-3333-4333-8333-333333333333',
+			timestampMs: 1_000,
+			objectKey: `track-map-reference-frames/${mapVersionId}/${crypto.randomUUID()}.jpg`,
+			byteCount: 3,
+			checksumSha256: 'a'.repeat(64),
+			contentType: 'image/jpeg',
+			createdBy: 'owner-1',
+			createdAt: new Date('2026-08-17T00:00:00.000Z').toISOString(),
+		});
+};
+
 describe('Track-map routes', () => {
 	test('owner creates, edits, reopens, clones, renames, and retires draft layouts', async () => {
 		const { request } = await fixture();
@@ -151,6 +170,7 @@ describe('Track-map routes', () => {
 			json('PATCH', { expectedStateVersion: 3, corners: [corner()] }),
 		);
 		expect(response.status).toBe(200);
+		await attachReferenceFrame(first.id);
 		response = await request(
 			`/api/v1/track-map-versions/${first.id}/approve`,
 			json('POST', { expectedStateVersion: 4 }),
@@ -464,6 +484,7 @@ describe('Track-map routes', () => {
 				)
 			).status,
 		).toBe(200);
+		await attachReferenceFrame(versionId);
 		expect(
 			(
 				await request(
@@ -666,6 +687,7 @@ describe('Track-map routes', () => {
 			(await userFixture.request(`/api/v1/track-map-versions/${versionId}`))
 				.status,
 		).toBe(404);
+		await attachReferenceFrame(versionId);
 		expect(
 			(
 				await ownerFixture.request(
@@ -804,6 +826,7 @@ describe('Track-map routes', () => {
 				)
 			).status,
 		).toBe(409);
+		await attachReferenceFrame(versionId);
 		expect(
 			await (await request(`/api/v1/track-map-versions/${versionId}`)).json(),
 		).toMatchObject({

@@ -40,6 +40,9 @@ The production Worker needs these bindings and values:
   config pins it to `https://gpu.chassisnotes.com`.
 - `GPU_ACCESS_CLIENT_ID` and `GPU_ACCESS_CLIENT_SECRET`: the Worker-only
   Cloudflare Access service token admitted by the GPU-host policy.
+- `INFERENCE_PROFILE_JSON`: the exact validated profile JSON installed on the
+  GPU host. Rotate it only with the GPU worker image/profile pair; its canonical
+  digest must match every Tracking run and segment.
 
 Set secrets with Wrangler rather than committing them:
 
@@ -53,6 +56,7 @@ pnpm exec wrangler secret put R2_ACCESS_KEY_ID
 pnpm exec wrangler secret put R2_SECRET_ACCESS_KEY
 pnpm exec wrangler secret put GPU_ACCESS_CLIENT_ID
 pnpm exec wrangler secret put GPU_ACCESS_CLIENT_SECRET
+pnpm exec wrangler secret put INFERENCE_PROFILE_JSON
 ```
 
 Before deployment, run the clean-checkout checks and build the static shell:
@@ -79,7 +83,7 @@ the directory marker. A successful build should not dirty tracked files.
 
 `pnpm test:production` is the safe clean-checkout dry-run. For release
 acceptance after provisioning, set `RC_MECH_REQUIRE_REMOTE_CONFIG=1`; that mode
-requires all nine production secret names,
+requires all ten production secret names,
 and it requires `RC_MECH_DEPLOYED_URL`, `RC_MECH_OWNER_COOKIE`,
 `RC_MECH_OWNER_CAR_ID`, `RC_MECH_OWNER_PHOTO_ID`, and
 `RC_MECH_OTHER_OWNER_COOKIE`, and `RC_MECH_R2_PUBLIC_ACCESS_VALIDATED=1` after

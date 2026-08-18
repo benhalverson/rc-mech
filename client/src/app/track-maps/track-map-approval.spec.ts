@@ -32,6 +32,14 @@ const version: TrackMapVersion = {
 	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
+	referenceFrame: {
+		raceVideoId: '33333333-3333-4333-8333-333333333333',
+		timestampMs: 100,
+		byteCount: 100,
+		checksumSha256: 'a'.repeat(64),
+		contentType: 'image/jpeg',
+		contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
+	},
 	corners: [corner],
 };
 
@@ -56,7 +64,7 @@ describe('TrackMapApproval', () => {
 		component.approveRequested.subscribe(() => (approvals += 1));
 		expect(button().disabled).toBe(true);
 		expect(fixture.nativeElement.textContent).toContain(
-			'Add and save at least one valid Corner before approval.',
+			'Select a recording frame before approval.',
 		);
 		expect(component['dirty']()).toBe(false);
 
@@ -96,5 +104,18 @@ describe('TrackMapApproval', () => {
 		});
 		fixture.detectChanges();
 		expect(button().disabled).toBe(true);
+	});
+
+	it('requires the immutable reference frame before approval', () => {
+		fixture.componentRef.setInput('version', {
+			...version,
+			referenceFrame: null,
+		});
+		fixture.componentRef.setInput('corners', version.corners);
+		fixture.detectChanges();
+		expect(button().disabled).toBe(true);
+		expect(fixture.nativeElement.textContent).toContain(
+			'Select a recording frame before approval.',
+		);
 	});
 });

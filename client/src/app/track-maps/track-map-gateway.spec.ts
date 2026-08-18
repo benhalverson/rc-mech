@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	parseTrackLayout,
 	parseTrackLayouts,
+	parseTrackMapRecordings,
+	parseTrackMapReferenceFrame,
 	parseTrackMapVersion,
 	TrackMapGateway,
 	trackMapGatewayFailure,
@@ -27,8 +29,25 @@ const version = {
 	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
+	referenceFrame: null,
 	corners: [],
 } as const;
+const frame = {
+	raceVideoId: 'recording-1',
+	timestampMs: 100,
+	byteCount: 200,
+	checksumSha256: 'a'.repeat(64),
+	contentType: 'image/jpeg',
+	contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
+} as const;
+const recording = {
+	id: 'recording-1',
+	fileName: 'Main.mov',
+	byteCount: 1000,
+	durationMs: 5000,
+	width: 1920,
+	height: 1080,
+};
 const layout = {
 	id: 'layout-1',
 	name: 'Main',
@@ -70,6 +89,12 @@ describe('TrackMapGateway', () => {
 		});
 		expect(parseTrackLayout({ trackLayout: layout })).toEqual(layout);
 		expect(parseTrackMapVersion({ trackMapVersion: version })).toEqual(version);
+		expect(parseTrackMapReferenceFrame({ referenceFrame: frame })).toEqual(
+			frame,
+		);
+		expect(parseTrackMapRecordings({ raceVideos: [recording] })).toEqual([
+			recording,
+		]);
 		expect(() => parseTrackLayouts({})).toThrow();
 	});
 	it('maps transport failures', () => {
@@ -115,6 +140,18 @@ describe('TrackMapGateway', () => {
 			throw new Error('Track-map version request was not issued.');
 		expect(versionRead.request.withCredentials).toBe(true);
 		versionRead.flush({ trackMapVersion: version });
+		gateway.loadRecordings();
+		gateway.recordings.value();
+		let recordingsRead:
+			| ReturnType<HttpTestingController['expectOne']>
+			| undefined;
+		await vi.waitFor(() => {
+			recordingsRead = http.expectOne('/api/v1/track-map-recordings');
+		});
+		if (!recordingsRead)
+			throw new Error('Track-map recording request was not issued.');
+		expect(recordingsRead.request.withCredentials).toBe(true);
+		recordingsRead.flush({ raceVideos: [recording] });
 		gateway.createLayout('Main').subscribe();
 		const createLayoutRequest = http.expectOne(
 			(request) =>
@@ -149,6 +186,21 @@ describe('TrackMapGateway', () => {
 			corners: [],
 		});
 		saveDraftRequest.flush({ trackMapVersion: version });
+		gateway
+			.selectReferenceFrame({
+				versionId: 'version-1',
+				raceVideoId: recording.id,
+				timestampMs: 100,
+			})
+			.subscribe();
+		const frameRequest = http.expectOne(
+			'/api/v1/track-map-versions/version-1/reference-frame',
+		);
+		expect(frameRequest.request.body).toEqual({
+			raceVideoId: recording.id,
+			timestampMs: 100,
+		});
+		frameRequest.flush({ referenceFrame: frame });
 		for (const action of ['approve', 'retire'] as const) {
 			gateway[`${action}Version`]('version-1', 1).subscribe();
 			const decisionRequest = http.expectOne(

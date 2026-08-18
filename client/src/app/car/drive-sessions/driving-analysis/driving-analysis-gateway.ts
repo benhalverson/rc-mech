@@ -91,6 +91,19 @@ export class DrivingAnalysisGateway {
 		);
 	}
 
+	retry(
+		analysisId: string,
+		expectedStateVersion: number,
+	): Observable<DrivingAnalysis> {
+		return this.parseRequest(
+			this.http.post<unknown>(
+				`/api/v1/driving-analyses/${encodeURIComponent(analysisId)}/retry`,
+				{ expectedStateVersion },
+				{ withCredentials: true },
+			),
+		);
+	}
+
 	selectAnalysis(analysisId: string | null): void {
 		this.analysisId.set(analysisId ?? '');
 	}
