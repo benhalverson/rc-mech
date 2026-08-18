@@ -20,6 +20,7 @@ import {
 	trackingRunInputFixture,
 } from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
+import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
 import type {
 	GpuLeaseAcquireInput,
 	GpuLeaseAcquireResult,
@@ -544,6 +545,7 @@ const coreWorkflowFixture = (
 		),
 	};
 	const publication = { publish: vi.fn() };
+	const publishAnalysisState = vi.fn(async () => undefined);
 	const workflow = new FirstTrackingSegmentWorkflow(
 		authority as unknown as TrackingAuthority,
 		coordinator as unknown as ConstructorParameters<
@@ -552,6 +554,7 @@ const coreWorkflowFixture = (
 		provider,
 		grants,
 		publication,
+		publishAnalysisState,
 	);
 	return {
 		authority,
@@ -560,6 +563,7 @@ const coreWorkflowFixture = (
 		grants,
 		provider,
 		publication,
+		publishAnalysisState,
 		steps: new WorkflowStepFixture(),
 		workflow,
 	};
@@ -567,6 +571,9 @@ const coreWorkflowFixture = (
 
 describe('DrivingAnalysisWorkflow', () => {
 	test('runs the first immutable segment through LocalSam31Provider and commits evidence before release', async () => {
+		const publishTrackingState = vi
+			.spyOn(DrivingAnalysisAuthority.prototype, 'publishTrackingState')
+			.mockResolvedValue({ kind: 'stale' });
 		const { authority, database } = await prepareAuthority();
 		const r2 = new MockR2Controller();
 		const trace: string[] = [];
@@ -709,6 +716,12 @@ describe('DrivingAnalysisWorkflow', () => {
 			'provider-grant-observation-artifact',
 		]);
 		expect(coordinator.calls.at(-1)).toBe('coordinator-release');
+		expect(publishTrackingState).toHaveBeenCalledWith(
+			OWNER_ID,
+			ANALYSIS_ID,
+			expect.objectContaining({ lifecycle: 'running', progress: 99 }),
+			expect.any(String),
+		);
 		expect(JSON.stringify(result)).not.toMatch(
 			/leaseId|fencingToken|transferRequest|objectKey|gpu\.chassisnotes/i,
 		);

@@ -10,6 +10,8 @@ import {
 	trackLayout,
 	trackMapVersion,
 } from '../../schema';
+import { trackingRun } from '../tracking/authority-schema';
+import type { PublicTrackingState } from '../tracking/authority-contracts';
 import {
 	createDrivingAnalysisInputSchema,
 	DRIVING_ANALYSIS_CREATION_WINDOW_MS,
@@ -75,6 +77,33 @@ const authorityError = (
 	message: string,
 ) => new DrivingAnalysisAuthorityError(code, message);
 
+const trackingAnalysisTarget = (
+	state: PublicTrackingState,
+	currentProgress: number,
+): Readonly<{
+	status: 'running' | 'awaiting-reidentification' | 'failed' | 'cancelled';
+	progress: number;
+}> => {
+	if (state.lifecycle === 'awaiting-reidentification')
+		return { status: 'awaiting-reidentification', progress: 99 };
+	if (state.lifecycle === 'failed')
+		return {
+			status: 'failed',
+			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+		};
+	if (state.lifecycle === 'cancelled')
+		return {
+			status: 'cancelled',
+			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+		};
+	if (state.lifecycle === 'completed' || state.progress >= 99)
+		return { status: 'running', progress: 99 };
+	return {
+		status: 'running',
+		progress: Math.max(currentProgress, Math.max(21, state.progress)),
+	};
+};
+
 const publicAnalysis = (
 	record: DrivingAnalysisRecord,
 ): PublicDrivingAnalysis => ({
@@ -106,6 +135,23 @@ const publicAnalysis = (
 		height: record.sourceHeight,
 		trackView: FIXED_TRACK_VIEW,
 	},
+	lifecycle:
+		record.status === 'awaiting-reidentification'
+			? 'awaiting-reidentification'
+			: record.status === 'failed'
+				? 'failed'
+				: /* c8 ignore next -- full completion is published by the later measurement/finalization slice. */ record.status ===
+						'completed'
+					? 'completed'
+					: record.status === 'cancelled' ||
+							record.status === 'deleting' ||
+							record.status === 'deleted'
+						? 'cancelled'
+						: record.stage === 'preparation'
+							? 'preparation'
+							: record.stage === 'tracking' && record.progress >= 99
+								? 'tracking-complete'
+								: 'tracking',
 	status: record.status,
 	stage: record.stage,
 	progress: record.progress,
@@ -392,6 +438,62 @@ export class DrivingAnalysisAuthority {
 		if (published)
 			return { kind: 'published', analysis: publicAnalysis(published) };
 		return this.replayedTransition(payload, workflowId, 21);
+	}
+
+	async publishTrackingState(
+		ownerId: string,
+		analysisId: string,
+		state: PublicTrackingState,
+		updatedAt: string,
+	): Promise<DrivingAnalysisTransition> {
+		const run = await this.database
+			.select({ id: trackingRun.id })
+			.from(trackingRun)
+			.where(
+				and(
+					eq(trackingRun.id, state.runId),
+					eq(trackingRun.ownerId, ownerId),
+					eq(trackingRun.analysisId, analysisId),
+				),
+			)
+			.get();
+		if (!run) return { kind: 'stale' };
+		const current = await this.find(ownerId, analysisId);
+		/* c8 ignore next -- a Tracking run linked to a missing analysis is corruption defense. */
+		if (!current || current.stage !== 'tracking') return { kind: 'stale' };
+		const target = trackingAnalysisTarget(state, current.progress);
+		if (
+			current.status === target.status &&
+			current.progress === target.progress
+		)
+			return { kind: 'replayed', analysis: publicAnalysis(current) };
+		if (
+			current.status !== 'running' &&
+			current.status !== 'awaiting-reidentification'
+		)
+			return { kind: 'stale' };
+		const published = await this.database
+			.update(drivingAnalysis)
+			.set({
+				status: target.status,
+				progress: target.progress,
+				stateVersion: current.stateVersion + 1,
+				updatedAt,
+			})
+			.where(
+				and(
+					eq(drivingAnalysis.id, analysisId),
+					eq(drivingAnalysis.ownerId, ownerId),
+					eq(drivingAnalysis.stateVersion, current.stateVersion),
+					eq(drivingAnalysis.stage, 'tracking'),
+				),
+			)
+			.returning()
+			.get();
+		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
+		return published
+			? { kind: 'published', analysis: publicAnalysis(published) }
+			: { kind: 'stale' };
 	}
 
 	private async replay(

@@ -104,6 +104,14 @@ export type PublicDrivingAnalysis = Readonly<{
 		height: number;
 		trackView: typeof FIXED_TRACK_VIEW;
 	}>;
+	lifecycle:
+		| 'preparation'
+		| 'tracking'
+		| 'awaiting-reidentification'
+		| 'tracking-complete'
+		| 'failed'
+		| 'completed'
+		| 'cancelled';
 	status:
 		| 'queued'
 		| 'running'

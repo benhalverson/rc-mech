@@ -182,6 +182,11 @@ export class FirstTrackingSegmentWorkflow {
 		private readonly provider: TrackingProvider,
 		private readonly grants: Pick<R2TransferGrantAuthority, 'issue'>,
 		private readonly publication: Pick<TrackingArtifactPublication, 'publish'>,
+		private readonly publishAnalysisState: (
+			ownerId: string,
+			analysisId: string,
+			state: PublicTrackingState,
+		) => Promise<void>,
 	) {}
 
 	async run(
@@ -542,29 +547,56 @@ export class FirstTrackingSegmentWorkflow {
 			await step.do('release-failed-tracking-lease', async () =>
 				this.coordinator.release(leaseIdentity(identity)),
 			);
+			const state = await step.do('load-safe-tracking-failure-state', () =>
+				this.authority.publicState(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					workflowIdentity.runId,
+				),
+			);
+			await step.do('publish-safe-tracking-failure', async () => {
+				await this.publishAnalysisState(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					state,
+				);
+				return { published: true };
+			});
 		} catch {
 			throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
 		}
 		throw new TrackingWorkflowError(code);
 	}
 
-	private publicResult(
+	private async publicResult(
 		workflowIdentity: TrackingWorkflowIdentity,
 		step: WorkflowStep,
 		name: string,
 	): Promise<FirstTrackingWorkflowResult> {
-		return step.do(`load-public-tracking-result-${name}`, async () => ({
-			state: await this.authority.publicState(
+		const result = await step.do(
+			`load-public-tracking-result-${name}`,
+			async () => ({
+				state: await this.authority.publicState(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					workflowIdentity.runId,
+				),
+				provenance: await this.authority.publicProvenance(
+					workflowIdentity.ownerId,
+					workflowIdentity.analysisId,
+					workflowIdentity.runId,
+				),
+			}),
+		);
+		await step.do(`publish-analysis-tracking-state-${name}`, async () => {
+			await this.publishAnalysisState(
 				workflowIdentity.ownerId,
 				workflowIdentity.analysisId,
-				workflowIdentity.runId,
-			),
-			provenance: await this.authority.publicProvenance(
-				workflowIdentity.ownerId,
-				workflowIdentity.analysisId,
-				workflowIdentity.runId,
-			),
-		}));
+				result.state,
+			);
+			return { published: true };
+		});
+		return result;
 	}
 }
 
@@ -662,6 +694,14 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 			}),
 			r2TransferGrantAuthority(this.env),
 			trackingArtifactPublication(this.env),
+			async (ownerId, analysisId, state) => {
+				await new DrivingAnalysisAuthority(this.env.DB).publishTrackingState(
+					ownerId,
+					analysisId,
+					state,
+					new Date().toISOString(),
+				);
+			},
 		).run(
 			{ ...event, payload } as Readonly<
 				WorkflowEvent<FirstTrackingWorkflowPayload>

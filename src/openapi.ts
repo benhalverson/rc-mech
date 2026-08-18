@@ -1448,6 +1448,7 @@ const drivingAnalysisSchema = {
 		'approvedTrackMapVersionId',
 		'subjectSeed',
 		'sourceLayout',
+		'lifecycle',
 		'status',
 		'stage',
 		'progress',
@@ -1502,6 +1503,20 @@ const drivingAnalysisSchema = {
 					},
 				},
 			},
+		},
+		lifecycle: {
+			type: 'string',
+			enum: [
+				'preparation',
+				'tracking',
+				'awaiting-reidentification',
+				'tracking-complete',
+				'failed',
+				'completed',
+				'cancelled',
+			],
+			description:
+				'Analysis-level lifecycle. tracking-complete means initial Tracking evidence is accepted; it is not full Driving-analysis completion.',
 		},
 		status: {
 			type: 'string',

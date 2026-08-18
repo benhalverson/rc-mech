@@ -21,6 +21,11 @@ import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import { RaceRecordingAuthority } from '../race-recording/race-recording-authority';
 import { RaceVideoValidationAuthority } from '../race-recording/race-video-validation-authority';
 import {
+	inferenceProfileAuthority,
+	trackingRun,
+} from '../tracking/authority-schema';
+import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking-fixtures';
+import {
 	DrivingAnalysisAuthority,
 	DrivingAnalysisAuthorityError,
 } from './driving-analysis-authority';
@@ -461,7 +466,7 @@ describe('DrivingAnalysisAuthority', () => {
 	});
 
 	test('publishes the transition from preparation into tracking', async () => {
-		const { authority } = await fixture();
+		const { authority, database } = await fixture();
 		await authority.create(command());
 		const payload = {
 			kind: 'analysis-creation.v1' as const,
@@ -505,6 +510,212 @@ describe('DrivingAnalysisAuthority', () => {
 				'77777777-7777-4777-8777-777777777777',
 				3,
 				new Date('2026-08-17T18:00:04.000Z').toISOString(),
+			),
+		).resolves.toEqual({ kind: 'stale' });
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					runId: '99999999-9999-4999-8999-999999999999',
+					lifecycle: 'running',
+					stage: 'tracking',
+					progress: 99,
+					waitReason: null,
+					safeFailureCode: null,
+				},
+				new Date('2026-08-17T18:00:04.000Z').toISOString(),
+			),
+		).resolves.toEqual({ kind: 'stale' });
+
+		const profile = inferenceProfileFixture();
+		await database.insert(inferenceProfileAuthority).values({
+			profileDigest:
+				'5abae405db4372b704fe5c0984d1d8a2ed02363a52fbeac5ea09b0f7ec7a6b58',
+			contractVersion: profile.contractVersion,
+			canonicalizationVersion: profile.canonicalizationVersion,
+			configurationJson: JSON.stringify(profile),
+			createdAt: NOW.toISOString(),
+		});
+		await database.insert(trackingRun).values({
+			id: '99999999-9999-4999-8999-999999999999',
+			analysisId: ANALYSIS_ID,
+			ownerId: OWNER_ID,
+			sequence: 1,
+			workflowId: ANALYSIS_ID,
+			profileDigest:
+				'5abae405db4372b704fe5c0984d1d8a2ed02363a52fbeac5ea09b0f7ec7a6b58',
+			inputDigest: 'b'.repeat(64),
+			status: 'active',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			completedAt: null,
+		});
+		const trackingState = {
+			runId: '99999999-9999-4999-8999-999999999999',
+			lifecycle: 'running' as const,
+			stage: 'tracking' as const,
+			progress: 99,
+			waitReason: null,
+			safeFailureCode: null,
+		};
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				trackingState,
+				new Date('2026-08-17T18:00:05.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: {
+				lifecycle: 'tracking-complete',
+				status: 'running',
+				stage: 'tracking',
+				progress: 99,
+			},
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				trackingState,
+				new Date('2026-08-17T18:00:05.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({ kind: 'replayed' });
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{ ...trackingState, lifecycle: 'completed', progress: 100 },
+				new Date('2026-08-17T18:00:05.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({ kind: 'replayed' });
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					...trackingState,
+					lifecycle: 'awaiting-reidentification',
+				},
+				new Date('2026-08-17T18:00:06.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { lifecycle: 'awaiting-reidentification' },
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{ ...trackingState, lifecycle: 'cancelled', progress: 75 },
+				new Date('2026-08-17T18:00:07.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { lifecycle: 'cancelled', progress: 99 },
+		});
+	});
+
+	test('publishes a safe Tracking failure without completing the analysis', async () => {
+		const { authority, database } = await fixture();
+		await authority.create(command());
+		const payload = {
+			kind: 'analysis-creation.v1' as const,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			expectedStateVersion: 1,
+		};
+		await authority.beginPreparation(
+			payload,
+			ANALYSIS_ID,
+			new Date('2026-08-17T18:00:01.000Z').toISOString(),
+		);
+		await authority.publishPreparationProgress(
+			{ ...payload, expectedStateVersion: 2 },
+			ANALYSIS_ID,
+			20,
+			new Date('2026-08-17T18:00:02.000Z').toISOString(),
+		);
+		await authority.publishTrackingStart(
+			{ ...payload, expectedStateVersion: 3 },
+			ANALYSIS_ID,
+			3,
+			new Date('2026-08-17T18:00:03.000Z').toISOString(),
+		);
+		const profile = inferenceProfileFixture();
+		const profileDigest =
+			'5abae405db4372b704fe5c0984d1d8a2ed02363a52fbeac5ea09b0f7ec7a6b58';
+		await database.insert(inferenceProfileAuthority).values({
+			profileDigest,
+			contractVersion: profile.contractVersion,
+			canonicalizationVersion: profile.canonicalizationVersion,
+			configurationJson: JSON.stringify(profile),
+			createdAt: NOW.toISOString(),
+		});
+		await database.insert(trackingRun).values({
+			id: '99999999-9999-4999-8999-999999999999',
+			analysisId: ANALYSIS_ID,
+			ownerId: OWNER_ID,
+			sequence: 1,
+			workflowId: ANALYSIS_ID,
+			profileDigest,
+			inputDigest: 'b'.repeat(64),
+			status: 'active',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			completedAt: null,
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					runId: '99999999-9999-4999-8999-999999999999',
+					lifecycle: 'running',
+					stage: 'tracking',
+					progress: 50,
+					waitReason: null,
+					safeFailureCode: null,
+				},
+				new Date('2026-08-17T18:00:04.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { lifecycle: 'tracking', progress: 50 },
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					runId: '99999999-9999-4999-8999-999999999999',
+					lifecycle: 'failed',
+					stage: 'tracking',
+					progress: 75,
+					waitReason: null,
+					safeFailureCode: 'TRACKING_PROVIDER_FAILED',
+				},
+				new Date('2026-08-17T18:00:04.000Z').toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { lifecycle: 'failed', status: 'failed', progress: 75 },
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					runId: '99999999-9999-4999-8999-999999999999',
+					lifecycle: 'running',
+					stage: 'tracking',
+					progress: 90,
+					waitReason: null,
+					safeFailureCode: null,
+				},
+				new Date('2026-08-17T18:00:05.000Z').toISOString(),
 			),
 		).resolves.toEqual({ kind: 'stale' });
 	});
