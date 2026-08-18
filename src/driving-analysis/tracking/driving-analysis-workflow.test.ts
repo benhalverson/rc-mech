@@ -21,6 +21,10 @@ import {
 } from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
+import {
+	AcceptedCornerEvidence,
+	AcceptedCornerEvidenceError,
+} from '../evidence/accepted-corner-evidence';
 import type {
 	GpuLeaseAcquireInput,
 	GpuLeaseAcquireResult,
@@ -92,6 +96,7 @@ let sqlite: SqliteD1Fixture | undefined;
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 	sqlite?.close();
 	sqlite = undefined;
 });
@@ -547,6 +552,15 @@ const coreWorkflowFixture = (
 		),
 	};
 	const publication = { publish: vi.fn() };
+	const evidence = {
+		commit: vi.fn(async () => ({
+			status: 'committed' as const,
+			measurement: {
+				version: 'corner-evidence.v1' as const,
+				passes: [],
+			},
+		})),
+	};
 	const publishAnalysisState = vi.fn(async () => undefined);
 	const workflow = new FirstTrackingSegmentWorkflow(
 		authority as unknown as TrackingAuthority,
@@ -556,6 +570,7 @@ const coreWorkflowFixture = (
 		provider,
 		grants,
 		publication,
+		evidence,
 		publishAnalysisState,
 	);
 	return {
@@ -565,6 +580,7 @@ const coreWorkflowFixture = (
 		grants,
 		provider,
 		publication,
+		evidence,
 		publishAnalysisState,
 		steps: new WorkflowStepFixture(),
 		workflow,
@@ -573,6 +589,12 @@ const coreWorkflowFixture = (
 
 describe('DrivingAnalysisWorkflow', () => {
 	test('runs the first immutable segment through LocalSam31Provider and commits evidence before release', async () => {
+		const commitEvidence = vi
+			.spyOn(AcceptedCornerEvidence.prototype, 'commit')
+			.mockResolvedValue({
+				status: 'committed',
+				measurement: { version: 'corner-evidence.v1', passes: [] },
+			});
 		const publishTrackingState = vi
 			.spyOn(DrivingAnalysisAuthority.prototype, 'publishTrackingState')
 			.mockResolvedValue({ kind: 'stale' });
@@ -715,6 +737,13 @@ describe('DrivingAnalysisWorkflow', () => {
 			'provider-grant-observation-artifact',
 		]);
 		expect(coordinator.calls.at(-1)).toBe('coordinator-release');
+		expect(commitEvidence).toHaveBeenCalledWith({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+		});
 		expect(publishTrackingState).toHaveBeenCalledWith(
 			OWNER_ID,
 			ANALYSIS_ID,
@@ -1143,6 +1172,68 @@ describe('DrivingAnalysisWorkflow', () => {
 			expect.objectContaining({ nextState: 'failed' }),
 		);
 		expect(value.coordinator.release).not.toHaveBeenCalled();
+	});
+
+	test.each([
+		{
+			code: 'STALE_AUTHORITY' as const,
+			expected: 'TRACKING_AUTHORITY_STALE' as const,
+		},
+		{
+			code: 'INVALID_ARTIFACT' as const,
+			expected: 'TRACKING_ARTIFACT_INVALID' as const,
+		},
+	])(
+		'fails closed when accepted evidence commit reports $code',
+		async ({ code, expected }) => {
+			const value = coreWorkflowFixture({
+				attemptId: ATTEMPT_ID,
+				leaseId: LEASE_ID,
+				fence: 7,
+				state: 'output-ready',
+				progress: 90,
+				safeFailureCode: null,
+			});
+			value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+			value.provider.submit.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+			value.evidence.commit.mockRejectedValue(
+				new AcceptedCornerEvidenceError(code),
+			);
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).rejects.toEqual(new TrackingWorkflowError(expected));
+			expect(value.publication.publish).toHaveBeenCalledOnce();
+			expect(value.publishAnalysisState).not.toHaveBeenCalled();
+			expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+				expect.objectContaining({ nextState: 'failed' }),
+			);
+		},
+	);
+
+	test('replays immutable accepted evidence before publishing Tracking state', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.evidence.commit).toHaveBeenCalledWith({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+		});
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.publishAnalysisState).toHaveBeenCalledOnce();
 	});
 
 	test('normalizes an unexpected grant-authority exception', async () => {

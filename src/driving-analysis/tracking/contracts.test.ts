@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import observationsCompleteAcceptedFixture from '../../../containers/driving-analysis/tests/fixtures/subject-tracking/observations-complete-accepted.json';
 import prepareAcceptedFixture from '../../../containers/driving-analysis/tests/fixtures/subject-tracking/prepare-accepted.json';
 import trackGapAcceptedFixture from '../../../containers/driving-analysis/tests/fixtures/subject-tracking/track-gap-accepted.json';
 import {
@@ -25,6 +26,11 @@ import {
 
 describe('tracking provider contracts', () => {
 	test('accepts the strict shared provider payloads', () => {
+		expect(
+			subjectObservationSegmentSchema.parse(
+				observationsCompleteAcceptedFixture,
+			),
+		).toEqual(observationsCompleteAcceptedFixture);
 		expect(
 			preparedMediaArtifactSchema.parse(prepareAcceptedFixture.prepared),
 		).toEqual(prepareAcceptedFixture.prepared);

@@ -24,6 +24,9 @@ UUID = "bde7ec63-86b9-4c86-a5e8-dbcf4a61f820"
 SHA = "4" * 64
 SUBJECT_TRACKING_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "subject-tracking"
 SUBJECT_TRACKING_FIXTURE_DIGESTS = {
+    "observations-complete-accepted.json": (
+        "d1ed623c5018ad2e6dd666cb17f10a4653b616c962e3e7c0d4a02db516b19d7c"
+    ),
     "prepare-accepted.json": (
         "f272e38ad613d219299172cd25333168e925ff73e063b10bdf87ad71aa7fa8dc"
     ),
@@ -411,6 +414,12 @@ def test_versioned_processing_response_fixtures_are_strict(
     fixture = SUBJECT_TRACKING_FIXTURE_ROOT / filename
     parsed = contract.model_validate_json(fixture.read_bytes())
     assert parsed.contract_version == "subject-tracking.v1"
+
+
+def test_shared_observation_output_fixture_is_strict() -> None:
+    fixture = SUBJECT_TRACKING_FIXTURE_ROOT / "observations-complete-accepted.json"
+    parsed = SubjectObservationSegment.model_validate_json(fixture.read_bytes())
+    assert parsed.contract_version == "subject-observation-segment.v1"
 
 
 @pytest.mark.parametrize(

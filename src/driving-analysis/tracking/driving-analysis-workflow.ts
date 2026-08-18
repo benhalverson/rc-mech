@@ -15,6 +15,11 @@ import {
 	RealDrivingAnalysisContainerPort,
 } from '../analysis/driving-analysis-creation-workflow';
 import {
+	AcceptedCornerEvidence,
+	AcceptedCornerEvidenceError,
+} from '../evidence/accepted-corner-evidence';
+import { CornerEvidenceAuthority } from '../evidence/corner-evidence-authority';
+import {
 	GPU_LEASE_COORDINATOR_OBJECT_NAME,
 	GPU_MAX_DEADLINE_MS,
 	type GpuLeaseAcquireInput,
@@ -47,6 +52,7 @@ import {
 } from './local-sam31-provider';
 import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
 import { preparedTrackViewStore } from './r2-prepared-track-view-store';
+import { R2TrackingArtifactStore } from './r2-tracking-artifact-store';
 import {
 	type R2TransferGrantAuthority,
 	r2TransferGrantAuthority,
@@ -115,6 +121,8 @@ export class TrackingWorkflowError extends Error {
 		this.name = 'TrackingWorkflowError';
 	}
 }
+
+class AcceptedEvidenceWorkflowError extends TrackingWorkflowError {}
 
 type CoordinatorPort = {
 	enqueue(input: GpuLeaseEnqueueInput): Promise<GpuLeaseEnqueueResult>;
@@ -189,6 +197,7 @@ export class FirstTrackingSegmentWorkflow {
 		private readonly provider: TrackingProvider,
 		private readonly grants: Pick<R2TransferGrantAuthority, 'issue'>,
 		private readonly publication: Pick<TrackingArtifactPublication, 'publish'>,
+		private readonly evidence: Pick<AcceptedCornerEvidence, 'commit'>,
 		private readonly publishAnalysisState: (
 			ownerId: string,
 			analysisId: string,
@@ -227,8 +236,14 @@ export class FirstTrackingSegmentWorkflow {
 				createdAt,
 			}),
 		);
-		if (context.acceptedArtifactId !== null)
+		if (context.acceptedArtifactId !== null) {
+			await this.commitAcceptedEvidence(
+				workflowIdentity,
+				step,
+				'accepted-replay',
+			);
 			return this.publicResult(workflowIdentity, step, 'accepted-replay');
+		}
 
 		let identity = await this.resumeIdentity(context, step);
 		if (!identity) {
@@ -295,6 +310,7 @@ export class FirstTrackingSegmentWorkflow {
 						}
 						return { accepted: true };
 					});
+					await this.commitAcceptedEvidence(workflowIdentity, step, 'accepted');
 					return this.publicResult(workflowIdentity, step, 'accepted');
 				}
 
@@ -528,7 +544,8 @@ export class FirstTrackingSegmentWorkflow {
 	): Promise<never> {
 		if (
 			error instanceof TrackingWorkflowError &&
-			error.code === 'TRACKING_AUTHORITY_STALE'
+			(error.code === 'TRACKING_AUTHORITY_STALE' ||
+				error instanceof AcceptedEvidenceWorkflowError)
 		)
 			throw error;
 		const code = publicFailure(error);
@@ -605,6 +622,26 @@ export class FirstTrackingSegmentWorkflow {
 		});
 		return result;
 	}
+
+	private async commitAcceptedEvidence(
+		workflowIdentity: TrackingWorkflowIdentity,
+		step: WorkflowStep,
+		name: string,
+	): Promise<void> {
+		await step.do(`commit-accepted-corner-evidence-${name}`, async () => {
+			try {
+				await this.evidence.commit(workflowIdentity);
+			} catch (error) {
+				if (
+					error instanceof AcceptedCornerEvidenceError &&
+					error.code === 'STALE_AUTHORITY'
+				)
+					throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+				throw new AcceptedEvidenceWorkflowError('TRACKING_ARTIFACT_INVALID');
+			}
+			return { committed: true };
+		});
+	}
 }
 
 export const firstTrackingSegmentWorkflow = (
@@ -622,6 +659,10 @@ export const firstTrackingSegmentWorkflow = (
 		}),
 		r2TransferGrantAuthority(environment),
 		trackingArtifactPublication(environment),
+		new AcceptedCornerEvidence(
+			new CornerEvidenceAuthority(environment.DB),
+			new R2TrackingArtifactStore(environment.ANALYSIS_MEDIA),
+		),
 		async (ownerId, analysisId, state) => {
 			await new DrivingAnalysisAuthority(environment.DB).publishTrackingState(
 				ownerId,
