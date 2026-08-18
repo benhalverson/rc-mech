@@ -56,6 +56,23 @@ const internalRejection = (validationId: string): RaceVideoValidationResponse =>
 		'The media validation service could not complete validation.',
 	);
 
+const logValidationEvent = (
+	validationId: string,
+	phase: string,
+	outcome: string,
+	facts?: Readonly<Record<string, boolean | number | string>>,
+): void => {
+	console.log(
+		JSON.stringify({
+			event: 'race_video_media_validation',
+			correlationId: validationId,
+			phase,
+			outcome,
+			...facts,
+		}),
+	);
+};
+
 const readBoundedJson = async (response: Response): Promise<unknown> => {
 	const contentType = response.headers
 		.get('content-type')
@@ -101,30 +118,46 @@ export const validateRaceVideoMedia = async (
 	runtime: RaceVideoMediaContainerRuntime,
 ): Promise<RaceVideoValidationResponse> => {
 	const command = raceVideoMediaValidationCommandSchema.parse(commandValue);
+	let phase = 'start';
+	logValidationEvent(command.validationId, phase, 'started');
 	try {
 		await runtime.start();
+		phase = 'container';
+		logValidationEvent(command.validationId, phase, 'ready');
 		const source = await runtime.bucket.get(command.objectKey);
-		if (!source)
+		if (!source) {
+			logValidationEvent(command.validationId, 'claim', 'source_missing');
 			return safeRejection(
 				command.validationId,
 				'STAGED_MEDIA_NOT_FOUND',
 				'claim',
 				'The private Race recording is unavailable.',
 			);
+		}
 		if (
 			source.size !== command.expectedByteCount ||
 			source.customMetadata?.['recordingId'] !== command.recordingId
-		)
+		) {
+			logValidationEvent(command.validationId, 'claim', 'source_mismatch');
 			return safeRejection(
 				command.validationId,
 				'STAGED_MEDIA_MISMATCH',
 				'claim',
 				'The private Race recording does not match validation state.',
 			);
+		}
 		const stagedPath = `/var/lib/rc-mech/staged/${command.validationId}.media`;
-		if ((await runtime.stage(stagedPath, source.body)) !== 0)
+		phase = 'stage';
+		const stageExitCode = await runtime.stage(stagedPath, source.body);
+		if (stageExitCode !== 0) {
+			logValidationEvent(command.validationId, phase, 'failed', {
+				exitCode: stageExitCode,
+			});
 			return internalRejection(command.validationId);
+		}
+		logValidationEvent(command.validationId, phase, 'completed');
 		const request = raceVideoValidationRequest(command);
+		phase = 'probe';
 		const rawResponse = await readBoundedJson(
 			await runtime.probe(
 				new Request('http://driving-analysis-media/v1/media/probe', {
@@ -134,15 +167,22 @@ export const validateRaceVideoMedia = async (
 				}),
 			),
 		);
+		logValidationEvent(command.validationId, phase, 'response');
 		const parsed = raceVideoValidationResponseSchema.parse(rawResponse);
 		if (
 			parsed.correlationId !== command.validationId ||
 			(parsed.outcome === 'accepted' &&
 				parsed.media.byteCount !== command.expectedByteCount)
-		)
+		) {
+			logValidationEvent(command.validationId, phase, 'contract_mismatch');
 			return internalRejection(command.validationId);
+		}
+		logValidationEvent(command.validationId, phase, parsed.outcome);
 		return parsed;
-	} catch {
+	} catch (error) {
+		logValidationEvent(command.validationId, phase, 'failed', {
+			errorName: error instanceof Error ? error.name : 'unknown',
+		});
 		return internalRejection(command.validationId);
 	}
 };
