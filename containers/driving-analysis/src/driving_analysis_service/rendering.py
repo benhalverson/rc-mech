@@ -443,6 +443,7 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     standard_error_observer=StderrLineObserver(
                         _discard_process_error,
                         MAX_FFMPEG_ERROR_LINE_BYTES,
+                        settings.limits.max_process_output_bytes,
                     ),
                 ),
             )
