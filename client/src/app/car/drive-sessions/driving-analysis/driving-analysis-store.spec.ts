@@ -436,7 +436,7 @@ describe('DrivingAnalysisStore', () => {
 
 		store.refreshAnalysis();
 		analyses.analysisValue.set(
-			analysis({ status: 'running', progress: 15, stateVersion: 3 }),
+			analysis({ status: 'failed', progress: 15, stateVersion: 3 }),
 		);
 		analyses.analysisHasValue.set(true);
 		await vi.waitFor(() => expect(store.analysis()?.progress).toBe(15));
@@ -448,14 +448,14 @@ describe('DrivingAnalysisStore', () => {
 		expect(analyses.retry).not.toHaveBeenCalled();
 		store.selectCar('car-1');
 		analyses.create.mockReturnValueOnce(
-			of(analysis({ status: 'running', progress: 15, stateVersion: 3 })),
+			of(analysis({ status: 'failed', progress: 15, stateVersion: 3 })),
 		);
 		store.createAnalysis(analysisCommand());
 		await vi.waitFor(() => expect(store.analysis()).not.toBeNull());
 		const retried = new Subject<DrivingAnalysis>();
 		analyses.retry.mockReturnValueOnce(retried);
 		analyses.analysisValue.set(
-			analysis({ status: 'running', progress: 15, stateVersion: 3 }),
+			analysis({ status: 'failed', progress: 15, stateVersion: 3 }),
 		);
 		analyses.analysisHasValue.set(true);
 		store.retryAnalysis();

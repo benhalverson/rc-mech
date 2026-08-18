@@ -75,14 +75,7 @@ export class DrivingAnalysisCreator {
 	);
 	protected readonly canRetryAnalysis = computed(() => {
 		const status = this.analysis()?.status;
-		const analysis = this.analysis();
-		return (
-			status === 'failed' ||
-			status === 'completed' ||
-			(analysis?.status === 'running' &&
-				analysis.stage === 'preparation' &&
-				analysis.progress === 15)
-		);
+		return status === 'failed' || status === 'completed';
 	});
 	protected readonly selectedMap = computed(() =>
 		this.store

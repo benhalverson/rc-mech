@@ -338,7 +338,7 @@ describe('DrivingAnalysisCreator', () => {
 			driveSessionId: 'drive-1',
 			analysis: {
 				id: 'analysis-1',
-				status: 'running',
+				status: 'failed',
 				stage: 'preparation',
 				progress: 15,
 			} as DrivingAnalysis,
