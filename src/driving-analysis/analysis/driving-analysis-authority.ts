@@ -305,15 +305,7 @@ export class DrivingAnalysisAuthority {
 			await this.start(current);
 			return { analysis: publicAnalysis(current), retried: false };
 		}
-		if (
-			current.status !== 'failed' &&
-			current.status !== 'completed' &&
-			!(
-				current.status === 'running' &&
-				current.stage === 'preparation' &&
-				current.progress === 15
-			)
-		)
+		if (current.status !== 'failed' && current.status !== 'completed')
 			throw authorityError(
 				'CONFLICT',
 				'Driving analysis is not eligible for retry',
@@ -615,25 +607,42 @@ export class DrivingAnalysisAuthority {
 			return { kind: 'replayed', analysis: publicAnalysis(current) };
 		if (current.status !== 'queued' && current.status !== 'running')
 			return { kind: 'stale' };
-		const failed = await this.database
-			.update(drivingAnalysis)
-			.set({
-				status: 'failed',
-				stateVersion: current.stateVersion + 1,
-				updatedAt,
-			})
-			.where(
-				and(
-					eq(drivingAnalysis.id, payload.analysisId),
-					eq(drivingAnalysis.ownerId, payload.ownerId),
-					eq(drivingAnalysis.workflowId, workflowId),
-					eq(drivingAnalysis.workflowSequence, payload.workflowSequence),
-					eq(drivingAnalysis.stateVersion, current.stateVersion),
-					inArray(drivingAnalysis.status, ['queued', 'running']),
+		const [, failedRows] = await this.database.batch([
+			this.database
+				.update(trackingRun)
+				.set({
+					status: 'failed',
+					version: sql`${trackingRun.version} + 1`,
+					completedAt: updatedAt,
+				})
+				.where(
+					and(
+						eq(trackingRun.ownerId, payload.ownerId),
+						eq(trackingRun.analysisId, payload.analysisId),
+						eq(trackingRun.workflowId, workflowId),
+						eq(trackingRun.status, 'active'),
+					),
 				),
-			)
-			.returning()
-			.get();
+			this.database
+				.update(drivingAnalysis)
+				.set({
+					status: 'failed',
+					stateVersion: current.stateVersion + 1,
+					updatedAt,
+				})
+				.where(
+					and(
+						eq(drivingAnalysis.id, payload.analysisId),
+						eq(drivingAnalysis.ownerId, payload.ownerId),
+						eq(drivingAnalysis.workflowId, workflowId),
+						eq(drivingAnalysis.workflowSequence, payload.workflowSequence),
+						eq(drivingAnalysis.stateVersion, current.stateVersion),
+						inArray(drivingAnalysis.status, ['queued', 'running']),
+					),
+				)
+				.returning(),
+		]);
+		const failed = failedRows[0];
 		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
 		return failed
 			? { kind: 'published', analysis: publicAnalysis(failed) }

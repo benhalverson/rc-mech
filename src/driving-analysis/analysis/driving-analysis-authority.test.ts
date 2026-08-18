@@ -628,7 +628,7 @@ describe('DrivingAnalysisAuthority', () => {
 	});
 
 	test('publishes current Workflow failures once and fences stale sequences', async () => {
-		const { authority } = await fixture();
+		const { authority, database } = await fixture();
 		await authority.create(command());
 		const payload = {
 			kind: 'analysis-creation.v1' as const,
@@ -638,6 +638,29 @@ describe('DrivingAnalysisAuthority', () => {
 			workflowSequence: 1,
 			expectedStateVersion: 1,
 		};
+		const profile = inferenceProfileFixture();
+		const profileDigest =
+			'5abae405db4372b704fe5c0984d1d8a2ed02363a52fbeac5ea09b0f7ec7a6b58';
+		await database.insert(inferenceProfileAuthority).values({
+			profileDigest,
+			contractVersion: profile.contractVersion,
+			canonicalizationVersion: profile.canonicalizationVersion,
+			configurationJson: JSON.stringify(profile),
+			createdAt: NOW.toISOString(),
+		});
+		await database.insert(trackingRun).values({
+			id: '99999999-9999-4999-8999-999999999999',
+			analysisId: ANALYSIS_ID,
+			ownerId: OWNER_ID,
+			sequence: 1,
+			workflowId: ANALYSIS_ID,
+			profileDigest,
+			inputDigest: 'b'.repeat(64),
+			status: 'active',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			completedAt: null,
+		});
 		await expect(
 			authority.publishWorkflowFailure(
 				payload,
@@ -648,6 +671,13 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'published',
 			analysis: { lifecycle: 'failed', status: 'failed', stateVersion: 2 },
 		});
+		const failedRun = await database
+			.select()
+			.from(trackingRun)
+			.where(eq(trackingRun.workflowId, ANALYSIS_ID))
+			.get();
+		expect(failedRun?.status).toBe('failed');
+		expect(failedRun?.completedAt).toBe('2026-08-17T18:00:01.000Z');
 		await expect(
 			authority.publishWorkflowFailure(
 				payload,
@@ -947,7 +977,7 @@ describe('DrivingAnalysisAuthority', () => {
 		await expectCode(authority.retry(OWNER_ID, ANALYSIS_ID, 5), 'CONFLICT');
 	});
 
-	test('retries completed analysis and the exact legacy preparation state', async () => {
+	test('retries completed analysis', async () => {
 		const completed = await fixture();
 		await completed.authority.create(command());
 		const payload = {
@@ -975,28 +1005,6 @@ describe('DrivingAnalysisAuthority', () => {
 			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
 		await expect(
 			completed.authority.retry(OWNER_ID, ANALYSIS_ID, 3),
-		).resolves.toMatchObject({
-			retried: true,
-			analysis: { status: 'queued', progress: 0, stateVersion: 4 },
-		});
-
-		sqlite?.close();
-		sqlite = undefined;
-		const legacy = await fixture();
-		await legacy.authority.create(command());
-		await legacy.authority.beginPreparation(
-			payload,
-			ANALYSIS_ID,
-			'2026-08-17T18:00:01.000Z',
-		);
-		await legacy.authority.publishPreparationProgress(
-			{ ...payload, expectedStateVersion: 2 },
-			ANALYSIS_ID,
-			15,
-			'2026-08-17T18:00:02.000Z',
-		);
-		await expect(
-			legacy.authority.retry(OWNER_ID, ANALYSIS_ID, 3),
 		).resolves.toMatchObject({
 			retried: true,
 			analysis: { status: 'queued', progress: 0, stateVersion: 4 },

@@ -109,6 +109,7 @@ const preparationFixture = async (
 	handler: MediaHandler,
 	storeFactory: (media: MockR2Controller) => PreparedTrackViewStore = (media) =>
 		new R2PreparedTrackViewStore(media.bucket),
+	ids: readonly [string, string] = [PREPARED_MEDIA_ID, CORRELATION_ID],
 ) => {
 	sqlite = createSqliteD1();
 	sqlite.exec(migrations);
@@ -140,13 +141,13 @@ const preparationFixture = async (
 		},
 	};
 	const store = storeFactory(analysisMedia);
-	const ids = [PREPARED_MEDIA_ID, CORRELATION_ID];
+	let idIndex = 0;
 	const preparation = new TrackViewPreparation({
 		authority,
 		media,
 		store,
 		now: () => NOW,
-		id: () => ids.shift() ?? 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+		id: () => ids[idIndex++ % ids.length] ?? PREPARED_MEDIA_ID,
 	});
 	return {
 		analysisMedia,
@@ -204,6 +205,28 @@ describe('TrackViewPreparation', () => {
 
 		expect(await value.preparation.prepare(OWNER_ID, RUN_ID)).toEqual(result);
 		expect(value.calls).toHaveLength(1);
+	});
+
+	test('retries a lost preparation response with the same immutable request and objects', async () => {
+		let attempts = 0;
+		const value = await preparationFixture(
+			async (command, media, inputDigest) => {
+				await seedPreparedObjects(media, command);
+				attempts += 1;
+				if (attempts === 1) throw new Error('lost response');
+				return acceptedResponse(command, inputDigest);
+			},
+			(media) => new R2PreparedTrackViewStore(media.bucket),
+			[PREPARED_MEDIA_ID, CORRELATION_ID],
+		);
+		const firstRequest = value.preparation.prepare(OWNER_ID, RUN_ID);
+		await expectPreparationError(firstRequest, 'PREPARATION_REJECTED');
+		const result = await value.preparation.prepare(OWNER_ID, RUN_ID);
+
+		expect(value.calls).toHaveLength(2);
+		expect(value.calls[1]).toEqual(value.calls[0]);
+		expect(result.prepared.preparedMediaId).toBe(PREPARED_MEDIA_ID);
+		expect(attempts).toBe(2);
 	});
 
 	test('uses Worker time and UUID capabilities when callers do not override them', async () => {

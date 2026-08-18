@@ -17,9 +17,9 @@ import {
 	type PublicDrivingAnalysis,
 } from './driving-analysis-contracts';
 
-const FAKE_PREPARATION_STEP = {
+const PREPARATION_STEP = {
 	retries: { limit: 2, delay: '5 seconds', backoff: 'constant' },
-	timeout: '1 minute',
+	timeout: '30 minutes',
 } as const;
 
 const preparationResultSchema = z.strictObject({
@@ -57,6 +57,7 @@ export type DrivingAnalysisContainerPort = {
 			ownerId: string;
 			workflowId: string;
 			workflowSequence: number;
+			createdAt: string;
 			analysisId: string;
 			raceVideoId: string;
 			raceWindow: PublicDrivingAnalysis['raceWindow'];
@@ -104,6 +105,7 @@ export class RealDrivingAnalysisContainerPort
 		ownerId: string;
 		workflowId: string;
 		workflowSequence: number;
+		createdAt: string;
 		analysisId: string;
 		raceVideoId: string;
 		raceWindow: PublicDrivingAnalysis['raceWindow'];
@@ -135,7 +137,7 @@ export class RealDrivingAnalysisContainerPort
 			sourceLayout: command.sourceLayout,
 		};
 		const inputDigest = await digestTrackingRunInput(input);
-		const createdAt = this.clock().toISOString();
+		const createdAt = command.createdAt;
 		await this.dependencies.tracking.createRun({
 			runId,
 			analysisId: command.analysisId,
@@ -151,11 +153,22 @@ export class RealDrivingAnalysisContainerPort
 			input,
 			createdAt,
 		});
+		const preparationIds = [
+			await deterministicUuidV4(`${runId}:preparation:1`),
+			await deterministicUuidV4(`${runId}:preparation:2`),
+		];
+		const preparedMediaId = preparationIds[0] ?? runId;
+		const correlationId = preparationIds[1] ?? runId;
+		let preparationIdIndex = 0;
 		const result = await new TrackViewPreparation({
 			authority: this.dependencies.prepared,
 			media: this.dependencies.media,
 			store: this.dependencies.store,
 			now: this.clock,
+			id: () =>
+				preparationIdIndex++ % preparationIds.length === 0
+					? preparedMediaId
+					: correlationId,
 		}).prepare(command.ownerId, runId);
 		return {
 			progress: 20,
@@ -165,14 +178,6 @@ export class RealDrivingAnalysisContainerPort
 	}
 }
 /* c8 ignore end */
-
-export class FakeDrivingAnalysisContainerPort
-	implements DrivingAnalysisContainerPort
-{
-	async startPreparation(): Promise<{ progress: number }> {
-		return { progress: 15 };
-	}
-}
 
 export type DrivingAnalysisCreationWorkflowResult =
 	| Readonly<{
@@ -210,16 +215,18 @@ export class DrivingAnalysisCreationWorkflowRunner {
 			return { status: 'replayed', analysis: begun.analysis };
 
 		const analysis = begun.analysis;
+		const createdAt = event.timestamp.toISOString();
 		try {
 			const preparation = preparationResultSchema.parse(
 				await step.do(
 					'prepare-driving-analysis-track-view',
-					FAKE_PREPARATION_STEP,
+					PREPARATION_STEP,
 					async () =>
 						this.container.startPreparation({
 							ownerId: payload.ownerId,
 							workflowId: event.instanceId,
 							workflowSequence: payload.workflowSequence,
+							createdAt,
 							analysisId: analysis.id,
 							raceVideoId: analysis.raceVideoId,
 							raceWindow: analysis.raceWindow,

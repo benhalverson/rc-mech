@@ -14,7 +14,6 @@ import {
 import {
 	type DrivingAnalysisContainerPort,
 	DrivingAnalysisCreationWorkflowRunner,
-	FakeDrivingAnalysisContainerPort,
 	RealDrivingAnalysisContainerPort,
 } from './driving-analysis-creation-workflow';
 
@@ -96,13 +95,13 @@ describe('Driving-analysis creation Workflow', () => {
 		}));
 		const publishPreparationProgress = vi.fn(async () => ({
 			kind: 'published' as const,
-			analysis: analysis(3, 15),
+			analysis: analysis(3, 20),
 		}));
 		const authority = {
 			beginPreparation,
 			publishPreparationProgress,
 		} as unknown as DrivingAnalysisAuthority;
-		const startPreparation = vi.fn(async () => ({ progress: 15 }));
+		const startPreparation = vi.fn(async () => ({ progress: 20 }));
 		const port: DrivingAnalysisContainerPort = { startPreparation };
 		const runner = new DrivingAnalysisCreationWorkflowRunner(
 			authority,
@@ -115,7 +114,7 @@ describe('Driving-analysis creation Workflow', () => {
 			runner.run(event, steps as unknown as WorkflowStep),
 		).resolves.toEqual({
 			status: 'published',
-			analysis: analysis(3, 15),
+			analysis: analysis(3, 20),
 		});
 		expect(steps.names).toEqual([
 			'begin-driving-analysis-preparation',
@@ -126,12 +125,13 @@ describe('Driving-analysis creation Workflow', () => {
 			steps.configurations.get('prepare-driving-analysis-track-view'),
 		).toEqual({
 			retries: { limit: 2, delay: '5 seconds', backoff: 'constant' },
-			timeout: '1 minute',
+			timeout: '30 minutes',
 		});
 		expect(startPreparation).toHaveBeenCalledWith({
 			ownerId: 'owner-1',
 			workflowId: ANALYSIS_ID,
 			workflowSequence: 1,
+			createdAt: '2026-08-17T18:00:00.000Z',
 			analysisId: ANALYSIS_ID,
 			raceVideoId: analysis(2, 0).raceVideoId,
 			raceWindow: analysis(2, 0).raceWindow,
@@ -142,7 +142,7 @@ describe('Driving-analysis creation Workflow', () => {
 		expect(publishPreparationProgress).toHaveBeenCalledWith(
 			{ ...payload, expectedStateVersion: 2 },
 			ANALYSIS_ID,
-			15,
+			20,
 			'2026-08-17T18:00:01.000Z',
 		);
 	});
@@ -150,13 +150,13 @@ describe('Driving-analysis creation Workflow', () => {
 	test('makes stale and completed replayed D1 starts no-ops before the port', async () => {
 		for (const begun of [
 			{ kind: 'stale' as const },
-			{ kind: 'replayed' as const, analysis: analysis(3, 15) },
+			{ kind: 'replayed' as const, analysis: analysis(3, 20) },
 		]) {
 			const beginPreparation = vi.fn(async () => begun);
 			const authority = {
 				beginPreparation,
 			} as unknown as DrivingAnalysisAuthority;
-			const startPreparation = vi.fn(async () => ({ progress: 15 }));
+			const startPreparation = vi.fn(async () => ({ progress: 20 }));
 			const runner = new DrivingAnalysisCreationWorkflowRunner(authority, {
 				startPreparation,
 			});
@@ -178,9 +178,9 @@ describe('Driving-analysis creation Workflow', () => {
 		}));
 		const publishPreparationProgress = vi.fn(async () => ({
 			kind: 'published' as const,
-			analysis: analysis(3, 15),
+			analysis: analysis(3, 20),
 		}));
-		const startPreparation = vi.fn(async () => ({ progress: 15 }));
+		const startPreparation = vi.fn(async () => ({ progress: 20 }));
 		const runner = new DrivingAnalysisCreationWorkflowRunner(
 			{
 				beginPreparation,
@@ -193,7 +193,7 @@ describe('Driving-analysis creation Workflow', () => {
 			runner.run(event, new StepFixture() as unknown as WorkflowStep),
 		).resolves.toMatchObject({
 			status: 'published',
-			analysis: { progress: 15 },
+			analysis: { progress: 20 },
 		});
 		expect(startPreparation).toHaveBeenCalledOnce();
 	});
@@ -201,7 +201,7 @@ describe('Driving-analysis creation Workflow', () => {
 	test('returns authoritative stale and replayed publication outcomes', async () => {
 		for (const published of [
 			{ kind: 'stale' as const },
-			{ kind: 'replayed' as const, analysis: analysis(3, 15) },
+			{ kind: 'replayed' as const, analysis: analysis(3, 20) },
 		]) {
 			const authority = {
 				beginPreparation: vi.fn(async () => ({
@@ -211,7 +211,7 @@ describe('Driving-analysis creation Workflow', () => {
 				publishPreparationProgress: vi.fn(async () => published),
 			} as unknown as DrivingAnalysisAuthority;
 			const runner = new DrivingAnalysisCreationWorkflowRunner(authority, {
-				startPreparation: vi.fn(async () => ({ progress: 15 })),
+				startPreparation: vi.fn(async () => ({ progress: 20 })),
 			});
 			await expect(
 				runner.run(event, new StepFixture() as unknown as WorkflowStep),
@@ -273,7 +273,7 @@ describe('Driving-analysis creation Workflow', () => {
 
 		beginPreparation.mockClear();
 		runner = new DrivingAnalysisCreationWorkflowRunner(authority, {
-			startPreparation: vi.fn(async () => ({ progress: 15 })),
+			startPreparation: vi.fn(async () => ({ progress: 20 })),
 		});
 		await expect(
 			runner.run(
@@ -282,12 +282,6 @@ describe('Driving-analysis creation Workflow', () => {
 			),
 		).rejects.toThrow();
 		expect(beginPreparation).not.toHaveBeenCalled();
-	});
-
-	test('provides the default fake preparation port', async () => {
-		await expect(
-			new FakeDrivingAnalysisContainerPort().startPreparation(),
-		).resolves.toEqual({ progress: 15 });
 	});
 
 	test('dispatches creation through the one per-analysis Workflow entrypoint', async () => {
