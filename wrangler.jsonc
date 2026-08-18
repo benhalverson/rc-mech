@@ -84,6 +84,20 @@
 		"ENVIRONMENT": "production",
 		"GPU_PROVIDER_ORIGIN": "https://gpu.chassisnotes.com"
 	},
+	"secrets": {
+		"required": [
+			"APP_URL",
+			"BETTER_AUTH_SECRET",
+			"EMAIL_FROM",
+			"GPU_ACCESS_CLIENT_ID",
+			"GPU_ACCESS_CLIENT_SECRET",
+			"INFERENCE_PROFILE_JSON",
+			"OWNER_EMAIL",
+			"R2_ACCESS_KEY_ID",
+			"R2_ACCOUNT_ID",
+			"R2_SECRET_ACCESS_KEY"
+		]
+	},
 	"env": {
 		"local": {
 			"routes": [],
