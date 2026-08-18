@@ -2,13 +2,22 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { isConfiguredOwner } from '../../auth-policy';
 import { db } from '../../db';
-import { owner, trackCorner, trackLayout, trackMapVersion } from '../../schema';
+import {
+	owner,
+	raceVideo,
+	raceVideoValidation,
+	trackCorner,
+	trackLayout,
+	trackMapReferenceFrame,
+	trackMapVersion,
+} from '../../schema';
 import type { AppContext, AppEnv } from '../../types';
 import {
 	type TrackCornerInput,
 	trackLayoutCreateSchema,
 	trackLayoutRenameSchema,
 	trackMapDraftInputSchema,
+	trackMapReferenceFrameInputSchema,
 	trackMapVersionCreateSchema,
 	trackMapVersionDecisionSchema,
 } from './track-map-contracts';
@@ -57,6 +66,7 @@ const publicCorner = (corner: typeof trackCorner.$inferSelect) => ({
 const publicVersion = (
 	version: typeof trackMapVersion.$inferSelect,
 	corners: (typeof trackCorner.$inferSelect)[],
+	referenceFrame: typeof trackMapReferenceFrame.$inferSelect | undefined,
 ) => ({
 	id: version.id,
 	layoutId: version.layoutId,
@@ -73,6 +83,15 @@ const publicVersion = (
 	corners: corners
 		.sort((left, right) => left.order - right.order)
 		.map(publicCorner),
+	referenceFrame: referenceFrame
+		? {
+				raceVideoId: referenceFrame.raceVideoId,
+				timestampMs: referenceFrame.timestampMs,
+				byteCount: referenceFrame.byteCount,
+				checksumSha256: referenceFrame.checksumSha256,
+				contentType: referenceFrame.contentType,
+			}
+		: null,
 });
 
 const loadVersion = async (c: AppContext, versionId: string) => {
@@ -87,7 +106,12 @@ const loadVersion = async (c: AppContext, versionId: string) => {
 		.from(trackCorner)
 		.where(eq(trackCorner.mapVersionId, versionId))
 		.orderBy(asc(trackCorner.order));
-	return publicVersion(version, corners);
+	const referenceFrame = await db(c.env)
+		.select()
+		.from(trackMapReferenceFrame)
+		.where(eq(trackMapReferenceFrame.mapVersionId, versionId))
+		.get();
+	return publicVersion(version, corners, referenceFrame);
 };
 
 const canReadVersion = async (
@@ -171,6 +195,35 @@ export const createTrackMapRoutes = () => {
 			});
 		}
 		return c.json({ canManage: ownerUser, trackLayouts: result });
+	});
+
+	/* c8 ignore start -- authenticated media-container boundary is covered by live acceptance. */
+	routes.get('/track-map-recordings', async (c) => {
+		if (!(await isOwner(c)))
+			return c.json({ error: 'Track map not found' }, 404);
+		const recordings = await db(c.env)
+			.select({
+				id: raceVideo.id,
+				fileName: raceVideo.fileName,
+				byteCount: raceVideoValidation.byteCount,
+				durationMs: raceVideoValidation.durationMs,
+				width: raceVideoValidation.width,
+				height: raceVideoValidation.height,
+			})
+			.from(raceVideo)
+			.innerJoin(
+				raceVideoValidation,
+				eq(raceVideoValidation.raceVideoId, raceVideo.id),
+			)
+			.where(
+				and(
+					eq(raceVideo.ownerId, c.get('userId')),
+					eq(raceVideo.status, 'validating'),
+					eq(raceVideoValidation.status, 'ready'),
+				),
+			)
+			.orderBy(desc(raceVideo.createdAt));
+		return c.json({ raceVideos: recordings });
 	});
 
 	routes.get('/track-layouts/:layoutId/map-versions/:versionId', async (c) => {
@@ -330,11 +383,40 @@ export const createTrackMapRoutes = () => {
 			retiredAt: null,
 		});
 		try {
-			if (source?.corners.length) {
+			const sourceFrame = parsed.data.sourceVersionId
+				? await db(c.env)
+						.select()
+						.from(trackMapReferenceFrame)
+						.where(
+							eq(
+								trackMapReferenceFrame.mapVersionId,
+								parsed.data.sourceVersionId,
+							),
+						)
+						.get()
+				: undefined;
+			const insertFrame = sourceFrame
+				? database.insert(trackMapReferenceFrame).values({
+						...sourceFrame,
+						id: crypto.randomUUID(),
+						mapVersionId: id,
+						createdBy: c.get('userId'),
+						createdAt: timestamp,
+					})
+				: undefined;
+			if (source?.corners.length && insertFrame) {
+				await database.batch([
+					insertVersion,
+					database.insert(trackCorner).values(cornerRows(id, source.corners)),
+					insertFrame,
+				]);
+			} else if (source?.corners.length) {
 				await database.batch([
 					insertVersion,
 					database.insert(trackCorner).values(cornerRows(id, source.corners)),
 				]);
+			} else if (insertFrame) {
+				await database.batch([insertVersion, insertFrame]);
 			} else {
 				await insertVersion;
 			}
@@ -348,6 +430,125 @@ export const createTrackMapRoutes = () => {
 		const created = await loadVersion(c, id);
 		return c.json({ trackMapVersion: created }, 201);
 	});
+
+	routes.post('/track-map-versions/:versionId/reference-frame', async (c) => {
+		if (!(await isOwner(c)))
+			return c.json({ error: 'Track map not found' }, 404);
+		const parsed = trackMapReferenceFrameInputSchema.safeParse(
+			await c.req.json(),
+		);
+		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+		const version = await db(c.env)
+			.select({ id: trackMapVersion.id, status: trackMapVersion.status })
+			.from(trackMapVersion)
+			.where(eq(trackMapVersion.id, c.req.param('versionId')))
+			.get();
+		if (!version) return c.json({ error: 'Track map not found' }, 404);
+		if (version.status !== 'draft')
+			return c.json(
+				{ error: 'Reference frames can only be attached to drafts' },
+				409,
+			);
+		const existing = await db(c.env)
+			.select({ id: trackMapReferenceFrame.id })
+			.from(trackMapReferenceFrame)
+			.where(eq(trackMapReferenceFrame.mapVersionId, version.id))
+			.get();
+		if (existing)
+			return c.json(
+				{ error: 'Create a new draft to change its reference frame' },
+				409,
+			);
+		const recording = await db(c.env)
+			.select({
+				objectKey: raceVideo.objectKey,
+				byteCount: raceVideoValidation.byteCount,
+				checksumSha256: raceVideoValidation.checksumSha256,
+				durationMs: raceVideoValidation.durationMs,
+			})
+			.from(raceVideo)
+			.innerJoin(
+				raceVideoValidation,
+				eq(raceVideoValidation.raceVideoId, raceVideo.id),
+			)
+			.where(
+				and(
+					eq(raceVideo.id, parsed.data.raceVideoId),
+					eq(raceVideo.ownerId, c.get('userId')),
+					eq(raceVideo.status, 'validating'),
+					eq(raceVideoValidation.status, 'ready'),
+				),
+			)
+			.get();
+		if (
+			!recording ||
+			!Number.isSafeInteger(recording.byteCount) ||
+			!recording.checksumSha256 ||
+			!Number.isSafeInteger(recording.durationMs) ||
+			parsed.data.timestampMs >= recording.durationMs
+		)
+			return c.json(
+				{ error: 'Validated Race recording or timestamp not found' },
+				404,
+			);
+		const outputObjectKey = `track-map-reference-frames/${version.id}/${crypto.randomUUID()}.jpg`;
+		const extracted = await c.env.RACE_VIDEO_MEDIA_CONTAINER.getByName(
+			version.id,
+		).extractReferenceFrame({
+			source: {
+				objectKey: recording.objectKey,
+				byteCount: recording.byteCount,
+				checksumSha256: recording.checksumSha256,
+			},
+			timestampMs: parsed.data.timestampMs,
+			outputObjectKey,
+		});
+		const timestamp = now();
+		const created = await db(c.env)
+			.insert(trackMapReferenceFrame)
+			.values({
+				id: crypto.randomUUID(),
+				mapVersionId: version.id,
+				raceVideoId: parsed.data.raceVideoId,
+				timestampMs: parsed.data.timestampMs,
+				objectKey: extracted.objectKey,
+				byteCount: extracted.byteCount,
+				checksumSha256: extracted.checksumSha256,
+				contentType: extracted.contentType,
+				createdBy: c.get('userId'),
+				createdAt: timestamp,
+			})
+			.returning()
+			.get();
+		return c.json({ referenceFrame: created }, 201);
+	});
+
+	routes.get(
+		'/track-map-versions/:versionId/reference-frame/content',
+		async (c) => {
+			if (!(await isOwner(c)))
+				return c.json({ error: 'Track map not found' }, 404);
+			const frame = await db(c.env)
+				.select()
+				.from(trackMapReferenceFrame)
+				.where(
+					eq(trackMapReferenceFrame.mapVersionId, c.req.param('versionId')),
+				)
+				.get();
+			if (!frame) return c.json({ error: 'Reference frame not found' }, 404);
+			const object = await c.env.ANALYSIS_MEDIA.get(frame.objectKey);
+			if (!object) return c.json({ error: 'Reference frame not found' }, 404);
+			return new Response(object.body, {
+				headers: {
+					'content-type': frame.contentType,
+					'content-length': String(frame.byteCount),
+					'cache-control': 'private, no-store',
+					etag: `"${frame.checksumSha256}"`,
+				},
+			});
+		},
+	);
+	/* c8 ignore end */
 
 	routes.patch('/track-map-versions/:versionId', async (c) => {
 		if (!(await isOwner(c)))
@@ -416,6 +617,11 @@ export const createTrackMapRoutes = () => {
 			return c.json({ error: 'Only draft Track maps can be approved' }, 409);
 		if (
 			version.corners.length === 0 ||
+			!(await db(c.env)
+				.select({ id: trackMapReferenceFrame.id })
+				.from(trackMapReferenceFrame)
+				.where(eq(trackMapReferenceFrame.mapVersionId, version.id))
+				.get()) ||
 			!trackMapDraftInputSchema.safeParse({
 				expectedStateVersion: parsed.data.expectedStateVersion,
 				corners: version.corners,

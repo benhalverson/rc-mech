@@ -111,3 +111,10 @@ export const trackMapVersionCreateSchema = z
 export const trackMapVersionDecisionSchema = z
 	.object({ expectedStateVersion: z.number().int().positive() })
 	.strict();
+
+export const trackMapReferenceFrameInputSchema = z
+	.object({
+		raceVideoId: z.string().uuid(),
+		timestampMs: z.number().int().nonnegative(),
+	})
+	.strict();

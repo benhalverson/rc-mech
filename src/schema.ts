@@ -449,6 +449,28 @@ export const trackCorner = sqliteTable(
 		),
 	],
 );
+export const trackMapReferenceFrame = sqliteTable(
+	'track_map_reference_frame',
+	{
+		id: id('id'),
+		mapVersionId: text('map_version_id')
+			.notNull()
+			.references(() => trackMapVersion.id, { onDelete: 'cascade' }),
+		raceVideoId: text('race_video_id').notNull(),
+		timestampMs: integer('timestamp_ms').notNull(),
+		objectKey: text('object_key').notNull(),
+		byteCount: integer('byte_count').notNull(),
+		checksumSha256: text('checksum_sha256').notNull(),
+		contentType: text('content_type').notNull(),
+		createdBy: text('created_by')
+			.notNull()
+			.references(() => owner.id),
+		createdAt: text('created_at').notNull(),
+	},
+	(table) => [
+		index('track_map_reference_frame_version_idx').on(table.mapVersionId),
+	],
+);
 export const maintenancePlan = sqliteTable('maintenance_plan', {
 	id: id('id'),
 	carId: text('car_id').notNull(),
