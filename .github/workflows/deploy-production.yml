@@ -1,0 +1,124 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/deploy-production.yml
+      - client/**
+      - containers/driving-analysis/**
+      - migrations/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - public/**
+      - scripts/**
+      - src/**
+      - tools/**
+      - tsconfig.json
+      - wrangler*.jsonc
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build, publish, and deploy
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install FFmpeg test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Run Python media-service quality gate
+        working-directory: containers/driving-analysis
+        run: uv run --frozen python -m driving_analysis_service.quality
+
+      - name: Run repository lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Build client
+        run: pnpm client:build
+
+      - name: Build and publish media image
+        id: publish-image
+        shell: bash
+        run: |
+          set -o pipefail
+          build_output="$(pnpm exec wrangler containers build \
+            --push \
+            --tag "rc-mech-driving-analysis-media:${GITHUB_SHA}" \
+            containers/driving-analysis 2>&1 | tee /tmp/rc-mech-container-build.log)"
+          digest="$(printf '%s\n' "$build_output" | grep -Eo 'sha256:[0-9a-fA-F]{64}' | tail -n 1 || true)"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+            echo "The container publish did not return an immutable sha256 digest." >&2
+            exit 1
+          fi
+          if [[ ! "$CLOUDFLARE_ACCOUNT_ID" =~ ^[0-9a-fA-F]{32}$ ]]; then
+            echo "CLOUDFLARE_ACCOUNT_ID is not a 32-character hexadecimal account ID." >&2
+            exit 1
+          fi
+          image="registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/rc-mech-driving-analysis-media@${digest,,}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Generate deploy config
+        env:
+          IMAGE: ${{ steps.publish-image.outputs.image }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const config = JSON.parse(readFileSync("wrangler.jsonc", "utf8"));
+          const productionContainer = config.containers?.find(
+            ({ name }) => name === "rc-mech-driving-analysis-media",
+          );
+          if (!productionContainer) {
+            throw new Error("Production media container was not found.");
+          }
+          productionContainer.image = process.env.IMAGE;
+          delete productionContainer.image_build_context;
+          writeFileSync("wrangler.deploy.jsonc", `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+
+      - name: Apply production D1 migrations
+        run: pnpm db:migrate:production
+
+      - name: Deploy Worker without rebuilding containers
+        run: pnpm exec wrangler deploy --env="" --config wrangler.deploy.jsonc

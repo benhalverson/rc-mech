@@ -52,8 +52,7 @@
 		{
 			"name": "rc-mech-driving-analysis-media",
 			"class_name": "RaceVideoMediaContainer",
-			"image": "./containers/driving-analysis/Dockerfile",
-			"image_build_context": "./containers/driving-analysis",
+			"image": "registry.cloudflare.com/acf9bf76ca02383a1cfe0a3bcf3906e4/rc-mech-driving-analysis-media@sha256:6d01d5e5f0dbfe8d880510596050934e4a6a6c83cbb49bfcbda327f6588da282",
 			"instance_type": "standard-4",
 			"max_instances": 2
 		}
