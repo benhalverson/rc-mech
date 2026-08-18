@@ -29,9 +29,9 @@ import type {
 	CornerPassEvidence,
 	EvidenceCorner,
 } from './corner-evidence';
+import { MAX_CORNER_EVIDENCE_PASSES } from './corner-evidence';
 import { cornerEvidenceBatch, cornerPassEvidence } from './evidence-schema';
 
-const MAX_PERSISTED_PASSES = 10_000;
 const PASS_INSERT_CHUNK_SIZE = 100;
 
 export class CornerEvidenceAuthorityError extends Error {
@@ -273,7 +273,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 	): Promise<CornerEvidenceCommitResult> {
 		if (
 			command.measurement.version !== 'corner-evidence.v1' ||
-			command.measurement.passes.length > MAX_PERSISTED_PASSES
+			command.measurement.passes.length > MAX_CORNER_EVIDENCE_PASSES
 		)
 			throw stale();
 		const context = await this.load(command);

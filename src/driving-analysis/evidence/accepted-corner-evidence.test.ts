@@ -12,6 +12,7 @@ import {
 	EVIDENCE_MAX_COMPRESSED_INPUT_BYTES,
 	EVIDENCE_MAX_OBSERVATION_CONTRACT_BYTES,
 } from './accepted-corner-evidence';
+import { MAX_CORNER_EVIDENCE_FRAMES } from './corner-evidence';
 
 const OWNER_ID = 'owner-1';
 const ANALYSIS_ID = 'analysis-1';
@@ -466,7 +467,10 @@ describe('accepted corner evidence', () => {
 		const workContext = await work.load(identity);
 		work.load.mockResolvedValue({
 			...workContext,
-			prepared: { ...workContext.prepared, decodedFrameCount: 30_001 },
+			prepared: {
+				...workContext.prepared,
+				decodedFrameCount: MAX_CORNER_EVIDENCE_FRAMES + 1,
+			},
 		});
 		const workRead = vi.fn();
 		await expect(

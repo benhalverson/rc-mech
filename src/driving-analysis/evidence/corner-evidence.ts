@@ -66,8 +66,9 @@ export class CornerEvidenceError extends Error {
 	}
 }
 
-export const MAX_CORNER_EVIDENCE_FRAMES = 30_000;
-export const MAX_CORNER_EVIDENCE_OPERATIONS = 3_000_000;
+export const MAX_CORNER_EVIDENCE_FRAMES = 100_000;
+export const MAX_CORNER_EVIDENCE_OPERATIONS = 10_000_000;
+export const MAX_CORNER_EVIDENCE_PASSES = 10_000;
 
 export const assertCornerEvidenceBudget = (
 	frameCount: number,
@@ -126,6 +127,7 @@ const measureCorner = (
 	corner: EvidenceCorner,
 	segment: SubjectObservationSegment,
 	tieToleranceMs: number,
+	passBudget: { count: number },
 ): CornerPassEvidence[] => {
 	const observations = segment.observations;
 	const events: { kind: 'entry' | 'exit'; crossing: GateCrossing }[] = [];
@@ -147,7 +149,7 @@ const measureCorner = (
 	for (const event of events) {
 		if (event.kind === 'entry') {
 			if (entry)
-				passes.push({
+				appendPass(passes, passBudget, () => ({
 					cornerId: corner.id,
 					cornerKey: corner.key,
 					cornerOrder: corner.order,
@@ -160,12 +162,12 @@ const measureCorner = (
 					rank: null,
 					tieGroup: null,
 					best: false,
-				});
+				}));
 			entry = event.crossing;
 			continue;
 		}
 		if (!entry) {
-			passes.push({
+			appendPass(passes, passBudget, () => ({
 				cornerId: corner.id,
 				cornerKey: corner.key,
 				cornerOrder: corner.order,
@@ -178,10 +180,10 @@ const measureCorner = (
 				rank: null,
 				tieGroup: null,
 				best: false,
-			});
+			}));
 			continue;
 		}
-		passes.push({
+		appendPass(passes, passBudget, () => ({
 			cornerId: corner.id,
 			cornerKey: corner.key,
 			cornerOrder: corner.order,
@@ -194,11 +196,11 @@ const measureCorner = (
 			rank: null,
 			tieGroup: null,
 			best: false,
-		});
+		}));
 		entry = null;
 	}
 	if (entry) {
-		passes.push({
+		appendPass(passes, passBudget, () => ({
 			cornerId: corner.id,
 			cornerKey: corner.key,
 			cornerOrder: corner.order,
@@ -212,7 +214,7 @@ const measureCorner = (
 			rank: null,
 			tieGroup: null,
 			best: false,
-		});
+		}));
 	}
 	const ranked = passes
 		.filter(isEligiblePass)
@@ -244,6 +246,17 @@ const measureCorner = (
 			best: rank === 1,
 		};
 	});
+};
+
+const appendPass = (
+	passes: CornerPassEvidence[],
+	budget: { count: number },
+	create: () => CornerPassEvidence,
+): void => {
+	if (budget.count >= MAX_CORNER_EVIDENCE_PASSES)
+		throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+	passes.push(create());
+	budget.count += 1;
 };
 
 type EligiblePass = CornerPassEvidence & {
@@ -302,10 +315,11 @@ export const measureAcceptedSegment = (
 		input.averageFrameRate.numerator;
 	if (!Number.isFinite(tieToleranceMs) || tieToleranceMs <= 0)
 		throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+	const passBudget = { count: 0 };
 	return {
 		version: 'corner-evidence.v1',
 		passes: input.corners.flatMap((corner) =>
-			measureCorner(corner, input.segment, tieToleranceMs),
+			measureCorner(corner, input.segment, tieToleranceMs, passBudget),
 		),
 	};
 };

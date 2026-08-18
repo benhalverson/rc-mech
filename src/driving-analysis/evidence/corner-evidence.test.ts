@@ -5,6 +5,7 @@ import {
 	CornerEvidenceError,
 	MAX_CORNER_EVIDENCE_FRAMES,
 	MAX_CORNER_EVIDENCE_OPERATIONS,
+	MAX_CORNER_EVIDENCE_PASSES,
 	measureAcceptedSegment,
 } from './corner-evidence';
 
@@ -96,16 +97,48 @@ const input = () => ({
 describe('deterministic corner evidence', () => {
 	test('bounds frames and corner-frame work before measurement', () => {
 		expect(() => assertCornerEvidenceBudget(3, 1)).not.toThrow();
+		expect(() =>
+			assertCornerEvidenceBudget(MAX_CORNER_EVIDENCE_FRAMES, 100),
+		).not.toThrow();
 		for (const [frames, corners] of [
 			[0, 1],
 			[MAX_CORNER_EVIDENCE_FRAMES + 1, 1],
 			[1, 0],
-			[MAX_CORNER_EVIDENCE_OPERATIONS, 2],
+			[
+				MAX_CORNER_EVIDENCE_FRAMES,
+				Math.floor(
+					MAX_CORNER_EVIDENCE_OPERATIONS / MAX_CORNER_EVIDENCE_FRAMES,
+				) + 1,
+			],
 			[1.5, 1],
 		] as const)
 			expect(() => assertCornerEvidenceBudget(frames, corners)).toThrow(
 				new CornerEvidenceError('INVALID_OBSERVATIONS'),
 			);
+	});
+
+	test('stops adversarial gate oscillation at the pass-emission budget', () => {
+		const value = input();
+		const frameCount = MAX_CORNER_EVIDENCE_PASSES * 2 + 3;
+		value.window.endTimestampMs = frameCount + 1;
+		value.manifest.window.endTimestampMs = frameCount + 1;
+		value.manifest.frames = Array.from({ length: frameCount }, (_, index) => ({
+			preparedFrameIndex: index,
+			frameIndex: index + 1,
+			timestampMs: index + 1,
+		}));
+		value.seed.timestampMs = 1;
+		value.segment.observations = Array.from(
+			{ length: frameCount },
+			(_, index) =>
+				observation(index + 1, index + 1, index % 2 === 0 ? 0.2 : 0.8),
+		);
+		const corner = value.corners[0];
+		if (!corner) throw new Error('missing corner fixture');
+		Object.assign(corner.exitGate, corner.entryGate);
+		expect(() => measureAcceptedSegment(value)).toThrow(
+			new CornerEvidenceError('INVALID_OBSERVATIONS'),
+		);
 	});
 
 	test('interpolates finite directed gate crossings into one ranked pass', () => {
