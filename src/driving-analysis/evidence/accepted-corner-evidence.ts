@@ -13,7 +13,6 @@ import {
 } from '../tracking/track-view-contracts';
 import { subjectProvenanceForProfile } from '../tracking/tracking-artifact-publication';
 import {
-	assertCornerEvidenceBudget,
 	CornerEvidenceError,
 	type CornerEvidenceMeasurement,
 	type EvidenceCorner,
@@ -256,10 +255,6 @@ const assertResourceBounds = (context: AcceptedCornerEvidenceContext): void => {
 		EVIDENCE_MAX_COMPRESSED_INPUT_BYTES
 	)
 		throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
-	assertCornerEvidenceBudget(
-		context.prepared.decodedFrameCount,
-		context.corners.length,
-	);
 };
 
 const assertSegmentMatchesAuthority = async (

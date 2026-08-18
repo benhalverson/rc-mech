@@ -12,7 +12,6 @@ import {
 	EVIDENCE_MAX_COMPRESSED_INPUT_BYTES,
 	EVIDENCE_MAX_OBSERVATION_CONTRACT_BYTES,
 } from './accepted-corner-evidence';
-import { MAX_CORNER_EVIDENCE_FRAMES } from './corner-evidence';
 
 const OWNER_ID = 'owner-1';
 const ANALYSIS_ID = 'analysis-1';
@@ -442,9 +441,19 @@ describe('accepted corner evidence', () => {
 		await expect(
 			invalidAcceptanceTime.evidence.commit(identity),
 		).rejects.toEqual(new AcceptedCornerEvidenceError('INVALID_ARTIFACT'));
+
+		const invalidContinuity = await fixture();
+		const continuityContext = await invalidContinuity.load(identity);
+		invalidContinuity.load.mockResolvedValue({
+			...continuityContext,
+			seed: { ...continuityContext.seed, frameIndex: 99 },
+		});
+		await expect(invalidContinuity.evidence.commit(identity)).rejects.toEqual(
+			new AcceptedCornerEvidenceError('INVALID_ARTIFACT'),
+		);
 	});
 
-	test('rejects aggregate input and work budgets before reading private objects', async () => {
+	test('rejects the aggregate input budget before reading private objects', async () => {
 		const aggregate = await fixture();
 		const aggregateContext = await aggregate.load(identity);
 		aggregate.load.mockResolvedValue({
@@ -462,23 +471,6 @@ describe('accepted corner evidence', () => {
 			new AcceptedCornerEvidenceError('INVALID_ARTIFACT'),
 		);
 		expect(aggregateRead).not.toHaveBeenCalled();
-
-		const work = await fixture();
-		const workContext = await work.load(identity);
-		work.load.mockResolvedValue({
-			...workContext,
-			prepared: {
-				...workContext.prepared,
-				decodedFrameCount: MAX_CORNER_EVIDENCE_FRAMES + 1,
-			},
-		});
-		const workRead = vi.fn();
-		await expect(
-			new AcceptedCornerEvidence(work.authority, {
-				read: workRead,
-			}).commit(identity),
-		).rejects.toEqual(new AcceptedCornerEvidenceError('INVALID_ARTIFACT'));
-		expect(workRead).not.toHaveBeenCalled();
 	});
 
 	test('cancels decompression when an accepted contract exceeds its bound', async () => {

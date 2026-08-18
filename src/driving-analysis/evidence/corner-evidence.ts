@@ -2,6 +2,7 @@ import type {
 	SubjectObservationSegment,
 	SubjectSeed,
 } from '../tracking/contracts';
+import { MAX_SUBJECT_OBSERVATIONS } from '../tracking/contracts';
 import type { PreparedFrameManifest } from '../tracking/track-view-contracts';
 
 type Point = Readonly<{ x: number; y: number }>;
@@ -66,7 +67,7 @@ export class CornerEvidenceError extends Error {
 	}
 }
 
-export const MAX_CORNER_EVIDENCE_FRAMES = 100_000;
+export const MAX_CORNER_EVIDENCE_FRAMES = MAX_SUBJECT_OBSERVATIONS;
 export const MAX_CORNER_EVIDENCE_OPERATIONS = 10_000_000;
 export const MAX_CORNER_EVIDENCE_PASSES = 10_000;
 
@@ -306,7 +307,7 @@ export const measureAcceptedSegment = (
 	input: AcceptedSegmentMeasurementInput,
 ): CornerEvidenceMeasurement => {
 	assertCornerEvidenceBudget(
-		input.manifest.frames.length,
+		input.segment.observations.length,
 		input.corners.length,
 	);
 	assertObservationContinuity(input);

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from driving_analysis_service.contracts import MAX_SUBJECT_OBSERVATIONS
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
 from driving_analysis_service.tracking_contracts import (
     FixedTrackView,
@@ -40,6 +41,19 @@ SUBJECT_TRACKING_FIXTURE_DIGESTS = {
         "3b60d5303d5829a24c0e41d261b0800f18b5e0e35d368d1105ae9867f810efa0"
     ),
 }
+
+
+def test_observation_contracts_share_the_runtime_ceiling() -> None:
+    segment_schema = SubjectObservationSegment.model_json_schema(by_alias=True)
+    artifact_schema = ObservationSegmentArtifact.model_json_schema(by_alias=True)
+    assert (
+        segment_schema["properties"]["observations"]["maxItems"]
+        == MAX_SUBJECT_OBSERVATIONS
+    )
+    assert (
+        artifact_schema["properties"]["observationCount"]["maximum"]
+        == MAX_SUBJECT_OBSERVATIONS
+    )
 
 
 def _manifest_payload() -> dict[str, object]:

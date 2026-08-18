@@ -117,6 +117,29 @@ describe('deterministic corner evidence', () => {
 			);
 	});
 
+	test('budgets an early-gap segment by observations, not the longer manifest', () => {
+		const value = input();
+		value.window.endTimestampMs = 200_000;
+		value.manifest.window.endTimestampMs = 200_000;
+		value.manifest.frames = Array.from({ length: 100_001 }, (_, index) => ({
+			preparedFrameIndex: index,
+			frameIndex: index + 1,
+			timestampMs: index + 100,
+		}));
+		value.segment.observations = [
+			observation(100, 1, 0.2),
+			observation(101, 2, 0.3),
+		];
+		value.segment.openGap = {
+			startTimestampMs: 102,
+			reason: 'ambiguous-identity',
+		};
+		expect(measureAcceptedSegment(value)).toEqual({
+			version: 'corner-evidence.v1',
+			passes: [],
+		});
+	});
+
 	test('stops adversarial gate oscillation at the pass-emission budget', () => {
 		const value = input();
 		const frameCount = MAX_CORNER_EVIDENCE_PASSES * 2 + 3;
