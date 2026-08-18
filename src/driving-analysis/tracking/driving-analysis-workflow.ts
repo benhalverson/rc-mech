@@ -12,7 +12,7 @@ import {
 import {
 	type DrivingAnalysisCreationWorkflowResult,
 	DrivingAnalysisCreationWorkflowRunner,
-	FakeDrivingAnalysisContainerPort,
+	RealDrivingAnalysisContainerPort,
 } from '../analysis/driving-analysis-creation-workflow';
 import {
 	GPU_LEASE_COORDINATOR_OBJECT_NAME,
@@ -40,10 +40,13 @@ import {
 	type TrackingJobSubmission,
 	uuidV4Schema,
 } from './contracts';
+import { inferenceProfileSchema } from './inference-profile';
 import {
 	LocalSam31Provider,
 	type TrackingProvider,
 } from './local-sam31-provider';
+import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
+import { preparedTrackViewStore } from './r2-prepared-track-view-store';
 import {
 	type R2TransferGrantAuthority,
 	r2TransferGrantAuthority,
@@ -145,6 +148,12 @@ export type DrivingAnalysisWorkflowEnvironment = {
 	GPU_PROVIDER_ORIGIN?: string;
 	GPU_ACCESS_CLIENT_ID?: string;
 	GPU_ACCESS_CLIENT_SECRET?: string;
+	INFERENCE_PROFILE_JSON?: string;
+	RACE_VIDEO_MEDIA_CONTAINER?: {
+		getByName(name: string): {
+			prepareTrackView(command: unknown): Promise<unknown>;
+		};
+	};
 };
 
 type AttemptIdentity = ExecutionIdentity & {
@@ -564,16 +573,47 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 		const payload = drivingAnalysisWorkflowEventPayloadSchema.parse(
 			event.payload,
 		);
-		if ('kind' in payload)
-			return new DrivingAnalysisCreationWorkflowRunner(
-				new DrivingAnalysisAuthority(this.env.DB),
-				new FakeDrivingAnalysisContainerPort(),
-			).run(
+		/* c8 ignore next -- real profile/container wiring is exercised by deployment acceptance. */
+		if ('kind' in payload) {
+			const authority = new DrivingAnalysisAuthority(this.env.DB);
+			return new DrivingAnalysisCreationWorkflowRunner(authority, {
+				startPreparation: async (command) => {
+					if (!this.env.INFERENCE_PROFILE_JSON)
+						throw new Error('INFERENCE_PROFILE_JSON is required for tracking');
+					let profile: ReturnType<typeof inferenceProfileSchema.parse>;
+					try {
+						profile = inferenceProfileSchema.parse(
+							JSON.parse(this.env.INFERENCE_PROFILE_JSON),
+						);
+					} catch {
+						throw new Error('INFERENCE_PROFILE_JSON is invalid');
+					}
+					return new RealDrivingAnalysisContainerPort({
+						authority,
+						tracking: new TrackingAuthority(this.env.DB),
+						prepared: new PreparedTrackViewAuthority(this.env.DB),
+						media: {
+							prepare: (mediaCommand) => {
+								const container =
+									this.env.RACE_VIDEO_MEDIA_CONTAINER?.getByName(
+										'rc-mech-driving-analysis-media',
+									);
+								if (!container)
+									throw new Error('Race-video media container is unavailable');
+								return container.prepareTrackView(mediaCommand);
+							},
+						},
+						profile,
+						store: preparedTrackViewStore(this.env),
+					}).startPreparation(command);
+				},
+			}).run(
 				{ ...event, payload } as Readonly<
 					WorkflowEvent<DrivingAnalysisWorkflowPayload>
 				>,
 				step,
 			);
+		}
 		const coordinator = this.env.GPU_LEASE_COORDINATOR.getByName(
 			GPU_LEASE_COORDINATOR_OBJECT_NAME,
 		);

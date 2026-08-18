@@ -64,6 +64,12 @@ export type DrivingAnalysisTransition =
 	  }>
 	| Readonly<{ kind: 'stale' }>;
 
+export type DrivingAnalysisPreparationSource = Readonly<{
+	objectKey: string;
+	byteCount: number;
+	checksumSha256: string;
+}>;
+
 const authorityError = (
 	code: DrivingAnalysisAuthorityErrorCode,
 	message: string,
@@ -222,6 +228,48 @@ export class DrivingAnalysisAuthority {
 		if (!record)
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
 		return publicAnalysis(record);
+	}
+
+	async preparationSource(
+		ownerId: string,
+		analysisId: string,
+	): Promise<DrivingAnalysisPreparationSource> {
+		const record = await this.database
+			.select({
+				objectKey: raceVideo.objectKey,
+				byteCount: raceVideoValidation.byteCount,
+				checksumSha256: raceVideoValidation.checksumSha256,
+			})
+			.from(drivingAnalysis)
+			.innerJoin(raceVideo, eq(raceVideo.id, drivingAnalysis.raceVideoId))
+			.innerJoin(
+				raceVideoValidation,
+				eq(raceVideoValidation.raceVideoId, raceVideo.id),
+			)
+			.where(
+				and(
+					eq(drivingAnalysis.ownerId, ownerId),
+					eq(drivingAnalysis.id, analysisId),
+					eq(raceVideo.ownerId, ownerId),
+					eq(raceVideo.status, 'validating'),
+					eq(raceVideoValidation.status, 'ready'),
+				),
+			)
+			.get();
+		if (
+			!record ||
+			!Number.isSafeInteger(record.byteCount) ||
+			!record.checksumSha256
+		)
+			throw authorityError(
+				'CONFLICT',
+				'Validated Race recording media facts are incomplete',
+			);
+		return {
+			objectKey: record.objectKey,
+			byteCount: record.byteCount,
+			checksumSha256: record.checksumSha256,
+		};
 	}
 
 	async beginPreparation(

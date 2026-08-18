@@ -69,7 +69,7 @@ const analysis = (stateVersion: number, progress: number) => ({
 });
 
 describe('Driving-analysis creation Workflow', () => {
-	test('advances only through authoritative D1 publications around the fake port', async () => {
+	test('advances only through authoritative D1 publications around preparation', async () => {
 		const beginPreparation = vi.fn(async () => ({
 			kind: 'published' as const,
 			analysis: analysis(2, 0),
@@ -99,16 +99,18 @@ describe('Driving-analysis creation Workflow', () => {
 		});
 		expect(steps.names).toEqual([
 			'begin-driving-analysis-preparation',
-			'start-fake-driving-analysis-preparation',
+			'prepare-driving-analysis-track-view',
 			'publish-driving-analysis-preparation-progress',
 		]);
 		expect(
-			steps.configurations.get('start-fake-driving-analysis-preparation'),
+			steps.configurations.get('prepare-driving-analysis-track-view'),
 		).toEqual({
 			retries: { limit: 2, delay: '5 seconds', backoff: 'constant' },
 			timeout: '1 minute',
 		});
 		expect(startPreparation).toHaveBeenCalledWith({
+			ownerId: 'owner-1',
+			workflowId: ANALYSIS_ID,
 			analysisId: ANALYSIS_ID,
 			raceVideoId: analysis(2, 0).raceVideoId,
 			raceWindow: analysis(2, 0).raceWindow,

@@ -13,6 +13,7 @@ import {
 	raceVideoValidation,
 	trackCorner,
 	trackLayout,
+	trackMapReferenceFrame,
 	trackMapVersion,
 } from '../../schema';
 import { MockR2Controller } from '../../testing/hono-fixture';
@@ -163,6 +164,18 @@ const seedReadyInput = async (database: D1Database) => {
 		viewWidth: 1,
 		viewHeight: 1,
 	});
+	await orm.insert(trackMapReferenceFrame).values({
+		id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+		mapVersionId: MAP_VERSION_ID,
+		raceVideoId: RACE_VIDEO_ID,
+		timestampMs: 1000,
+		objectKey: `track-map-reference-frames/${MAP_VERSION_ID}/frame.jpg`,
+		byteCount: 3,
+		checksumSha256: 'a'.repeat(64),
+		contentType: 'image/jpeg',
+		createdBy: OWNER_ID,
+		createdAt: timestamp,
+	});
 	await orm
 		.update(trackMapVersion)
 		.set({
@@ -217,6 +230,21 @@ const expectCode = async (
 };
 
 describe('DrivingAnalysisAuthority', () => {
+	test('returns only the owner-scoped validated recording source facts', async () => {
+		const value = await fixture();
+		await value.authority.create(command());
+		await expect(
+			value.authority.preparationSource(OWNER_ID, ANALYSIS_ID),
+		).resolves.toEqual({
+			objectKey: `race-recordings/private/${RACE_VIDEO_ID}`,
+			byteCount: 1024,
+			checksumSha256: 'a'.repeat(64),
+		});
+		await expect(
+			value.authority.preparationSource('user-1', ANALYSIS_ID),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+	});
+
 	test('keeps lifecycle triggers compatible with the remote D1 migration parser', () => {
 		const lifecycleTrigger = drivingAnalysisMigration.split(
 			'CREATE TRIGGER driving_analysis_lifecycle_transition',
