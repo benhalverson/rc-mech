@@ -118,6 +118,10 @@ describe('Race-video media container adapter', () => {
 			},
 			start: vi.fn(async () => undefined),
 			stage: vi.fn(async () => 0),
+			checksum: vi.fn(
+				async () =>
+					'41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d',
+			),
 			extract: vi.fn(async () => ({
 				body: new ReadableStream({
 					start(controller) {
@@ -144,6 +148,23 @@ describe('Race-video media container adapter', () => {
 				runtime as unknown as ReferenceFrameExtractionRuntime,
 			),
 		).rejects.toThrow('does not match frame input');
+		runtime.checksum.mockResolvedValueOnce('0'.repeat(64));
+		await expect(
+			extractRaceVideoReferenceFrame(
+				{
+					source: {
+						objectKey: sourceKey,
+						byteCount: 6,
+						checksumSha256:
+							'41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d',
+					},
+					timestampMs: 250,
+					outputObjectKey:
+						'track-map-reference-frames/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg',
+				},
+				runtime as unknown as ReferenceFrameExtractionRuntime,
+			),
+		).rejects.toThrow('checksum does not match');
 
 		const accepted = await extractRaceVideoReferenceFrame(
 			{
@@ -166,7 +187,7 @@ describe('Race-video media container adapter', () => {
 			250,
 		);
 		expect(output.has(accepted.objectKey)).toBe(true);
-		expect(runtime.cleanup).toHaveBeenCalledTimes(1);
+		expect(runtime.cleanup).toHaveBeenCalledTimes(2);
 	});
 
 	test('stages, calls, streams, and cleans up a prepared Track view', async () => {
@@ -175,7 +196,7 @@ describe('Race-video media container adapter', () => {
 			bucket: {
 				get: vi.fn(async () => ({
 					size: 100,
-					checksums: { toJSON: () => ({ sha256: SOURCE_SHA }) },
+					checksums: { toJSON: () => ({}) },
 					body: new ReadableStream<Uint8Array>(),
 				})),
 				put: vi.fn(async (key: string, body: ReadableStream) => {
@@ -184,6 +205,7 @@ describe('Race-video media container adapter', () => {
 			},
 			start: vi.fn(async () => undefined),
 			stage: vi.fn(async () => 0),
+			checksum: vi.fn(async () => SOURCE_SHA),
 			prepare: vi.fn(async () =>
 				jsonResponse(
 					prepareAcceptedFixture(
@@ -230,6 +252,7 @@ describe('Race-video media container adapter', () => {
 			},
 			start: vi.fn(async () => undefined),
 			stage: vi.fn(async () => 0),
+			checksum: vi.fn(async () => SOURCE_SHA),
 			prepare: vi.fn(async () =>
 				jsonResponse({
 					contractVersion: 'subject-tracking.v1',
@@ -267,6 +290,7 @@ describe('Race-video media container adapter', () => {
 			},
 			start: vi.fn(async () => undefined),
 			stage: vi.fn(),
+			checksum: vi.fn(async () => SOURCE_SHA),
 			prepare: vi.fn(),
 			stream: vi.fn(),
 			cleanup: vi.fn(),
@@ -304,13 +328,21 @@ describe('Race-video media container adapter', () => {
 			),
 			cleanup: vi.fn(async () => undefined),
 		};
+		matching.checksum.mockResolvedValueOnce('0'.repeat(64));
+		await expect(
+			prepareRaceVideoTrackView(
+				preparationCommand,
+				matching as unknown as RaceVideoTrackViewPreparationRuntime,
+			),
+		).rejects.toThrow('checksum does not match');
+		matching.checksum.mockResolvedValue(SOURCE_SHA);
 		await expect(
 			prepareRaceVideoTrackView(
 				preparationCommand,
 				matching as unknown as RaceVideoTrackViewPreparationRuntime,
 			),
 		).rejects.toThrow('does not match preparation input');
-		expect(matching.cleanup).toHaveBeenCalledOnce();
+		expect(matching.cleanup).toHaveBeenCalledTimes(2);
 	});
 	test('shares approved accepted and rejected fixtures with Python', () => {
 		expect(accepted).toEqual(acceptedFixture);

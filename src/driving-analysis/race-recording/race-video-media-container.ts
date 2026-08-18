@@ -100,6 +100,7 @@ export type RaceVideoTrackViewPreparationRuntime = Readonly<{
 	bucket: R2Bucket;
 	start(): Promise<void>;
 	stage(path: string, body: ReadableStream): Promise<number>;
+	checksum(path: string): Promise<string>;
 	prepare(request: Request): Promise<Response>;
 	stream(path: string): Promise<PreparationStream>;
 	cleanup(path: string): Promise<void>;
@@ -109,6 +110,7 @@ export type ReferenceFrameExtractionRuntime = Readonly<{
 	bucket: R2Bucket;
 	start(): Promise<void>;
 	stage(path: string, body: ReadableStream): Promise<number>;
+	checksum(path: string): Promise<string>;
 	extract(path: string, timestampMs: number): Promise<ReferenceFrameStream>;
 	cleanup(path: string): Promise<void>;
 }>;
@@ -162,10 +164,12 @@ export const extractRaceVideoReferenceFrame = async (
 	const command = referenceFrameExtractionCommandSchema.parse(commandValue);
 	await runtime.start();
 	const source = await runtime.bucket.get(command.source.objectKey);
+	const storedChecksum = source?.checksums.toJSON().sha256;
 	if (
 		!source ||
 		source.size !== command.source.byteCount ||
-		source.checksums.toJSON().sha256 !== command.source.checksumSha256
+		(storedChecksum !== undefined &&
+			storedChecksum !== command.source.checksumSha256)
 	)
 		throw new Error('Private source recording does not match frame input');
 	const stagedPath = `/var/lib/rc-mech/staged/reference-${crypto.randomUUID()}.media`;
@@ -174,6 +178,8 @@ export const extractRaceVideoReferenceFrame = async (
 		if ((await runtime.stage(stagedPath, source.body)) !== 0)
 			/* c8 ignore next -- container process failure is covered by live acceptance. */
 			throw new Error('Private source recording could not be staged');
+		if ((await runtime.checksum(stagedPath)) !== command.source.checksumSha256)
+			throw new Error('Private source recording checksum does not match');
 		const frame = await runtime.extract(stagedPath, command.timestampMs);
 		const bytes = await readBoundedBytes(frame.body, MAX_REFERENCE_FRAME_BYTES);
 		/* c8 ignore next -- ffmpeg failure is covered by live acceptance. */
@@ -230,10 +236,12 @@ export const prepareRaceVideoTrackView = async (
 	const request = prepareStageRequestSchema.parse(command.request);
 	await runtime.start();
 	const source = await runtime.bucket.get(command.source.objectKey);
+	const storedChecksum = source?.checksums.toJSON().sha256;
 	if (
 		!source ||
 		source.size !== command.source.byteCount ||
-		source.checksums.toJSON().sha256 !== command.source.checksumSha256
+		(storedChecksum !== undefined &&
+			storedChecksum !== command.source.checksumSha256)
 	)
 		throw new Error(
 			'Private source recording does not match preparation input',
@@ -244,6 +252,8 @@ export const prepareRaceVideoTrackView = async (
 		if ((await runtime.stage(stagedPath, source.body)) !== 0)
 			/* c8 ignore next -- container process failure is covered by live acceptance. */
 			throw new Error('Private source recording could not be staged');
+		if ((await runtime.checksum(stagedPath)) !== command.source.checksumSha256)
+			throw new Error('Private source recording checksum does not match');
 		const parsed = prepareStageResponseSchema.parse(
 			await readBoundedJson(
 				await runtime.prepare(
@@ -444,31 +454,71 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 	/* c8 ignore next -- declarative Container runtime configuration is verified by Wrangler. */
 	pingEndpoint = 'driving-analysis-media/health';
 
+	/* c8 ignore start -- Cloudflare Container process wiring is verified by Wrangler/live acceptance. */
+	private startRuntime(): Promise<void> {
+		return this.startAndWaitForPorts({
+			ports: 8080,
+			cancellationOptions: {
+				instanceGetTimeoutMS: 30_000,
+				portReadyTimeoutMS: 30_000,
+				waitInterval: 250,
+			},
+		});
+	}
+
+	private async stage(path: string, body: ReadableStream): Promise<number> {
+		const container = this.ctx.container;
+		if (!container) throw new Error('Container execution is unavailable');
+		const process = await container.exec(['/usr/bin/tee', path], {
+			stdin: body,
+			stdout: 'ignore',
+			stderr: 'ignore',
+			user: '10001:10001',
+		});
+		return process.exitCode;
+	}
+
+	private async stagedChecksum(path: string): Promise<string> {
+		const container = this.ctx.container;
+		if (!container) throw new Error('Container execution is unavailable');
+		const process = await container.exec(['/usr/bin/sha256sum', '--', path], {
+			stdout: 'pipe',
+			stderr: 'ignore',
+			user: '10001:10001',
+		});
+		if (!process.stdout)
+			throw new Error('Staged media checksum is unavailable');
+		const output = new TextDecoder('ascii', {
+			fatal: true,
+			ignoreBOM: false,
+		}).decode(await readBoundedBytes(process.stdout, 256));
+		if ((await process.exitCode) !== 0)
+			throw new Error('Staged media checksum failed');
+		const checksum = /^([0-9a-f]{64})\s/.exec(output)?.[1];
+		if (!checksum) throw new Error('Staged media checksum is invalid');
+		return checksum;
+	}
+
+	private async cleanup(path: string): Promise<void> {
+		const container = this.ctx.container;
+		if (!container) throw new Error('Container execution is unavailable');
+		const process = await container.exec(['/usr/bin/rm', '-f', '--', path], {
+			stdout: 'ignore',
+			stderr: 'ignore',
+			user: '10001:10001',
+		});
+		if ((await process.exitCode) !== 0)
+			throw new Error('Staged media cleanup failed');
+	}
+	/* c8 ignore end */
+
 	async validateRaceVideo(
 		command: unknown,
 	): Promise<RaceVideoValidationResponse> {
 		return validateRaceVideoMedia(command, {
 			bucket: this.env.ANALYSIS_MEDIA,
-			start: () =>
-				this.startAndWaitForPorts({
-					ports: 8080,
-					cancellationOptions: {
-						instanceGetTimeoutMS: 30_000,
-						portReadyTimeoutMS: 30_000,
-						waitInterval: 250,
-					},
-				}),
-			stage: async (path, body) => {
-				const container = this.ctx.container;
-				if (!container) throw new Error('Container execution is unavailable');
-				const process = await container.exec(['/usr/bin/tee', path], {
-					stdin: body,
-					stdout: 'ignore',
-					stderr: 'ignore',
-					user: '10001:10001',
-				});
-				return process.exitCode;
-			},
+			start: () => this.startRuntime(),
+			stage: (path, body) => this.stage(path, body),
 			probe: (request) => this.containerFetch(request, 8080),
 		});
 	}
@@ -479,26 +529,9 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 	): Promise<unknown> {
 		return prepareRaceVideoTrackView(command, {
 			bucket: this.env.ANALYSIS_MEDIA,
-			start: () =>
-				this.startAndWaitForPorts({
-					ports: 8080,
-					cancellationOptions: {
-						instanceGetTimeoutMS: 30_000,
-						portReadyTimeoutMS: 30_000,
-						waitInterval: 250,
-					},
-				}),
-			stage: async (path, body) => {
-				const container = this.ctx.container;
-				if (!container) throw new Error('Container execution is unavailable');
-				const process = await container.exec(['/usr/bin/tee', path], {
-					stdin: body,
-					stdout: 'ignore',
-					stderr: 'ignore',
-					user: '10001:10001',
-				});
-				return process.exitCode;
-			},
+			start: () => this.startRuntime(),
+			stage: (path, body) => this.stage(path, body),
+			checksum: (path) => this.stagedChecksum(path),
 			prepare: (request) => this.containerFetch(request, 8080),
 			stream: async (path) => {
 				const container = this.ctx.container;
@@ -515,20 +548,7 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 					waitForExit: () => process.exitCode,
 				};
 			},
-			cleanup: async (path) => {
-				const container = this.ctx.container;
-				if (!container) throw new Error('Container execution is unavailable');
-				const process = await container.exec(
-					['/usr/bin/rm', '-f', '--', path],
-					{
-						stdout: 'ignore',
-						stderr: 'ignore',
-						user: '10001:10001',
-					},
-				);
-				if ((await process.exitCode) !== 0)
-					throw new Error('Staged media cleanup failed');
-			},
+			cleanup: (path) => this.cleanup(path),
 		});
 	}
 	/* c8 ignore end */
@@ -544,26 +564,9 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 	}> {
 		return extractRaceVideoReferenceFrame(command, {
 			bucket: this.env.ANALYSIS_MEDIA,
-			start: () =>
-				this.startAndWaitForPorts({
-					ports: 8080,
-					cancellationOptions: {
-						instanceGetTimeoutMS: 30_000,
-						portReadyTimeoutMS: 30_000,
-						waitInterval: 250,
-					},
-				}),
-			stage: async (path, body) => {
-				const container = this.ctx.container;
-				if (!container) throw new Error('Container execution is unavailable');
-				const process = await container.exec(['/usr/bin/tee', path], {
-					stdin: body,
-					stdout: 'ignore',
-					stderr: 'ignore',
-					user: '10001:10001',
-				});
-				return process.exitCode;
-			},
+			start: () => this.startRuntime(),
+			stage: (path, body) => this.stage(path, body),
+			checksum: (path) => this.stagedChecksum(path),
 			extract: async (path, timestampMs) => {
 				const container = this.ctx.container;
 				if (!container) throw new Error('Container execution is unavailable');
@@ -591,16 +594,7 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 					throw new Error('Reference frame stream is unavailable');
 				return { body: process.stdout, waitForExit: () => process.exitCode };
 			},
-			cleanup: async (path) => {
-				const container = this.ctx.container;
-				if (!container) throw new Error('Container execution is unavailable');
-				const process = await container.exec(
-					['/usr/bin/rm', '-f', '--', path],
-					{ stdout: 'ignore', stderr: 'ignore', user: '10001:10001' },
-				);
-				if ((await process.exitCode) !== 0)
-					throw new Error('Staged media cleanup failed');
-			},
+			cleanup: (path) => this.cleanup(path),
 		});
 	}
 	/* c8 ignore end */
