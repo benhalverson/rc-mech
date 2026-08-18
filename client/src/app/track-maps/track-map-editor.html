@@ -11,7 +11,7 @@
 			<h3 class="mt-2 text-base font-semibold">Choose the camera view</h3>
 			@if (version()?.referenceFrame; as frame) {
 				<p class="mt-3 text-sm font-semibold">Frame source locked</p>
-				<p class="alloy-supporting-text mt-1 text-xs">Recording {{ frame.raceVideoId }} · {{ frame.timestampMs }} ms</p>
+				<p class="mt-1 text-xs text-alloy-text-on-canvas-secondary">Recording {{ frame.raceVideoId }} · {{ frame.timestampMs }} ms</p>
 			} @else {
 				<label class="mt-3 grid gap-1 text-sm font-semibold" for="recording-select">Validated Race recording</label>
 				<select id="recording-select" class="alloy-control mt-1 w-full" [value]="selectedRecordingId()" (change)="selectRecording($any($event.target).value)" [disabled]="busy() || !version()">
@@ -21,7 +21,7 @@
 					}
 				</select>
 				@if (!recordings().length) {
-					<p class="alloy-supporting-text mt-2 text-xs">No validated recordings are ready yet. Finish a Race recording upload and validation first.</p>
+					<p class="mt-2 text-xs text-alloy-text-on-canvas-secondary">No validated recordings are ready yet. Finish a Race recording upload and validation first.</p>
 				}
 			}
 		</li>
@@ -31,12 +31,12 @@
 			<h3 class="mt-2 text-base font-semibold">Set the reference moment</h3>
 			@if (version()?.referenceFrame; as frame) {
 				<p class="mt-3 text-sm font-semibold">{{ frame.timestampMs }} ms selected</p>
-				<p class="alloy-supporting-text mt-1 text-xs">The frame is immutable for this draft. Create another draft to choose a different moment.</p>
+				<p class="mt-1 text-xs text-alloy-text-on-canvas-secondary">The frame is immutable for this draft. Create another draft to choose a different moment.</p>
 			} @else {
 				<label class="mt-3 grid gap-1 text-sm font-semibold" for="frame-timestamp">Timestamp in milliseconds</label>
 				<input id="frame-timestamp" class="alloy-control mt-1 w-full" type="number" min="0" [attr.max]="selectedRecording() ? selectedRecording()!.durationMs - 1 : null" step="1" [value]="timestampMs()" (input)="setTimestamp($any($event.target).value)" [disabled]="busy() || !selectedRecording()" />
 				@if (selectedRecording(); as recording) {
-					<p class="alloy-supporting-text mt-2 text-xs">Recording length: {{ recording.durationMs }} ms</p>
+					<p class="mt-2 text-xs text-alloy-text-on-canvas-secondary">Recording length: {{ recording.durationMs }} ms</p>
 				}
 				<button class="alloy-control alloy-control-secondary mt-3 w-full" type="button" (click)="selectFrame()" [disabled]="busy() || !selectedRecording() || timestampMs() >= selectedRecording()!.durationMs">{{ busy() ? 'Extracting frame…' : 'Use this frame' }}</button>
 			}
@@ -47,9 +47,9 @@
 			<h3 class="mt-2 text-base font-semibold">Draw what analysis should watch</h3>
 			@if (activeCorner(); as corner) {
 				<p class="mt-3 text-sm"><strong>Active:</strong> {{ corner.order }} · {{ corner.name }}</p>
-				<p class="alloy-supporting-text mt-1 text-xs"><strong>Drawing:</strong> {{ targetLabel() }}</p>
+				<p class="mt-1 text-xs text-alloy-text-on-canvas-secondary"><strong>Drawing:</strong> {{ targetLabel() }}</p>
 			} @else {
-				<p class="alloy-supporting-text mt-3 text-sm">Add a Corner after selecting the frame.</p>
+				<p class="mt-3 text-sm text-alloy-text-on-canvas-secondary">Add a Corner after selecting the frame.</p>
 			}
 		</li>
 	</ol>

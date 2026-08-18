@@ -38,6 +38,7 @@ const frame = {
 	byteCount: 200,
 	checksumSha256: 'a'.repeat(64),
 	contentType: 'image/jpeg',
+	contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
 } as const;
 const recording = {
 	id: 'recording-1',

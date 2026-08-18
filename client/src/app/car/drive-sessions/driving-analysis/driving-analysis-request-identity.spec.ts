@@ -11,6 +11,8 @@ const command = (): StartDrivingAnalysisCommand => ({
 	raceWindow: { startTimestampMs: 0, endTimestampMs: 1000 },
 	subjectSeed: {
 		timestampMs: 100,
+		frameIndex: 3,
+		identity: 'subject-1',
 		box: { x: 0.1, y: 0.2, width: 0.1, height: 0.1 },
 	},
 });

@@ -50,6 +50,7 @@ const referenceFrame = object({
 	byteCount: number(),
 	checksumSha256: string(),
 	contentType: literal('image/jpeg'),
+	contentUrl: string(),
 });
 const version = object({
 	id: string(),

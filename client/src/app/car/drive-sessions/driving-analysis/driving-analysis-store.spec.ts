@@ -91,6 +91,8 @@ const analysis = (
 	approvedTrackMapVersionId: '44444444-4444-4444-8444-444444444444',
 	subjectSeed: {
 		timestampMs: 180_000,
+		frameIndex: 5_400,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 	sourceLayout: {
@@ -100,6 +102,7 @@ const analysis = (
 		height: 1080,
 		trackView: { x: 0, y: 1 / 3, width: 1, height: 2 / 3 },
 	},
+	lifecycle: 'preparation',
 	status: 'queued',
 	stage: 'preparation',
 	progress: 0,
@@ -117,6 +120,8 @@ const analysisCommand = (): StartDrivingAnalysisCommand => ({
 	raceWindow: { startTimestampMs: 120_000, endTimestampMs: 720_000 },
 	subjectSeed: {
 		timestampMs: 180_000,
+		frameIndex: 5_400,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 });
@@ -230,6 +235,7 @@ class FakeTrackMapGateway {
 			byteCount: 100,
 			checksumSha256: 'a'.repeat(64),
 			contentType: 'image/jpeg',
+			contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
 		},
 		corners: [],
 	});

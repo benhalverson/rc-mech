@@ -77,6 +77,7 @@ const selectedVersion: TrackMapVersion = {
 		byteCount: 100,
 		checksumSha256: 'a'.repeat(64),
 		contentType: 'image/jpeg',
+		contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
 	},
 	corners: [
 		{
@@ -187,6 +188,8 @@ describe('DrivingAnalysisCreator', () => {
 			raceWindow: { startTimestampMs: 120_000, endTimestampMs: 720_000 },
 			subjectSeed: {
 				timestampMs: 180_000,
+				frameIndex: 5_400,
+				identity: 'subject-1',
 				box: { x: 0.45, y: 0.45, width: 0.1, height: 0.08 },
 			},
 		});
@@ -209,6 +212,43 @@ describe('DrivingAnalysisCreator', () => {
 		root
 			.querySelector('form')
 			?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+		expect(store.createAnalysis).toHaveBeenCalledTimes(3);
+		const identity = root.querySelector<HTMLInputElement>(
+			'[data-subject-identity]',
+		);
+		const frameIndex = root.querySelector<HTMLInputElement>(
+			'[data-seed-frame-index]',
+		);
+		if (!identity || !frameIndex)
+			throw new Error('Subject-seed inputs missing');
+		for (const value of ['', 'x'.repeat(129)]) {
+			identity.value = value;
+			identity.dispatchEvent(new Event('input', { bubbles: true }));
+			root
+				.querySelector('form')
+				?.dispatchEvent(
+					new Event('submit', { bubbles: true, cancelable: true }),
+				);
+			fixture.detectChanges();
+			expect(root.textContent).toContain(
+				'Subject identity must be between 1 and 128 characters',
+			);
+		}
+		identity.value = 'subject-1';
+		identity.dispatchEvent(new Event('input', { bubbles: true }));
+		for (const value of ['-1', '36000', '1.5']) {
+			frameIndex.value = value;
+			frameIndex.dispatchEvent(new Event('input', { bubbles: true }));
+			root
+				.querySelector('form')
+				?.dispatchEvent(
+					new Event('submit', { bubbles: true, cancelable: true }),
+				);
+			fixture.detectChanges();
+			expect(root.textContent).toContain(
+				'Subject frame must identify a decoded recording frame',
+			);
+		}
 		expect(store.createAnalysis).toHaveBeenCalledTimes(3);
 
 		const editor = fixture.debugElement.query(By.directive(SubjectBoxEditor))
@@ -335,7 +375,30 @@ describe('DrivingAnalysisCreator', () => {
 			error: null,
 		});
 		fixture.detectChanges();
+		expect(root.querySelector('[data-retry-analysis]')).not.toBeNull();
+		store.analysisCreation.set({
+			status: 'accepted',
+			driveSessionId: 'drive-1',
+			analysis: {
+				...store.analysisCreation().analysis,
+				status: 'running',
+				stage: 'tracking',
+				progress: 50,
+			} as DrivingAnalysis,
+			error: null,
+		});
+		store.pending.set(false);
+		fixture.detectChanges();
 		expect(root.querySelector('[data-retry-analysis]')).toBeNull();
+		store.analysisCreation.set({
+			...store.analysisCreation(),
+			analysis: {
+				...store.analysisCreation().analysis,
+				status: 'failed',
+			} as DrivingAnalysis,
+		});
+		fixture.detectChanges();
+		expect(root.querySelector('[data-retry-analysis]')).not.toBeNull();
 	});
 
 	it('covers unavailable maps, validation boundaries, failures, and pending state', async () => {
@@ -350,6 +413,7 @@ describe('DrivingAnalysisCreator', () => {
 		fixture.detectChanges();
 		const root = fixture.nativeElement as HTMLElement;
 		expect(root.textContent).toContain('Loading approved Track maps');
+		root.querySelector<HTMLButtonElement>('[data-mark-seed]')?.click();
 
 		store.trackMapsLoading.set(false);
 		store.trackMapsFailure.set({ status: 503 });

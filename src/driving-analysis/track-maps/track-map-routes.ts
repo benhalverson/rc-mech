@@ -94,6 +94,7 @@ const publicReferenceFrame = (
 	byteCount: referenceFrame.byteCount,
 	checksumSha256: referenceFrame.checksumSha256,
 	contentType: referenceFrame.contentType,
+	contentUrl: `/api/v1/track-map-versions/${encodeURIComponent(referenceFrame.mapVersionId)}/reference-frame/content`,
 });
 
 const loadVersion = async (c: AppContext, versionId: string) => {

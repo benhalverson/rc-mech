@@ -3,6 +3,7 @@ import {
 	int,
 	literal,
 	maximum,
+	maxLength,
 	minLength,
 	nonnegative,
 	number,
@@ -51,6 +52,8 @@ const raceWindow = strictObject({
 );
 const subjectSeed = strictObject({
 	timestampMs: int().check(nonnegative()),
+	frameIndex: int().check(nonnegative()),
+	identity: string().check(minLength(1), maxLength(128)),
 	box: subjectBox,
 });
 const fixedTrackView = strictObject({
@@ -78,6 +81,15 @@ export const drivingAnalysisSchema = readonly(
 		approvedTrackMapVersionId: string().check(minLength(1)),
 		subjectSeed,
 		sourceLayout,
+		lifecycle: union([
+			literal('preparation'),
+			literal('tracking'),
+			literal('awaiting-reidentification'),
+			literal('tracking-complete'),
+			literal('failed'),
+			literal('completed'),
+			literal('cancelled'),
+		]),
 		status: union([
 			literal('queued'),
 			literal('running'),

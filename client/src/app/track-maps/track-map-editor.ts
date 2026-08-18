@@ -99,10 +99,7 @@ export class TrackMapEditor {
 		),
 	);
 	protected readonly frameUrl = computed(() => {
-		const version = this.version();
-		return version?.referenceFrame
-			? `/api/v1/track-map-versions/${encodeURIComponent(version.id)}/reference-frame/content`
-			: '';
+		return this.version()?.referenceFrame?.contentUrl ?? '';
 	});
 	protected readonly targetLabel = computed(() => {
 		const target = this.selectedTarget();

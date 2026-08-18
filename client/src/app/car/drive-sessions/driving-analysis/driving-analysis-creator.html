@@ -63,11 +63,13 @@
 			</div>
 		</div>
 
-		<fieldset class="grid gap-2 sm:grid-cols-3">
-			<legend class="col-span-full text-sm font-semibold">Exact absolute timestamps (milliseconds)</legend>
+		<fieldset class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+			<legend class="col-span-full text-sm font-semibold">Immutable Race window and Subject seed</legend>
 			<label class="grid gap-1 text-xs font-semibold">Race start<input class="alloy-control" data-window-start type="number" step="1" [formField]="fields.startTimestampMs" /></label>
 			<label class="grid gap-1 text-xs font-semibold">Race end<input class="alloy-control" data-window-end type="number" step="1" [formField]="fields.endTimestampMs" /></label>
-			<label class="grid gap-1 text-xs font-semibold">Subject frame<input class="alloy-control" data-seed-timestamp type="number" step="1" [formField]="fields.seedTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Subject timestamp (ms)<input class="alloy-control" data-seed-timestamp type="number" step="1" [formField]="fields.seedTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Source frame index<input class="alloy-control" data-seed-frame-index type="number" step="1" [formField]="fields.seedFrameIndex" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Subject identity<input class="alloy-control" data-subject-identity type="text" autocomplete="off" [formField]="fields.subjectIdentity" /></label>
 		</fieldset>
 
 		@if (formError()) {

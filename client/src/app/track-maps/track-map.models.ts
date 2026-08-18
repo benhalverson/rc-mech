@@ -24,6 +24,7 @@ export type TrackMapReferenceFrame = {
 	byteCount: number;
 	checksumSha256: string;
 	contentType: 'image/jpeg';
+	contentUrl: string;
 };
 export type TrackMapRecording = {
 	id: string;

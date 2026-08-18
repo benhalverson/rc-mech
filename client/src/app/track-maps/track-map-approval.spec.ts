@@ -38,6 +38,7 @@ const version: TrackMapVersion = {
 		byteCount: 100,
 		checksumSha256: 'a'.repeat(64),
 		contentType: 'image/jpeg',
+		contentUrl: '/api/v1/track-map-versions/map-1/reference-frame/content',
 	},
 	corners: [corner],
 };
