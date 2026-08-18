@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
 let authentication = 0;
+const playableRaceVideo = readFileSync(
+	new URL('./support/race-video.mp4', import.meta.url),
+);
 const browserClientPort = Number(
 	process.env['RC_MECH_BROWSER_CLIENT_PORT'] ?? 4201,
 );
@@ -26,6 +30,67 @@ const authenticateOwner = async (page: Page): Promise<void> => {
 const scan = async (page: Page) => {
 	await injectAxe(page);
 	return getViolations(page);
+};
+
+const createReadyRaceRecording = async (page: Page): Promise<string> => {
+	const carResponse = await page.request.post('/api/v1/cars', {
+		data: {
+			name: 'Track map reference recording fixture',
+			make: 'Test make',
+			model: 'Test model',
+		},
+	});
+	expect(carResponse.status()).toBe(201);
+	const car = (await carResponse.json()) as { car: { id: string } };
+	const driveResponse = await page.request.post(
+		`/api/v1/cars/${car.car.id}/drives`,
+		{
+			data: {
+				startedAt: '2026-08-17T18:00:00.000Z',
+				durationMinutes: 10,
+				conditions: 'Dry',
+			},
+		},
+	);
+	expect(driveResponse.status()).toBe(201);
+	const drive = (await driveResponse.json()) as {
+		driveSession: { id: string };
+	};
+	const createResponse = await page.request.post(
+		`/api/v1/cars/${car.car.id}/drives/${drive.driveSession.id}/race-videos`,
+		{
+			data: {
+				fileName: 'Track-map-reference.mp4',
+				contentType: 'video/mp4',
+				sizeBytes: playableRaceVideo.length,
+				requestId: '00000000-0000-4000-8000-000000000237',
+			},
+		},
+	);
+	expect(createResponse.status()).toBe(201);
+	const recording = (await createResponse.json()) as {
+		raceVideo: { id: string };
+	};
+	const partResponse = await page.request.put(
+		`/api/v1/race-videos/${recording.raceVideo.id}/upload-parts/1`,
+		{
+			headers: {
+				'content-length': String(playableRaceVideo.length),
+				'content-type': 'application/octet-stream',
+				'x-transfer-request-id': 'track-map-browser-part-1',
+			},
+			data: playableRaceVideo,
+		},
+	);
+	expect(partResponse.ok()).toBe(true);
+	const completionResponse = await page.request.post(
+		`/api/v1/race-videos/${recording.raceVideo.id}/complete`,
+	);
+	expect(completionResponse.ok()).toBe(true);
+	expect(await completionResponse.json()).toMatchObject({
+		raceVideo: { status: 'ready' },
+	});
+	return recording.raceVideo.id;
 };
 
 const registerUser = async (
@@ -58,6 +123,7 @@ test('approves, reuses, and retires immutable Track maps with private draft cont
 }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await authenticateOwner(page);
+	const recordingId = await createReadyRaceRecording(page);
 	await page.goto('/track-maps');
 	await expect(page.getByRole('heading', { name: 'Track maps' })).toBeVisible();
 	expect(await scan(page)).toEqual([]);
@@ -72,7 +138,20 @@ test('approves, reuses, and retires immutable Track maps with private draft cont
 		page.getByText('Create draft saved.', { exact: true }),
 	).toBeVisible();
 	await expect(
-		page.getByRole('heading', { name: 'Draw the corners the camera can see' }),
+		page.getByRole('heading', {
+			name: 'Anchor the geometry to one race frame',
+		}),
+	).toBeVisible();
+	await page.getByLabel('Validated Race recording').selectOption(recordingId);
+	await page.getByLabel('Timestamp in milliseconds').fill('250');
+	await page.getByRole('button', { name: 'Use this frame' }).click();
+	await expect(
+		page.getByText('Select frame saved.', { exact: true }),
+	).toBeVisible();
+	await expect(
+		page.getByRole('img', {
+			name: 'Selected private Race recording reference frame',
+		}),
 	).toBeVisible();
 
 	await page.getByRole('button', { name: 'Add corner' }).click();
@@ -95,13 +174,13 @@ test('approves, reuses, and retires immutable Track maps with private draft cont
 	const cornerName = page.getByLabel('Name', { exact: true });
 	await expect(cornerName).toHaveValue('Hairpin');
 	const canvas = page.getByRole('button', {
-		name: /Track map geometry editor/,
+		name: /Track-view geometry editor/,
 	});
 	await canvas.focus();
 	await expect(cornerName).toHaveValue('Hairpin');
 	await canvas.press('ArrowRight');
 	await expect(cornerName).toHaveValue('Hairpin');
-	await canvas.click({ position: { x: 120, y: 170 } });
+	await canvas.click({ position: { x: 120, y: 60 } });
 	await expect(cornerName).toHaveValue('Hairpin');
 	await page
 		.getByLabel('Geometry target', { exact: true })
@@ -111,7 +190,7 @@ test('approves, reuses, and retires immutable Track maps with private draft cont
 		.getByLabel('Geometry target', { exact: true })
 		.selectOption('viewSize');
 	await canvas.press('ArrowLeft');
-	await page.getByRole('button', { name: 'Save draft geometry' }).click();
+	await page.getByRole('button', { name: 'Save draft', exact: true }).click();
 	await expect(
 		page.getByText('Save draft saved.', { exact: true }),
 	).toBeVisible();
