@@ -9,6 +9,7 @@ from pydantic import Field, StringConstraints, model_validator
 from driving_analysis_service.contracts import (
     MAX_BENCHMARK_FRAME_COUNT,
     MAX_BENCHMARK_TIMESTAMP_MS,
+    MAX_SUBJECT_OBSERVATIONS,
     SHA256_PATTERN,
     NormalizedBox,
     RationalValue,
@@ -309,7 +310,7 @@ class SubjectObservationSegment(StrictContract):
     outcome: Literal["accepted"]
     case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     observations: tuple[SubjectObservation, ...] = Field(
-        max_length=MAX_BENCHMARK_FRAME_COUNT,
+        max_length=MAX_SUBJECT_OBSERVATIONS,
         strict=False,
     )
     open_gap: OpenTrackingGap | None = Field(alias="openGap")
@@ -352,7 +353,7 @@ class ObservationSegmentArtifact(StrictContract):
     observation_count: int = Field(
         alias="observationCount",
         ge=0,
-        le=MAX_BENCHMARK_FRAME_COUNT,
+        le=MAX_SUBJECT_OBSERVATIONS,
         strict=True,
     )
     completed: bool

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const MAX_TIMESTAMP_MS = 86_400_000;
 const MAX_FRAME_COUNT = 10_000_000;
+export const MAX_SUBJECT_OBSERVATIONS = 100_000;
 const UUID_V4 =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -238,7 +239,9 @@ export const subjectObservationSegmentSchema = z
 		contractVersion: z.literal('subject-observation-segment.v1'),
 		outcome: z.literal('accepted'),
 		caseId: safeIdentifierSchema,
-		observations: z.array(subjectObservationSchema).max(MAX_FRAME_COUNT),
+		observations: z
+			.array(subjectObservationSchema)
+			.max(MAX_SUBJECT_OBSERVATIONS),
 		openGap: openTrackingGapSchema.nullable(),
 		provenance: subjectProvenanceSchema,
 	})
@@ -265,7 +268,7 @@ export const observationSegmentArtifactSchema = z
 		checksumSha256: sha256Schema,
 		contentEncoding: z.literal('gzip'),
 		mediaType: z.literal('application/vnd.rc-mech.subject-observations+json'),
-		observationCount: z.number().int().min(0).max(MAX_FRAME_COUNT),
+		observationCount: z.number().int().min(0).max(MAX_SUBJECT_OBSERVATIONS),
 		completed: z.boolean(),
 		gap: openTrackingGapSchema.nullable(),
 		provenance: subjectProvenanceSchema,

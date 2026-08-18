@@ -62,6 +62,7 @@
 		{
 			"includes": [
 				"containers/driving-analysis/tests/fixtures/subject-tracking/prepare-accepted.json",
+				"containers/driving-analysis/tests/fixtures/subject-tracking/observations-complete-accepted.json",
 				"containers/driving-analysis/tests/fixtures/subject-tracking/track-gap-accepted.json",
 				"containers/driving-analysis/tests/fixtures/subject-tracking/track-rejected.json",
 				"containers/driving-analysis/tests/fixtures/subject-tracking/trusted-provider.json"

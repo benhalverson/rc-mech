@@ -1,6 +1,6 @@
 # Subject-tracking fixtures
 
-The four JSON files in this directory are exact-text test inputs. Their two-space
+The five JSON files in this directory are exact-text test inputs. Their two-space
 layout and trailing newlines are intentionally stable so byte comparisons and
 literal test mutations do not change when repository formatting runs.
 
