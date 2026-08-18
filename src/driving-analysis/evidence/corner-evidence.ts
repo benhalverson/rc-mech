@@ -77,7 +77,7 @@ export const assertCornerEvidenceBudget = (
 ): void => {
 	if (
 		!Number.isSafeInteger(frameCount) ||
-		frameCount < 1 ||
+		frameCount < 0 ||
 		frameCount > MAX_CORNER_EVIDENCE_FRAMES ||
 		!Number.isSafeInteger(cornerCount) ||
 		cornerCount < 1 ||

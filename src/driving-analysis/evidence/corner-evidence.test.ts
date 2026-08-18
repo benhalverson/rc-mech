@@ -97,11 +97,12 @@ const input = () => ({
 describe('deterministic corner evidence', () => {
 	test('bounds frames and corner-frame work before measurement', () => {
 		expect(() => assertCornerEvidenceBudget(3, 1)).not.toThrow();
+		expect(() => assertCornerEvidenceBudget(0, 1)).not.toThrow();
 		expect(() =>
 			assertCornerEvidenceBudget(MAX_CORNER_EVIDENCE_FRAMES, 100),
 		).not.toThrow();
 		for (const [frames, corners] of [
-			[0, 1],
+			[-1, 1],
 			[MAX_CORNER_EVIDENCE_FRAMES + 1, 1],
 			[1, 0],
 			[
@@ -115,6 +116,24 @@ describe('deterministic corner evidence', () => {
 			expect(() => assertCornerEvidenceBudget(frames, corners)).toThrow(
 				new CornerEvidenceError('INVALID_OBSERVATIONS'),
 			);
+	});
+
+	test('accepts a gap opened on the first prepared frame', () => {
+		const value = input();
+		value.segment.observations = [];
+		value.segment.openGap = {
+			startTimestampMs: value.seed.timestampMs,
+			reason: 'ambiguous-identity',
+		};
+		expect(measureAcceptedSegment(value)).toEqual({
+			version: 'corner-evidence.v1',
+			passes: [],
+		});
+
+		value.segment.openGap = null;
+		expect(() => measureAcceptedSegment(value)).toThrow(
+			new CornerEvidenceError('INVALID_OBSERVATIONS'),
+		);
 	});
 
 	test('budgets an early-gap segment by observations, not the longer manifest', () => {
