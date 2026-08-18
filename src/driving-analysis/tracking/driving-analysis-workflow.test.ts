@@ -1216,6 +1216,35 @@ describe('DrivingAnalysisWorkflow', () => {
 		},
 	);
 
+	test('keeps accepted-evidence infrastructure failures retryable', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: completedStatusFixture(submission),
+		}));
+		const failure = new AcceptedCornerEvidenceError('RETRYABLE_INFRASTRUCTURE');
+		value.evidence.commit.mockRejectedValue(failure);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(failure);
+		expect(value.publication.publish).toHaveBeenCalledOnce();
+		expect(value.publishAnalysisState).not.toHaveBeenCalled();
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
+	});
+
 	test('replays immutable accepted evidence before publishing Tracking state', async () => {
 		const value = coreWorkflowFixture();
 		value.getContext().acceptedArtifactId = ATTEMPT_ID;

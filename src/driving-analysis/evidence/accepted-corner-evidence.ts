@@ -11,19 +11,18 @@ import {
 	type PreparedFrameManifest,
 	preparedFrameManifestSchema,
 } from '../tracking/track-view-contracts';
+import { subjectProvenanceForProfile } from '../tracking/tracking-artifact-publication';
 import {
-	subjectProvenanceForProfile,
-	TRACKING_ARTIFACT_MAX_COMPRESSED_BYTES,
-	TRACKING_ARTIFACT_MAX_CONTRACT_BYTES,
-} from '../tracking/tracking-artifact-publication';
-import {
+	assertCornerEvidenceBudget,
+	CornerEvidenceError,
 	type CornerEvidenceMeasurement,
 	type EvidenceCorner,
 	measureAcceptedSegment,
 } from './corner-evidence';
 
-const MANIFEST_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
-const MANIFEST_MAX_CONTRACT_BYTES = 64 * 1024 * 1024;
+export const EVIDENCE_MAX_COMPRESSED_INPUT_BYTES = 16 * 1024 * 1024;
+export const EVIDENCE_MAX_OBSERVATION_CONTRACT_BYTES = 16 * 1024 * 1024;
+export const EVIDENCE_MAX_MANIFEST_CONTRACT_BYTES = 8 * 1024 * 1024;
 
 export type AcceptedCornerEvidenceIdentity = Readonly<{
 	ownerId: string;
@@ -48,6 +47,7 @@ export type AcceptedCornerEvidenceContext = AcceptedCornerEvidenceIdentity &
 			gapJson: string | null;
 			firstTimestampMs: number | null;
 			lastTimestampMs: number | null;
+			createdAt: string;
 		}>;
 		prepared: PreparedMediaArtifact;
 		seed: SubjectSeed;
@@ -96,7 +96,12 @@ export interface CornerEvidenceAuthorityPort {
 }
 
 export class AcceptedCornerEvidenceError extends Error {
-	constructor(readonly code: 'INVALID_ARTIFACT' | 'STALE_AUTHORITY') {
+	constructor(
+		readonly code:
+			| 'INVALID_ARTIFACT'
+			| 'STALE_AUTHORITY'
+			| 'RETRYABLE_INFRASTRUCTURE',
+	) {
 		super(code);
 		this.name = 'AcceptedCornerEvidenceError';
 	}
@@ -106,7 +111,6 @@ export class AcceptedCornerEvidence {
 	constructor(
 		private readonly authority: CornerEvidenceAuthorityPort,
 		private readonly store: Pick<TrackingArtifactStore, 'read'>,
-		private readonly now: () => Date = () => new Date(),
 	) {}
 
 	async commit(
@@ -116,14 +120,12 @@ export class AcceptedCornerEvidence {
 			return await this.commitValidated(identity);
 		} catch (error) {
 			if (error instanceof AcceptedCornerEvidenceError) throw error;
-			if (
-				typeof error === 'object' &&
-				error !== null &&
-				'code' in error &&
-				error.code === 'STALE_AUTHORITY'
-			)
-				throw new AcceptedCornerEvidenceError('STALE_AUTHORITY');
-			throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
+			if (error instanceof CornerEvidenceError)
+				throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
+			const authorityCode = errorCode(error);
+			if (authorityCode === 'STALE_AUTHORITY')
+				throw new AcceptedCornerEvidenceError(authorityCode);
+			throw new AcceptedCornerEvidenceError('RETRYABLE_INFRASTRUCTURE');
 		}
 	}
 
@@ -136,10 +138,9 @@ export class AcceptedCornerEvidence {
 				status: 'replayed',
 				measurement: context.existingMeasurement,
 			};
-		const [segment, manifest] = await Promise.all([
-			this.readAcceptedSegment(context),
-			this.readManifest(context),
-		]);
+		assertResourceBounds(context);
+		const manifest = await this.readManifest(context);
+		const segment = await this.readAcceptedSegment(context);
 		assertManifestMatchesPrepared(manifest, context.prepared);
 		await assertSegmentMatchesAuthority(segment, context);
 		const measurement = measureAcceptedSegment({
@@ -164,8 +165,7 @@ export class AcceptedCornerEvidence {
 			measurementVersion: measurement.version,
 		});
 		const measurementDigest = await digestCanonical(measurement);
-		const createdAt = this.now();
-		if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime()))
+		if (Number.isNaN(new Date(context.artifact.createdAt).getTime()))
 			throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
 		return this.authority.commit({
 			...identity,
@@ -183,7 +183,7 @@ export class AcceptedCornerEvidence {
 			measurementInputDigest,
 			measurementDigest,
 			measurement,
-			createdAt: createdAt.toISOString(),
+			createdAt: context.artifact.createdAt,
 		});
 	}
 
@@ -192,7 +192,7 @@ export class AcceptedCornerEvidence {
 	): Promise<SubjectObservationSegment> {
 		const artifact = context.artifact;
 		if (
-			artifact.byteCount > TRACKING_ARTIFACT_MAX_COMPRESSED_BYTES ||
+			artifact.byteCount > EVIDENCE_MAX_COMPRESSED_INPUT_BYTES ||
 			artifact.byteCount < 1
 		)
 			throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
@@ -206,13 +206,14 @@ export class AcceptedCornerEvidence {
 			(await sha256(object.bytes)) !== artifact.checksumSha256
 		)
 			throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
-		const bytes = await decompressGzip(
-			object.bytes,
-			TRACKING_ARTIFACT_MAX_CONTRACT_BYTES,
+		const bytes = await invalidArtifact(() =>
+			decompressGzip(object.bytes, EVIDENCE_MAX_OBSERVATION_CONTRACT_BYTES),
 		);
 		if ((await sha256(bytes)) !== artifact.contractDigest)
 			throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
-		return subjectObservationSegmentSchema.parse(parseJson(bytes));
+		return invalidArtifact(() =>
+			subjectObservationSegmentSchema.parse(parseJson(bytes)),
+		);
 	}
 
 	private async readManifest(
@@ -220,7 +221,7 @@ export class AcceptedCornerEvidence {
 	): Promise<PreparedFrameManifest> {
 		const descriptor = context.manifestObject;
 		if (
-			descriptor.byteCount > MANIFEST_MAX_COMPRESSED_BYTES ||
+			descriptor.byteCount > EVIDENCE_MAX_COMPRESSED_INPUT_BYTES ||
 			descriptor.byteCount < 1 ||
 			descriptor.byteCount !== context.prepared.frameManifestByteCount ||
 			descriptor.checksumSha256 !== context.prepared.frameManifestChecksumSha256
@@ -236,13 +237,30 @@ export class AcceptedCornerEvidence {
 			(await sha256(object.bytes)) !== descriptor.checksumSha256
 		)
 			throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
-		return preparedFrameManifestSchema.parse(
-			parseJson(
-				await decompressGzip(object.bytes, MANIFEST_MAX_CONTRACT_BYTES),
+		return invalidArtifact(async () =>
+			preparedFrameManifestSchema.parse(
+				parseJson(
+					await decompressGzip(
+						object.bytes,
+						EVIDENCE_MAX_MANIFEST_CONTRACT_BYTES,
+					),
+				),
 			),
 		);
 	}
 }
+
+const assertResourceBounds = (context: AcceptedCornerEvidenceContext): void => {
+	if (
+		context.artifact.byteCount + context.manifestObject.byteCount >
+		EVIDENCE_MAX_COMPRESSED_INPUT_BYTES
+	)
+		throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
+	assertCornerEvidenceBudget(
+		context.prepared.decodedFrameCount,
+		context.corners.length,
+	);
+};
 
 const assertSegmentMatchesAuthority = async (
 	segment: SubjectObservationSegment,
@@ -312,26 +330,36 @@ const decompressGzip = async (
 		.stream()
 		.pipeThrough(new DecompressionStream('gzip'))
 		.getReader();
-	const chunks: Uint8Array[] = [];
+	const decompressed = new Uint8Array(maximumBytes);
 	let total = 0;
 	while (true) {
 		const { done, value } = await reader.read();
 		if (done) break;
-		total += value.byteLength;
-		if (total > maximumBytes) {
+		if (total + value.byteLength > maximumBytes) {
 			await reader.cancel();
 			throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
 		}
-		chunks.push(value);
+		decompressed.set(value, total);
+		total += value.byteLength;
 	}
-	const decompressed = new Uint8Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		decompressed.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return decompressed;
+	return decompressed.subarray(0, total);
 };
+
+const invalidArtifact = async <T>(
+	operation: () => T | Promise<T>,
+): Promise<T> => {
+	try {
+		return await operation();
+	} catch (error) {
+		if (error instanceof AcceptedCornerEvidenceError) throw error;
+		throw new AcceptedCornerEvidenceError('INVALID_ARTIFACT');
+	}
+};
+
+const errorCode = (error: unknown): unknown =>
+	typeof error === 'object' && error !== null && 'code' in error
+		? error.code
+		: undefined;
 
 const parseJson = (bytes: Uint8Array): unknown =>
 	JSON.parse(

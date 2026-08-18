@@ -543,9 +543,11 @@ export class FirstTrackingSegmentWorkflow {
 		step: WorkflowStep,
 	): Promise<never> {
 		if (
-			error instanceof TrackingWorkflowError &&
-			(error.code === 'TRACKING_AUTHORITY_STALE' ||
-				error instanceof AcceptedEvidenceWorkflowError)
+			(error instanceof TrackingWorkflowError &&
+				(error.code === 'TRACKING_AUTHORITY_STALE' ||
+					error instanceof AcceptedEvidenceWorkflowError)) ||
+			(error instanceof AcceptedCornerEvidenceError &&
+				error.code === 'RETRYABLE_INFRASTRUCTURE')
 		)
 			throw error;
 		const code = publicFailure(error);
@@ -637,6 +639,11 @@ export class FirstTrackingSegmentWorkflow {
 					error.code === 'STALE_AUTHORITY'
 				)
 					throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+				if (
+					error instanceof AcceptedCornerEvidenceError &&
+					error.code === 'RETRYABLE_INFRASTRUCTURE'
+				)
+					throw error;
 				throw new AcceptedEvidenceWorkflowError('TRACKING_ARTIFACT_INVALID');
 			}
 			return { committed: true };

@@ -35,7 +35,7 @@ const MAX_PERSISTED_PASSES = 10_000;
 const PASS_INSERT_CHUNK_SIZE = 100;
 
 export class CornerEvidenceAuthorityError extends Error {
-	constructor(readonly code: 'STALE_AUTHORITY') {
+	constructor(readonly code: 'STALE_AUTHORITY' | 'RETRYABLE_INFRASTRUCTURE') {
 		super(code);
 		this.name = 'CornerEvidenceAuthorityError';
 	}
@@ -78,6 +78,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 				gapJson: subjectObservationArtifact.gapJson,
 				firstTimestampMs: subjectObservationArtifact.firstTimestampMs,
 				lastTimestampMs: subjectObservationArtifact.lastTimestampMs,
+				artifactCreatedAt: subjectObservationArtifact.createdAt,
 				preparedMediaId: sql<string>`${preparedTrackingMedia.id}`.as(
 					'evidence_prepared_media_id',
 				),
@@ -249,6 +250,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 				gapJson: source.gapJson,
 				firstTimestampMs: source.firstTimestampMs,
 				lastTimestampMs: source.lastTimestampMs,
+				createdAt: source.artifactCreatedAt,
 			},
 			prepared: preparedMediaArtifactSchema.parse(
 				JSON.parse(source.preparedDescriptorJson),
@@ -423,7 +425,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 			);
 
 		const passRows = command.measurement.passes.map((pass) =>
-			passValues(command.artifactId, pass),
+			passValues(command.artifactId, command.measurementDigest, pass),
 		);
 		const statements = [
 			this.database
@@ -437,13 +439,20 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 					.onConflictDoNothing(),
 			),
 		];
+		let batchFailed = false;
 		try {
 			await this.database.batch(statements);
 		} catch {
-			throw stale();
+			batchFailed = true;
 		}
-		const stored = await this.loadExisting(command.artifactId);
-		if (!stored) throw stale();
+		let stored: Awaited<ReturnType<CornerEvidenceAuthority['loadExisting']>>;
+		try {
+			stored = await this.loadExisting(command.artifactId);
+		} catch (error) {
+			if (error instanceof CornerEvidenceAuthorityError) throw error;
+			throw retryable();
+		}
+		if (!stored) throw batchFailed ? retryable() : stale();
 		assertStoredMatchesCommand(stored, command);
 		return { status: 'committed', measurement: stored.measurement };
 	}
@@ -502,8 +511,13 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 	}
 }
 
-const passValues = (batchArtifactId: string, pass: CornerPassEvidence) => ({
+const passValues = (
+	batchArtifactId: string,
+	batchMeasurementDigest: string,
+	pass: CornerPassEvidence,
+) => ({
 	batchArtifactId,
+	batchMeasurementDigest,
 	cornerId: pass.cornerId,
 	cornerKey: pass.cornerKey,
 	cornerOrder: pass.cornerOrder,
@@ -694,3 +708,6 @@ const chunks = <T>(values: readonly T[], size: number): T[][] => {
 
 const stale = (): CornerEvidenceAuthorityError =>
 	new CornerEvidenceAuthorityError('STALE_AUTHORITY');
+
+const retryable = (): CornerEvidenceAuthorityError =>
+	new CornerEvidenceAuthorityError('RETRYABLE_INFRASTRUCTURE');

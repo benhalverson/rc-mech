@@ -18,11 +18,13 @@ CREATE TABLE corner_evidence_batch (
   measurement_version TEXT NOT NULL,
   measurement_input_digest TEXT NOT NULL CHECK (length(measurement_input_digest) = 64),
   measurement_digest TEXT NOT NULL CHECK (length(measurement_digest) = 64),
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  UNIQUE (artifact_id, measurement_digest)
 );
 
 CREATE TABLE corner_pass_evidence (
   batch_artifact_id TEXT NOT NULL REFERENCES corner_evidence_batch(artifact_id),
+  batch_measurement_digest TEXT NOT NULL CHECK (length(batch_measurement_digest) = 64),
   corner_id TEXT NOT NULL REFERENCES track_corner(id),
   corner_key TEXT NOT NULL,
   corner_order INTEGER NOT NULL CHECK (corner_order >= 0),
@@ -45,6 +47,8 @@ CREATE TABLE corner_pass_evidence (
   tie_group INTEGER,
   best INTEGER NOT NULL CHECK (best IN (0, 1)),
   PRIMARY KEY (batch_artifact_id, corner_id, pass_ordinal),
+  FOREIGN KEY (batch_artifact_id, batch_measurement_digest)
+    REFERENCES corner_evidence_batch(artifact_id, measurement_digest),
   CHECK (
     (entry_timestamp_ms IS NULL AND entry_before_frame_index IS NULL AND entry_after_frame_index IS NULL) OR
     (entry_timestamp_ms IS NOT NULL AND entry_before_frame_index IS NOT NULL AND entry_after_frame_index IS NOT NULL)

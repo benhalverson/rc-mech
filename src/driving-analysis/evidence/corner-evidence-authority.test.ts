@@ -629,7 +629,6 @@ describe('CornerEvidenceAuthority', () => {
 		const evidence = new AcceptedCornerEvidence(
 			value.authority,
 			new R2TrackingArtifactStore(r2.bucket),
-			() => NOW,
 		);
 		await expect(evidence.commit(identity)).resolves.toMatchObject({
 			status: 'committed',
@@ -710,12 +709,69 @@ describe('CornerEvidenceAuthority', () => {
 		expect(await value.database.select().from(cornerPassEvidence)).toEqual([
 			expect.objectContaining({
 				batchArtifactId: ATTEMPT_ID,
+				batchMeasurementDigest: command().measurementDigest,
 				cornerId: CORNER_ID,
 				durationMs: 100,
 				rank: 1,
 				best: true,
 			}),
 		]);
+	});
+
+	test('atomically fences concurrent conflicting measurements at the child rows', async () => {
+		const value = await seed();
+		if (!sqlite) throw new Error('SQLite fixture unavailable');
+		const database = sqlite.database;
+		let batchCalls = 0;
+		let releaseBoth: () => void = () => undefined;
+		const bothArrived = new Promise<void>((resolve) => {
+			releaseBoth = resolve;
+		});
+		const wrapped: D1Database = {
+			prepare: (query) => database.prepare(query),
+			exec: (query) => database.exec(query),
+			withSession: (constraintOrBookmark) =>
+				database.withSession(constraintOrBookmark),
+			dump: () => database.dump(),
+			batch: async <T>(statements: D1PreparedStatement[]) => {
+				batchCalls += 1;
+				if (batchCalls === 2) releaseBoth();
+				await bothArrived;
+				return database.batch<T>(statements);
+			},
+		};
+		const first = command();
+		const firstPass = first.measurement.passes[0];
+		if (!firstPass) throw new Error('missing pass fixture');
+		const second = {
+			...first,
+			measurementDigest: 'd'.repeat(64),
+			measurement: {
+				...first.measurement,
+				passes: [{ ...firstPass, durationMs: 101 }],
+			},
+		};
+		const results = await Promise.allSettled([
+			new CornerEvidenceAuthority(wrapped).commit(first),
+			new CornerEvidenceAuthority(wrapped).commit(second),
+		]);
+		expect(
+			results.filter((result) => result.status === 'fulfilled'),
+		).toHaveLength(1);
+		expect(results.filter((result) => result.status === 'rejected')).toEqual([
+			expect.objectContaining({
+				reason: new CornerEvidenceAuthorityError('STALE_AUTHORITY'),
+			}),
+		]);
+		const [storedBatch] = await value.database
+			.select()
+			.from(cornerEvidenceBatch);
+		const [storedPass] = await value.database.select().from(cornerPassEvidence);
+		expect(storedBatch).toBeDefined();
+		expect(storedPass).toMatchObject({
+			batchMeasurementDigest: storedBatch?.measurementDigest,
+			durationMs: storedBatch?.measurementDigest === 'c'.repeat(64) ? 100 : 101,
+		});
 	});
 
 	test('rejects stale lifecycle authority and database mutation', async () => {
@@ -834,9 +890,18 @@ describe('CornerEvidenceAuthority', () => {
 		);
 	});
 
-	test.each(['failure', 'no-op'] as const)(
-		'maps a D1 batch $case without publishing partial evidence',
-		async (batchCase) => {
+	test.each([
+		{
+			batchCase: 'failure' as const,
+			expected: new CornerEvidenceAuthorityError('RETRYABLE_INFRASTRUCTURE'),
+		},
+		{
+			batchCase: 'no-op' as const,
+			expected: new CornerEvidenceAuthorityError('STALE_AUTHORITY'),
+		},
+	])(
+		'maps a D1 batch $batchCase without publishing partial evidence',
+		async ({ batchCase, expected }) => {
 			const value = await seed();
 			if (!sqlite) throw new Error('SQLite fixture unavailable');
 			const database = sqlite.database;
@@ -871,9 +936,52 @@ describe('CornerEvidenceAuthority', () => {
 			};
 			await expect(
 				new CornerEvidenceAuthority(wrapped).commit(command()),
-			).rejects.toEqual(new CornerEvidenceAuthorityError('STALE_AUTHORITY'));
+			).rejects.toEqual(expected);
 			expect(await value.database.select().from(cornerEvidenceBatch)).toEqual(
 				[],
+			);
+		},
+	);
+
+	test.each(['raw-read-failure', 'known-stale-record'] as const)(
+		'maps post-batch $case without trusting partial evidence',
+		async (failureCase) => {
+			const value = await seed();
+			if (!sqlite) throw new Error('SQLite fixture unavailable');
+			const database = sqlite.database;
+			let batchAttempted = false;
+			const wrapped: D1Database = {
+				prepare: (query) => {
+					if (
+						failureCase === 'raw-read-failure' &&
+						batchAttempted &&
+						query.includes('corner_evidence_batch')
+					)
+						throw new Error('private D1 read failure');
+					return database.prepare(query);
+				},
+				exec: (query) => database.exec(query),
+				withSession: (constraintOrBookmark) =>
+					database.withSession(constraintOrBookmark),
+				dump: () => database.dump(),
+				batch: async () => {
+					batchAttempted = true;
+					if (failureCase === 'known-stale-record')
+						await value.database.insert(cornerEvidenceBatch).values({
+							...batchValues(),
+							measurementVersion: 'corner-evidence.v2',
+						});
+					throw new Error('private D1 batch failure');
+				},
+			};
+			await expect(
+				new CornerEvidenceAuthority(wrapped).commit(command()),
+			).rejects.toEqual(
+				new CornerEvidenceAuthorityError(
+					failureCase === 'raw-read-failure'
+						? 'RETRYABLE_INFRASTRUCTURE'
+						: 'STALE_AUTHORITY',
+				),
 			);
 		},
 	);

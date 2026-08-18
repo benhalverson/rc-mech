@@ -1,11 +1,13 @@
 import { sql } from 'drizzle-orm';
 import {
 	check,
+	foreignKey,
 	integer,
 	primaryKey,
 	real,
 	sqliteTable,
 	text,
+	uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { drivingAnalysis, trackCorner, trackMapVersion } from '../../schema';
 import {
@@ -55,6 +57,10 @@ export const cornerEvidenceBatch = sqliteTable(
 		createdAt: text('created_at').notNull(),
 	},
 	(table) => [
+		uniqueIndex('corner_evidence_batch_artifact_measurement').on(
+			table.artifactId,
+			table.measurementDigest,
+		),
 		check(
 			'corner_evidence_batch_digests',
 			sql`length(${table.profileDigest}) = 64 AND length(${table.specificationDigest}) = 64 AND length(${table.observationChecksumSha256}) = 64 AND length(${table.observationContractDigest}) = 64 AND length(${table.manifestChecksumSha256}) = 64 AND length(${table.measurementInputDigest}) = 64 AND length(${table.measurementDigest}) = 64`,
@@ -68,6 +74,7 @@ export const cornerPassEvidence = sqliteTable(
 		batchArtifactId: text('batch_artifact_id')
 			.notNull()
 			.references(() => cornerEvidenceBatch.artifactId),
+		batchMeasurementDigest: text('batch_measurement_digest').notNull(),
 		cornerId: text('corner_id')
 			.notNull()
 			.references(() => trackCorner.id),
@@ -92,12 +99,19 @@ export const cornerPassEvidence = sqliteTable(
 		best: integer('best', { mode: 'boolean' }).notNull(),
 	},
 	(table) => [
+		foreignKey({
+			columns: [table.batchArtifactId, table.batchMeasurementDigest],
+			foreignColumns: [
+				cornerEvidenceBatch.artifactId,
+				cornerEvidenceBatch.measurementDigest,
+			],
+		}),
 		primaryKey({
 			columns: [table.batchArtifactId, table.cornerId, table.ordinal],
 		}),
 		check(
 			'corner_pass_evidence_ordinal',
-			sql`${table.cornerOrder} >= 0 AND ${table.ordinal} > 0`,
+			sql`length(${table.batchMeasurementDigest}) = 64 AND ${table.cornerOrder} >= 0 AND ${table.ordinal} > 0`,
 		),
 		check(
 			'corner_pass_evidence_crossings',

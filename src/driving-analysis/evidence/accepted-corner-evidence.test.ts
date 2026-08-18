@@ -9,6 +9,8 @@ import {
 	AcceptedCornerEvidence,
 	AcceptedCornerEvidenceError,
 	type CornerEvidenceAuthorityPort,
+	EVIDENCE_MAX_COMPRESSED_INPUT_BYTES,
+	EVIDENCE_MAX_OBSERVATION_CONTRACT_BYTES,
 } from './accepted-corner-evidence';
 
 const OWNER_ID = 'owner-1';
@@ -140,6 +142,7 @@ const fixture = async () => {
 			gapJson: null,
 			firstTimestampMs: 100,
 			lastTimestampMs: 300,
+			createdAt: NOW.toISOString(),
 		},
 		prepared: {
 			preparedMediaId: PREPARED_MEDIA_ID,
@@ -200,7 +203,6 @@ const fixture = async () => {
 	const evidence = new AcceptedCornerEvidence(
 		authority,
 		new R2TrackingArtifactStore(r2.bucket),
-		() => NOW,
 	);
 	return {
 		authority,
@@ -242,8 +244,8 @@ describe('accepted corner evidence', () => {
 		await expect(
 			new AcceptedCornerEvidence(value.authority, value.store).commit(identity),
 		).resolves.toMatchObject({ status: 'committed' });
-		expect(value.commit.mock.calls.at(-1)?.[0].createdAt).toMatch(
-			/^\d{4}-\d{2}-\d{2}T/,
+		expect(value.commit.mock.calls.at(-1)?.[0].createdAt).toBe(
+			NOW.toISOString(),
 		);
 	});
 
@@ -254,6 +256,26 @@ describe('accepted corner evidence', () => {
 			new AcceptedCornerEvidenceError('INVALID_ARTIFACT'),
 		);
 		expect(value.commit).not.toHaveBeenCalled();
+	});
+
+	test('maps invalid accepted JSON to artifact corruption', async () => {
+		const value = await fixture();
+		const contractBytes = new TextEncoder().encode('{');
+		const invalidJson = await gzipBytes(contractBytes);
+		value.r2.seed(OBSERVATION_KEY, invalidJson);
+		const context = await value.load(identity);
+		value.load.mockResolvedValue({
+			...context,
+			artifact: {
+				...context.artifact,
+				byteCount: invalidJson.byteLength,
+				checksumSha256: await digest(invalidJson),
+				contractDigest: await digest(contractBytes),
+			},
+		});
+		await expect(value.evidence.commit(identity)).rejects.toEqual(
+			new AcceptedCornerEvidenceError('INVALID_ARTIFACT'),
+		);
 	});
 
 	test('replays D1 evidence without rereading private objects', async () => {
@@ -272,7 +294,7 @@ describe('accepted corner evidence', () => {
 		expect(value.commit).not.toHaveBeenCalled();
 	});
 
-	test('preserves stale authority while redacting unexpected failures', async () => {
+	test('preserves stale authority and keeps infrastructure failures retryable', async () => {
 		const stale = await fixture();
 		stale.load.mockRejectedValue({ code: 'STALE_AUTHORITY' });
 		await expect(stale.evidence.commit(identity)).rejects.toEqual(
@@ -282,15 +304,36 @@ describe('accepted corner evidence', () => {
 		const unexpected = await fixture();
 		unexpected.load.mockRejectedValue(new Error('private persistence detail'));
 		await expect(unexpected.evidence.commit(identity)).rejects.toEqual(
-			new AcceptedCornerEvidenceError('INVALID_ARTIFACT'),
+			new AcceptedCornerEvidenceError('RETRYABLE_INFRASTRUCTURE'),
+		);
+
+		const storeFailure = await fixture();
+		await expect(
+			new AcceptedCornerEvidence(storeFailure.authority, {
+				read: vi.fn().mockRejectedValue(new Error('private R2 failure')),
+			}).commit(identity),
+		).rejects.toEqual(
+			new AcceptedCornerEvidenceError('RETRYABLE_INFRASTRUCTURE'),
+		);
+
+		const commitFailure = await fixture();
+		commitFailure.commit.mockRejectedValue(new Error('private D1 failure'));
+		await expect(commitFailure.evidence.commit(identity)).rejects.toEqual(
+			new AcceptedCornerEvidenceError('RETRYABLE_INFRASTRUCTURE'),
 		);
 	});
 
 	test.each([
 		{ target: 'observation' as const, byteCount: 0 },
-		{ target: 'observation' as const, byteCount: 64 * 1024 * 1024 + 1 },
+		{
+			target: 'observation' as const,
+			byteCount: EVIDENCE_MAX_COMPRESSED_INPUT_BYTES + 1,
+		},
 		{ target: 'manifest' as const, byteCount: 0 },
-		{ target: 'manifest' as const, byteCount: 64 * 1024 * 1024 + 1 },
+		{
+			target: 'manifest' as const,
+			byteCount: EVIDENCE_MAX_COMPRESSED_INPUT_BYTES + 1,
+		},
 	])('rejects invalid $target byte bounds: $byteCount', async (scenario) => {
 		const value = await fixture();
 		const context = await value.load(identity);
@@ -349,7 +392,7 @@ describe('accepted corner evidence', () => {
 		},
 	);
 
-	test('rejects contract, provenance, manifest, and clock mismatches', async () => {
+	test('rejects contract, provenance, manifest, and acceptance-time mismatches', async () => {
 		const contract = await fixture();
 		const contractContext = await contract.load(identity);
 		contract.load.mockResolvedValue({
@@ -389,20 +432,56 @@ describe('accepted corner evidence', () => {
 			new AcceptedCornerEvidenceError('INVALID_ARTIFACT'),
 		);
 
-		const invalidClock = await fixture();
-		const evidence = new AcceptedCornerEvidence(
-			invalidClock.authority,
-			invalidClock.store,
-			() => new Date(Number.NaN),
-		);
-		await expect(evidence.commit(identity)).rejects.toEqual(
+		const invalidAcceptanceTime = await fixture();
+		const invalidTimeContext = await invalidAcceptanceTime.load(identity);
+		invalidAcceptanceTime.load.mockResolvedValue({
+			...invalidTimeContext,
+			artifact: { ...invalidTimeContext.artifact, createdAt: 'invalid' },
+		});
+		await expect(
+			invalidAcceptanceTime.evidence.commit(identity),
+		).rejects.toEqual(new AcceptedCornerEvidenceError('INVALID_ARTIFACT'));
+	});
+
+	test('rejects aggregate input and work budgets before reading private objects', async () => {
+		const aggregate = await fixture();
+		const aggregateContext = await aggregate.load(identity);
+		aggregate.load.mockResolvedValue({
+			...aggregateContext,
+			artifact: {
+				...aggregateContext.artifact,
+				byteCount: EVIDENCE_MAX_COMPRESSED_INPUT_BYTES,
+			},
+		});
+		const aggregateRead = vi.fn();
+		const aggregateEvidence = new AcceptedCornerEvidence(aggregate.authority, {
+			read: aggregateRead,
+		});
+		await expect(aggregateEvidence.commit(identity)).rejects.toEqual(
 			new AcceptedCornerEvidenceError('INVALID_ARTIFACT'),
 		);
+		expect(aggregateRead).not.toHaveBeenCalled();
+
+		const work = await fixture();
+		const workContext = await work.load(identity);
+		work.load.mockResolvedValue({
+			...workContext,
+			prepared: { ...workContext.prepared, decodedFrameCount: 30_001 },
+		});
+		const workRead = vi.fn();
+		await expect(
+			new AcceptedCornerEvidence(work.authority, {
+				read: workRead,
+			}).commit(identity),
+		).rejects.toEqual(new AcceptedCornerEvidenceError('INVALID_ARTIFACT'));
+		expect(workRead).not.toHaveBeenCalled();
 	});
 
 	test('cancels decompression when an accepted contract exceeds its bound', async () => {
 		const value = await fixture();
-		const oversized = new Uint8Array(64 * 1024 * 1024 + 1);
+		const oversized = new Uint8Array(
+			EVIDENCE_MAX_OBSERVATION_CONTRACT_BYTES + 1,
+		);
 		const compressed = await gzipBytes(oversized);
 		value.r2.seed(OBSERVATION_KEY, compressed);
 		const context = await value.load(identity);

@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'vitest';
 import type { SubjectProvenance } from '../tracking/contracts';
-import { CornerEvidenceError, measureAcceptedSegment } from './corner-evidence';
+import {
+	assertCornerEvidenceBudget,
+	CornerEvidenceError,
+	MAX_CORNER_EVIDENCE_FRAMES,
+	MAX_CORNER_EVIDENCE_OPERATIONS,
+	measureAcceptedSegment,
+} from './corner-evidence';
 
 const provenance: SubjectProvenance = {
 	provider: 'sam31',
@@ -88,6 +94,20 @@ const input = () => ({
 });
 
 describe('deterministic corner evidence', () => {
+	test('bounds frames and corner-frame work before measurement', () => {
+		expect(() => assertCornerEvidenceBudget(3, 1)).not.toThrow();
+		for (const [frames, corners] of [
+			[0, 1],
+			[MAX_CORNER_EVIDENCE_FRAMES + 1, 1],
+			[1, 0],
+			[MAX_CORNER_EVIDENCE_OPERATIONS, 2],
+			[1.5, 1],
+		] as const)
+			expect(() => assertCornerEvidenceBudget(frames, corners)).toThrow(
+				new CornerEvidenceError('INVALID_OBSERVATIONS'),
+			);
+	});
+
 	test('interpolates finite directed gate crossings into one ranked pass', () => {
 		expect(measureAcceptedSegment(input())).toEqual({
 			version: 'corner-evidence.v1',

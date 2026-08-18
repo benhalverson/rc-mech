@@ -66,6 +66,24 @@ export class CornerEvidenceError extends Error {
 	}
 }
 
+export const MAX_CORNER_EVIDENCE_FRAMES = 30_000;
+export const MAX_CORNER_EVIDENCE_OPERATIONS = 3_000_000;
+
+export const assertCornerEvidenceBudget = (
+	frameCount: number,
+	cornerCount: number,
+): void => {
+	if (
+		!Number.isSafeInteger(frameCount) ||
+		frameCount < 1 ||
+		frameCount > MAX_CORNER_EVIDENCE_FRAMES ||
+		!Number.isSafeInteger(cornerCount) ||
+		cornerCount < 1 ||
+		frameCount * cornerCount > MAX_CORNER_EVIDENCE_OPERATIONS
+	)
+		throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+};
+
 type Observation = SubjectObservationSegment['observations'][number];
 
 const cross = (left: Point, right: Point): number =>
@@ -111,7 +129,11 @@ const measureCorner = (
 ): CornerPassEvidence[] => {
 	const observations = segment.observations;
 	const events: { kind: 'entry' | 'exit'; crossing: GateCrossing }[] = [];
-	for (const { before, after } of observationPairs(observations)) {
+	for (let index = 1; index < observations.length; index += 1) {
+		const before = observations[index - 1];
+		const after = observations[index];
+		/* c8 ignore next -- the index bounds above establish both observations. */
+		if (!before || !after) continue;
 		const entry = crossing(before, after, corner.entryGate);
 		if (entry) events.push({ kind: 'entry', crossing: entry });
 		const exit = crossing(before, after, corner.exitGate);
@@ -224,14 +246,6 @@ const measureCorner = (
 	});
 };
 
-const observationPairs = (
-	observations: readonly Observation[],
-): readonly Readonly<{ before: Observation; after: Observation }>[] =>
-	observations.flatMap((after, index) => {
-		const before = observations[index - 1];
-		return before ? [{ before, after }] : [];
-	});
-
 type EligiblePass = CornerPassEvidence & {
 	eligibility: 'eligible';
 	entry: GateCrossing;
@@ -278,6 +292,10 @@ const assertObservationContinuity = (
 export const measureAcceptedSegment = (
 	input: AcceptedSegmentMeasurementInput,
 ): CornerEvidenceMeasurement => {
+	assertCornerEvidenceBudget(
+		input.manifest.frames.length,
+		input.corners.length,
+	);
 	assertObservationContinuity(input);
 	const tieToleranceMs =
 		(1_000 * input.averageFrameRate.denominator) /
