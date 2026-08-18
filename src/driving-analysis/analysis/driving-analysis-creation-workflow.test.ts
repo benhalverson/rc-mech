@@ -53,6 +53,8 @@ const analysis = (stateVersion: number, progress: number) => ({
 	raceWindow: { startTimestampMs: 120_000, endTimestampMs: 720_000 },
 	subjectSeed: {
 		timestampMs: 180_000,
+		frameIndex: 1800,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 	sourceLayout: {

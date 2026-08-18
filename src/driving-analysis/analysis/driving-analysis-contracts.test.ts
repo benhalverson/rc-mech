@@ -15,6 +15,8 @@ const input = () => ({
 	raceWindow: { startTimestampMs: 100, endTimestampMs: 1000 },
 	subjectSeed: {
 		timestampMs: 200,
+		frameIndex: 12,
+		identity: 'subject-1',
 		box: { x: 0.25, y: 0.4, width: 0.08, height: 0.06 },
 	},
 });

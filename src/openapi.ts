@@ -1468,7 +1468,7 @@ const drivingAnalysisSchema = {
 			additionalProperties: false,
 			description:
 				'The initial Subject observation; timestampMs must fall inside the half-open Race window',
-			required: ['timestampMs', 'box'],
+			required: ['timestampMs', 'frameIndex', 'identity', 'box'],
 			properties: {
 				timestampMs: {
 					type: 'integer',
@@ -1476,6 +1476,8 @@ const drivingAnalysisSchema = {
 					description:
 						'Absolute recording timestamp at or after the Race-window start and before its end',
 				},
+				frameIndex: { type: 'integer', minimum: 0 },
+				identity: { type: 'string', minLength: 1, maxLength: 128 },
 				box: drivingAnalysisBoxSchema,
 			},
 		},

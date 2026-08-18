@@ -273,6 +273,8 @@ export const drivingAnalysis = sqliteTable(
 			.notNull()
 			.references(() => trackMapVersion.id),
 		subjectSeedTimestampMs: integer('subject_seed_timestamp_ms').notNull(),
+		subjectSeedFrameIndex: integer('subject_seed_frame_index').notNull(),
+		subjectSeedIdentity: text('subject_seed_identity').notNull(),
 		subjectBoxX: real('subject_box_x').notNull(),
 		subjectBoxY: real('subject_box_y').notNull(),
 		subjectBoxWidth: real('subject_box_width').notNull(),

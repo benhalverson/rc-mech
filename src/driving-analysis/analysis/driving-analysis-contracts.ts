@@ -39,8 +39,10 @@ export const createDrivingAnalysisInputSchema = z
 			startTimestampMs: timestampSchema,
 			endTimestampMs: timestampSchema.positive(),
 		}),
-		subjectSeed: z.strictObject({
+		 subjectSeed: z.strictObject({
 			timestampMs: timestampSchema,
+			frameIndex: z.number().int().nonnegative(),
+			identity: z.string().trim().min(1).max(128),
 			box: normalizedSubjectBoxSchema,
 		}),
 	})
@@ -91,6 +93,8 @@ export type PublicDrivingAnalysis = Readonly<{
 	approvedTrackMapVersionId: string;
 	subjectSeed: Readonly<{
 		timestampMs: number;
+		frameIndex: number;
+		identity: string;
 		box: Readonly<{ x: number; y: number; width: number; height: number }>;
 	}>;
 	sourceLayout: Readonly<{
@@ -153,6 +157,8 @@ export const digestDrivingAnalysisCommand = async (
 				},
 				requestId: command.input.requestId,
 				subjectSeed: {
+					frameIndex: String(command.input.subjectSeed.frameIndex),
+					identity: command.input.subjectSeed.identity,
 					box: {
 						height: float64Token(command.input.subjectSeed.box.height),
 						width: float64Token(command.input.subjectSeed.box.width),

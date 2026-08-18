@@ -90,6 +90,8 @@ const publicAnalysis = (
 	approvedTrackMapVersionId: record.approvedTrackMapVersionId,
 	subjectSeed: {
 		timestampMs: record.subjectSeedTimestampMs,
+		frameIndex: record.subjectSeedFrameIndex,
+		identity: record.subjectSeedIdentity,
 		box: {
 			x: record.subjectBoxX,
 			y: record.subjectBoxY,
@@ -189,6 +191,8 @@ export class DrivingAnalysisAuthority {
 					raceWindowEndMs: parsed.data.raceWindow.endTimestampMs,
 					approvedTrackMapVersionId: parsed.data.approvedTrackMapVersionId,
 					subjectSeedTimestampMs: parsed.data.subjectSeed.timestampMs,
+					subjectSeedFrameIndex: parsed.data.subjectSeed.frameIndex,
+					subjectSeedIdentity: parsed.data.subjectSeed.identity,
 					subjectBoxX: parsed.data.subjectSeed.box.x,
 					subjectBoxY: parsed.data.subjectSeed.box.y,
 					subjectBoxWidth: parsed.data.subjectSeed.box.width,
