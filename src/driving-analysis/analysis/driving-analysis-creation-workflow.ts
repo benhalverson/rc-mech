@@ -56,6 +56,7 @@ export type DrivingAnalysisContainerPort = {
 		command: Readonly<{
 			ownerId: string;
 			workflowId: string;
+			workflowSequence: number;
 			analysisId: string;
 			raceVideoId: string;
 			raceWindow: PublicDrivingAnalysis['raceWindow'];
@@ -102,6 +103,7 @@ export class RealDrivingAnalysisContainerPort
 	async startPreparation(command: {
 		ownerId: string;
 		workflowId: string;
+		workflowSequence: number;
 		analysisId: string;
 		raceVideoId: string;
 		raceWindow: PublicDrivingAnalysis['raceWindow'];
@@ -138,7 +140,7 @@ export class RealDrivingAnalysisContainerPort
 			runId,
 			analysisId: command.analysisId,
 			ownerId: command.ownerId,
-			sequence: 1,
+			sequence: command.workflowSequence,
 			workflowId,
 			profile: this.dependencies.profile,
 			inputDigest,
@@ -208,71 +210,80 @@ export class DrivingAnalysisCreationWorkflowRunner {
 			return { status: 'replayed', analysis: begun.analysis };
 
 		const analysis = begun.analysis;
-		const preparation = preparationResultSchema.parse(
-			await step.do(
-				'prepare-driving-analysis-track-view',
-				FAKE_PREPARATION_STEP,
-				async () =>
-					this.container.startPreparation({
-						ownerId: payload.ownerId,
-						workflowId: event.instanceId,
-						analysisId: analysis.id,
-						raceVideoId: analysis.raceVideoId,
-						raceWindow: analysis.raceWindow,
-						subjectSeed: analysis.subjectSeed,
-						sourceLayout: analysis.sourceLayout,
-						approvedTrackMapVersionId: analysis.approvedTrackMapVersionId,
-					}),
-			),
-		);
-		const published = await step.do(
-			'publish-driving-analysis-preparation-progress',
-			async () =>
-				this.authority.publishPreparationProgress(
-					{
-						...payload,
-						expectedStateVersion: analysis.stateVersion,
-					},
-					event.instanceId,
-					preparation.progress,
-					this.clock().toISOString(),
+		try {
+			const preparation = preparationResultSchema.parse(
+				await step.do(
+					'prepare-driving-analysis-track-view',
+					FAKE_PREPARATION_STEP,
+					async () =>
+						this.container.startPreparation({
+							ownerId: payload.ownerId,
+							workflowId: event.instanceId,
+							workflowSequence: payload.workflowSequence,
+							analysisId: analysis.id,
+							raceVideoId: analysis.raceVideoId,
+							raceWindow: analysis.raceWindow,
+							subjectSeed: analysis.subjectSeed,
+							sourceLayout: analysis.sourceLayout,
+							approvedTrackMapVersionId: analysis.approvedTrackMapVersionId,
+						}),
 				),
-		);
-		if (published.kind === 'stale') return { status: 'stale' };
-		if (
-			this.startFirstTracking &&
-			preparation.runId &&
-			preparation.preparedMediaId
-		) {
-			const tracking = await step.do(
-				'publish-driving-analysis-tracking-start',
+			);
+			const published = await step.do(
+				'publish-driving-analysis-preparation-progress',
 				async () =>
-					this.authority.publishTrackingStart(
+					this.authority.publishPreparationProgress(
 						{
 							...payload,
-							expectedStateVersion: published.analysis.stateVersion,
+							expectedStateVersion: analysis.stateVersion,
 						},
 						event.instanceId,
-						published.analysis.stateVersion,
+						preparation.progress,
 						this.clock().toISOString(),
 					),
 			);
-			if (tracking.kind === 'stale') return { status: 'stale' };
-			await step.do('dispatch-first-tracking-segment', async () => {
-				await this.startFirstTracking?.({
+			if (published.kind === 'stale') return { status: 'stale' };
+			if (
+				this.startFirstTracking &&
+				preparation.runId &&
+				preparation.preparedMediaId
+			) {
+				const tracking = await step.do(
+					'publish-driving-analysis-tracking-start',
+					async () =>
+						this.authority.publishTrackingStart(
+							{
+								...payload,
+								expectedStateVersion: published.analysis.stateVersion,
+							},
+							event.instanceId,
+							published.analysis.stateVersion,
+							this.clock().toISOString(),
+						),
+				);
+				if (tracking.kind === 'stale') return { status: 'stale' };
+				await this.startFirstTracking({
 					ownerId: payload.ownerId,
 					analysisId: analysis.id,
-					runId: preparation.runId as string,
+					runId: preparation.runId,
 					segmentId: await deterministicUuidV4(
 						`${preparation.runId}:first-segment`,
 					),
-					preparedMediaId: preparation.preparedMediaId as string,
+					preparedMediaId: preparation.preparedMediaId,
 					subjectSeed: analysis.subjectSeed,
 				});
-				return { dispatched: true };
-			});
-			return { status: tracking.kind, analysis: tracking.analysis };
+				return { status: tracking.kind, analysis: tracking.analysis };
+			}
+			return { status: published.kind, analysis: published.analysis };
+		} catch (error) {
+			await step.do('publish-driving-analysis-workflow-failure', async () =>
+				this.authority.publishWorkflowFailure(
+					payload,
+					event.instanceId,
+					this.clock().toISOString(),
+				),
+			);
+			throw error;
 		}
-		return { status: published.kind, analysis: published.analysis };
 	}
 }

@@ -71,6 +71,7 @@ export const drivingAnalysisWorkflowPayloadSchema = z.strictObject({
 	ownerId: z.string().min(1).max(128),
 	analysisId: uuidV4Schema,
 	workflowId: uuidV4Schema,
+	workflowSequence: z.number().int().positive(),
 	expectedStateVersion: z.number().int().positive(),
 });
 

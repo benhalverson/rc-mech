@@ -297,6 +297,7 @@ describe('DrivingAnalysisAuthority', () => {
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
 			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
 			expectedStateVersion: 1,
 		});
 
@@ -345,6 +346,7 @@ describe('DrivingAnalysisAuthority', () => {
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
 			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
 			expectedStateVersion: 1,
 		};
 		await expectCode(
@@ -478,6 +480,7 @@ describe('DrivingAnalysisAuthority', () => {
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
 			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
 			expectedStateVersion: 1,
 		};
 		await authority.beginPreparation(
@@ -624,6 +627,79 @@ describe('DrivingAnalysisAuthority', () => {
 		});
 	});
 
+	test('publishes current Workflow failures once and fences stale sequences', async () => {
+		const { authority } = await fixture();
+		await authority.create(command());
+		const payload = {
+			kind: 'analysis-creation.v1' as const,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
+			expectedStateVersion: 1,
+		};
+		await expect(
+			authority.publishWorkflowFailure(
+				payload,
+				ANALYSIS_ID,
+				'2026-08-17T18:00:01.000Z',
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { lifecycle: 'failed', status: 'failed', stateVersion: 2 },
+		});
+		await expect(
+			authority.publishWorkflowFailure(
+				payload,
+				ANALYSIS_ID,
+				'2026-08-17T18:00:02.000Z',
+			),
+		).resolves.toMatchObject({ kind: 'replayed' });
+		await expect(
+			authority.publishWorkflowFailure(
+				{ ...payload, workflowSequence: 2 },
+				ANALYSIS_ID,
+				'2026-08-17T18:00:03.000Z',
+			),
+		).resolves.toEqual({ kind: 'stale' });
+	});
+
+	test('does not overwrite a terminal Workflow with a late failure', async () => {
+		const { authority, database } = await fixture();
+		await authority.create(command());
+		const payload = {
+			kind: 'analysis-creation.v1' as const,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
+			expectedStateVersion: 1,
+		};
+		await authority.beginPreparation(
+			payload,
+			ANALYSIS_ID,
+			'2026-08-17T18:00:01.000Z',
+		);
+		await database
+			.update(drivingAnalysis)
+			.set({
+				status: 'completed',
+				stage: 'finalization',
+				progress: 100,
+				stateVersion: 3,
+				updatedAt: '2026-08-17T18:00:02.000Z',
+			})
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+
+		await expect(
+			authority.publishWorkflowFailure(
+				payload,
+				ANALYSIS_ID,
+				'2026-08-17T18:00:03.000Z',
+			),
+		).resolves.toEqual({ kind: 'stale' });
+	});
+
 	test('publishes a safe Tracking failure without completing the analysis', async () => {
 		const { authority, database } = await fixture();
 		await authority.create(command());
@@ -632,6 +708,7 @@ describe('DrivingAnalysisAuthority', () => {
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
 			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
 			expectedStateVersion: 1,
 		};
 		await authority.beginPreparation(
@@ -736,6 +813,7 @@ describe('DrivingAnalysisAuthority', () => {
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
 			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
 			expectedStateVersion: 1,
 		};
 		await authority.beginPreparation(
@@ -779,9 +857,22 @@ describe('DrivingAnalysisAuthority', () => {
 			createdAt: NOW.toISOString(),
 			completedAt: null,
 		});
+		await authority.publishTrackingState(
+			OWNER_ID,
+			ANALYSIS_ID,
+			{
+				runId: '99999999-9999-4999-8999-999999999999',
+				lifecycle: 'failed',
+				stage: 'tracking',
+				progress: 21,
+				waitReason: null,
+				safeFailureCode: 'TRACKING_PROVIDER_FAILED',
+			},
+			new Date('2026-08-17T18:00:04.000Z').toISOString(),
+		);
 
 		await expect(
-			authority.retry(OWNER_ID, ANALYSIS_ID, 4),
+			authority.retry(OWNER_ID, ANALYSIS_ID, 5),
 		).resolves.toMatchObject({
 			retried: true,
 			analysis: {
@@ -795,9 +886,24 @@ describe('DrivingAnalysisAuthority', () => {
 				status: 'queued',
 				stage: 'preparation',
 				progress: 0,
-				stateVersion: 5,
+				stateVersion: 6,
 			},
 		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					runId: '99999999-9999-4999-8999-999999999999',
+					lifecycle: 'running',
+					stage: 'tracking',
+					progress: 90,
+					waitReason: null,
+					safeFailureCode: null,
+				},
+				'2026-08-17T18:00:05.000Z',
+			),
+		).resolves.toEqual({ kind: 'stale' });
 		const persisted = await database
 			.select()
 			.from(drivingAnalysis)
@@ -820,7 +926,8 @@ describe('DrivingAnalysisAuthority', () => {
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
 			workflowId: RETRY_WORKFLOW_ID,
-			expectedStateVersion: 5,
+			workflowSequence: 2,
+			expectedStateVersion: 6,
 		});
 		await expect(
 			authority.beginPreparation(
@@ -830,14 +937,70 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toEqual({ kind: 'stale' });
 		await expect(
-			authority.retry(OWNER_ID, ANALYSIS_ID, 5),
-		).resolves.toMatchObject({ retried: false, analysis: { stateVersion: 5 } });
+			authority.retry(OWNER_ID, ANALYSIS_ID, 6),
+		).resolves.toMatchObject({ retried: false, analysis: { stateVersion: 6 } });
 		await expectCode(
 			authority.retry(OWNER_ID, ANALYSIS_ID, 0),
 			'INVALID_INPUT',
 		);
-		await expectCode(authority.retry('user-1', ANALYSIS_ID, 5), 'NOT_FOUND');
-		await expectCode(authority.retry(OWNER_ID, ANALYSIS_ID, 4), 'CONFLICT');
+		await expectCode(authority.retry('user-1', ANALYSIS_ID, 6), 'NOT_FOUND');
+		await expectCode(authority.retry(OWNER_ID, ANALYSIS_ID, 5), 'CONFLICT');
+	});
+
+	test('retries completed analysis and the exact legacy preparation state', async () => {
+		const completed = await fixture();
+		await completed.authority.create(command());
+		const payload = {
+			kind: 'analysis-creation.v1' as const,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			workflowSequence: 1,
+			expectedStateVersion: 1,
+		};
+		await completed.authority.beginPreparation(
+			payload,
+			ANALYSIS_ID,
+			'2026-08-17T18:00:01.000Z',
+		);
+		await completed.database
+			.update(drivingAnalysis)
+			.set({
+				status: 'completed',
+				stage: 'finalization',
+				progress: 100,
+				stateVersion: 3,
+				updatedAt: '2026-08-17T18:00:02.000Z',
+			})
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await expect(
+			completed.authority.retry(OWNER_ID, ANALYSIS_ID, 3),
+		).resolves.toMatchObject({
+			retried: true,
+			analysis: { status: 'queued', progress: 0, stateVersion: 4 },
+		});
+
+		sqlite?.close();
+		sqlite = undefined;
+		const legacy = await fixture();
+		await legacy.authority.create(command());
+		await legacy.authority.beginPreparation(
+			payload,
+			ANALYSIS_ID,
+			'2026-08-17T18:00:01.000Z',
+		);
+		await legacy.authority.publishPreparationProgress(
+			{ ...payload, expectedStateVersion: 2 },
+			ANALYSIS_ID,
+			15,
+			'2026-08-17T18:00:02.000Z',
+		);
+		await expect(
+			legacy.authority.retry(OWNER_ID, ANALYSIS_ID, 3),
+		).resolves.toMatchObject({
+			retried: true,
+			analysis: { status: 'queued', progress: 0, stateVersion: 4 },
+		});
 	});
 
 	test('enforces active-analysis quota and the atomic D1 quota trigger', async () => {
@@ -922,6 +1085,7 @@ describe('DrivingAnalysisAuthority', () => {
 					ownerId: OWNER_ID,
 					analysisId: ANALYSIS_ID,
 					workflowId: ANALYSIS_ID,
+					workflowSequence: 1,
 					expectedStateVersion: 1,
 				},
 				ANALYSIS_ID,
@@ -954,6 +1118,7 @@ describe('DrivingAnalysisAuthority', () => {
 				ownerId: OWNER_ID,
 				analysisId: ANALYSIS_ID,
 				workflowId: ANALYSIS_ID,
+				workflowSequence: 1,
 				expectedStateVersion: 1,
 			},
 			ANALYSIS_ID,

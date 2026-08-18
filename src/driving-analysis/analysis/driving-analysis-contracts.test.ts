@@ -30,6 +30,7 @@ describe('Driving-analysis creation contracts', () => {
 				ownerId: 'owner-1',
 				analysisId: '66666666-6666-4666-8666-666666666666',
 				workflowId: '66666666-6666-4666-8666-666666666666',
+				workflowSequence: 1,
 				expectedStateVersion: 1,
 			}),
 		).toMatchObject({ ownerId: 'owner-1' });

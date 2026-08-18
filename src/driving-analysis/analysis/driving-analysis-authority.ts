@@ -306,8 +306,12 @@ export class DrivingAnalysisAuthority {
 			return { analysis: publicAnalysis(current), retried: false };
 		}
 		if (
-			!(['running', 'awaiting-reidentification', 'failed'] as const).includes(
-				current.status as 'running',
+			current.status !== 'failed' &&
+			current.status !== 'completed' &&
+			!(
+				current.status === 'running' &&
+				current.stage === 'preparation' &&
+				current.progress === 15
 			)
 		)
 			throw authorityError(
@@ -537,7 +541,11 @@ export class DrivingAnalysisAuthority {
 		updatedAt: string,
 	): Promise<DrivingAnalysisTransition> {
 		const run = await this.database
-			.select({ id: trackingRun.id })
+			.select({
+				id: trackingRun.id,
+				status: trackingRun.status,
+				workflowId: trackingRun.workflowId,
+			})
 			.from(trackingRun)
 			.where(
 				and(
@@ -547,10 +555,11 @@ export class DrivingAnalysisAuthority {
 				),
 			)
 			.get();
-		if (!run) return { kind: 'stale' };
+		if (run?.status !== 'active') return { kind: 'stale' };
 		const current = await this.find(ownerId, analysisId);
 		/* c8 ignore next -- a Tracking run linked to a missing analysis is corruption defense. */
-		if (current?.stage !== 'tracking') return { kind: 'stale' };
+		if (current?.stage !== 'tracking' || current.workflowId !== run.workflowId)
+			return { kind: 'stale' };
 		const target = trackingAnalysisTarget(state, current.progress);
 		if (
 			current.status === target.status &&
@@ -574,6 +583,7 @@ export class DrivingAnalysisAuthority {
 				and(
 					eq(drivingAnalysis.id, analysisId),
 					eq(drivingAnalysis.ownerId, ownerId),
+					eq(drivingAnalysis.workflowId, run.workflowId),
 					eq(drivingAnalysis.stateVersion, current.stateVersion),
 					eq(drivingAnalysis.stage, 'tracking'),
 				),
@@ -583,6 +593,50 @@ export class DrivingAnalysisAuthority {
 		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
 		return published
 			? { kind: 'published', analysis: publicAnalysis(published) }
+			: { kind: 'stale' };
+	}
+
+	async publishWorkflowFailure(
+		payloadValue: DrivingAnalysisWorkflowPayload,
+		workflowId: string,
+		updatedAt: string,
+	): Promise<DrivingAnalysisTransition> {
+		const payload = drivingAnalysisWorkflowPayloadSchema.parse(payloadValue);
+		if (!(await this.hasCurrentWorkflowInput(payload, workflowId)))
+			return { kind: 'stale' };
+		const current = await this.findWorkflow(
+			payload.ownerId,
+			payload.analysisId,
+			workflowId,
+		);
+		/* c8 ignore next -- the row can disappear here only under a concurrent authority transition. */
+		if (!current) return { kind: 'stale' };
+		if (current.status === 'failed')
+			return { kind: 'replayed', analysis: publicAnalysis(current) };
+		if (current.status !== 'queued' && current.status !== 'running')
+			return { kind: 'stale' };
+		const failed = await this.database
+			.update(drivingAnalysis)
+			.set({
+				status: 'failed',
+				stateVersion: current.stateVersion + 1,
+				updatedAt,
+			})
+			.where(
+				and(
+					eq(drivingAnalysis.id, payload.analysisId),
+					eq(drivingAnalysis.ownerId, payload.ownerId),
+					eq(drivingAnalysis.workflowId, workflowId),
+					eq(drivingAnalysis.workflowSequence, payload.workflowSequence),
+					eq(drivingAnalysis.stateVersion, current.stateVersion),
+					inArray(drivingAnalysis.status, ['queued', 'running']),
+				),
+			)
+			.returning()
+			.get();
+		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
+		return failed
+			? { kind: 'published', analysis: publicAnalysis(failed) }
 			: { kind: 'stale' };
 	}
 
@@ -606,6 +660,7 @@ export class DrivingAnalysisAuthority {
 				ownerId: record.ownerId,
 				analysisId: record.id,
 				workflowId: record.workflowId,
+				workflowSequence: record.workflowSequence,
 				expectedStateVersion: record.stateVersion,
 			});
 		} catch {
@@ -681,6 +736,7 @@ export class DrivingAnalysisAuthority {
 					eq(drivingAnalysis.id, payload.analysisId),
 					eq(drivingAnalysis.ownerId, payload.ownerId),
 					eq(drivingAnalysis.workflowId, workflowId),
+					eq(drivingAnalysis.workflowSequence, payload.workflowSequence),
 					eq(car.ownerId, payload.ownerId),
 					isNull(car.archivedAt),
 					isNull(driveSession.deletedAt),
