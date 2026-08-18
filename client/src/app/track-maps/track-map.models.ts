@@ -18,6 +18,21 @@ export type TrackCorner = {
 	exitGate: Gate;
 	cornerView: CornerView;
 };
+export type TrackMapReferenceFrame = {
+	raceVideoId: string;
+	timestampMs: number;
+	byteCount: number;
+	checksumSha256: string;
+	contentType: 'image/jpeg';
+};
+export type TrackMapRecording = {
+	id: string;
+	fileName: string;
+	byteCount: number;
+	durationMs: number;
+	width: number;
+	height: number;
+};
 export type TrackMapVersion = {
 	id: string;
 	layoutId: string;
@@ -32,6 +47,7 @@ export type TrackMapVersion = {
 	approvedAt: string | null;
 	retiredAt: string | null;
 	corners: TrackCorner[];
+	referenceFrame: TrackMapReferenceFrame | null;
 };
 export type TrackLayout = {
 	id: string;
@@ -64,4 +80,8 @@ export type CreateTrackMapDraftCommand = {
 };
 export type SaveTrackMapDraftCommand = {
 	readonly corners: readonly TrackCorner[];
+};
+export type SelectTrackMapFrameCommand = {
+	readonly raceVideoId: string;
+	readonly timestampMs: number;
 };

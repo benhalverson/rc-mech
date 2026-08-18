@@ -2,6 +2,8 @@ import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type {
 	SaveTrackMapDraftCommand,
+	SelectTrackMapFrameCommand,
+	TrackMapRecording,
 	TrackMapVersion,
 } from './track-map.models';
 import { TrackMapEditor } from './track-map-editor';
@@ -19,6 +21,13 @@ const version: TrackMapVersion = {
 	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
+	referenceFrame: {
+		raceVideoId: '33333333-3333-4333-8333-333333333333',
+		timestampMs: 100,
+		byteCount: 100,
+		checksumSha256: 'a'.repeat(64),
+		contentType: 'image/jpeg',
+	},
 	corners: [
 		{
 			key: 'turn-1',
@@ -37,6 +46,14 @@ const version: TrackMapVersion = {
 			cornerView: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 },
 		},
 	],
+};
+const recording: TrackMapRecording = {
+	id: 'recording-1',
+	fileName: 'Main.mov',
+	byteCount: 1_000,
+	durationMs: 5_000,
+	width: 1_920,
+	height: 1_080,
 };
 
 describe('TrackMapEditor', () => {
@@ -110,6 +127,11 @@ describe('TrackMapEditor', () => {
 		component.saveRequested.subscribe((command) => saved.push(command));
 		return saved;
 	};
+	const frameCommands = (): SelectTrackMapFrameCommand[] => {
+		const selected: SelectTrackMapFrameCommand[] = [];
+		component.frameRequested.subscribe((command) => selected.push(command));
+		return selected;
+	};
 
 	beforeEach(async () => {
 		await TestBed.configureTestingModule({
@@ -159,6 +181,41 @@ describe('TrackMapEditor', () => {
 		});
 	});
 
+	it('guides recording and timestamp selection before revealing the frame', () => {
+		const selected = frameCommands();
+		fixture.componentRef.setInput('version', {
+			...version,
+			referenceFrame: null,
+			corners: [],
+		});
+		fixture.componentRef.setInput('recordings', [recording]);
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Main.mov');
+		expect(component['frameUrl']()).toBe('');
+		expect(button('Use this frame').disabled).toBe(true);
+		fixture.componentRef.setInput('busy', true);
+		fixture.detectChanges();
+		expect(button('Extracting frame…').disabled).toBe(true);
+		fixture.componentRef.setInput('busy', false);
+		fixture.detectChanges();
+		choose(
+			fixture.nativeElement.querySelector('#recording-select'),
+			recording.id,
+		);
+		fill('#frame-timestamp', '1250');
+		button('Use this frame').click();
+		expect(selected).toEqual([
+			{ raceVideoId: recording.id, timestampMs: 1_250 },
+		]);
+		fill('#frame-timestamp', '5000');
+		expect(button('Use this frame').disabled).toBe(true);
+		fill('#frame-timestamp', '-1');
+		fill('#frame-timestamp', 'not-a-number');
+		component['selectRecording']('');
+		component['selectFrame']();
+		expect(selected).toHaveLength(1);
+	});
+
 	it('preserves same-revision edits and rebases on new revisions and versions', () => {
 		button('Add corner').click();
 		fixture.componentRef.setInput('version', { ...version, corners: [] });
@@ -196,7 +253,7 @@ describe('TrackMapEditor', () => {
 		expect(fixture.nativeElement.textContent).toContain(
 			'Save the current geometry before approval.',
 		);
-		button('Save draft geometry').click();
+		button('Save draft').click();
 		fixture.componentRef.setInput('version', {
 			...version,
 			stateVersion: 2,
@@ -223,7 +280,7 @@ describe('TrackMapEditor', () => {
 		button('Remove corner').click();
 		button('Add corner').click();
 		fixture.detectChanges();
-		button('Save draft geometry').click();
+		button('Save draft').click();
 		expect(saved[0]?.corners.map(({ key, order }) => ({ key, order }))).toEqual(
 			[
 				{ key: 'turn-2', order: 1 },
@@ -240,12 +297,25 @@ describe('TrackMapEditor', () => {
 			),
 			'entryStart',
 		);
+		choose(
+			fixture.nativeElement.querySelector(
+				'select[aria-label="Geometry target"]',
+			),
+			'exitStart',
+		);
+		expect(fixture.nativeElement.textContent).toContain('Drawing: Exit gate');
+		choose(
+			fixture.nativeElement.querySelector(
+				'select[aria-label="Geometry target"]',
+			),
+			'entryStart',
+		);
 		canvas().focus();
 		expect(document.activeElement).toBe(canvas());
 		press('ArrowRight', true);
 		setCanvasBounds(0, 0, 640, 360);
 		clickCanvas(320, 180);
-		button('Save draft geometry').click();
+		button('Save draft').click();
 		expect(saved[0]?.corners[0]?.entryGate.start).toEqual({ x: 0.5, y: 0.5 });
 	});
 
@@ -266,7 +336,7 @@ describe('TrackMapEditor', () => {
 		expect(fixture.nativeElement.textContent).not.toContain(
 			'Geometry needs attention',
 		);
-		button('Save draft geometry').click();
+		button('Save draft').click();
 		const view = saved[0]?.corners[0]?.cornerView;
 		expect(view?.x).toBeCloseTo(0.2);
 		expect(view?.y).toBeCloseTo(0.3);

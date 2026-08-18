@@ -1,22 +1,16 @@
 import { Component, inject, linkedSignal, signal } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
 import type { TrackLayout } from './track-map.models';
 import { TrackMapEditor } from './track-map-editor';
-import { TrackMapPrototype } from './track-map-prototype';
 import { TrackMapReview } from './track-map-review';
 import { TrackMapStore } from './track-map-store';
 
 @Component({
 	selector: 'app-track-maps',
-	imports: [TrackMapEditor, TrackMapReview, TrackMapPrototype],
+	imports: [TrackMapEditor, TrackMapReview],
 	templateUrl: './track-maps.html',
 })
 export class TrackMaps {
 	protected readonly store = inject(TrackMapStore);
-	protected readonly route = inject(ActivatedRoute);
-	protected readonly prototypeEnabled = signal(
-		this.route?.snapshot.queryParamMap.get('prototype') === 'map-editor',
-	);
 	protected readonly newLayoutName = signal('');
 	protected readonly layoutName = signal('');
 	protected readonly selectedLayout = linkedSignal<

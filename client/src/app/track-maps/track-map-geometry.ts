@@ -10,6 +10,7 @@ export class TrackMapGeometry {
 	readonly corners = input.required<readonly TrackCorner[]>();
 	readonly activeCorner = input<TrackCorner | null>(null);
 	readonly decorative = input(false);
+	readonly overlay = input(false);
 	readonly label = input.required<string>();
 
 	protected svgX(point: Point): number {

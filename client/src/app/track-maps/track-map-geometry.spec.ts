@@ -52,12 +52,15 @@ describe('TrackMapGeometry', () => {
 
 	it('stays hidden from accessibility APIs inside the labelled editor button', () => {
 		fixture.componentRef.setInput('decorative', true);
+		fixture.componentRef.setInput('overlay', true);
 		fixture.detectChanges();
 		const svg = fixture.nativeElement.querySelector('svg') as SVGElement;
 		expect(svg.hasAttribute('role')).toBe(false);
 		expect(svg.getAttribute('aria-hidden')).toBe('true');
 		expect(svg.hasAttribute('aria-label')).toBe(false);
 		expect(svg.querySelectorAll('circle')).toHaveLength(0);
+		expect(svg.getAttribute('preserveAspectRatio')).toBe('none');
+		expect(svg.querySelector('path')).toBeNull();
 	});
 
 	it('renders temporary duplicate keys without unstable-tracking diagnostics', () => {

@@ -83,15 +83,17 @@ const publicVersion = (
 	corners: corners
 		.sort((left, right) => left.order - right.order)
 		.map(publicCorner),
-	referenceFrame: referenceFrame
-		? {
-				raceVideoId: referenceFrame.raceVideoId,
-				timestampMs: referenceFrame.timestampMs,
-				byteCount: referenceFrame.byteCount,
-				checksumSha256: referenceFrame.checksumSha256,
-				contentType: referenceFrame.contentType,
-			}
-		: null,
+	referenceFrame: referenceFrame ? publicReferenceFrame(referenceFrame) : null,
+});
+
+const publicReferenceFrame = (
+	referenceFrame: typeof trackMapReferenceFrame.$inferSelect,
+) => ({
+	raceVideoId: referenceFrame.raceVideoId,
+	timestampMs: referenceFrame.timestampMs,
+	byteCount: referenceFrame.byteCount,
+	checksumSha256: referenceFrame.checksumSha256,
+	contentType: referenceFrame.contentType,
 });
 
 const loadVersion = async (c: AppContext, versionId: string) => {
@@ -520,7 +522,7 @@ export const createTrackMapRoutes = () => {
 			})
 			.returning()
 			.get();
-		return c.json({ referenceFrame: created }, 201);
+		return c.json({ referenceFrame: publicReferenceFrame(created) }, 201);
 	});
 
 	routes.get(

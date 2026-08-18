@@ -10,7 +10,9 @@ import { disabled, FormField, form } from '@angular/forms/signals';
 import type {
 	Point,
 	SaveTrackMapDraftCommand,
+	SelectTrackMapFrameCommand,
 	TrackCorner,
+	TrackMapRecording,
 	TrackMapVersion,
 } from './track-map.models';
 import { TrackMapApproval } from './track-map-approval';
@@ -39,8 +41,12 @@ const isPointTarget = (target: GeometryTarget): target is PointTarget =>
 export class TrackMapEditor {
 	readonly version = input<TrackMapVersion | null>(null);
 	readonly busy = input(false);
+	readonly recordings = input<readonly TrackMapRecording[]>([]);
 	readonly saveRequested = output<SaveTrackMapDraftCommand>();
+	readonly frameRequested = output<SelectTrackMapFrameCommand>();
 	readonly approveRequested = output<void>();
+	protected readonly selectedRecordingId = signal('');
+	protected readonly timestampMs = signal(0);
 	protected readonly corners = linkedSignal<
 		{ id: string; stateVersion: number } | null,
 		TrackCorner[]
@@ -86,6 +92,23 @@ export class TrackMapEditor {
 	protected readonly selectedPointTarget = computed(() => {
 		const target = this.selectedTarget();
 		return isPointTarget(target) ? target : null;
+	});
+	protected readonly selectedRecording = computed(() =>
+		this.recordings().find(
+			(recording) => recording.id === this.selectedRecordingId(),
+		),
+	);
+	protected readonly frameUrl = computed(() => {
+		const version = this.version();
+		return version?.referenceFrame
+			? `/api/v1/track-map-versions/${encodeURIComponent(version.id)}/reference-frame/content`
+			: '';
+	});
+	protected readonly targetLabel = computed(() => {
+		const target = this.selectedTarget();
+		if (target.startsWith('entry')) return 'Entry gate';
+		if (target.startsWith('exit')) return 'Exit gate';
+		return 'Corner view';
 	});
 	protected readonly errors = computed(() =>
 		validateTrackCorners(this.corners()),
@@ -136,6 +159,21 @@ export class TrackMapEditor {
 	}
 	protected selectTarget(target: GeometryTarget): void {
 		this.selectedTarget.set(target);
+	}
+	protected selectRecording(recordingId: string): void {
+		this.selectedRecordingId.set(recordingId);
+		this.timestampMs.set(0);
+	}
+	protected setTimestamp(value: string): void {
+		const timestampMs = Number(value);
+		if (Number.isSafeInteger(timestampMs) && timestampMs >= 0)
+			this.timestampMs.set(timestampMs);
+	}
+	protected selectFrame(): void {
+		const recording = this.selectedRecording();
+		const timestampMs = this.timestampMs();
+		if (recording && timestampMs < recording.durationMs)
+			this.frameRequested.emit({ raceVideoId: recording.id, timestampMs });
 	}
 
 	protected moveSelected(event: KeyboardEvent, selected: number): void {

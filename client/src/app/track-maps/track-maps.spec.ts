@@ -1,8 +1,9 @@
 import { signal } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
-import { ActivatedRoute } from '@angular/router';
+import { By } from '@angular/platform-browser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackLayout, TrackMapVersion } from './track-map.models';
+import { TrackMapEditor } from './track-map-editor';
 import { TrackMapStore } from './track-map-store';
 import { TrackMaps } from './track-maps';
 
@@ -19,6 +20,13 @@ const version: TrackMapVersion = {
 	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
+	referenceFrame: {
+		raceVideoId: '33333333-3333-4333-8333-333333333333',
+		timestampMs: 100,
+		byteCount: 100,
+		checksumSha256: 'a'.repeat(64),
+		contentType: 'image/jpeg',
+	},
 	corners: [
 		{
 			key: 'turn-1',
@@ -89,6 +97,7 @@ describe('TrackMaps', () => {
 		const selectedVersionId = signal<string | null>(null);
 		store = {
 			layouts: signal([layout]),
+			recordings: signal([]),
 			canManage: signal(true),
 			selectedLayoutId,
 			selectedVersionId,
@@ -103,6 +112,7 @@ describe('TrackMaps', () => {
 			createLayout: vi.fn(),
 			createDraft: vi.fn(),
 			saveDraft: vi.fn(),
+			selectReferenceFrame: vi.fn(),
 			approveVersion: vi.fn(),
 			retireVersion: vi.fn(),
 			renameLayout: vi.fn(),
@@ -111,13 +121,7 @@ describe('TrackMaps', () => {
 		};
 		await TestBed.configureTestingModule({
 			imports: [TrackMaps],
-			providers: [
-				{ provide: TrackMapStore, useValue: store },
-				{
-					provide: ActivatedRoute,
-					useValue: { snapshot: { queryParamMap: { get: () => null } } },
-				},
-			],
+			providers: [{ provide: TrackMapStore, useValue: store }],
 		}).compileComponents();
 		fixture = TestBed.createComponent(TrackMaps);
 		fixture.detectChanges();
@@ -173,17 +177,6 @@ describe('TrackMaps', () => {
 		);
 		expect(fixture.nativeElement.textContent).toContain('Load failed');
 		expect(fixture.nativeElement.textContent).toContain('Mutation failed');
-	});
-
-	it('opens the selected guided prototype when URL-gated', () => {
-		const prototypeEnabled = fixture.componentInstance as unknown as {
-			prototypeEnabled: ReturnType<typeof signal<boolean>>;
-		};
-		prototypeEnabled.prototypeEnabled.set(true);
-		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).toContain(
-			'Track-map guided flow',
-		);
 	});
 
 	it('derives an editable draft from the selected approved version', () => {
@@ -266,11 +259,21 @@ describe('TrackMaps', () => {
 			version,
 		);
 		fixture.detectChanges();
-		button('Save draft geometry').click();
+		const editor = fixture.debugElement.query(By.directive(TrackMapEditor))
+			.componentInstance as TrackMapEditor;
+		editor.frameRequested.emit({
+			raceVideoId: 'recording-1',
+			timestampMs: 1_000,
+		});
+		button('Save draft').click();
 		button('Approve version').click();
 		button('Retire layout').click();
 		expect(store['saveDraft']).toHaveBeenCalledWith({
 			corners: version.corners,
+		});
+		expect(store['selectReferenceFrame']).toHaveBeenCalledWith({
+			raceVideoId: 'recording-1',
+			timestampMs: 1_000,
 		});
 		expect(store['approveVersion']).toHaveBeenCalledOnce();
 		expect(store['retireLayout']).toHaveBeenCalledOnce();

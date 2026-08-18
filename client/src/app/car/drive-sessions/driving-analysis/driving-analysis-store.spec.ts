@@ -218,6 +218,13 @@ class FakeTrackMapGateway {
 		approvedBy: 'owner-1',
 		approvedAt: '2026-08-17T18:00:00.000Z',
 		retiredAt: null,
+		referenceFrame: {
+			raceVideoId: '33333333-3333-4333-8333-333333333333',
+			timestampMs: 100,
+			byteCount: 100,
+			checksumSha256: 'a'.repeat(64),
+			contentType: 'image/jpeg',
+		},
 		corners: [],
 	});
 	readonly versionHasValue = signal(false);

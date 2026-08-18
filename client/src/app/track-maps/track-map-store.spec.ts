@@ -2,7 +2,12 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of, Subject, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TrackLayout, TrackMapVersion } from './track-map.models';
+import type {
+	TrackLayout,
+	TrackMapRecording,
+	TrackMapReferenceFrame,
+	TrackMapVersion,
+} from './track-map.models';
 import { TrackMapGateway } from './track-map-gateway';
 import { TrackMapStore, trackMapFailureMessage } from './track-map-store';
 
@@ -35,6 +40,13 @@ const version: TrackMapVersion = {
 	approvedBy: null,
 	approvedAt: null,
 	retiredAt: null,
+	referenceFrame: {
+		raceVideoId: '33333333-3333-4333-8333-333333333333',
+		timestampMs: 100,
+		byteCount: 100,
+		checksumSha256: 'a'.repeat(64),
+		contentType: 'image/jpeg',
+	},
 	corners: [corner],
 };
 const layout: TrackLayout = {
@@ -58,6 +70,15 @@ const layout: TrackLayout = {
 		},
 	],
 };
+const recording: TrackMapRecording = {
+	id: 'recording-1',
+	fileName: 'Main.mov',
+	byteCount: 1_000,
+	durationMs: 5_000,
+	width: 1_920,
+	height: 1_080,
+};
+const referenceFrame = version.referenceFrame as TrackMapReferenceFrame;
 
 class FakeGateway {
 	readonly canManage = signal(true);
@@ -69,6 +90,10 @@ class FakeGateway {
 	readonly versionLoading = signal(false);
 	readonly versionError = signal<unknown>(undefined);
 	readonly loadedVersion = signal<TrackMapVersion>(version);
+	readonly recordingItems = signal<TrackMapRecording[]>([recording]);
+	readonly recordingsHaveValue = signal(true);
+	readonly recordingsLoading = signal(false);
+	readonly recordingsError = signal<unknown>(undefined);
 	readonly layouts = {
 		hasValue: () => this.layoutsHaveValue(),
 		value: () => ({
@@ -86,10 +111,18 @@ class FakeGateway {
 		error: (): unknown => this.versionError(),
 		reload: vi.fn(),
 	};
+	readonly recordings = {
+		hasValue: () => this.recordingsHaveValue(),
+		value: () => this.recordingItems(),
+		isLoading: () => this.recordingsLoading(),
+		error: (): unknown => this.recordingsError(),
+	};
+	readonly loadRecordings = vi.fn();
 	readonly selectVersion = vi.fn();
 	readonly createLayout = vi.fn(() => of(layout));
 	readonly createDraft = vi.fn(() => of(version));
 	readonly saveDraft = vi.fn(() => of(version));
+	readonly selectReferenceFrame = vi.fn(() => of(referenceFrame));
 	readonly approveVersion = vi.fn(() =>
 		of({ ...version, status: 'approved' as const, stateVersion: 2 }),
 	);
@@ -128,6 +161,8 @@ describe('TrackMapStore', () => {
 		expect(store.selectedVersionId()).toBe(version.id);
 		expect(store.version()).toEqual(version);
 		expect(gateway.selectVersion).toHaveBeenCalledWith(version.id);
+		expect(gateway.loadRecordings).toHaveBeenCalledOnce();
+		expect(store.recordings()).toEqual([recording]);
 		store.openVersion('missing');
 		expect(store.selectedVersionId()).toBe(version.id);
 		store.openVersion(version.id);
@@ -154,6 +189,25 @@ describe('TrackMapStore', () => {
 		store.openLayout(layout.id);
 		expect(store.selectedVersionId()).toBe(version.id);
 		expect(store.version()).toEqual(approved);
+		expect(gateway.loadRecordings).not.toHaveBeenCalled();
+	});
+
+	it('selects one immutable reference frame for a draft', () => {
+		gateway.loadedVersion.set({ ...version, referenceFrame: null });
+		store.openLayout(layout.id);
+		store.selectReferenceFrame({
+			raceVideoId: recording.id,
+			timestampMs: 1_250,
+		});
+		expect(gateway.selectReferenceFrame).toHaveBeenCalledWith({
+			versionId: version.id,
+			raceVideoId: recording.id,
+			timestampMs: 1_250,
+		});
+		expect(store.version()?.referenceFrame).toEqual(referenceFrame);
+		expect(store.message()).toBe('Select frame saved.');
+		store.selectReferenceFrame({ raceVideoId: recording.id, timestampMs: 0 });
+		expect(gateway.selectReferenceFrame).toHaveBeenCalledOnce();
 	});
 
 	it('runs every mutation with immutable commands and refreshes summaries', () => {
@@ -189,6 +243,7 @@ describe('TrackMapStore', () => {
 		store.createLayout({ name: 'Nope' });
 		store.createDraft({ layoutId: layout.id });
 		store.saveDraft({ corners: [] });
+		store.selectReferenceFrame({ raceVideoId: recording.id, timestampMs: 0 });
 		store.approveVersion();
 		store.retireVersion();
 		store.renameLayout({ name: 'Nope' });
@@ -205,6 +260,7 @@ describe('TrackMapStore', () => {
 		expect(store.selectedLayoutId()).toBeNull();
 		store.createDraft({ layoutId: layout.id });
 		store.saveDraft({ corners: [] });
+		store.selectReferenceFrame({ raceVideoId: recording.id, timestampMs: 0 });
 		store.renameLayout({ name: 'Ignored' });
 		store.retireLayout();
 		expect(gateway.createLayout).toHaveBeenCalledTimes(1);
@@ -222,12 +278,14 @@ describe('TrackMapStore', () => {
 		expect(store.selectedVersionId()).toBe(version.id);
 		store.createDraft({ layoutId: layout.id });
 		store.saveDraft({ corners: [] });
+		store.selectReferenceFrame({ raceVideoId: recording.id, timestampMs: 0 });
 		store.approveVersion();
 		store.retireVersion();
 		store.renameLayout({ name: 'Nope' });
 		store.retireLayout();
 		expect(gateway.createDraft).not.toHaveBeenCalled();
 		expect(gateway.saveDraft).not.toHaveBeenCalled();
+		expect(gateway.selectReferenceFrame).not.toHaveBeenCalled();
 		expect(gateway.renameLayout).not.toHaveBeenCalled();
 		expect(gateway.retireLayout).not.toHaveBeenCalled();
 		expect(gateway.approveVersion).not.toHaveBeenCalled();
@@ -237,7 +295,10 @@ describe('TrackMapStore', () => {
 	it('maps read and mutation failures into presentation state', () => {
 		gateway.layoutsHaveValue.set(false);
 		gateway.layoutsLoading.set(true);
+		gateway.recordingsHaveValue.set(false);
+		gateway.recordingsLoading.set(true);
 		expect(store.layouts()).toEqual([]);
+		expect(store.recordings()).toEqual([]);
 		expect(store.canManage()).toBe(false);
 		expect(store.loading()).toBe(true);
 		gateway.layoutError.set(new Error('offline'));
@@ -245,6 +306,11 @@ describe('TrackMapStore', () => {
 
 		gateway.layoutsHaveValue.set(true);
 		gateway.layoutError.set(undefined);
+		gateway.recordingsError.set(new Error('recordings offline'));
+		expect(store.readError()).toBe(
+			'Validated Race recordings could not be loaded.',
+		);
+		gateway.recordingsError.set(undefined);
 		store.openLayout(layout.id);
 		gateway.versionHasValue.set(false);
 		gateway.versionError.set(new Error('bad version'));
@@ -278,6 +344,7 @@ describe('TrackMapStore', () => {
 		expect(store.selectedVersionId()).toBeNull();
 		expect(store.version()).toBeNull();
 		store.saveDraft({ corners: [] });
+		store.selectReferenceFrame({ raceVideoId: recording.id, timestampMs: 0 });
 		store.approveVersion();
 		store.retireVersion();
 		store.renameLayout({ name: 'No layout' });

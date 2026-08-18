@@ -16,6 +16,13 @@ const version: TrackMapVersion = {
 	approvedBy: 'owner-1',
 	approvedAt: '2026-01-02',
 	retiredAt: null,
+	referenceFrame: {
+		raceVideoId: '33333333-3333-4333-8333-333333333333',
+		timestampMs: 100,
+		byteCount: 100,
+		checksumSha256: 'a'.repeat(64),
+		contentType: 'image/jpeg',
+	},
 	corners: [
 		{
 			key: 'hairpin',
@@ -57,6 +64,18 @@ describe('TrackMapReview', () => {
 		expect(
 			fixture.nativeElement.querySelector('svg').getAttribute('aria-label'),
 		).toContain('version 3');
+		const image = fixture.nativeElement.querySelector(
+			'img',
+		) as HTMLImageElement;
+		expect(image.getAttribute('src')).toBe(
+			'/api/v1/track-map-versions/version-1/reference-frame/content',
+		);
+		expect(image.alt).toContain('100 milliseconds');
+		expect(
+			fixture.nativeElement
+				.querySelector('svg')
+				.getAttribute('preserveAspectRatio'),
+		).toBe('none');
 	});
 
 	it('labels missing approval provenance without inventing it', () => {
@@ -68,5 +87,18 @@ describe('TrackMapReview', () => {
 		});
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('Not approved');
+	});
+
+	it('keeps legacy versions readable when no reference frame exists', () => {
+		fixture.componentRef.setInput('version', {
+			...version,
+			id: 'version/legacy',
+			referenceFrame: null,
+		});
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('img')).toBeNull();
+		expect(fixture.nativeElement.textContent).toContain(
+			'legacy version has no saved reference frame',
+		);
 	});
 });
