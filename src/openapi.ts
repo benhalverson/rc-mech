@@ -2577,6 +2577,28 @@ const trackMapVersionSchema = {
 		approvedAt: { type: 'string', format: 'date-time', nullable: true },
 		retiredAt: { type: 'string', format: 'date-time', nullable: true },
 		corners: { type: 'array', maxItems: 100, items: trackCornerSchema },
+		referenceFrame: {
+			oneOf: [
+				{
+					type: 'object',
+					required: [
+						'raceVideoId',
+						'timestampMs',
+						'byteCount',
+						'checksumSha256',
+						'contentType',
+					],
+					properties: {
+						raceVideoId: { type: 'string', format: 'uuid' },
+						timestampMs: { type: 'integer', minimum: 0 },
+						byteCount: { type: 'integer', minimum: 1 },
+						checksumSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+						contentType: { type: 'string', enum: ['image/jpeg'] },
+					},
+				},
+				{ type: 'null' },
+			],
+		},
 	},
 } as const;
 const trackMapVersionResponse = {
@@ -2697,6 +2719,51 @@ trackMapPaths['/api/v1/track-layouts'] = {
 			201: { description: 'Track layout created' },
 			400: { description: 'Invalid name' },
 			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-recordings'] = {
+	get: {
+		summary: 'Owner-only list validated Race recordings for Track-map frames',
+		description:
+			'Lists recording metadata without exposing private object keys or source URLs.',
+		responses: {
+			200: {
+				description: 'Validated private Race recordings',
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							required: ['raceVideos'],
+							properties: {
+								raceVideos: {
+									type: 'array',
+									items: {
+										type: 'object',
+										required: [
+											'id',
+											'fileName',
+											'byteCount',
+											'durationMs',
+											'width',
+											'height',
+										],
+										properties: {
+											id: { type: 'string', format: 'uuid' },
+											fileName: { type: 'string' },
+											byteCount: { type: 'integer', minimum: 1 },
+											durationMs: { type: 'integer', minimum: 1 },
+											width: { type: 'integer', minimum: 1 },
+											height: { type: 'integer', minimum: 1 },
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			404: { description: 'Track-map management is owner-only' },
 		},
 	},
 };
@@ -2825,6 +2892,45 @@ trackMapPaths['/api/v1/track-map-versions/{versionId}/approve'] = {
 			409: {
 				description: 'Draft geometry is invalid or the observed state is stale',
 			},
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}/reference-frame'] = {
+	parameters: [trackMapVersionIdParameter],
+	post: {
+		summary: 'Owner-only extract and attach a still frame to a draft Track map',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['raceVideoId', 'timestampMs'],
+						properties: {
+							raceVideoId: { type: 'string', format: 'uuid' },
+							timestampMs: { type: 'integer', minimum: 0 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Reference frame extracted and attached' },
+			400: { description: 'Invalid recording or timestamp input' },
+			404: { description: 'Track map or validated recording not found' },
+			409: { description: 'Only a new draft may receive a reference frame' },
+		},
+	},
+};
+trackMapPaths[
+	'/api/v1/track-map-versions/{versionId}/reference-frame/content'
+] = {
+	parameters: [trackMapVersionIdParameter],
+	get: {
+		summary: 'Owner-only read the private Track-map reference frame',
+		responses: {
+			200: { description: 'Private JPEG reference frame' },
+			404: { description: 'Reference frame not found' },
 		},
 	},
 };
