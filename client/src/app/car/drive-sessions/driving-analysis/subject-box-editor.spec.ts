@@ -280,4 +280,64 @@ describe('SubjectBoxEditor', () => {
 		});
 		expect(fixture.componentInstance.valid()).toBe(true);
 	});
+
+	it('keeps arbitrary pointer precision valid for every numeric input', () => {
+		const fixture = TestBed.createComponent(SubjectBoxEditor);
+		fixture.componentRef.setInput('editorId', 'arbitrary-pointer');
+		fixture.componentRef.setInput('box', {
+			x: 0.45,
+			y: 0.45,
+			width: 0.1,
+			height: 0.08,
+		});
+		fixture.detectChanges();
+		const root = fixture.nativeElement as HTMLElement;
+		const surface = root.querySelector<HTMLElement>('[data-box-surface]');
+		if (!surface) throw new Error('Surface missing');
+		vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({
+			x: 0,
+			y: 0,
+			left: 0,
+			top: 0,
+			right: 100,
+			bottom: 100,
+			width: 100,
+			height: 100,
+			toJSON: () => ({}),
+		});
+		Object.assign(surface, {
+			setPointerCapture: vi.fn(),
+			releasePointerCapture: vi.fn(),
+		});
+		surface.dispatchEvent(
+			pointerEvent('pointerdown', {
+				pointerId: 12,
+				clientX: 23.7,
+				clientY: 58.3,
+				button: 0,
+			}),
+		);
+		surface.dispatchEvent(
+			pointerEvent('pointermove', {
+				pointerId: 12,
+				clientX: 68.8,
+				clientY: 91.6,
+			}),
+		);
+		fixture.detectChanges();
+
+		expect(fixture.componentInstance.box()).toEqual({
+			x: 0.237,
+			y: 0.583,
+			width: 0.451,
+			height: 0.333,
+		});
+		expect(
+			Array.from(
+				root.querySelectorAll<HTMLInputElement>(
+					'input[data-box-x], input[data-box-y], input[data-box-width], input[data-box-height]',
+				),
+			).every((input) => input.checkValidity()),
+		).toBe(true);
+	});
 });
