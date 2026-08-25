@@ -365,16 +365,34 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await creator.getByLabel('Subject identity').fill('car-44');
 	const subjectBox = creator.locator('[data-subject-box]');
 	const surface = creator.locator('[data-box-surface]');
+	await surface.scrollIntoViewIfNeeded();
 	const surfaceBounds = await surface.boundingBox();
 	if (!surfaceBounds) throw new Error('Subject-box surface bounds missing');
+	const pointerFractions = {
+		start: { x: 0.237, y: 0.183 },
+		end: { x: 0.688, y: 0.516 },
+	};
 	const pointerStart = {
-		x: surfaceBounds.x + surfaceBounds.width * 0.237,
-		y: surfaceBounds.y + surfaceBounds.height * 0.183,
+		x: surfaceBounds.x + surfaceBounds.width * pointerFractions.start.x,
+		y: surfaceBounds.y + surfaceBounds.height * pointerFractions.start.y,
 	};
 	const pointerEnd = {
-		x: surfaceBounds.x + surfaceBounds.width * 0.688,
-		y: surfaceBounds.y + surfaceBounds.height * 0.516,
+		x: surfaceBounds.x + surfaceBounds.width * pointerFractions.end.x,
+		y: surfaceBounds.y + surfaceBounds.height * pointerFractions.end.y,
 	};
+	const roundToSixDecimals = (value: number) =>
+		Math.round(value * 1_000_000) / 1_000_000;
+	const pointerSubjectBox = {
+		x: roundToSixDecimals(pointerFractions.start.x),
+		y: roundToSixDecimals(pointerFractions.start.y),
+		width: roundToSixDecimals(
+			pointerFractions.end.x - pointerFractions.start.x,
+		),
+		height: roundToSixDecimals(
+			pointerFractions.end.y - pointerFractions.start.y,
+		),
+	};
+	const expectedSubjectBox = { ...pointerSubjectBox, width: 0.12 };
 	await page.mouse.move(pointerStart.x, pointerStart.y);
 	await page.mouse.down();
 	await page.mouse.move(pointerEnd.x, pointerEnd.y);
@@ -384,15 +402,9 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		creator.getByText('Enter all four normalized Subject-box coordinates.'),
 	).toBeVisible();
 	await creator.getByLabel('Width').fill('0.12');
-	const normalizedBox = {
-		x: Number(await creator.locator('[data-box-x]').inputValue()),
-		y: Number(await creator.locator('[data-box-y]').inputValue()),
-		width: Number(await creator.locator('[data-box-width]').inputValue()),
-		height: Number(await creator.locator('[data-box-height]').inputValue()),
-	};
 	await expect(subjectBox).toHaveAttribute(
 		'aria-label',
-		new RegExp(`${normalizedBox.x * 100}% from the left`),
+		new RegExp(`${expectedSubjectBox.x * 100}% from the left`),
 	);
 	const invalidControls = await creator.locator('form').evaluate((form) =>
 		Array.from((form as HTMLFormElement).elements)
@@ -432,7 +444,7 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 			timestampMs: 500,
 			frameIndex: 5,
 			identity: 'car-44',
-			box: normalizedBox,
+			box: expectedSubjectBox,
 		},
 	});
 	expect((await responsePromise).status()).toBe(202);
