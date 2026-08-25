@@ -238,6 +238,30 @@ describe('Race-video media container adapter', () => {
 			'prepared/manifest.json.gz',
 		]);
 		expect(runtime.cleanup).toHaveBeenCalledOnce();
+
+		const error = new Error('container preparation failed');
+		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+		runtime.prepare.mockRejectedValueOnce(error);
+		await expect(
+			prepareRaceVideoTrackView(
+				preparationCommand,
+				runtime as unknown as RaceVideoTrackViewPreparationRuntime,
+			),
+		).rejects.toBe(error);
+		expect(runtime.cleanup).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(log.mock.calls[0]?.[0]?.toString() ?? '')).toMatchObject({
+			event: 'race_video_track_view_preparation',
+			outcome: 'failed',
+			phase: 'prepare',
+			correlationId: CORRELATION_ID,
+			caseId: RUN_ID,
+			stagedMediaId: RACE_VIDEO_ID,
+			preparedMediaId: preparationRequest.preparedMediaId,
+			errorName: 'Error',
+			errorMessage: 'container preparation failed',
+			errorStack: error.stack,
+		});
+		log.mockRestore();
 	});
 
 	test('returns a safe service rejection without publishing artifacts', async () => {

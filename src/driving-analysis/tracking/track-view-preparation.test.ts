@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	inferenceProfileFixture,
 	RUN_ID,
@@ -299,6 +299,7 @@ describe('TrackViewPreparation', () => {
 	});
 
 	test('sanitizes thrown media failures and surfaces failed cleanup', async () => {
+		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 		const failed = await preparationFixture(async (command, media) => {
 			await media.bucket.put(command.output.mediaObjectKey, 'partial');
 			throw new Error('secret source path');
@@ -308,6 +309,18 @@ describe('TrackViewPreparation', () => {
 			'PREPARATION_REJECTED',
 		);
 		expect(failed.analysisMedia.objects.size).toBe(0);
+		expect(JSON.parse(log.mock.calls[0]?.[0]?.toString() ?? '')).toMatchObject({
+			event: 'track_view_preparation',
+			outcome: 'failed',
+			phase: 'prepare',
+			correlationId: CORRELATION_ID,
+			caseId: RUN_ID,
+			stagedMediaId: failed.input.raceVideoId,
+			preparedMediaId: PREPARED_MEDIA_ID,
+			errorName: 'Error',
+			errorMessage: 'secret source path',
+		});
+		log.mockRestore();
 
 		sqlite?.close();
 		sqlite = undefined;
