@@ -35,6 +35,9 @@
 			"style": {
 				"useImportType": "off"
 			},
+			"nursery": {
+				"noFloatingPromises": "error"
+			},
 			"complexity": {
 				"useLiteralKeys": "off"
 			}

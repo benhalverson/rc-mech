@@ -80,6 +80,21 @@ const publicResult = (
 	accepted: AcceptedPreparedTrackView,
 ): PreparedTrackViewResult => ({ runId, prepared: accepted.descriptor });
 
+const preparationErrorDetails = (
+	error: unknown,
+): Readonly<Record<string, string>> =>
+	error instanceof Error
+		? {
+				errorName: error.name,
+				errorMessage: error.message,
+				...(error.stack ? { errorStack: error.stack } : {}),
+			}
+		: {
+				errorName: 'unknown',
+				errorMessage:
+					error === null || error === undefined ? 'unknown' : error.toString(),
+			};
+
 export class TrackViewPreparation {
 	private readonly authority;
 	private readonly media;
@@ -138,7 +153,20 @@ export class TrackViewPreparation {
 				},
 				output: { mediaObjectKey, frameManifestObjectKey },
 			});
-		} catch {
+		} catch (error) {
+			console.log(
+				JSON.stringify({
+					event: 'track_view_preparation',
+					outcome: 'failed',
+					phase: 'prepare',
+					ownerId,
+					correlationId,
+					caseId: runId,
+					stagedMediaId: request.input.stagedMediaId,
+					preparedMediaId,
+					...preparationErrorDetails(error),
+				}),
+			);
 			await this.cleanup(candidateKeys);
 			throw new TrackViewPreparationError(
 				'PREPARATION_REJECTED',

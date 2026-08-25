@@ -207,6 +207,21 @@ const preparedArtifactPath = (
 	member: `${string}.track.mp4` | `${string}.frames.json.gz`,
 ): string => `/var/lib/rc-mech/artifacts/${preparedMediaId}.prepared/${member}`;
 
+const preparationErrorDetails = (
+	error: unknown,
+): Readonly<Record<string, string>> =>
+	error instanceof Error
+		? {
+				errorName: error.name,
+				errorMessage: error.message,
+				...(error.stack ? { errorStack: error.stack } : {}),
+			}
+		: {
+				errorName: 'unknown',
+				errorMessage:
+					error === null || error === undefined ? 'unknown' : error.toString(),
+			};
+
 const publishPreparedObject = async (
 	runtime: RaceVideoTrackViewPreparationRuntime,
 	path: string,
@@ -247,13 +262,16 @@ export const prepareRaceVideoTrackView = async (
 			'Private source recording does not match preparation input',
 		);
 	const stagedPath = `/var/lib/rc-mech/staged/${request.input.stagedMediaId}.media`;
+	let phase = 'stage';
 	try {
 		/* c8 ignore next -- container process failure is covered by live acceptance. */
 		if ((await runtime.stage(stagedPath, source.body)) !== 0)
 			/* c8 ignore next -- container process failure is covered by live acceptance. */
 			throw new Error('Private source recording could not be staged');
+		phase = 'checksum';
 		if ((await runtime.checksum(stagedPath)) !== command.source.checksumSha256)
 			throw new Error('Private source recording checksum does not match');
+		phase = 'prepare';
 		const parsed = prepareStageResponseSchema.parse(
 			await readBoundedJson(
 				await runtime.prepare(
@@ -278,6 +296,7 @@ export const prepareRaceVideoTrackView = async (
 			parsed.prepared.window.endTimestampMs !== request.window.endTimestampMs
 		)
 			throw new Error('Prepared descriptor does not match preparation input');
+		phase = 'publish-media';
 		await publishPreparedObject(
 			runtime,
 			preparedArtifactPath(
@@ -301,6 +320,20 @@ export const prepareRaceVideoTrackView = async (
 			parsed.prepared.frameManifestChecksumSha256,
 		);
 		return parsed;
+	} catch (error) {
+		console.log(
+			JSON.stringify({
+				event: 'race_video_track_view_preparation',
+				outcome: 'failed',
+				phase,
+				correlationId: request.correlationId,
+				caseId: request.caseId,
+				stagedMediaId: request.input.stagedMediaId,
+				preparedMediaId: request.preparedMediaId,
+				...preparationErrorDetails(error),
+			}),
+		);
+		throw error;
 	} finally {
 		await runtime.cleanup(stagedPath);
 	}
