@@ -364,16 +364,35 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await creator.getByLabel('Source frame index').fill('5');
 	await creator.getByLabel('Subject identity').fill('car-44');
 	const subjectBox = creator.locator('[data-subject-box]');
-	await subjectBox.focus();
-	await subjectBox.press('ArrowRight');
+	const surface = creator.locator('[data-box-surface]');
+	const surfaceBounds = await surface.boundingBox();
+	if (!surfaceBounds) throw new Error('Subject-box surface bounds missing');
+	const pointerStart = {
+		x: surfaceBounds.x + surfaceBounds.width * 0.237,
+		y: surfaceBounds.y + surfaceBounds.height * 0.183,
+	};
+	const pointerEnd = {
+		x: surfaceBounds.x + surfaceBounds.width * 0.688,
+		y: surfaceBounds.y + surfaceBounds.height * 0.516,
+	};
+	await page.mouse.move(pointerStart.x, pointerStart.y);
+	await page.mouse.down();
+	await page.mouse.move(pointerEnd.x, pointerEnd.y);
+	await page.mouse.up();
 	await creator.getByLabel('Width').fill('');
 	await expect(
 		creator.getByText('Enter all four normalized Subject-box coordinates.'),
 	).toBeVisible();
 	await creator.getByLabel('Width').fill('0.12');
+	const normalizedBox = {
+		x: Number(await creator.locator('[data-box-x]').inputValue()),
+		y: Number(await creator.locator('[data-box-y]').inputValue()),
+		width: Number(await creator.locator('[data-box-width]').inputValue()),
+		height: Number(await creator.locator('[data-box-height]').inputValue()),
+	};
 	await expect(subjectBox).toHaveAttribute(
 		'aria-label',
-		/45\.2% from the left/,
+		new RegExp(`${normalizedBox.x * 100}% from the left`),
 	);
 	const invalidControls = await creator.locator('form').evaluate((form) =>
 		Array.from((form as HTMLFormElement).elements)
@@ -413,7 +432,7 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 			timestampMs: 500,
 			frameIndex: 5,
 			identity: 'car-44',
-			box: { x: 0.452, y: 0.45, width: 0.12, height: 0.08 },
+			box: normalizedBox,
 		},
 	});
 	expect((await responsePromise).status()).toBe(202);
