@@ -341,6 +341,60 @@ describe('TrackViewPreparation', () => {
 		);
 	});
 
+	test.each([
+		{
+			name: 'an Error without a stack',
+			thrownValue: (() => {
+				const error = new Error('stackless media failure');
+				delete error.stack;
+				return error;
+			})(),
+			errorName: 'Error',
+			errorMessage: 'stackless media failure',
+		},
+		{
+			name: 'a non-Error value',
+			thrownValue: 'plain media failure',
+			errorName: 'unknown',
+			errorMessage: 'plain media failure',
+		},
+		{
+			name: 'null',
+			thrownValue: null,
+			errorName: 'unknown',
+			errorMessage: 'unknown',
+		},
+		{
+			name: 'undefined',
+			thrownValue: undefined,
+			errorName: 'unknown',
+			errorMessage: 'unknown',
+		},
+	])(
+		'logs safe details for $name media failures',
+		async ({ thrownValue, errorName, errorMessage }) => {
+			const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+			const value = await preparationFixture(async () => {
+				throw thrownValue;
+			});
+			await expectPreparationError(
+				value.preparation.prepare(OWNER_ID, RUN_ID),
+				'PREPARATION_REJECTED',
+			);
+			const entry = JSON.parse(log.mock.calls[0]?.[0]?.toString() ?? '');
+			expect(entry).toMatchObject({
+				event: 'track_view_preparation',
+				outcome: 'failed',
+				phase: 'prepare',
+				errorName,
+				errorMessage,
+			});
+			expect(entry).not.toHaveProperty('errorStack');
+			expect(JSON.stringify(entry)).not.toContain('race-videos/');
+			log.mockRestore();
+		},
+	);
+
 	test('cleans output whose descriptor does not match immutable input', async () => {
 		const value = await preparationFixture(
 			async (command, media, inputDigest) => {
