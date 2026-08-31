@@ -261,6 +261,31 @@ describe('Race-video media container adapter', () => {
 			errorMessage: 'container preparation failed',
 			errorStack: error.stack,
 		});
+
+		const errorWithoutStack = new Error('container failed without a stack');
+		Object.defineProperty(errorWithoutStack, 'stack', { value: undefined });
+		const thrownValues: readonly [unknown, string][] = [
+			[errorWithoutStack, 'container failed without a stack'],
+			['plain thrown value', 'plain thrown value'],
+			[null, 'unknown'],
+			[undefined, 'unknown'],
+		];
+		for (const [thrownValue, expectedMessage] of thrownValues) {
+			log.mockClear();
+			runtime.prepare.mockRejectedValueOnce(thrownValue);
+			await expect(
+				prepareRaceVideoTrackView(
+					preparationCommand,
+					runtime as unknown as RaceVideoTrackViewPreparationRuntime,
+				),
+			).rejects.toBe(thrownValue);
+			const entry = JSON.parse(log.mock.calls[0]?.[0]?.toString() ?? '');
+			expect(entry).toMatchObject({
+				errorName: thrownValue instanceof Error ? 'Error' : 'unknown',
+				errorMessage: expectedMessage,
+			});
+			expect(entry).not.toHaveProperty('errorStack');
+		}
 		log.mockRestore();
 	});
 
