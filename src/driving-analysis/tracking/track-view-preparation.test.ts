@@ -346,7 +346,7 @@ describe('TrackViewPreparation', () => {
 			name: 'an Error without a stack',
 			thrownValue: (() => {
 				const error = new Error('stackless media failure');
-				Object.defineProperty(error, 'stack', { value: undefined });
+				delete error.stack;
 				return error;
 			})(),
 			errorName: 'Error',

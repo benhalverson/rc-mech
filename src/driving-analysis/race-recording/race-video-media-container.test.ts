@@ -263,7 +263,7 @@ describe('Race-video media container adapter', () => {
 		});
 
 		const errorWithoutStack = new Error('container failed without a stack');
-		Object.defineProperty(errorWithoutStack, 'stack', { value: undefined });
+		delete errorWithoutStack.stack;
 		const thrownValues: readonly [unknown, string][] = [
 			[errorWithoutStack, 'container failed without a stack'],
 			['plain thrown value', 'plain thrown value'],
