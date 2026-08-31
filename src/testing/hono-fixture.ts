@@ -491,11 +491,16 @@ export const createHonoFixture = (
 	const assets = Object.assign(async (..._args: unknown[]) => ({}), {
 		fetch: async (input: RequestInfo | URL) => {
 			const request = new Request(input);
-			return new URL(request.url).pathname === '/'
+			const pathname = new URL(request.url).pathname;
+			return pathname === '/' && !request.url.includes('asset-miss=1')
 				? new Response('<app-root></app-root>', {
 						headers: { 'content-type': 'text/html' },
 					})
-				: new Response('Not found', { status: 404 });
+				: pathname === '/assets/app.js'
+					? new Response('console.log("asset");', {
+							headers: { 'content-type': 'application/javascript' },
+						})
+					: new Response('Not found', { status: 404 });
 		},
 		connect: (): Socket => {
 			throw new Error('Unexpected socket connection in backend tests');
