@@ -15,9 +15,19 @@ export const hasHiddenPathSegment = (pathname: string): boolean =>
 		return decoded.startsWith('.');
 	});
 
+const withNoIndex = (response: Response): Response => {
+	const headers = new Headers(response.headers);
+	headers.set('X-Robots-Tag', 'noindex');
+	return new Response(response.body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers,
+	});
+};
+
 export const spaFallback = async (c: AppContext) => {
-	if (hasHiddenPathSegment(new URL(c.req.url).pathname))
-		return c.text('Not found', 404);
+	const pathname = new URL(c.req.url).pathname;
+	if (hasHiddenPathSegment(pathname)) return c.text('Not found', 404);
 
 	const response = await c.env.ASSETS.fetch(c.req.raw);
 	if (
@@ -26,5 +36,9 @@ export const spaFallback = async (c: AppContext) => {
 		!c.req.header('Accept')?.includes('text/html')
 	)
 		return response;
-	return c.env.ASSETS.fetch(new Request(new URL('/', c.req.url), c.req.raw));
+
+	const fallback = await c.env.ASSETS.fetch(
+		new Request(new URL('/', c.req.url), c.req.raw),
+	);
+	return pathname === '/' ? fallback : withNoIndex(fallback);
 };

@@ -40,6 +40,13 @@ export const createApp = (
 ) => {
 	const app = new Hono<AppEnv>();
 
+	app.use('*', async (c, next) => {
+		const url = new URL(c.req.url);
+		if (url.hostname !== 'www.chassisnotes.com') return next();
+		url.hostname = 'chassisnotes.com';
+		return c.redirect(url.toString(), 308);
+	});
+
 	app.use('/api/*', async (c, next) =>
 		cors({
 			origin: (origin) => (isAllowedOrigin(origin, c.env) ? origin : ''),
