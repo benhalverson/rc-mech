@@ -223,7 +223,7 @@ describe('GpuLeaseCoordinator', () => {
 			status: 'stale',
 		});
 		expect(
-			await stub.restoreCapacityBusy({
+			await stub.requeueProviderLoss({
 				segmentId: lease.segmentId,
 				leaseId: lease.leaseId,
 				fence: lease.fence,

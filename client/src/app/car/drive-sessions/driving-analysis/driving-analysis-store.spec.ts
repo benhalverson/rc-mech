@@ -547,6 +547,7 @@ describe('DrivingAnalysisStore', () => {
 		vi.useFakeTimers();
 		try {
 			store.selectCar('car-1');
+			TestBed.flushEffects();
 			gateway.collectionHasValue.set(false);
 			await vi.advanceTimersByTimeAsync(3_000);
 			expect(gateway.refresh).not.toHaveBeenCalled();

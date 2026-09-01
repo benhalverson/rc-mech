@@ -124,6 +124,17 @@ export const transitionTrackingAttemptCommandSchema = z.strictObject({
 	updatedAt: isoTimestampSchema,
 });
 
+export const retireTrackingAttemptCommandSchema = z.strictObject({
+	ownerId: authorityIdentifierSchema,
+	runId: uuidV4Schema,
+	segmentId: uuidV4Schema,
+	attemptId: uuidV4Schema,
+	leaseId: uuidV4Schema,
+	fence: positiveIntSchema,
+	nextState: z.enum(['expired', 'replaced']),
+	updatedAt: isoTimestampSchema,
+});
+
 export const recordTrackingTransferRequestCommandSchema = z
 	.strictObject({
 		ownerId: authorityIdentifierSchema,
@@ -336,6 +347,9 @@ export type ActivateTrackingAttemptCommand = z.infer<
 >;
 export type TransitionTrackingAttemptCommand = z.infer<
 	typeof transitionTrackingAttemptCommandSchema
+>;
+export type RetireTrackingAttemptCommand = z.infer<
+	typeof retireTrackingAttemptCommandSchema
 >;
 export type RecordTrackingTransferRequestCommand = z.infer<
 	typeof recordTrackingTransferRequestCommandSchema

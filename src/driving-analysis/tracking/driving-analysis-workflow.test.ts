@@ -28,6 +28,7 @@ import {
 import type {
 	GpuLeaseAcquireInput,
 	GpuLeaseAcquireResult,
+	GpuLeaseBusyInput,
 	GpuLeaseEnqueueInput,
 	GpuLeaseEnqueueResult,
 	GpuLeaseHoldInput,
@@ -48,6 +49,7 @@ import type {
 import {
 	type DrivingAnalysisWorkflowEnvironment,
 	deployedInferenceProfile,
+	deterministicJitter,
 	deterministicUuidV4,
 	FirstTrackingSegmentWorkflow,
 	type FirstTrackingWorkflowPayload,
@@ -105,7 +107,13 @@ class WorkflowStepFixture {
 	readonly names: string[] = [];
 	readonly configurations = new Map<
 		string,
-		{ retries?: { limit: number }; timeout?: string | number } | null
+		{
+			retries?: {
+				limit: number;
+				delay?: (input: { ctx: { attempt: number } }) => number;
+			};
+			timeout?: string | number;
+		} | null
 	>();
 	private readonly outputs = new Map<string, unknown>();
 
@@ -114,7 +122,10 @@ class WorkflowStepFixture {
 		callbackOrConfiguration:
 			| (() => Promise<T>)
 			| {
-					retries?: { limit: number };
+					retries?: {
+						limit: number;
+						delay?: (input: { ctx: { attempt: number } }) => number;
+					};
 					timeout?: string | number;
 			  },
 		configuredCallback?: () => Promise<T>,
@@ -139,6 +150,8 @@ class WorkflowStepFixture {
 				this.outputs.set(name, output);
 				return output;
 			} catch (error) {
+				const delay = configuration?.retries?.delay;
+				if (delay) delay({ ctx: { attempt: attempt + 1 } });
 				failure = error;
 			}
 		}
@@ -212,6 +225,11 @@ class CoordinatorFixture {
 		}
 		this.calls.push('coordinator-release');
 		this.trace.push('coordinator-release');
+		return { status: 'ok' as const };
+	}
+
+	async requeueProviderLoss(_input: GpuLeaseBusyInput) {
+		this.calls.push('coordinator-requeue-provider-loss');
 		return { status: 'ok' as const };
 	}
 }
@@ -463,6 +481,9 @@ const coreWorkflowFixture = (
 			};
 			return context.attempt;
 		}),
+		retireAttempt: vi.fn(async () => {
+			if (context.attempt) context = { ...context, attempt: null };
+		}),
 		publicState: vi.fn(async () => ({
 			runId: RUN_ID,
 			lifecycle: 'running' as const,
@@ -498,6 +519,9 @@ const coreWorkflowFixture = (
 		>(async () => ({ status: 'ok' })),
 		release: vi.fn<
 			(input: GpuLeaseReleaseInput) => Promise<GpuLeaseMutationResult>
+		>(async () => ({ status: 'ok' })),
+		requeueProviderLoss: vi.fn<
+			(input: GpuLeaseBusyInput) => Promise<GpuLeaseMutationResult>
 		>(async () => ({ status: 'ok' })),
 		beginCommitHold: vi.fn<
 			(input: GpuLeaseHoldInput) => Promise<GpuLeaseMutationResult>
@@ -766,10 +790,11 @@ describe('DrivingAnalysisWorkflow', () => {
 		);
 		expect(authoritativeReplay).toEqual(result);
 		expect(fetcher).toHaveBeenCalledTimes(callsBeforeReplay);
-		expect(steps.configurations.get('submit-tracking-segment')).toMatchObject({
-			retries: { limit: 1 },
-			timeout: '30 seconds',
-		});
+		expect(
+			[...steps.configurations.entries()].find(([name]) =>
+				name.startsWith('submit-tracking-segment'),
+			)?.[1],
+		).toMatchObject({ retries: { limit: 1 }, timeout: '30 seconds' });
 	});
 
 	test('derives stable version-four attempt identities', async () => {
@@ -779,6 +804,231 @@ describe('DrivingAnalysisWorkflow', () => {
 		);
 		expect(await deterministicUuidV4('one immutable lease')).toBe(first);
 		expect(await deterministicUuidV4('another lease')).not.toBe(first);
+	});
+
+	test('retires provider-loss attempts and submits the replacement with a new identity', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().availabilityDeadlineAt = Date.now() + 86_400_000;
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			fence: 8,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.provider.submit
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'GPU_CAPACITY_BUSY',
+				retryable: true,
+			})
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.provider.submit).toHaveBeenCalledTimes(2);
+		expect(value.provider.submit.mock.calls[0]?.[0].attemptId).not.toBe(
+			value.provider.submit.mock.calls[1]?.[0].attemptId,
+		);
+		expect(value.authority.retireAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'replaced' }),
+		);
+		expect(value.coordinator.requeueProviderLoss).toHaveBeenCalledOnce();
+		expect(
+			value.steps.names.some((name) =>
+				name.startsWith('retire-lost-tracking-attempt-'),
+			),
+		).toBe(true);
+	});
+
+	test('replaces an attempt when polling loses the provider', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().availabilityDeadlineAt = Date.now() + 86_400_000;
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			fence: 8,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.provider.submit
+			.mockResolvedValueOnce({
+				ok: true,
+				value: status(
+					{
+						...submissionFixture(),
+						runId: RUN_ID,
+						segmentId: SEGMENT_ID,
+						attemptId: 'placeholder',
+						leaseId: LEASE_ID,
+						fencingToken: 7,
+						specificationDigest: '4'.repeat(64),
+						profileDigest: PROFILE_DIGEST,
+					},
+					'processing',
+					20,
+					null,
+					null,
+				),
+			})
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+		value.provider.status
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			})
+			.mockImplementation(async (identity) => ({
+				ok: true,
+				value: completedStatusFixture(identity as TrackingJobSubmission),
+			}));
+
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.provider.status).toHaveBeenCalledOnce();
+		expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+	});
+
+	test('fails safely when provider-loss requeue is fenced by a newer lease', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().availabilityDeadlineAt = Date.now() + 86_400_000;
+		value.coordinator.requeueProviderLoss.mockResolvedValue({
+			status: 'stale',
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.provider.submit).toHaveBeenCalledOnce();
+	});
+
+	test('normalizes thrown provider submission and status failures', async () => {
+		const submissionFailure = coreWorkflowFixture();
+		submissionFailure.provider.submit.mockRejectedValue(
+			new Error('private provider detail'),
+		);
+		await expect(
+			submissionFailure.workflow.run(
+				workflowEvent(),
+				submissionFailure.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+
+		const statusFailure = coreWorkflowFixture();
+		statusFailure.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(submission, 'processing', 20, null, null),
+		}));
+		statusFailure.provider.status.mockRejectedValue(
+			new Error('private status detail'),
+		);
+		await expect(
+			statusFailure.workflow.run(
+				workflowEvent(),
+				statusFailure.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+
+		const authorityFailure = coreWorkflowFixture();
+		authorityFailure.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(submission, 'processing', 20, null, null),
+		}));
+		authorityFailure.authority.workflowContext
+			.mockResolvedValueOnce(authorityFailure.getContext())
+			.mockResolvedValueOnce(authorityFailure.getContext())
+			.mockResolvedValueOnce(authorityFailure.getContext())
+			.mockResolvedValueOnce(authorityFailure.getContext())
+			.mockRejectedValueOnce(
+				new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'),
+			);
+		await expect(
+			authorityFailure.workflow.run(
+				workflowEvent(),
+				authorityFailure.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+
+		const directStatusAuthorityFailure = coreWorkflowFixture();
+		directStatusAuthorityFailure.provider.submit.mockImplementation(
+			async (submission) => ({
+				ok: true,
+				value: status(submission, 'processing', 20, null, null),
+			}),
+		);
+		directStatusAuthorityFailure.provider.status.mockRejectedValue(
+			new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'),
+		);
+		await expect(
+			directStatusAuthorityFailure.workflow.run(
+				workflowEvent(),
+				directStatusAuthorityFailure.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+	});
+
+	test('fails polling provider loss without a requeue capability', async () => {
+		const value = coreWorkflowFixture();
+		delete (value.coordinator as { requeueProviderLoss?: unknown })
+			.requeueProviderLoss;
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: status(submission, 'processing', 20, null, null),
+		}));
+		value.provider.status.mockResolvedValue({
+			ok: false,
+			code: 'TRACKING_PROVIDER_UNAVAILABLE',
+			retryable: true,
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(
+			new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE'),
+		);
+	});
+
+	test('deterministic jitter is bounded, repeatable, and deadline-safe', () => {
+		const first = deterministicJitter('segment', 1, 5_000);
+		expect(first).toBe(deterministicJitter('segment', 1, 5_000));
+		expect(first).toBeGreaterThanOrEqual(0);
+		expect(first).toBeLessThanOrEqual(5_000);
+		expect(deterministicJitter('segment', 1, 0)).toBe(0);
+		expect(deterministicJitter('segment', 1, -1)).toBe(0);
 	});
 
 	test('loads the pinned deployment profile and addresses media by run', async () => {
@@ -827,6 +1077,8 @@ describe('DrivingAnalysisWorkflow', () => {
 			progress: 0,
 			safeFailureCode: null,
 		});
+		delete (value.coordinator as { requeueProviderLoss?: unknown })
+			.requeueProviderLoss;
 		await expect(
 			value.workflow.run(
 				workflowEvent(),
@@ -1077,10 +1329,10 @@ describe('DrivingAnalysisWorkflow', () => {
 			progress: 90,
 			safeFailureCode: null,
 		});
-		value.provider.submit.mockImplementation(async (submission) => ({
+		value.provider.status.mockImplementation(async (identity) => ({
 			ok: true,
 			value: status(
-				submission,
+				identity,
 				'transfer-grant-required',
 				90,
 				{
@@ -1124,9 +1376,9 @@ describe('DrivingAnalysisWorkflow', () => {
 			safeFailureCode: null,
 		});
 		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
-		value.provider.submit.mockImplementation(async (submission) => ({
+		value.provider.status.mockImplementation(async (identity) => ({
 			ok: true,
-			value: completedStatusFixture(submission),
+			value: completedStatusFixture(identity as TrackingJobSubmission),
 		}));
 		value.publication.publish.mockRejectedValue(
 			new Error('private R2 validation detail'),
@@ -1155,9 +1407,9 @@ describe('DrivingAnalysisWorkflow', () => {
 			safeFailureCode: null,
 		});
 		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
-		value.provider.submit.mockImplementation(async (submission) => ({
+		value.provider.status.mockImplementation(async (identity) => ({
 			ok: true,
-			value: completedStatusFixture(submission),
+			value: completedStatusFixture(identity as TrackingJobSubmission),
 		}));
 		value.publication.publish.mockRejectedValue(
 			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
@@ -1195,9 +1447,9 @@ describe('DrivingAnalysisWorkflow', () => {
 				safeFailureCode: null,
 			});
 			value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
-			value.provider.submit.mockImplementation(async (submission) => ({
+			value.provider.status.mockImplementation(async (identity) => ({
 				ok: true,
-				value: completedStatusFixture(submission),
+				value: completedStatusFixture(identity as TrackingJobSubmission),
 			}));
 			value.evidence.commit.mockRejectedValue(
 				new AcceptedCornerEvidenceError(code),
@@ -1226,9 +1478,9 @@ describe('DrivingAnalysisWorkflow', () => {
 			safeFailureCode: null,
 		});
 		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
-		value.provider.submit.mockImplementation(async (submission) => ({
+		value.provider.status.mockImplementation(async (identity) => ({
 			ok: true,
-			value: completedStatusFixture(submission),
+			value: completedStatusFixture(identity as TrackingJobSubmission),
 		}));
 		const failure = new AcceptedCornerEvidenceError('RETRYABLE_INFRASTRUCTURE');
 		value.evidence.commit.mockRejectedValue(failure);
@@ -1398,6 +1650,8 @@ describe('DrivingAnalysisWorkflow', () => {
 			progress: 0,
 			safeFailureCode: null,
 		});
+		delete (value.coordinator as { requeueProviderLoss?: unknown })
+			.requeueProviderLoss;
 		value.authority.workflowContext
 			.mockResolvedValueOnce(value.getContext())
 			.mockRejectedValue(new Error('private persistence detail'));
