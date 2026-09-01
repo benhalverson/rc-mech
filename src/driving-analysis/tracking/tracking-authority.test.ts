@@ -421,6 +421,73 @@ describe('TrackingAuthority', () => {
 		);
 	});
 
+	test('retires an attempt atomically while preserving its historical record', async () => {
+		const value = await createAttemptAuthority();
+		await makeOutputReady(value.authority);
+
+		await value.authority.retireAttempt({
+			...attemptWitness(),
+			nextState: 'replaced',
+			updatedAt: LATER,
+		});
+
+		expect(
+			await value.authority.workflowContext({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				runId: RUN_ID,
+				workflowId: WORKFLOW_ID,
+				segmentId: SEGMENT_ID,
+			}),
+		).toMatchObject({ attempt: null });
+		const historicalAttempt = await value.database
+			.prepare('SELECT id, state FROM tracking_execution_attempt WHERE id = ?1')
+			.bind(ATTEMPT_ID)
+			.first();
+		const segment = await value.database
+			.prepare(
+				'SELECT id, current_attempt_id, authority_lease_id, authority_fence FROM tracking_segment WHERE id = ?1',
+			)
+			.bind(SEGMENT_ID)
+			.first();
+		expect(historicalAttempt).toMatchObject({
+			id: ATTEMPT_ID,
+			state: 'replaced',
+		});
+		expect(segment).toMatchObject({
+			id: SEGMENT_ID,
+			current_attempt_id: null,
+			authority_lease_id: null,
+			authority_fence: null,
+		});
+		await expectAuthorityError(
+			value.authority.retireAttempt({
+				...attemptWitness(),
+				nextState: 'expired',
+				updatedAt: LATER,
+			}),
+			'STALE_AUTHORITY',
+		);
+	});
+
+	test('rejects retirement when the segment authority update loses its fence', async () => {
+		const value = await createAttemptAuthority();
+		await value.database
+			.prepare(
+				"UPDATE tracking_segment SET outcome = 'tracking-gap', accepted_artifact_id = 'artifact', gap_json = '{}' WHERE id = ?1",
+			)
+			.bind(SEGMENT_ID)
+			.run();
+		await expectAuthorityError(
+			value.authority.retireAttempt({
+				...attemptWitness(),
+				nextState: 'expired',
+				updatedAt: LATER,
+			}),
+			'STALE_AUTHORITY',
+		);
+	});
+
 	test.each(['cancelled', 'expired', 'replaced'] as const)(
 		'prevents a %s attempt from mutating authority',
 		async (terminalState) => {

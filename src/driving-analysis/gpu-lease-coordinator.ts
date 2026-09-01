@@ -323,6 +323,13 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 		return result;
 	}
 
+	/** Release a provider-lost lease while retaining the waiter's FIFO place. */
+	async requeueProviderLoss(
+		raw: GpuLeaseBusyInput,
+	): Promise<GpuLeaseMutationResult> {
+		return this.restoreCapacityBusy(raw);
+	}
+
 	async beginCommitHold(
 		raw: GpuLeaseHoldInput,
 	): Promise<GpuLeaseMutationResult> {

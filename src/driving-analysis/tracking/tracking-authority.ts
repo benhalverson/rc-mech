@@ -38,8 +38,10 @@ import {
 	publicTrackingStateSchema,
 	type RecordTrackingArtifactPromotionCommand,
 	type RecordTrackingTransferRequestCommand,
+	type RetireTrackingAttemptCommand,
 	recordTrackingArtifactPromotionCommandSchema,
 	recordTrackingTransferRequestCommandSchema,
+	retireTrackingAttemptCommandSchema,
 	type TrackingWorkflowIdentity,
 	type TransitionTrackingAttemptCommand,
 	type TransitionTrackingTransferRequestCommand,
@@ -699,6 +701,51 @@ export class TrackingAuthority {
 		/* c8 ignore next -- a zero-row result requires a concurrent D1 witness change after the read above. */
 		if (!updated) throw stale('Tracking-attempt authority changed');
 		return updated;
+	}
+
+	/** Retire the current attempt and atomically remove its segment authority. */
+	async retireAttempt(
+		commandValue: RetireTrackingAttemptCommand,
+	): Promise<void> {
+		const command = retireTrackingAttemptCommandSchema.parse(commandValue);
+		const attempt = await this.requireCurrentAttempt(command);
+		await this.database.batch([
+			this.database
+				.update(trackingExecutionAttempt)
+				.set({
+					state: command.nextState,
+					updatedAt: command.updatedAt,
+					version: attempt.version + 1,
+				})
+				.where(
+					and(
+						eq(trackingExecutionAttempt.id, command.attemptId),
+						eq(trackingExecutionAttempt.state, attempt.state),
+						eq(trackingExecutionAttempt.version, attempt.version),
+						this.currentAuthorityExists(command),
+					),
+				),
+			this.database
+				.update(trackingSegment)
+				.set({
+					currentAttemptId: null,
+					authorityLeaseId: null,
+					authorityFence: null,
+					version: sql`${trackingSegment.version} + 1`,
+				})
+				.where(
+					and(
+						eq(trackingSegment.id, command.segmentId),
+						eq(trackingSegment.currentAttemptId, command.attemptId),
+						eq(trackingSegment.authorityLeaseId, command.leaseId),
+						eq(trackingSegment.authorityFence, command.fence),
+						isNull(trackingSegment.outcome),
+					),
+				),
+		]);
+		const segment = await this.ownedSegment(command.runId, command.segmentId);
+		if (!segment || segment.currentAttemptId !== null)
+			throw stale('Tracking attempt retirement lost its authority race');
 	}
 
 	async recordTransferRequest(
