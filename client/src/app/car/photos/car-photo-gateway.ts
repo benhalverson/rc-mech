@@ -4,7 +4,7 @@ import {
 	httpResource,
 } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
-import { catchError, map, type Observable, throwError } from 'rxjs';
+import { catchError, map, type Observable, tap, throwError } from 'rxjs';
 import {
 	type CarPhoto,
 	carPhotoCollectionSchema,
@@ -132,12 +132,18 @@ export class CarPhotoGateway {
 	private sendFile(url: string, file: File): Observable<CarPhoto> {
 		const body = new FormData();
 		body.append('file', file, file.name);
-		return this.http.post<unknown>(url, body, { withCredentials: true }).pipe(
-			map(parsePhotoMutation),
-			catchError((error: unknown) =>
-				throwError(() => photoGatewayFailure(error)),
-			),
-		);
+		return this.http
+			.post<unknown>(url, body, {
+				headers: { 'ngsw-bypass': 'true' },
+				withCredentials: true,
+			})
+			.pipe(
+				tap((body) => console.log('Uploaded photo data:', body)),
+				map(parsePhotoMutation),
+				catchError((error: unknown) =>
+					throwError(() => photoGatewayFailure(error)),
+				),
+			);
 	}
 
 	private endpoint(photo: CarPhoto): string {

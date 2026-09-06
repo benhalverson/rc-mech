@@ -125,6 +125,7 @@ describe('CarPhotoGateway', () => {
 		expect(upload.request.withCredentials).toBe(true);
 		expect(upload.request.body).toBeInstanceOf(FormData);
 		expect(upload.request.headers.has('content-type')).toBe(false);
+		expect(upload.request.headers.get('ngsw-bypass')).toBe('true');
 		expect((upload.request.body as FormData).get('file')).toBeInstanceOf(File);
 		upload.flush({ photo: photo() });
 		await expect(uploaded).resolves.toEqual(photo());
@@ -135,6 +136,7 @@ describe('CarPhotoGateway', () => {
 			'/api/v1/cars/car%2F1/photos/photo-1/replace',
 		);
 		expect(replace.request.method).toBe('POST');
+		expect(replace.request.headers.get('ngsw-bypass')).toBe('true');
 		replace.flush({ photo: replacedPhoto });
 		await expect(replaced).resolves.toEqual(replacedPhoto);
 

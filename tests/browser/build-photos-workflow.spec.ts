@@ -1,6 +1,8 @@
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
+test.use({ serviceWorkers: 'allow' });
+
 let authentication = 0;
 
 const authenticateOwner = async (page: Page): Promise<void> => {
@@ -122,6 +124,11 @@ test('renders the private photo list and archived state accessibly in dark mode'
 		page.getByRole('list', { name: 'Car photo gallery' }),
 	).toBeVisible();
 	await expect(page.getByText('Primary photo')).toBeVisible();
+	await expect
+		.poll(() =>
+			page.evaluate(() => Boolean(navigator.serviceWorker.controller)),
+		)
+		.toBe(true);
 	const photoUpload = page.waitForResponse(
 		(response) =>
 			response.url().endsWith(`/api/v1/cars/${created.car.id}/photos`) &&
@@ -145,6 +152,7 @@ test('renders the private photo list and archived state accessibly in dark mode'
 	expect(uploadRequest.headers()['content-type']).toMatch(
 		/^multipart\/form-data;\s*boundary=.+$/i,
 	);
+	expect(uploadRequest.headers()['ngsw-bypass']).toBe('true');
 	await expect(page.getByRole('listitem')).toHaveCount(2);
 	await expect(
 		page.getByRole('button', { name: 'Move photo earlier' }).first(),
