@@ -174,6 +174,69 @@ describe('photo routes', () => {
 		expect(response.status).toBe(status);
 	});
 
+	test('returns a safe 400 and logs request metadata when the boundary is missing', async () => {
+		const { d1, request } = fixture();
+		const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		d1.queue({ kind: 'first', value: car() });
+		const response = await request('/api/v1/cars/car-1/photos', {
+			method: 'POST',
+			headers: {
+				'content-type': 'multipart/form-data',
+				'cf-ray': 'photo-ray-1',
+			},
+			body: 'file contents are not logged',
+		});
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			error: 'Photo upload must include a valid multipart boundary',
+			maxBytes: 10 * 1024 * 1024,
+		});
+		expect(log).toHaveBeenCalledWith('photo multipart parsing failed', {
+			route: '/api/v1/cars/car-1/photos',
+			contentType: 'multipart/form-data',
+			requestId: 'photo-ray-1',
+		});
+	});
+
+	test('returns a safe 400 when multipart parsing fails', async () => {
+		const { d1, request } = fixture();
+		const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		d1.queue({ kind: 'first', value: car() });
+		const response = await request('/api/v1/cars/car-1/photos', {
+			method: 'POST',
+			headers: {
+				'content-type': 'multipart/form-data; boundary="photo-boundary"',
+				'x-request-id': 'photo-request-1',
+			},
+			body: 'not a multipart body',
+		});
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			error: 'Photo upload must include a valid multipart boundary',
+			maxBytes: 10 * 1024 * 1024,
+		});
+		expect(log).toHaveBeenCalledWith('photo multipart parsing failed', {
+			route: '/api/v1/cars/car-1/photos',
+			contentType: 'multipart/form-data; boundary="photo-boundary"',
+			requestId: 'photo-request-1',
+		});
+	});
+
+	test('uses an unknown request id when malformed multipart has no request id', async () => {
+		const { d1, request } = fixture();
+		const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		d1.queue({ kind: 'first', value: car() });
+		const response = await request('/api/v1/cars/car-1/photos', {
+			method: 'POST',
+		});
+		expect(response.status).toBe(400);
+		expect(log).toHaveBeenCalledWith('photo multipart parsing failed', {
+			route: '/api/v1/cars/car-1/photos',
+			contentType: '',
+			requestId: 'unknown',
+		});
+	});
+
 	test('rejects an invalid photo sort order', async () => {
 		const { d1, request } = fixture();
 		d1.queue({ kind: 'first', value: car() }, { kind: 'all', rows: [] });
