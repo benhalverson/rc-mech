@@ -122,8 +122,32 @@ test('renders the private photo list and archived state accessibly in dark mode'
 		page.getByRole('list', { name: 'Car photo gallery' }),
 	).toBeVisible();
 	await expect(page.getByText('Primary photo')).toBeVisible();
+	const photoUpload = page.waitForResponse(
+		(response) =>
+			response.url().endsWith(`/api/v1/cars/${created.car.id}/photos`) &&
+			response.request().method() === 'POST',
+	);
+	const photoRequest = page.waitForRequest(
+		(request) =>
+			request.url().endsWith(`/api/v1/cars/${created.car.id}/photos`) &&
+			request.method() === 'POST',
+	);
+	await page.locator('.upload-button input').setInputFiles({
+		name: 'browser-upload.webp',
+		mimeType: 'image/webp',
+		buffer: Buffer.from('browser photo'),
+	});
+	const [uploadResponse, uploadRequest] = await Promise.all([
+		photoUpload,
+		photoRequest,
+	]);
+	expect(uploadResponse.status()).toBe(201);
+	expect(uploadRequest.headers()['content-type']).toMatch(
+		/^multipart\/form-data;\s*boundary=.+$/i,
+	);
+	await expect(page.getByRole('listitem')).toHaveCount(2);
 	await expect(
-		page.getByRole('button', { name: 'Move photo earlier' }),
+		page.getByRole('button', { name: 'Move photo earlier' }).first(),
 	).toBeDisabled();
 	expect(await scan(page)).toEqual([]);
 

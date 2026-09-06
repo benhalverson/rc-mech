@@ -124,6 +124,7 @@ describe('CarPhotoGateway', () => {
 		expect(upload.request.method).toBe('POST');
 		expect(upload.request.withCredentials).toBe(true);
 		expect(upload.request.body).toBeInstanceOf(FormData);
+		expect(upload.request.headers.has('content-type')).toBe(false);
 		expect((upload.request.body as FormData).get('file')).toBeInstanceOf(File);
 		upload.flush({ photo: photo() });
 		await expect(uploaded).resolves.toEqual(photo());
