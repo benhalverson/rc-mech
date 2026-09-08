@@ -19,7 +19,7 @@ subject-benchmark = "driving_analysis_service.subject_benchmark_cli:main"
 
 [dependency-groups]
 dev = [
-  "httpx2==2.10.0",
+  "httpx2==2.12.0",
   "pytest==9.0.3",
   "pytest-cov==7.0.0",
   "ruff==0.15.6",
