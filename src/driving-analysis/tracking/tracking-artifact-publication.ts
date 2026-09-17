@@ -22,6 +22,7 @@ import {
 	type TrackingArtifactStore,
 	TrackingArtifactStoreError,
 } from './r2-tracking-artifact-store';
+import { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 import {
 	type SubjectObservationArtifactRecord,
 	type TrackingArtifactPublicationContext,
@@ -31,7 +32,7 @@ import {
 
 export const TRACKING_ARTIFACT_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 export const TRACKING_ARTIFACT_MAX_CONTRACT_BYTES = 64 * 1024 * 1024;
-export const TRACKING_ARTIFACT_GARBAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+export { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 
 const publishTrackingArtifactCommandSchema = z.strictObject({
 	ownerId: z.string().trim().min(1).max(128),
