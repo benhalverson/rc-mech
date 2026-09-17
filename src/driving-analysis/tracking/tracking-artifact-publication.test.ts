@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import parityFixtures from '../../../shared/fixtures/tracking-python-canonical.json';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -26,7 +27,11 @@ import type {
 	GpuLeaseMutationResult,
 	GpuLeaseReleaseInput,
 } from '../gpu-lease-coordinator';
-import type { OutputArtifact, SubjectProvenance } from './contracts';
+import {
+	type OutputArtifact,
+	type SubjectProvenance,
+	trackStageRequestSchema,
+} from './contracts';
 import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
 import {
 	R2TrackingArtifactStore,
@@ -356,6 +361,45 @@ const wrappingStore = (
 });
 
 describe('TrackingArtifactPublication', () => {
+	test.each(parityFixtures)(
+		'matches Python production bytes and digests: $name',
+		async (fixture) => {
+			const value = await publicationFixture();
+			const request = trackStageRequestSchema.parse(fixture.request);
+			const digestSpy = vi.spyOn(crypto.subtle, 'digest');
+			try {
+				const provenance = await subjectProvenanceForProfile({
+					...inferenceProfileFixture(),
+					model: {
+						...inferenceProfileFixture().model,
+						version: fixture.profile.model.version,
+					},
+					identityConfidenceThreshold:
+						fixture.profile.identityConfidenceThreshold,
+				});
+				expect(new TextDecoder().decode(digestSpy.mock.calls[0][1])).toBe(
+					fixture.provenanceCanonical,
+				);
+				expect(provenance.configurationDigest).toBe(fixture.provenanceDigest);
+				const digest = await trackingInputDigestFor(
+					{
+						...value.context,
+						prepared: request.prepared,
+						seed: request.subjectSeed,
+					},
+					request.observationSegmentId,
+					provenance,
+				);
+				expect(new TextDecoder().decode(digestSpy.mock.calls[1][1])).toBe(
+					fixture.trackingCanonical,
+				);
+				expect(digest).toBe(fixture.trackingDigest);
+			} finally {
+				digestSpy.mockRestore();
+			}
+		},
+	);
+
 	test('validates, promotes, binds, releases, and replays one immutable artifact', async () => {
 		const value = await publicationFixture();
 		const { artifact, bytes } = await artifactFixture(value);
