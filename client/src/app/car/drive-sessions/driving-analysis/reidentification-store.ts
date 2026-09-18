@@ -33,12 +33,20 @@ export const ReidentificationStore = signalStore(
 		gateway: inject(ReidentificationGateway),
 		identities: inject(ReidentificationIdentity),
 	})),
+	withProps((store) => ({
+		remote: store.gateway.read(
+			computed(() => ({
+				analysisId: store.analysisId(),
+				version: store.selectionVersion(),
+			})),
+		),
+	})),
 	withComputed((store) => ({
 		context: computed(() =>
-			store.gateway.context.hasValue() ? store.gateway.context.value() : null,
+			store.remote.hasValue() ? store.remote.value() : null,
 		),
-		loading: computed(() => store.gateway.context.isLoading()),
-		readFailed: computed(() => !!store.gateway.context.error()),
+		loading: computed(() => store.remote.isLoading()),
+		readFailed: computed(() => !!store.remote.error()),
 	})),
 	withMethods((store) => {
 		const correct = rxMethod<ReidentifySubjectCommand>((commands) =>
@@ -88,7 +96,6 @@ export const ReidentificationStore = signalStore(
 				)
 					return;
 				patchState(store, { analysisId, selectionVersion, outcome: idle() });
-				store.gateway.select(analysisId);
 			},
 			correct(command: ReidentifySubjectCommand): void {
 				correct(command);

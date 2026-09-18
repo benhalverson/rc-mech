@@ -78,6 +78,7 @@ const gap: ReidentificationContext = {
 	runId: 'run',
 	segmentId: 'segment',
 	acceptedDigest: 'a'.repeat(64),
+	frames: [{ frameIndex: 15, timestampMs: 500 }],
 	gap: { startTimestampMs: 250, reason: 'missing' },
 };
 
@@ -175,18 +176,9 @@ describe('SubjectReidentification', () => {
 		const player = f.element.querySelector('video');
 		if (!player) throw new Error('Missing video');
 		const pause = vi.spyOn(player, 'pause').mockImplementation(() => undefined);
-		f.input('input[type=range]', '500');
+		f.input('input[type=range]', '0');
 		expect(player.currentTime).toBe(0.5);
 		expect(pause).toHaveBeenCalledOnce();
-		f.input('input[type=number][step="1"]', '500');
-		const numeric = f.element.querySelectorAll<HTMLInputElement>(
-			'input[type=number][step="1"]',
-		);
-		const frame = numeric[1];
-		if (!frame) throw new Error('Missing frame');
-		frame.value = '15';
-		frame.dispatchEvent(new Event('input', { bubbles: true }));
-		f.fixture.detectChanges();
 		f.submit();
 		expect(f.store.correct).toHaveBeenCalledWith({
 			analysisId: analysis.id,
@@ -199,7 +191,7 @@ describe('SubjectReidentification', () => {
 		});
 		f.fixture.componentRef.setInput('analysis', { ...analysis, progress: 98 });
 		f.fixture.detectChanges();
-		expect(numeric[0]?.value).toBe('500');
+		expect(f.element.textContent).toContain('frame 15 at 500 ms');
 		const range =
 			f.element.querySelector<HTMLInputElement>('input[type=range]');
 		if (!range) throw new Error('Missing range');
@@ -209,14 +201,26 @@ describe('SubjectReidentification', () => {
 	});
 	it('rejects stale, nonfinite, out-of-window, invalid-frame, and invalid-box input with focus', async () => {
 		const f = await setup();
+		vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(
+			() => undefined,
+		);
 		f.submit();
 		expect(f.store.correct).not.toHaveBeenCalled();
-		expect(document.activeElement?.getAttribute('type')).toBe('number');
-		f.input('input[type=number][step="1"]', '');
+		expect(document.activeElement?.getAttribute('type')).toBe('range');
+		f.store.context.set({
+			...gap,
+			frames: [{ frameIndex: 15, timestampMs: 250 }],
+		});
+		f.input('input[type=range]', '0');
 		f.submit();
-		f.input('input[type=number][step="1"]', '1000');
+		f.store.context.set({
+			...gap,
+			frames: [{ frameIndex: 15, timestampMs: 1000 }],
+		});
+		f.input('input[type=range]', '0');
 		f.submit();
-		f.input('input[type=number][step="1"]', '500');
+		f.store.context.set(gap);
+		f.input('input[type=range]', '0');
 		const editor = f.fixture.debugElement.query(By.directive(SubjectBoxEditor))
 			.componentInstance as SubjectBoxEditor;
 		editor.box.set({ ...analysis.subjectSeed.box, width: 0.2 });
@@ -238,6 +242,12 @@ describe('SubjectReidentification', () => {
 	});
 	it('renders loading, read failure, pending, failure, and success accessibly', async () => {
 		const f = await setup();
+		f.store.context.set({ ...gap, frames: [] });
+		f.fixture.detectChanges();
+		expect(f.element.querySelector('[role=status]')?.textContent).toContain(
+			'No later prepared frames',
+		);
+		f.store.context.set(gap);
 		f.store.loading.set(true);
 		f.fixture.detectChanges();
 		expect(f.element.querySelector('[role=status]')?.textContent).toContain(
