@@ -164,6 +164,70 @@ describe('GpuLeaseCoordinator', () => {
 		},
 	);
 
+	test('releases only the exact expired waiter after failure without creating a completion receipt', async () => {
+		const stub = coordinator();
+		await stub.enqueue({
+			segmentId: 'failed-output',
+			deadlineAt,
+			kind: 'initial',
+		});
+		await stub.enqueue({ segmentId: 'next', deadlineAt, kind: 'initial' });
+		const lease = await stub.acquire({ now });
+		if (lease.status !== 'acquired') throw new Error('expected lease');
+		const identity = {
+			segmentId: lease.segmentId,
+			leaseId: lease.leaseId,
+			fence: lease.fence,
+		};
+		await stub.witness({ ...identity, now: lease.expiresAt });
+		expect(await stub.release({ ...identity, completed: true })).toEqual({
+			status: 'stale',
+		});
+		expect(
+			await stub.release({ ...identity, leaseId: crypto.randomUUID() }),
+		).toEqual({ status: 'stale' });
+		expect(await stub.release({ ...identity, fence: lease.fence + 1 })).toEqual(
+			{ status: 'stale' },
+		);
+		expect(await stub.release(identity)).toEqual({ status: 'ok' });
+		await evictDurableObject(stub as unknown as DurableObjectStub);
+		// A lost response can replay safely: the old waiter stays absent.
+		expect(await coordinator().release(identity)).toEqual({ status: 'stale' });
+		expect(
+			await coordinator().release({ ...identity, completed: true }),
+		).toEqual({ status: 'stale' });
+		expect(await coordinator().acquire({ now: lease.expiresAt })).toMatchObject(
+			{ status: 'acquired', segmentId: 'next' },
+		);
+	});
+
+	test('cannot release a restored waiter belonging to a newer lease', async () => {
+		const stub = coordinator();
+		await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });
+		const old = await stub.acquire({ now });
+		if (old.status !== 'acquired') throw new Error('expected lease');
+		const identity = {
+			segmentId: old.segmentId,
+			leaseId: old.leaseId,
+			fence: old.fence,
+		};
+		await stub.witness({ ...identity, now: old.expiresAt });
+		const newer = await stub.acquire({ now: old.expiresAt });
+		if (newer.status !== 'acquired') throw new Error('expected replacement');
+		expect(await stub.release(identity)).toEqual({ status: 'stale' });
+		await stub.witness({
+			segmentId: newer.segmentId,
+			leaseId: newer.leaseId,
+			fence: newer.fence,
+			now: newer.expiresAt,
+		});
+		expect(await stub.release(identity)).toEqual({ status: 'stale' });
+		expect(await stub.acquire({ now: newer.expiresAt })).toMatchObject({
+			status: 'acquired',
+			segmentId: 'one',
+		});
+	});
+
 	test.each([false, true])(
 		'replays completed release after eviction and a newer lease, including a lost response: %s',
 		async (loseResponse) => {
@@ -463,6 +527,30 @@ describe('GpuLeaseCoordinator', () => {
 		expect(await stub.acquire({ now })).toEqual({ status: 'empty' });
 	});
 
+	test('replays a busy restoration after eviction without moving its original FIFO waiter', async () => {
+		const stub = coordinator();
+		await stub.enqueue({ segmentId: 'first', deadlineAt, kind: 'initial' });
+		const lease = await stub.acquire({ now });
+		if (lease.status !== 'acquired') throw new Error('expected lease');
+		await stub.enqueue({ segmentId: 'second', deadlineAt, kind: 'initial' });
+		const command = {
+			segmentId: lease.segmentId,
+			leaseId: lease.leaseId,
+			fence: lease.fence,
+			now,
+		};
+		expect(await stub.requeueProviderLoss(command)).toEqual({ status: 'ok' });
+		await evictDurableObject(stub as unknown as DurableObjectStub);
+		expect(await coordinator().requeueProviderLoss(command)).toEqual({
+			status: 'ok',
+		});
+		expect(await coordinator().acquire({ segmentId: 'second', now })).toEqual({
+			status: 'busy',
+		});
+		expect(
+			await coordinator().acquire({ segmentId: 'first', now }),
+		).toMatchObject({ status: 'acquired', segmentId: 'first' });
+	});
 	test('fences active cancellation and restores a capacity-busy lease', async () => {
 		const stub = coordinator();
 		await stub.enqueue({

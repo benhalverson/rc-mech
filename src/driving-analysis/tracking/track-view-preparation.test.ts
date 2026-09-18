@@ -36,6 +36,7 @@ const CLEANUP_AT = new Date('2026-08-18T20:01:00.000Z');
 const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
+	'0034_tracking_availability.sql',
 ]
 	.map((name) =>
 		readFileSync(

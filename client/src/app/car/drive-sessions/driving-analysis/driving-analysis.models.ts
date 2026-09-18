@@ -6,7 +6,9 @@ import {
 	maxLength,
 	minLength,
 	nonnegative,
+	nullable,
 	number,
+	optional,
 	pipe,
 	positive,
 	readonly,
@@ -109,6 +111,23 @@ export const drivingAnalysisSchema = readonly(
 		]),
 		progress: int().check(nonnegative(), maximum(100)),
 		stateVersion: int().check(positive()),
+		waitReason: optional(
+			nullable(
+				union([
+					literal('waiting-for-provider'),
+					literal('waiting-for-capacity'),
+				]),
+			),
+		),
+		safeFailureCode: optional(
+			nullable(
+				union([
+					literal('TRACKING_PROVIDER_UNAVAILABLE'),
+					literal('TRACKING_PROVIDER_FAILED'),
+					literal('TRACKING_ARTIFACT_INVALID'),
+				]),
+			),
+		),
 		createdAt: string().check(minLength(1)),
 		updatedAt: string().check(minLength(1)),
 	}).check(
@@ -118,8 +137,10 @@ export const drivingAnalysisSchema = readonly(
 					analysis.raceWindow.startTimestampMs &&
 				analysis.subjectSeed.timestampMs < analysis.raceWindow.endTimestampMs &&
 				((analysis.status === 'queued' &&
-					analysis.stage === 'preparation' &&
-					analysis.progress === 0) ||
+					((analysis.stage === 'preparation' && analysis.progress === 0) ||
+						(analysis.stage === 'tracking' &&
+							analysis.progress < 100 &&
+							analysis.waitReason != null))) ||
 					(analysis.status === 'running' && analysis.progress < 100) ||
 					(analysis.status === 'awaiting-reidentification' &&
 						analysis.stage === 'tracking' &&

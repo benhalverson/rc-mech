@@ -382,3 +382,30 @@ export type PublicTrackingProvenance = z.infer<
 	typeof publicTrackingProvenanceSchema
 >;
 export type PublicTrackingState = z.infer<typeof publicTrackingStateSchema>;
+
+export const setTrackingWaitReasonCommandSchema =
+	trackingWorkflowIdentitySchema.extend({
+		expectedCurrentAttemptId: uuidV4Schema.nullable(),
+		waitReason: publicTrackingStateSchema.shape.waitReason,
+	});
+export type SetTrackingWaitReasonCommand = z.infer<
+	typeof setTrackingWaitReasonCommandSchema
+>;
+
+export const expireTrackingAvailabilityCommandSchema =
+	trackingWorkflowIdentitySchema.extend({
+		expectedCurrentAttemptId: uuidV4Schema.nullable(),
+		expiredAt: positiveIntSchema,
+	});
+export type ExpireTrackingAvailabilityCommand = z.infer<
+	typeof expireTrackingAvailabilityCommandSchema
+>;
+
+export const failUnavailableTrackingOutputCommandSchema =
+	trackingWorkflowIdentitySchema.extend({
+		expectedCurrentAttemptId: uuidV4Schema,
+		failedAt: positiveIntSchema,
+	});
+export type FailUnavailableTrackingOutputCommand = z.infer<
+	typeof failUnavailableTrackingOutputCommandSchema
+>;

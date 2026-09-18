@@ -55,6 +55,7 @@ const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
 	'0022_tracking_artifact_publication.sql',
+	'0034_tracking_availability.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -286,6 +287,260 @@ const expectAuthorityError = async (
 };
 
 describe('TrackingAuthority', () => {
+	test('applies nullable availability fields to populated legacy records without changing their authority', async () => {
+		const { authority, database } = await createAttemptAuthority();
+		await database
+			.prepare('ALTER TABLE tracking_segment DROP COLUMN wait_reason')
+			.run();
+		await database
+			.prepare('ALTER TABLE tracking_run DROP COLUMN safe_failure_code')
+			.run();
+		fixture?.exec(
+			readFileSync(
+				resolve(migrationDirectory, '0034_tracking_availability.sql'),
+				'utf8',
+			),
+		);
+		expect(
+			await authority.workflowContext({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				workflowId: WORKFLOW_ID,
+				runId: RUN_ID,
+				segmentId: SEGMENT_ID,
+			}),
+		).toMatchObject({ attempt: { attemptId: ATTEMPT_ID, fence: 7 } });
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'running',
+			waitReason: null,
+			safeFailureCode: null,
+		});
+	});
+
+	test('rejects stale wait and deadline commands, and preserves progress through waiting and expiry', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		const identity = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: WORKFLOW_ID,
+			runId: RUN_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: ATTEMPT_ID,
+		};
+		await authority.transitionAttempt({
+			...attemptWitness(),
+			expectedState: 'active',
+			nextState: 'processing',
+			progress: 75,
+			safeFailureCode: null,
+			updatedAt: LATER,
+		});
+		await expectAuthorityError(
+			authority.setWaitReason({
+				...identity,
+				expectedCurrentAttemptId: null,
+				waitReason: 'waiting-for-provider',
+			}),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.expireAvailability({
+				...identity,
+				expiredAt: segment.availabilityDeadlineAt - 1,
+			}),
+			'STALE_AUTHORITY',
+		);
+		await authority.setWaitReason({
+			...identity,
+			waitReason: 'waiting-for-provider',
+		});
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'queued', progress: 75 });
+		await authority.expireAvailability({
+			...identity,
+			expiredAt: segment.availabilityDeadlineAt,
+		});
+		await expectAuthorityError(
+			authority.setWaitReason({ ...identity, waitReason: null }),
+			'STALE_AUTHORITY',
+		);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			progress: 75,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+		});
+	});
+
+	test('keeps a later segment wait running after accepting evidence', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		const artifact = await preparePromotion(
+			authority,
+			segment.specificationDigest,
+		);
+		await authority.acceptArtifact(artifact);
+		await authority.createSegment(
+			segmentCommand({
+				segmentId: SECOND_SEGMENT_ID,
+				order: 1,
+				seed: {
+					kind: 'reidentification',
+					sourceId: REIDENTIFICATION_ID,
+					value: {
+						...submissionFixture().trackingRequest.subjectSeed,
+						timestampMs: 200,
+					},
+				},
+			}),
+		);
+		await authority.setWaitReason({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: WORKFLOW_ID,
+			runId: RUN_ID,
+			segmentId: SECOND_SEGMENT_ID,
+			expectedCurrentAttemptId: null,
+			waitReason: 'waiting-for-capacity',
+		});
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'running',
+			stage: 'tracking',
+			progress: 99,
+			waitReason: 'waiting-for-capacity',
+		});
+	});
+	test('records deadline expiry without an acquired attempt and replays the safe failure', async () => {
+		const { authority, segment } = await createSegmentAuthority();
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: null,
+			expiredAt: segment.availabilityDeadlineAt,
+		};
+		await authority.expireAvailability(command);
+		await authority.expireAvailability(command);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			progress: 0,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+		});
+	});
+
+	test('fails unavailable output authority before the deadline and fences the run while retaining its original attempt', async () => {
+		const { authority, database } = await createAttemptAuthority();
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: ATTEMPT_ID,
+			failedAt: Date.parse(LATER),
+		};
+		await expectAuthorityError(
+			authority.failUnavailableOutput(command),
+			'STALE_AUTHORITY',
+		);
+		await makeOutputReady(authority);
+		await expectAuthorityError(
+			authority.failUnavailableOutput({ ...command, workflowId: 'superseded' }),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.failUnavailableOutput({
+				...command,
+				expectedCurrentAttemptId: SECOND_ATTEMPT_ID,
+			}),
+			'STALE_AUTHORITY',
+		);
+		await authority.failUnavailableOutput(command);
+		await authority.failUnavailableOutput(command);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			progress: 90,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+		});
+		expect(
+			await database
+				.prepare('SELECT current_attempt_id FROM tracking_segment WHERE id = ?')
+				.bind(SEGMENT_ID)
+				.first(),
+		).toEqual({ current_attempt_id: ATTEMPT_ID });
+		await expectAuthorityError(
+			authority.activateAttempt(
+				attemptCommand({
+					attemptId: SECOND_ATTEMPT_ID,
+					leaseId: SECOND_LEASE_ID,
+					fence: 8,
+					expectedCurrentAttemptId: ATTEMPT_ID,
+				}),
+			),
+			'STALE_AUTHORITY',
+		);
+	});
+
+	test('does not turn accepted output into an availability failure', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest),
+		);
+		await expectAuthorityError(
+			authority.failUnavailableOutput({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				runId: RUN_ID,
+				workflowId: WORKFLOW_ID,
+				segmentId: SEGMENT_ID,
+				expectedCurrentAttemptId: ATTEMPT_ID,
+				failedAt: Date.parse(LATER),
+			}),
+			'STALE_AUTHORITY',
+		);
+	});
+
+	test('persists a safe wait under current segment authority and clears it on resume', async () => {
+		const { authority } = await createAttemptAuthority();
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: ATTEMPT_ID,
+		};
+		await authority.setWaitReason({
+			...command,
+			waitReason: 'waiting-for-provider',
+		});
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'queued',
+			waitReason: 'waiting-for-provider',
+		});
+		await authority.setWaitReason({ ...command, waitReason: null });
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'running', waitReason: null });
+	});
+
 	test('pins one canonical profile and makes run creation replay-safe', async () => {
 		const { authority } = authorityFixture();
 		const created = await authority.createRun(runCommand());
@@ -430,6 +685,13 @@ describe('TrackingAuthority', () => {
 			nextState: 'replaced',
 			updatedAt: LATER,
 		});
+		await expect(
+			value.authority.retireAttempt({
+				...attemptWitness(),
+				nextState: 'replaced',
+				updatedAt: LATER,
+			}),
+		).resolves.toBeUndefined();
 
 		expect(
 			await value.authority.workflowContext({

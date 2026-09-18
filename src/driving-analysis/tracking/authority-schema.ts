@@ -48,6 +48,7 @@ export const trackingRun = sqliteTable(
 		version: integer('version').notNull().default(1),
 		createdAt: text('created_at').notNull(),
 		completedAt: text('completed_at'),
+		safeFailureCode: text('safe_failure_code'),
 	},
 	(table) => [
 		uniqueIndex('tracking_run_analysis_sequence').on(
@@ -224,6 +225,9 @@ export const trackingSegment = sqliteTable(
 		specificationVersion: text('specification_version').notNull(),
 		specificationDigest: text('specification_digest').notNull(),
 		availabilityDeadlineAt: integer('availability_deadline_at').notNull(),
+		waitReason: text('wait_reason', {
+			enum: ['waiting-for-provider', 'waiting-for-capacity'],
+		}),
 		currentAttemptId: text('current_attempt_id'),
 		authorityLeaseId: text('authority_lease_id'),
 		authorityFence: integer('authority_fence'),

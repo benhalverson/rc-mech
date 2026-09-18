@@ -22,7 +22,11 @@ import {
 	createFirstTrackingSegmentCommandSchema,
 	createTrackingRunCommandSchema,
 	createTrackingSegmentCommandSchema,
+	type ExpireTrackingAvailabilityCommand,
+	expireTrackingAvailabilityCommandSchema,
+	type FailUnavailableTrackingOutputCommand,
 	type FenceTrackingRunCommand,
+	failUnavailableTrackingOutputCommandSchema,
 	fenceTrackingRunCommandSchema,
 	type MarkTrackingArtifactPromotionDeletedCommand,
 	type MarkTrackingArtifactPromotionReadyCommand,
@@ -42,6 +46,8 @@ import {
 	recordTrackingArtifactPromotionCommandSchema,
 	recordTrackingTransferRequestCommandSchema,
 	retireTrackingAttemptCommandSchema,
+	type SetTrackingWaitReasonCommand,
+	setTrackingWaitReasonCommandSchema,
 	type TrackingWorkflowIdentity,
 	type TransitionTrackingAttemptCommand,
 	type TransitionTrackingTransferRequestCommand,
@@ -421,7 +427,13 @@ export class TrackingAuthority {
 			workflowId: _workflowId,
 			...segment
 		} = command;
-		await this.createSegment(segment);
+		const existing = await this.ownedSegment(command.runId, command.segmentId);
+		await this.createSegment({
+			...segment,
+			availabilityDeadlineAt:
+				existing?.availabilityDeadlineAt ?? segment.availabilityDeadlineAt,
+			createdAt: existing?.createdAt ?? segment.createdAt,
+		});
 		return this.workflowContext({
 			ownerId: command.ownerId,
 			analysisId: command.analysisId,
@@ -709,6 +721,27 @@ export class TrackingAuthority {
 		commandValue: RetireTrackingAttemptCommand,
 	): Promise<void> {
 		const command = retireTrackingAttemptCommandSchema.parse(commandValue);
+		await this.requireActiveRun(command.ownerId, command.runId);
+		const retired = await this.database
+			.select({ id: trackingExecutionAttempt.id })
+			.from(trackingExecutionAttempt)
+			.innerJoin(
+				trackingSegment,
+				eq(trackingSegment.id, trackingExecutionAttempt.segmentId),
+			)
+			.where(
+				and(
+					eq(trackingSegment.runId, command.runId),
+					eq(trackingSegment.id, command.segmentId),
+					isNull(trackingSegment.currentAttemptId),
+					eq(trackingExecutionAttempt.id, command.attemptId),
+					eq(trackingExecutionAttempt.leaseId, command.leaseId),
+					eq(trackingExecutionAttempt.fence, command.fence),
+					eq(trackingExecutionAttempt.state, command.nextState),
+				),
+			)
+			.get();
+		if (retired) return;
 		const attempt = await this.requireCurrentAttempt(command);
 		await this.database.batch([
 			this.database
@@ -1553,6 +1586,134 @@ export class TrackingAuthority {
 		});
 	}
 
+	async expireAvailability(
+		value: ExpireTrackingAvailabilityCommand,
+	): Promise<void> {
+		const command = expireTrackingAvailabilityCommandSchema.parse(value);
+		return this.recordUnavailable(command, 'deadline');
+	}
+
+	async failUnavailableOutput(
+		value: FailUnavailableTrackingOutputCommand,
+	): Promise<void> {
+		const { failedAt, ...identity } =
+			failUnavailableTrackingOutputCommandSchema.parse(value);
+		return this.recordUnavailable(
+			{ ...identity, expiredAt: failedAt },
+			'output-authority-lost',
+		);
+	}
+
+	private async recordUnavailable(
+		command: ExpireTrackingAvailabilityCommand,
+		reason: 'deadline' | 'output-authority-lost',
+	): Promise<void> {
+		const changed = await this.database
+			.update(trackingRun)
+			.set({
+				status: 'failed',
+				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+				completedAt: new Date(command.expiredAt).toISOString(),
+			})
+			.where(
+				and(
+					eq(trackingRun.id, command.runId),
+					eq(trackingRun.ownerId, command.ownerId),
+					eq(trackingRun.analysisId, command.analysisId),
+					eq(trackingRun.workflowId, command.workflowId),
+					or(
+						eq(trackingRun.status, 'active'),
+						and(
+							eq(trackingRun.status, 'failed'),
+							eq(trackingRun.safeFailureCode, 'TRACKING_PROVIDER_UNAVAILABLE'),
+						),
+					),
+					exists(
+						this.database
+							.select({ id: trackingSegment.id })
+							.from(trackingSegment)
+							.where(
+								and(
+									eq(trackingSegment.id, command.segmentId),
+									eq(trackingSegment.runId, command.runId),
+									isNull(trackingSegment.acceptedArtifactId),
+									reason === 'deadline'
+										? lte(
+												trackingSegment.availabilityDeadlineAt,
+												command.expiredAt,
+											)
+										: exists(
+												this.database
+													.select({ id: trackingExecutionAttempt.id })
+													.from(trackingExecutionAttempt)
+													.where(
+														and(
+															eq(
+																trackingExecutionAttempt.id,
+																trackingSegment.currentAttemptId,
+															),
+															eq(
+																trackingExecutionAttempt.state,
+																'output-ready',
+															),
+														),
+													),
+											),
+									command.expectedCurrentAttemptId === null
+										? isNull(trackingSegment.currentAttemptId)
+										: eq(
+												trackingSegment.currentAttemptId,
+												command.expectedCurrentAttemptId,
+											),
+									sql`${trackingSegment.order} = (SELECT MAX(segment_order) FROM tracking_segment WHERE run_id = ${command.runId})`,
+								),
+							),
+					),
+				),
+			)
+			.returning({ id: trackingRun.id });
+		if (changed.length !== 1)
+			throw stale('Tracking deadline authority is no longer current');
+	}
+
+	async setWaitReason(value: SetTrackingWaitReasonCommand): Promise<void> {
+		const command = setTrackingWaitReasonCommandSchema.parse(value);
+		const changed = await this.database
+			.update(trackingSegment)
+			.set({ waitReason: command.waitReason })
+			.where(
+				and(
+					eq(trackingSegment.id, command.segmentId),
+					eq(trackingSegment.runId, command.runId),
+					isNull(trackingSegment.acceptedArtifactId),
+					command.expectedCurrentAttemptId === null
+						? isNull(trackingSegment.currentAttemptId)
+						: eq(
+								trackingSegment.currentAttemptId,
+								command.expectedCurrentAttemptId,
+							),
+					exists(
+						this.database
+							.select({ id: trackingRun.id })
+							.from(trackingRun)
+							.where(
+								and(
+									eq(trackingRun.id, command.runId),
+									eq(trackingRun.ownerId, command.ownerId),
+									eq(trackingRun.analysisId, command.analysisId),
+									eq(trackingRun.workflowId, command.workflowId),
+									eq(trackingRun.status, 'active'),
+								),
+							),
+					),
+					sql`${trackingSegment.order} = (SELECT MAX(segment_order) FROM tracking_segment WHERE run_id = ${command.runId})`,
+				),
+			)
+			.returning({ id: trackingSegment.id });
+		if (changed.length !== 1)
+			throw stale('Tracking wait authority is no longer current');
+	}
+
 	async publicState(
 		ownerId: string,
 		analysisId: string,
@@ -1626,7 +1787,16 @@ export class TrackingAuthority {
 				lifecycle: 'failed',
 				progress: Math.min(highWater, 99),
 				waitReason: null,
-				safeFailureCode: publicFailureCode(latestAttempt?.safeFailureCode),
+				safeFailureCode: publicFailureCode(
+					run.safeFailureCode ?? latestAttempt?.safeFailureCode,
+				),
+			};
+		} else if (segments.at(-1)?.waitReason) {
+			state = {
+				lifecycle: hasAcceptedEvidence ? 'running' : 'queued',
+				progress: hasAcceptedEvidence ? 99 : Math.min(highWater, 99),
+				waitReason: segments.at(-1)?.waitReason ?? null,
+				safeFailureCode: null,
 			};
 		} else if (acceptedGap) {
 			state = {

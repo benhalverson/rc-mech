@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
+import type { PublicDrivingAnalysis } from '../../src/driving-analysis/analysis/driving-analysis-contracts';
 
 let authentication = 0;
 const playableRaceVideo = readFileSync(
@@ -452,6 +453,54 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(creator.getByText('Preparation · 0%')).toBeVisible();
 	await creator.getByRole('button', { name: 'Check status' }).click();
 	await expect(creator.getByText('Preparation · 0%')).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	const { drivingAnalysis }: { drivingAnalysis: PublicDrivingAnalysis } =
+		await (await responsePromise).json();
+	let trackingState: PublicDrivingAnalysis = {
+		...drivingAnalysis,
+		lifecycle: 'tracking',
+		status: 'queued',
+		stage: 'tracking',
+		progress: 50,
+		waitReason: 'waiting-for-provider',
+		safeFailureCode: null,
+	};
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}`,
+		(route) => route.fulfill({ json: { drivingAnalysis: trackingState } }),
+	);
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(
+		creator.getByText(
+			'Waiting to continue tracking. We’ll retry automatically.',
+		),
+	).toBeVisible();
+	await expect(creator.getByText('Analysis queued')).toBeVisible();
+	await expect(creator.getByText('Tracking · 50%')).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	trackingState = {
+		...trackingState,
+		status: 'running',
+		waitReason: 'waiting-for-capacity',
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(creator.getByText('Analysis running')).toBeVisible();
+	trackingState = {
+		...trackingState,
+		lifecycle: 'failed',
+		status: 'failed',
+		waitReason: null,
+		safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(
+		creator.getByText(
+			'Tracking could not resume in time. You can retry this analysis.',
+		),
+	).toBeVisible();
+	await expect(
+		creator.getByRole('button', { name: 'Retry workflow' }),
+	).toBeVisible();
 	expect(await scan(page)).toEqual([]);
 });
 

@@ -135,6 +135,12 @@ export type PublicDrivingAnalysis = Readonly<{
 		| 'finalization';
 	progress: number;
 	stateVersion: number;
+	waitReason?: 'waiting-for-provider' | 'waiting-for-capacity' | null;
+	safeFailureCode?:
+		| 'TRACKING_PROVIDER_UNAVAILABLE'
+		| 'TRACKING_PROVIDER_FAILED'
+		| 'TRACKING_ARTIFACT_INVALID'
+		| null;
 	createdAt: string;
 	updatedAt: string;
 }>;

@@ -107,6 +107,7 @@ type Waiter = {
 	deadlineAt: number;
 	kind: WorkKind;
 	ordinal: number;
+	restoredFrom?: { leaseId: string; fence: number };
 };
 type Lease = Waiter & {
 	leaseId: string;
@@ -254,7 +255,22 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 			)
 				return { status: 'ok' } as const;
 			this.expire(state, Date.now());
-			if (!this.current(state, input)) return { status: 'stale' } as const;
+			if (!this.current(state, input)) {
+				const restored = state.waiters.find(
+					(waiter) => waiter.segmentId === input.segmentId,
+				)?.restoredFrom;
+				if (
+					!input.completed &&
+					restored?.leaseId === input.leaseId &&
+					restored.fence === input.fence
+				) {
+					state.waiters = state.waiters.filter(
+						(waiter) => waiter.segmentId !== input.segmentId,
+					);
+					return { status: 'ok' } as const;
+				}
+				return { status: 'stale' } as const;
+			}
 			state.activeLease = null;
 			if (input.completed) {
 				this.markTerminal(state, input.segmentId, 'completed');
@@ -315,7 +331,15 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 		const result = await this.mutate((state) => {
 			this.expire(state, now);
 			const lease = this.current(state, input);
-			if (!lease) return { status: 'stale' } as const;
+			if (!lease) {
+				const restored = state.waiters.find(
+					(waiter) => waiter.segmentId === input.segmentId,
+				)?.restoredFrom;
+				return restored?.leaseId === input.leaseId &&
+					restored.fence === input.fence
+					? ({ status: 'ok' } as const)
+					: ({ status: 'stale' } as const);
+			}
 			const alreadyQueued = state.waiters.some(
 				(waiter) => waiter.segmentId === input.segmentId,
 			);
@@ -332,6 +356,7 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 					deadlineAt: lease.deadlineAt,
 					kind: lease.kind,
 					ordinal: lease.ordinal,
+					restoredFrom: { leaseId: lease.leaseId, fence: lease.fence },
 				});
 			return { status: 'ok' } as const;
 		});
@@ -435,6 +460,7 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 				deadlineAt: lease.deadlineAt,
 				kind: lease.kind,
 				ordinal: lease.ordinal,
+				restoredFrom: { leaseId: lease.leaseId, fence: lease.fence },
 			});
 		}
 	}

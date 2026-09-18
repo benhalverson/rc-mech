@@ -325,6 +325,25 @@ describe('DrivingAnalysisAuthority', () => {
 	test('returns the winning immutable analysis when identical requests race', async () => {
 		const { authority } = await fixture();
 		if (!sqlite) throw new Error('SQLite fixture unavailable');
+		// Release both request digests together so neither request observes an
+		// already-created row before entering the insert race.
+		const digest = crypto.subtle.digest.bind(crypto.subtle);
+		const waitingDigests: (() => void)[] = [];
+		let digestCount = 0;
+		vi.spyOn(crypto.subtle, 'digest').mockImplementation(
+			async (algorithm, data) => {
+				const result = await digest(algorithm, data);
+				digestCount += 1;
+				if (digestCount <= 2) {
+					await new Promise<void>((resolve) => {
+						waitingDigests.push(resolve);
+						if (waitingDigests.length === 2)
+							for (const release of waitingDigests) release();
+					});
+				}
+				return result;
+			},
+		);
 		const peer = new DrivingAnalysisAuthority(sqlite.database, {
 			clock: () => NOW,
 			id: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
@@ -568,6 +587,27 @@ describe('DrivingAnalysisAuthority', () => {
 			waitReason: null,
 			safeFailureCode: null,
 		};
+		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'queued',
+			waitReason: 'waiting-for-provider',
+			safeFailureCode: null,
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					...trackingState,
+					lifecycle: 'queued',
+					progress: 50,
+					waitReason: 'waiting-for-provider',
+				},
+				NOW.toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { status: 'queued', stage: 'tracking', progress: 50 },
+		});
 		await expect(
 			authority.publishTrackingState(
 				OWNER_ID,
@@ -582,6 +622,21 @@ describe('DrivingAnalysisAuthority', () => {
 				status: 'running',
 				stage: 'tracking',
 				progress: 99,
+			},
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{ ...trackingState, waitReason: 'waiting-for-capacity' },
+				NOW.toISOString(),
+			),
+		).resolves.toMatchObject({
+			analysis: {
+				status: 'running',
+				lifecycle: 'tracking',
+				progress: 99,
+				waitReason: 'waiting-for-capacity',
 			},
 		});
 		await expect(
@@ -799,6 +854,13 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'published',
 			analysis: { lifecycle: 'tracking', progress: 50 },
 		});
+		await database
+			.update(trackingRun)
+			.set({
+				status: 'failed',
+				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+			})
+			.where(eq(trackingRun.id, '99999999-9999-4999-8999-999999999999'));
 		await expect(
 			authority.publishTrackingState(
 				OWNER_ID,
@@ -817,6 +879,26 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'published',
 			analysis: { lifecycle: 'failed', status: 'failed', progress: 75 },
 		});
+		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'failed',
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+			waitReason: null,
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					runId: '99999999-9999-4999-8999-999999999999',
+					lifecycle: 'failed',
+					stage: 'tracking',
+					progress: 90,
+					waitReason: null,
+					safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+				},
+				NOW.toISOString(),
+			),
+		).resolves.toEqual({ kind: 'stale' });
 		await expect(
 			authority.publishTrackingState(
 				OWNER_ID,

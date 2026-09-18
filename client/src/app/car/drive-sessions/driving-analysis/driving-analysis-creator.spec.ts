@@ -390,15 +390,35 @@ describe('DrivingAnalysisCreator', () => {
 		store.pending.set(false);
 		fixture.detectChanges();
 		expect(root.querySelector('[data-retry-analysis]')).toBeNull();
+		const tracking = store.analysisCreation().analysis;
+		if (!tracking) throw new Error('Expected tracking analysis');
+		store.analysisCreation.set({
+			...store.analysisCreation(),
+			analysis: {
+				...tracking,
+				status: 'queued',
+				waitReason: 'waiting-for-provider',
+			},
+		});
+		fixture.detectChanges();
+		expect(root.textContent).toContain(
+			'Waiting to continue tracking. We’ll retry automatically.',
+		);
+		expect(root.querySelector('[data-retry-analysis]')).toBeNull();
 		store.analysisCreation.set({
 			...store.analysisCreation(),
 			analysis: {
 				...store.analysisCreation().analysis,
 				status: 'failed',
+				waitReason: null,
+				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
 			} as DrivingAnalysis,
 		});
 		fixture.detectChanges();
 		expect(root.querySelector('[data-retry-analysis]')).not.toBeNull();
+		expect(root.textContent).toContain(
+			'Tracking could not resume in time. You can retry this analysis.',
+		);
 	});
 
 	it('covers unavailable maps, validation boundaries, failures, and pending state', async () => {

@@ -52,6 +52,36 @@ The local services restart persistently after host reboot, but local state alone
 
 ADR 0019 remains in force for asynchronous run-level Workflow orchestration, but this decision moves GPU work out of the Cloudflare container. ADR 0020 remains in force for TypeScript orchestration and Python-owned media and computer-vision work, but this decision splits those Python responsibilities between the Cloudflare media container and the local GPU service. ADR 0021 remains in force for a versioned inference-provider boundary, but this decision locates `TrackingProvider` at the trusted TypeScript boundary rather than inside the Python container. ADR 0027 remains in force for actual Python-container egress, including its mediated R2 path. It does not require GPU control to traverse the Python container, does not extend the container's allowed logical hosts, and does not grant general container Internet access.
 
+## Tracking availability persistence and execution budget
+
+The first executable segment persists its availability deadline in D1. Replaying
+segment creation reuses that deadline. Nullable segment `wait_reason` and run
+`safe_failure_code` fields preserve safe public waiting and deadline failures,
+including expiry before acquiring any attempt. The existing analysis table keeps
+its lifecycle constraints; public reads project a Tracking wait from the current
+Workflow's D1 run as `queued` before accepted evidence and `running` thereafter.
+
+Provider contact steps persist plain result unions and use explicit durable
+backoff sleeps. Temporary contact failures retain a valid attempt, while confirmed
+interruption or expired execution authority retires it before replacement. A
+transient contact retry divides longer backoff into at most 30-second durable
+sleeps with authority witnesses between sleeps; silence never renews a lease.
+If output-ready authority expires, the run fails retryably with
+`TRACKING_PROVIDER_UNAVAILABLE`, retaining its original attempt and artifact
+metadata without resubmission. Failure releases only the matching restored FIFO
+waiter, so a new run can retry without blocking unrelated work.
+Gateway failures and interrupted response streams remain retryable; malformed
+successful provider responses still fail closed. A
+restored FIFO waiter retains the restoring lease identity so an exact restoration
+replay after coordinator eviction does not move it. Output-ready computation is
+never resubmitted to repair a contact outage.
+
+The Workflow uses a 25,000-step limit and the Worker permits 1,000,000 subrequests.
+A full 24 hours of 15-second status polling requires fewer than 25,000 durable
+steps; sleeps do not consume the step budget. These settings accommodate repeated
+D1 authority checks within the fixed deadline, rather than increasing that
+deadline. See [Workflow limits](https://developers.cloudflare.com/workflows/reference/limits/).
+
 ## Publication recovery retention
 
 Promotion tombstones remain permanently ineligible for publication and are retained
