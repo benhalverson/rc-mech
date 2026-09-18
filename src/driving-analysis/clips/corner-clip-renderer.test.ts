@@ -1,7 +1,13 @@
 import { describe, expect, test, vi } from 'vitest';
 import accepted from '../../../containers/driving-analysis/tests/fixtures/corner-render/accepted.json';
+import invalidRequests from '../../../containers/driving-analysis/tests/fixtures/corner-render/invalid-requests.json';
+import rejected from '../../../containers/driving-analysis/tests/fixtures/corner-render/rejected.json';
 import requestFixture from '../../../containers/driving-analysis/tests/fixtures/corner-render/request.json';
 import { MockR2Controller } from '../../testing/hono-fixture';
+import {
+	cornerClipObjectKey,
+	parseCornerClipObjectKey,
+} from './clip-object-key';
 import {
 	clipRenderDigest,
 	clipRequestSchema,
@@ -18,7 +24,12 @@ const sourceKey = `race-recordings/${requestFixture.renderId}/${requestFixture.r
 const command = () => ({
 	request: clipRequestSchema.parse(requestFixture),
 	sourceObjectKey: sourceKey,
-	outputObjectKey: `corner-clips/run-1/${'a'.repeat(64)}.mp4`,
+	outputObjectKey: cornerClipObjectKey({
+		ownerId: 'owner-1',
+		analysisId: 'analysis-1',
+		runId: 'run-1',
+		inputDigest: 'a'.repeat(64),
+	}),
 });
 const fixture = () => {
 	const r2 = new MockR2Controller();
@@ -43,6 +54,39 @@ const fixture = () => {
 };
 
 describe('Corner renderer boundary', () => {
+	test.each(invalidRequests)(
+		'rejects shared Python request: $name',
+		({ request }) => {
+			expect(clipRequestSchema.safeParse(request).success).toBe(false);
+		},
+	);
+	test('retains distinct gates and bounds all storage identity segments', () => {
+		const request = structuredClone(requestFixture);
+		request.specification.overlay.entryGate.exit.x = 0.5;
+		expect(clipRequestSchema.safeParse(request).success).toBe(true);
+		const identity = {
+			ownerId: 'owner-1',
+			analysisId: 'analysis-1',
+			runId: 'run-1',
+			inputDigest: 'a'.repeat(64),
+		};
+		expect(cornerClipObjectKey(identity)).toBe(
+			`corner-clips/owner-1/analysis-1/run-1/${'a'.repeat(64)}.mp4`,
+		);
+		expect(parseCornerClipObjectKey(cornerClipObjectKey(identity))).toEqual(
+			identity,
+		);
+		for (const key of [
+			cornerClipObjectKey(identity).replace('.mp4', '.mov'),
+			`${cornerClipObjectKey(identity)}/extra`,
+			cornerClipObjectKey(identity).replace('/owner-1/', '/../'),
+		])
+			expect(() => parseCornerClipObjectKey(key)).toThrow();
+		for (const field of ['ownerId', 'analysisId', 'runId', 'inputDigest'])
+			expect(() =>
+				cornerClipObjectKey({ ...identity, [field]: '../private' }),
+			).toThrow();
+	});
 	test('shares strict Python contracts and canonical digest', async () => {
 		expect(clipResponseSchema.parse(accepted).outcome).toBe('accepted');
 		expect(await clipRenderDigest(command().request, '7.1.2')).toBe(
@@ -61,17 +105,6 @@ describe('Corner renderer boundary', () => {
 			},
 		])
 			expect(clipResponseSchema.safeParse(invalid).success).toBe(false);
-		const rejected = {
-			contractVersion: 'corner-render.v1',
-			correlationId: null,
-			caseId: null,
-			outcome: 'rejected',
-			error: {
-				code: 'RENDER_FAILED',
-				stage: 'render',
-				message: 'Corner clip rendering failed safely',
-			},
-		};
 		expect(clipResponseSchema.parse(rejected).outcome).toBe('rejected');
 		expect(
 			clipResponseSchema.safeParse({
@@ -100,6 +133,7 @@ describe('Corner renderer boundary', () => {
 	test.each([
 		'source-key',
 		'output-key',
+		'output-run',
 		'missing-source',
 		'source-size',
 		'stage',
@@ -123,6 +157,11 @@ describe('Corner renderer boundary', () => {
 		const value = command();
 		if (failure === 'source-key') value.sourceObjectKey = 'other/private';
 		if (failure === 'output-key') value.outputObjectKey = 'other/output';
+		if (failure === 'output-run')
+			value.outputObjectKey = value.outputObjectKey.replace(
+				'/run-1/',
+				'/run-2/',
+			);
 		if (failure === 'missing-source') await r2.bucket.delete(sourceKey);
 		if (failure === 'source-size') value.request.input.expectedByteCount = 10;
 		if (failure === 'stage') runtime.stage = async () => 1;
