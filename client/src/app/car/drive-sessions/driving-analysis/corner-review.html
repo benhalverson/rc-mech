@@ -5,6 +5,7 @@
 	</header>
 	@if (store.loading()) { <p role="status">Loading accepted Corner evidence…</p> }
 	@if (store.error(); as error) { <p class="alloy-state alloy-error-state" role="alert">{{ error }}</p> }
+	@if (store.clipsError(); as error) { <p role="status">{{ error }}</p> }
 	@if (store.review(); as review) {
 		<a class="alloy-link" [routerLink]="['/garage', review.carId, 'drive-sessions']">Back to Drive sessions</a>
 		<p class="m-0">Analysis status: <strong>{{ review.status }}</strong>. Results reflect accepted evidence from this run.</p>
@@ -17,6 +18,7 @@
 						<h4 class="m-0 font-semibold">Segment {{ pass.provenance.segmentSequence }} · Pass {{ pass.ordinal }}</h4>
 						@if (pass.eligibility === 'eligible') {
 							<p class="m-0"><strong>{{ pass.durationMs | number:'1.0-3' }} ms</strong> · Rank {{ pass.rank }} · Tie group {{ pass.tieGroup }} @if (pass.best) { <span class="font-semibold">· Best corner pass</span> }</p>
+							<app-corner-clip [clip]="pass.clip" [contentUrl]="pass.clip?.contentUrl ?? null" [label]="corner.name + ', segment ' + pass.provenance.segmentSequence + ', pass ' + pass.ordinal" />
 						} @else {
 							<p class="m-0 font-semibold">Excluded from comparison</p>
 								<p class="m-0">{{ exclusionLabel(pass.exclusionReason) }}</p>

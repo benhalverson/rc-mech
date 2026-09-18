@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppDependencies } from '../app-dependencies';
+import { createCornerClipRoutes } from '../driving-analysis/clips/corner-clip-routes';
 import type { AppEnv } from '../types';
 import { createConsumableMaintenanceRoutes } from './maintenance/consumable-maintenance';
 import { createConsumableRoutes } from './maintenance/consumables';
@@ -17,6 +18,7 @@ export const createMaintenanceRoutes = (dependencies: AppDependencies) =>
 		.route('/', createDriveSessionRoutes())
 		.route('/', createDrivingAnalysisRoutes(dependencies))
 		.route('/', createCornerEvidenceRoutes())
+		.route('/', createCornerClipRoutes())
 		.route('/', createRaceRecordingRoutes(dependencies))
 		.route('/', createMaintenancePlanRoutes())
 		.route('/', createServiceRecordRoutes());

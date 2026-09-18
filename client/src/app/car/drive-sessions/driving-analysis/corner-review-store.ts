@@ -15,11 +15,37 @@ export const CornerReviewStore = signalStore(
 	withProps((store) => {
 		return {
 			resource: inject(CornerReviewGateway).read(store.analysisId),
+			clipsResource: inject(CornerReviewGateway).readClips(store.analysisId),
 		};
 	}),
 	withComputed((store) => ({
-		review: computed(() =>
-			store.resource.hasValue() ? store.resource.value() : null,
+		review: computed(() => {
+			if (!store.resource.hasValue()) return null;
+			const review = store.resource.value();
+			const clips = store.clipsResource.hasValue()
+				? store.clipsResource.value()
+				: [];
+			return {
+				...review,
+				corners: review.corners.map((corner) => ({
+					...corner,
+					passes: corner.passes.map((pass) => ({
+						...pass,
+						clip:
+							clips.find(
+								(clip) =>
+									clip.cornerId === corner.id &&
+									clip.segmentId === pass.provenance.segmentId &&
+									clip.ordinal === pass.ordinal,
+							) ?? null,
+					})),
+				})),
+			};
+		}),
+		clipsError: computed(() =>
+			store.clipsResource.error()
+				? 'Clips could not be loaded. Refresh evidence to try again.'
+				: null,
 		),
 		loading: computed(() => store.resource.isLoading()),
 		error: computed(() => {
@@ -38,6 +64,7 @@ export const CornerReviewStore = signalStore(
 		},
 		refresh(): void {
 			store.resource.reload();
+			store.clipsResource.reload();
 		},
 	})),
 );
