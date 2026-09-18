@@ -1,5 +1,9 @@
 import { Container } from '@cloudflare/containers';
 import { z } from 'zod';
+import {
+	type ClipRenderCommand,
+	renderCornerClip,
+} from '../clips/corner-clip-renderer';
 /* c8 ignore next -- type-only contract import is erased at runtime. */
 import {
 	FRAME_MANIFEST_CONTENT_TYPE,
@@ -555,6 +559,31 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 			probe: (request) => this.containerFetch(request, 8080),
 		});
 	}
+
+	/* c8 ignore start -- Cloudflare Container process wiring is verified by Wrangler/live acceptance. */
+	async renderCornerClip(command: ClipRenderCommand) {
+		return renderCornerClip(command, {
+			bucket: this.env.ANALYSIS_MEDIA,
+			start: () => this.startRuntime(),
+			stage: (path, body) => this.stage(path, body),
+			checksum: (path) => this.stagedChecksum(path),
+			render: (request) => this.containerFetch(request, 8080),
+			stream: async (path) => {
+				const container = this.ctx.container;
+				if (!container) throw new Error('Container execution is unavailable');
+				const process = await container.exec(['/usr/bin/cat', path], {
+					stdout: 'pipe',
+					stderr: 'ignore',
+					user: '10001:10001',
+				});
+				if (!process.stdout)
+					throw new Error('Corner clip stream is unavailable');
+				return { body: process.stdout, waitForExit: () => process.exitCode };
+			},
+			cleanup: (path) => this.cleanup(path),
+		});
+	}
+	/* c8 ignore end */
 
 	/* c8 ignore start -- Cloudflare Container process wiring is verified by Wrangler/live acceptance. */
 	async prepareTrackView(

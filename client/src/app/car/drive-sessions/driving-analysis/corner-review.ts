@@ -1,12 +1,13 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, inject, input, type OnChanges } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { CornerClip } from './corner-clip';
 import { exclusionReasonLabel } from './corner-review.models';
 import { CornerReviewStore } from './corner-review-store';
 
 @Component({
 	selector: 'app-corner-review',
-	imports: [DecimalPipe, RouterLink],
+	imports: [DecimalPipe, RouterLink, CornerClip],
 	templateUrl: './corner-review.html',
 })
 export class CornerReview implements OnChanges {
