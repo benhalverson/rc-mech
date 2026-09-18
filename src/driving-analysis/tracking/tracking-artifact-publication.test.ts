@@ -1167,6 +1167,32 @@ describe('TrackingArtifactPublication', () => {
 		).toBeNull();
 	});
 
+	test('cancellation during the commit hold rejects promoted evidence and late completion replay', async () => {
+		const value = await publicationFixture();
+		const { artifact, bytes } = await artifactFixture(value);
+		seedStaging(value, bytes);
+		value.lease.onBegin = async () => {
+			await value.authority.fenceRun({
+				ownerId: OWNER_ID,
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status: 'cancelled',
+				completedAt: START.toISOString(),
+			});
+		};
+		await expect(publish(value, artifact)).rejects.toEqual(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		await expect(publish(value, artifact)).rejects.toEqual(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		expect(value.lease.holdReleaseCalls).toHaveLength(1);
+		expect(value.lease.releaseCalls).toHaveLength(0);
+		expect(
+			await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
+		).toBeNull();
+	});
+
 	test('reports bounded cleanup and lease release failures safely', async () => {
 		const invalidCleanup = await publicationFixture();
 		await expect(
