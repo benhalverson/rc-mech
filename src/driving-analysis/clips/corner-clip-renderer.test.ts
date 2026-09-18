@@ -4,7 +4,10 @@ import invalidRequests from '../../../containers/driving-analysis/tests/fixtures
 import rejected from '../../../containers/driving-analysis/tests/fixtures/corner-render/rejected.json';
 import requestFixture from '../../../containers/driving-analysis/tests/fixtures/corner-render/request.json';
 import { MockR2Controller } from '../../testing/hono-fixture';
-import { cornerClipObjectKey } from './clip-object-key';
+import {
+	cornerClipObjectKey,
+	parseCornerClipObjectKey,
+} from './clip-object-key';
 import {
 	clipRenderDigest,
 	clipRequestSchema,
@@ -70,6 +73,15 @@ describe('Corner renderer boundary', () => {
 		expect(cornerClipObjectKey(identity)).toBe(
 			`corner-clips/owner-1/analysis-1/run-1/${'a'.repeat(64)}.mp4`,
 		);
+		expect(parseCornerClipObjectKey(cornerClipObjectKey(identity))).toEqual(
+			identity,
+		);
+		for (const key of [
+			cornerClipObjectKey(identity).replace('.mp4', '.mov'),
+			`${cornerClipObjectKey(identity)}/extra`,
+			cornerClipObjectKey(identity).replace('/owner-1/', '/../'),
+		])
+			expect(() => parseCornerClipObjectKey(key)).toThrow();
 		for (const field of ['ownerId', 'analysisId', 'runId', 'inputDigest'])
 			expect(() =>
 				cornerClipObjectKey({ ...identity, [field]: '../private' }),

@@ -1,3 +1,4 @@
+import { parseCornerClipObjectKey } from './clip-object-key';
 import {
 	type ClipArtifact,
 	type ClipRequest,
@@ -60,14 +61,12 @@ export const renderCornerClip = async (
 	runtime: ClipRenderRuntime,
 ): Promise<ClipArtifact> => {
 	const request = clipRequestSchema.parse(command.request);
+	const outputIdentity = parseCornerClipObjectKey(command.outputObjectKey);
 	if (
 		!/^race-recordings\/[0-9a-f-]{36}\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/.test(
 			command.sourceObjectKey,
 		) ||
-		!/^corner-clips\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/[0-9a-f]{64}\.mp4$/.test(
-			command.outputObjectKey,
-		) ||
-		command.outputObjectKey.split('/')[3] !== request.specification.runId
+		outputIdentity.runId !== request.specification.runId
 	)
 		throw new Error('CLIP_INPUT_INVALID');
 	await runtime.start();

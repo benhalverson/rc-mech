@@ -8,6 +8,26 @@ const identitySchema = z.strictObject({
 	inputDigest: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
+const objectKeyPartsSchema = z.tuple([
+	z.literal('corner-clips'),
+	identitySchema.shape.ownerId,
+	identitySchema.shape.analysisId,
+	identitySchema.shape.runId,
+	z
+		.string()
+		.endsWith('.mp4')
+		.transform((name) => name.slice(0, -4))
+		.pipe(identitySchema.shape.inputDigest),
+]);
+
+export const parseCornerClipObjectKey = (
+	key: string,
+): z.infer<typeof identitySchema> => {
+	const [, ownerId, analysisId, runId, inputDigest] =
+		objectKeyPartsSchema.parse(key.split('/'));
+	return { ownerId, analysisId, runId, inputDigest };
+};
+
 /** Shared by publication and lifecycle cleanup; never accepts user-chosen paths. */
 export const cornerClipObjectKey = (
 	identity: z.infer<typeof identitySchema>,
