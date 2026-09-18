@@ -96,6 +96,30 @@ steps; sleeps do not consume the step budget. These settings accommodate repeate
 D1 authority checks within the fixed deadline, rather than increasing that
 deadline. See [Workflow limits](https://developers.cloudflare.com/workflows/reference/limits/).
 
+## Accepted Tracking gaps and correction waits
+
+A gap uses the same validated artifact promotion and conditional acceptance as a
+completed segment. Publication releases GPU capacity only after acceptance. On
+accepted replay, the Workflow verifies the completed-release receipt before
+publishing state or entering the external wait. Accepted corner evidence is
+committed before the public awaiting-reidentification state is published.
+
+The Workflow waits for `tracking-reidentified` events without polling the local
+provider or acquiring a lease. An event is only a wakeup: D1 must contain the next
+immutable segment under the same owner, run, Workflow, and accepted predecessor.
+Duplicate or premature wakeups cannot create a segment. Correction identity is
+the new segment ID; replay requires the identical seed, and competing corrections
+conflict on the next segment order. A correction requires the accepted artifact
+digest and a seed strictly later than the gap. Its insertion is fenced by the
+active run version, and its distinct segment enters the FIFO tail with fresh
+execution authority. Historical gaps remain immutable; segments are measured
+independently so crossings through a gap cannot become eligible by interpolation.
+
+Each resumed segment has its own durable step-name prefix. Public lifecycle uses
+the final segment's outcome, so an earlier accepted gap does not keep a corrected
+run in awaiting-reidentification. Cancellation fences D1 and terminates the
+original Workflow, including any external wait.
+
 ## Publication recovery retention
 
 Promotion tombstones remain permanently ineligible for publication and are retained
