@@ -212,6 +212,23 @@ describe('private Corner clips on real SQL authority', () => {
 				ANALYSIS_ID,
 			),
 		).toBeNull();
+		const removeObject = value.r2.bucket.delete.bind(value.r2.bucket);
+		const deletion = vi
+			.spyOn(value.r2.bucket, 'delete')
+			.mockImplementation(async (objectKey) => {
+				if (objectKey === OBSERVATION_KEY)
+					throw new Error('persistent storage failure');
+				await removeObject(objectKey);
+			});
+		for (let attempt = 0; attempt < 2; attempt++) {
+			await lifecycle.cleanup(10);
+			expect([...value.r2.objects.keys()]).toEqual([OBSERVATION_KEY]);
+			expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+				status: 'deleting',
+				permanent: false,
+			});
+		}
+		deletion.mockRestore();
 		await lifecycle.cleanup(10);
 		expect(value.r2.objects.size).toBe(0);
 		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({

@@ -310,7 +310,11 @@ export function createAnalysisLifecycle(options: Options) {
 						),
 					]),
 				];
-				for (const key of keys) await options.bucket.delete(key);
+				const deletions = await Promise.allSettled(
+					keys.map(async (key) => options.bucket.delete(key)),
+				);
+				if (deletions.some((result) => result.status === 'rejected'))
+					throw new Error('ANALYSIS_MEDIA_CLEANUP_FAILED');
 				await database.batch([
 					database
 						.update(drivingAnalysis)
