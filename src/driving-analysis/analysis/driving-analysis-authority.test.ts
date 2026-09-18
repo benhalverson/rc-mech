@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { defaultAppDependencies } from '../../app-dependencies';
 import {
 	authRateLimit,
 	car,
@@ -18,15 +19,27 @@ import {
 	trackMapVersion,
 } from '../../schema';
 import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking-fixtures';
-import { MockR2Controller } from '../../testing/hono-fixture';
+import {
+	createHonoFixture,
+	MockR2Controller,
+} from '../../testing/hono-fixture';
+import {
+	preparedDescriptorFixture,
+	preparedObjectsFixture,
+	trackingRunInputFixture,
+} from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import { RaceRecordingAuthority } from '../race-recording/race-recording-authority';
 import { RaceVideoValidationAuthority } from '../race-recording/race-video-validation-authority';
 import {
 	inferenceProfileAuthority,
 	trackingRun,
+	trackingRunInput,
 } from '../tracking/authority-schema';
+import { PreparedTrackViewAuthority } from '../tracking/prepared-track-view-authority';
 import { TrackingAuthority } from '../tracking/tracking-authority';
+import { digestTrackingRunInput } from '../tracking/tracking-run-input';
+import { createAnalysisLifecycle } from './analysis-lifecycle';
 import {
 	DrivingAnalysisAuthority,
 	DrivingAnalysisAuthorityError,
@@ -235,6 +248,52 @@ const fixture = async () => {
 	};
 };
 
+const seedPreparedAnalysis = async (binding: D1Database) => {
+	const template = trackingRunInputFixture();
+	const pinned = trackingRunInputFixture({
+		runId: RETRY_WORKFLOW_ID,
+		raceVideoId: RACE_VIDEO_ID,
+		sourceObjectKey: `race-recordings/private/${RACE_VIDEO_ID}`,
+		sourceByteCount: 1024,
+		sourceChecksumSha256: 'a'.repeat(64),
+		sourceLayout: { ...template.sourceLayout, width: 1920, height: 1080 },
+	});
+	const inputDigest = await digestTrackingRunInput(pinned);
+	await new TrackingAuthority(binding).createRun({
+		runId: RETRY_WORKFLOW_ID,
+		ownerId: OWNER_ID,
+		analysisId: ANALYSIS_ID,
+		workflowId: ANALYSIS_ID,
+		sequence: 1,
+		profile: inferenceProfileFixture(),
+		inputDigest,
+		createdAt: NOW.toISOString(),
+	});
+	const prepared = new PreparedTrackViewAuthority(binding);
+	await prepared.pinRunInput({
+		ownerId: OWNER_ID,
+		input: pinned,
+		createdAt: NOW.toISOString(),
+	});
+	const objects = preparedObjectsFixture();
+	await prepared.acceptPreparedTrackView({
+		ownerId: OWNER_ID,
+		runId: RETRY_WORKFLOW_ID,
+		expectedRunVersion: 1,
+		expectedInputDigest: inputDigest,
+		descriptor: {
+			...preparedDescriptorFixture(inputDigest),
+			caseId: RETRY_WORKFLOW_ID,
+			sourceByteCount: 1024,
+			sourceChecksumSha256: 'a'.repeat(64),
+		},
+		objects,
+		deleteAfter: '2026-08-18T18:00:00.000Z',
+		createdAt: NOW.toISOString(),
+	});
+	return objects;
+};
+
 const expectCode = async (
 	promise: Promise<unknown>,
 	code: DrivingAnalysisAuthorityError['code'],
@@ -246,6 +305,306 @@ const expectCode = async (
 };
 
 describe('DrivingAnalysisAuthority', () => {
+	test('creation replay does not restart a terminal workflow', async () => {
+		const { authority, startProcessing } = await fixture();
+		await authority.create(command());
+		await authority.cancel(OWNER_ID, ANALYSIS_ID, 1);
+		startProcessing.mockClear();
+		await expect(authority.create(command())).resolves.toMatchObject({
+			created: false,
+			analysis: { status: 'cancelled' },
+		});
+		expect(startProcessing).not.toHaveBeenCalled();
+	});
+	test('a source deletion that wins after retry preflight prevents a fresh workflow', async () => {
+		const { authority, database, binding, startProcessing } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'failed', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		const recording = new RaceRecordingAuthority(
+			binding,
+			new MockR2Controller().bucket,
+		);
+		const batch = binding.batch.bind(binding);
+		vi.spyOn(binding, 'batch').mockImplementationOnce(async (statements) => {
+			await recording.remove({ ownerId: OWNER_ID, recordingId: RACE_VIDEO_ID });
+			return batch(statements);
+		});
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(startProcessing).toHaveBeenCalledTimes(1);
+		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'failed',
+			stateVersion: 2,
+		});
+	});
+	test.each([
+		null,
+		'TRACKING_PROVIDER_UNAVAILABLE',
+		'TRACKING_ARTIFACT_INVALID',
+	])('exposes safe retry eligibility for failure %s', async (code) => {
+		const { authority, database, binding } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'failed', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		if (code) {
+			await seedPreparedAnalysis(binding);
+			await database
+				.update(trackingRun)
+				.set({
+					status: 'failed',
+					version: 2,
+					safeFailureCode: code,
+					completedAt: NOW.toISOString(),
+				})
+				.where(eq(trackingRun.id, RETRY_WORKFLOW_ID));
+		}
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: new MockR2Controller().bucket,
+			startCancellation: async () => undefined,
+		});
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			canRetry: code !== 'TRACKING_ARTIFACT_INVALID',
+			failure: {
+				code:
+					code === 'TRACKING_ARTIFACT_INVALID'
+						? 'PROCESSING_REJECTED'
+						: 'PROCESSING_UNAVAILABLE',
+				retryable: code !== 'TRACKING_ARTIFACT_INVALID',
+			},
+		});
+		if (code === 'TRACKING_ARTIFACT_INVALID')
+			await expect(
+				authority.retry(OWNER_ID, ANALYSIS_ID, 2),
+			).rejects.toMatchObject({ code: 'TERMINAL_FAILURE' });
+	});
+	test('a deletion CAS loser cannot fence a run or dispatch cancellation', async () => {
+		const { authority, database, binding } = await fixture();
+		await authority.create(command());
+		await seedPreparedAnalysis(binding);
+		const batch = binding.batch.bind(binding);
+		vi.spyOn(binding, 'batch').mockImplementationOnce(async (statements) => {
+			await database
+				.update(drivingAnalysis)
+				.set({ status: 'running', stateVersion: 2 })
+				.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+			return batch(statements);
+		});
+		const dispatch = vi.fn(async () => undefined);
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: new MockR2Controller().bucket,
+			startCancellation: dispatch,
+		});
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(await database.select().from(trackingRun)).toMatchObject([
+			{ status: 'active', version: 1 },
+		]);
+	});
+	test('retries failed media deletion and revisits deleted tombstones for late uploads', async () => {
+		const { authority, binding } = await fixture();
+		await authority.create(command());
+		const objects = await seedPreparedAnalysis(binding);
+		const r2 = new MockR2Controller();
+		for (const object of objects)
+			r2.seed(object.objectKey, new Uint8Array([1]));
+		const removeObject = vi
+			.spyOn(r2.bucket, 'delete')
+			.mockRejectedValueOnce(new Error('private storage location'));
+		let now = NOW;
+		const dispatch = vi.fn(async () => undefined);
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: r2.bucket,
+			clock: () => now,
+			startCancellation: dispatch,
+		});
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 7,
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		dispatch.mockRejectedValueOnce(new Error('private workflow detail'));
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).rejects.toMatchObject({ code: 'WORKFLOW_UNAVAILABLE' });
+		await lifecycle.remove({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			expectedStateVersion: 1,
+		});
+		await lifecycle.cleanup(10);
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'deleting',
+			permanent: false,
+		});
+		await lifecycle.cleanup(10);
+		expect(
+			await lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).toMatchObject({ status: 'deleted', permanent: true });
+		expect(r2.objects.size).toBe(0);
+		removeObject.mockRestore();
+		r2.seed(objects[0].objectKey, new Uint8Array([2]));
+		await lifecycle.cleanup(10);
+		expect(r2.objects.size).toBe(1);
+		now = new Date(NOW.getTime() + 86_400_000);
+		await lifecycle.cleanup(10);
+		expect(r2.objects.size).toBe(0);
+	});
+	test('terminal tracking publication fences the run and fixes its retention timestamp', async () => {
+		const { authority, database, binding } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({
+				status: 'running',
+				stage: 'tracking',
+				progress: 21,
+				stateVersion: 2,
+			})
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await new TrackingAuthority(binding).createRun({
+			runId: RETRY_WORKFLOW_ID,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			sequence: 1,
+			profile: inferenceProfileFixture(),
+			inputDigest: 'a'.repeat(64),
+			createdAt: NOW.toISOString(),
+		});
+		const state = {
+			runId: RETRY_WORKFLOW_ID,
+			lifecycle: 'failed' as const,
+			stage: 'tracking' as const,
+			progress: 30,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_FAILED' as const,
+		};
+		await authority.publishTrackingState(
+			OWNER_ID,
+			ANALYSIS_ID,
+			state,
+			NOW.toISOString(),
+		);
+		await authority.publishTrackingState(
+			OWNER_ID,
+			ANALYSIS_ID,
+			state,
+			'2026-08-17T19:00:00.000Z',
+		);
+		expect(await database.select().from(trackingRun)).toMatchObject([
+			{ status: 'failed', completedAt: NOW.toISOString(), version: 2 },
+		]);
+	});
+	test('replays a retry command after a lost response without creating another generation', async () => {
+		const { authority, database, startProcessing } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'failed', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		startProcessing.mockRejectedValueOnce(new Error('dispatch unavailable'));
+		const commandId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 9, commandId),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2, commandId),
+		).rejects.toMatchObject({ code: 'WORKFLOW_UNAVAILABLE' });
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2, commandId),
+		).resolves.toMatchObject({
+			retried: false,
+			analysis: { stateVersion: 3, status: 'queued' },
+		});
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 3, commandId),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'running', stateVersion: 4 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2, commandId),
+		).resolves.toMatchObject({ retried: false, analysis: { stateVersion: 4 } });
+	});
+	test('deletion fences active work, hides evidence, and retains a minimal owner-scoped tombstone after cleanup', async () => {
+		const { authority, binding } = await fixture();
+		await authority.create(command());
+		const r2 = new MockR2Controller();
+		const workflow = {
+			createBatch: async () => [{ id: ANALYSIS_ID + '-cancel' }],
+			get: async () => ({ terminate: async () => undefined }),
+		} as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'];
+		const lifecycle = defaultAppDependencies.analysisLifecycle({
+			...createHonoFixture().env,
+			DB: binding,
+			ANALYSIS_MEDIA: r2.bucket,
+			DRIVING_ANALYSIS_WORKFLOW: workflow,
+		});
+		await expect(
+			lifecycle.remove({
+				ownerId: 'other-owner',
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).resolves.toMatchObject({
+			analysisId: ANALYSIS_ID,
+			status: 'deleting',
+			stateVersion: 2,
+			permanent: false,
+		});
+		await expect(authority.get(OWNER_ID, ANALYSIS_ID)).rejects.toMatchObject({
+			code: 'NOT_FOUND',
+		});
+		await lifecycle.cleanup(10);
+		await expect(lifecycle.get(OWNER_ID, ANALYSIS_ID)).resolves.toEqual({
+			analysisId: ANALYSIS_ID,
+			status: 'deleted',
+			stateVersion: 3,
+			permanent: true,
+			canCancel: false,
+			canRetry: false,
+			failure: null,
+		});
+		await expect(
+			lifecycle.get('other-owner', ANALYSIS_ID),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await expect(authority.create(command())).rejects.toMatchObject({
+			code: 'NOT_FOUND',
+		});
+	});
 	test('fences the current run and analysis before cancellation dispatch, then replays after dispatch failure', async () => {
 		const { authority, database, startProcessing, binding } = await fixture();
 		await authority.create(command());
@@ -1115,7 +1474,7 @@ describe('DrivingAnalysisAuthority', () => {
 				.from(trackingRun)
 				.where(eq(trackingRun.id, '99999999-9999-4999-8999-999999999999'))
 				.get(),
-		).toMatchObject({ status: 'replaced', version: 2 });
+		).toMatchObject({ status: 'failed', version: 2 });
 		expect(startProcessing).toHaveBeenLastCalledWith({
 			kind: 'analysis-creation.v1',
 			ownerId: OWNER_ID,
@@ -1139,7 +1498,9 @@ describe('DrivingAnalysisAuthority', () => {
 			'INVALID_INPUT',
 		);
 		await expectCode(authority.retry('user-1', ANALYSIS_ID, 6), 'NOT_FOUND');
-		await expectCode(authority.retry(OWNER_ID, ANALYSIS_ID, 5), 'CONFLICT');
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 5),
+		).resolves.toMatchObject({ retried: false, analysis: { stateVersion: 6 } });
 	});
 
 	test('retries completed analysis', async () => {
@@ -1268,8 +1629,9 @@ describe('DrivingAnalysisAuthority', () => {
 	});
 
 	test('blocks source deletion while active and permits it after completion', async () => {
-		const { authority, database } = await fixture();
+		const { authority, database, binding } = await fixture();
 		await authority.create(command());
+		await seedPreparedAnalysis(binding);
 		if (!sqlite) throw new Error('SQLite fixture unavailable');
 		const validation = new RaceVideoValidationAuthority(sqlite.database);
 		const r2 = new MockR2Controller();
@@ -1281,6 +1643,10 @@ describe('DrivingAnalysisAuthority', () => {
 		r2.seed(recording.objectKey, new Uint8Array([1, 2, 3]));
 		const recordings = new RaceRecordingAuthority(sqlite.database, r2.bucket);
 		expect(await validation.hasActiveAnalysis(RACE_VIDEO_ID)).toBe(true);
+		vi.spyOn(
+			RaceVideoValidationAuthority.prototype,
+			'hasActiveAnalysis',
+		).mockResolvedValueOnce(false);
 		await expect(
 			recordings.remove({ ownerId: OWNER_ID, recordingId: RACE_VIDEO_ID }),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
@@ -1307,10 +1673,31 @@ describe('DrivingAnalysisAuthority', () => {
 				updatedAt: '2026-08-17T18:00:02.000Z',
 			})
 			.run();
+		await database
+			.update(trackingRun)
+			.set({ status: 'completed', version: 2, completedAt: NOW.toISOString() })
+			.where(eq(trackingRun.id, RETRY_WORKFLOW_ID));
 		expect(await validation.hasActiveAnalysis(RACE_VIDEO_ID)).toBe(false);
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: r2.bucket,
+			startCancellation: async () => undefined,
+		});
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			canRetry: true,
+			failure: null,
+		});
 		await recordings.remove({ ownerId: OWNER_ID, recordingId: RACE_VIDEO_ID });
 		expect(r2.objects.size).toBe(0);
 		expect(await database.select().from(raceVideo)).toEqual([]);
+		expect(await database.select().from(trackingRunInput)).toHaveLength(1);
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			canRetry: false,
+			failure: { code: 'SOURCE_UNAVAILABLE', retryable: false },
+		});
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 3),
+		).rejects.toMatchObject({ code: 'SOURCE_UNAVAILABLE' });
 	});
 
 	test('rejects invalid, unavailable, and cross-owner immutable inputs', async () => {

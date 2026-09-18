@@ -4,6 +4,168 @@ import { getViolations, injectAxe } from 'axe-playwright';
 import type { PublicDrivingAnalysis } from '../../src/driving-analysis/analysis/driving-analysis-contracts';
 
 let authentication = 0;
+
+test('reviews private Corner comparisons with keyboard-accessible provenance and AXE', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await createCar(page, 'Corner comparison fixture');
+	const pass = {
+		cornerId: 'corner-1',
+		cornerKey: 'hairpin',
+		cornerOrder: 1,
+		ordinal: 1,
+		entry: { timestampMs: 100.125, beforeFrameIndex: 2, afterFrameIndex: 3 },
+		exit: { timestampMs: 600.875, beforeFrameIndex: 15, afterFrameIndex: 16 },
+		durationMs: 500.75,
+		eligibility: 'eligible',
+		exclusionReason: null,
+		rank: 1,
+		tieGroup: 1,
+		best: true,
+		provenance: {
+			segmentId: 'segment-1',
+			segmentSequence: 1,
+			profileDigest: 'a'.repeat(64),
+			observationChecksum: 'b'.repeat(64),
+			manifestChecksum: 'c'.repeat(64),
+			measurementVersion: 'corner-evidence.v1',
+			measurementDigest: 'd'.repeat(64),
+		},
+	};
+	await page.route('**/api/v1/driving-analyses/analysis-1/evidence', (route) =>
+		route.fulfill({
+			json: {
+				evidence: {
+					analysisId: 'analysis-1',
+					carId: created.car.id,
+					driveSessionId: 'drive-1',
+					stateVersion: 4,
+					status: 'running',
+					runId: 'run-1',
+					trackMapVersionId: 'map-1',
+					tieToleranceMs: 40,
+					corners: [
+						{
+							id: 'corner-1',
+							name: 'Hairpin',
+							order: 1,
+							passes: [
+								pass,
+								{
+									...pass,
+									ordinal: 2,
+									durationMs: 530.75,
+									exit: { ...pass.exit, timestampMs: 630.875 },
+								},
+								{
+									...pass,
+									ordinal: 3,
+									durationMs: null,
+									entry: null,
+									exit: null,
+									eligibility: 'ineligible',
+									exclusionReason: 'tracking-gap',
+									rank: null,
+									tieGroup: null,
+									best: false,
+								},
+							],
+						},
+					],
+				},
+			},
+		}),
+	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/clips', (route) =>
+		route.fulfill({
+			json: {
+				clips: [1, 2].map((ordinal) => ({
+					id: `clip-${ordinal}`,
+					cornerId: 'corner-1',
+					ordinal,
+					segmentId: 'segment-1',
+					status: 'ready',
+					inputDigest: 'e'.repeat(64),
+					checksum: 'f'.repeat(64),
+					durationMs: 1500,
+					pipelineVersion: 'corner-render.v1',
+				})),
+			},
+		}),
+	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/lifecycle', (route) =>
+		route.fulfill({
+			json: {
+				lifecycle: {
+					analysisId: 'analysis-1',
+					status: 'running',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: true,
+					canRetry: false,
+					failure: null,
+				},
+			},
+		}),
+	);
+	await page.route(
+		'**/api/v1/driving-analyses/analysis-1/clips/*/content',
+		(route) =>
+			route.fulfill({ body: playableRaceVideo, contentType: 'video/mp4' }),
+	);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(
+		`/garage/${created.car.id}/drive-sessions/analysis/analysis-1`,
+	);
+	await expect(
+		page.getByRole('heading', { name: 'Corner comparison' }),
+	).toBeVisible();
+	await expect(
+		page.getByText('Best corner pass', { exact: false }),
+	).toHaveCount(2);
+	await expect(
+		page.getByText('Tracking lost the Subject car during this pass.'),
+	).toBeVisible();
+	const videos = page.locator('video');
+	await expect(videos).toHaveCount(2);
+	await expect(videos.first()).toHaveAttribute('controls', '');
+	await videos.first().evaluate(async (video: HTMLVideoElement) => {
+		await video.play();
+		video.pause();
+	});
+	await expect
+		.poll(() =>
+			videos.first().evaluate((video: HTMLVideoElement) => video.readyState),
+		)
+		.toBeGreaterThan(0);
+	const details = page
+		.getByText('Timing and provenance', { exact: true })
+		.first();
+	await details.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		page
+			.getByLabel('Hairpin, segment 1, pass 1')
+			.getByText('100.125 ms, between frames 2 and 3'),
+	).toBeVisible();
+	await expect(
+		page.getByRole('link', { name: 'Back to Drive sessions' }),
+	).toHaveAttribute('href', `/garage/${created.car.id}/drive-sessions`);
+	expect(await scan(page)).toEqual([]);
+	const deleteButton = page.getByRole('button', {
+		name: 'Delete analysis',
+		exact: true,
+	});
+	await deleteButton.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		page.getByRole('button', { name: 'Confirm deletion' }),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Keep analysis' }).click();
+	await expect(deleteButton).toBeFocused();
+});
 const playableRaceVideo = readFileSync(
 	new URL('./support/race-video.mp4', import.meta.url),
 );

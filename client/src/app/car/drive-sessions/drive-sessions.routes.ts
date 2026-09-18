@@ -4,6 +4,9 @@ import { CarGateway } from '../car-gateway';
 import { CarStore } from '../car-store';
 import { DriveSessionGateway } from './drive-session-gateway';
 import { DriveSessionStore } from './drive-session-store';
+import { AnalysisLifecycleGateway } from './driving-analysis/analysis-lifecycle-gateway';
+import { CornerReviewGateway } from './driving-analysis/corner-review-gateway';
+import { CornerReviewStore } from './driving-analysis/corner-review-store';
 import { CorrectionPlayer } from './driving-analysis/correction-player';
 import { DrivingAnalysisGateway } from './driving-analysis/driving-analysis-gateway';
 import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis/driving-analysis-request-identity';
@@ -16,6 +19,19 @@ import { ReidentificationIdentity } from './driving-analysis/reidentification-id
 import { ReidentificationStore } from './driving-analysis/reidentification-store';
 
 export const DRIVE_SESSIONS_ROUTES: Routes = [
+	{
+		path: 'analysis/:analysisId',
+		providers: [
+			CornerReviewGateway,
+			CornerReviewStore,
+			AnalysisLifecycleGateway,
+			DrivingAnalysisRequestIdentityCapability,
+		],
+		loadComponent: () =>
+			import('./driving-analysis/corner-review').then(
+				({ CornerReview }) => CornerReview,
+			),
+	},
 	{
 		path: '',
 		providers: [

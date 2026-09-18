@@ -1,0 +1,11 @@
+@if (clip(); as artifact) {
+	@if (contentUrl(); as url) {
+		<video class="w-full max-w-2xl rounded bg-black" controls preload="metadata" [src]="url" [attr.aria-label]="label()" (error)="failed.set(true)">
+			<track kind="captions" srclang="en" label="Silent clip" src="/media/no-captions.vtt" />
+			Your browser cannot play this clip.
+		</video>
+		@if (failed()) { <p role="status">This clip is unavailable. Refresh evidence to check its status.</p> }
+		<p class="text-sm">Silent clip. Timing and gate annotations are described in the pass details. Includes up to 500 ms before entry and after exit.</p>
+		<details><summary class="cursor-pointer font-semibold">Clip provenance</summary><dl class="grid gap-2 text-sm"><div><dt class="font-semibold">Pipeline</dt><dd class="m-0">{{ artifact.pipelineVersion }}</dd></div><div><dt class="font-semibold">Input digest</dt><dd class="m-0 break-all">{{ artifact.inputDigest }}</dd></div><div><dt class="font-semibold">Clip checksum</dt><dd class="m-0 break-all">{{ artifact.checksum }}</dd></div></dl></details>
+	} @else { <p role="status">Clip is being prepared.</p> }
+} @else { <p role="status">Clip is not ready yet.</p> }

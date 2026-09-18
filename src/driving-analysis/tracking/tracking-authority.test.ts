@@ -56,6 +56,7 @@ const migrations = [
 	'0020_immutable_track_view.sql',
 	'0022_tracking_artifact_publication.sql',
 	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -457,6 +458,33 @@ describe('TrackingAuthority', () => {
 			waitReason: null,
 			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
 		});
+	});
+
+	test('failure replay does not postpone terminal prepared-media retention', async () => {
+		const { authority, preparedAuthority } = await createSegmentAuthority();
+		const expiredAt = Date.parse(LATER);
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: null,
+			expiredAt,
+		};
+		await authority.expireAvailability(command);
+		await authority.expireAvailability({
+			...command,
+			expiredAt: expiredAt + 60 * 60 * 1000,
+		});
+		expect(
+			await preparedAuthority.cleanupCandidates(
+				new Date(expiredAt + 24 * 60 * 60 * 1000).toISOString(),
+				LATER,
+			),
+		).toEqual([
+			expect.objectContaining({ runId: RUN_ID, preparedMediaId: PREPARED_ID }),
+		]);
 	});
 
 	test('fails unavailable output authority before the deadline and fences the run while retaining its original attempt', async () => {

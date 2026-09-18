@@ -7,6 +7,7 @@ import {
 	signal,
 } from '@angular/core';
 import { FormField, form } from '@angular/forms/signals';
+import { RouterLink } from '@angular/router';
 import { TrackMapGeometry } from '../../../track-maps/track-map-geometry';
 import {
 	MAX_RACE_WINDOW_DURATION_MS,
@@ -45,6 +46,7 @@ const titleCase = (value: string): string =>
 		SubjectBoxEditor,
 		SubjectReidentification,
 		TrackMapGeometry,
+		RouterLink,
 	],
 	templateUrl: './driving-analysis-creator.html',
 	host: { class: 'block' },

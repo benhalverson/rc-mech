@@ -36,6 +36,7 @@ const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
 	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -99,6 +100,32 @@ const expectAuthorityError = async (
 };
 
 describe('PreparedTrackViewAuthority', () => {
+	test('claims abandoned preparation outputs before cleanup and fences late acceptance', async () => {
+		const { authority, inputDigest } = await pinnedAuthorityFixture();
+		await authority.recordPreparationIntent(
+			OWNER_ID,
+			RUN_ID,
+			PREPARED_MEDIA_ID,
+			DELETE_AFTER,
+		);
+		expect(await authority.claimAbandonedPreparation(NOW)).toEqual([]);
+		expect(
+			await authority.claimAbandonedPreparation(DELETE_AFTER),
+		).toMatchObject([
+			{ preparedMediaId: PREPARED_MEDIA_ID, state: 'deleting' },
+		]);
+		await expect(
+			authority.recordPreparationIntent(
+				OWNER_ID,
+				RUN_ID,
+				PREPARED_MEDIA_ID,
+				DELETE_AFTER,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.acceptPreparedTrackView(acceptCommand(inputDigest)),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+	});
 	test('pins one immutable owned Race window and approved Track-map layout', async () => {
 		const { authority, input, inputDigest } = await authorityFixture();
 		await expectAuthorityError(

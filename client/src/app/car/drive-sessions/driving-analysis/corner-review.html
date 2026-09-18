@@ -1,0 +1,62 @@
+<section class="grid gap-5" aria-labelledby="corner-review-title">
+	<header class="flex flex-wrap items-start justify-between gap-3">
+		<div><p class="alloy-eyebrow">Driving analysis</p><h2 id="corner-review-title" class="m-0 text-2xl font-semibold">Corner comparison</h2></div>
+		<button class="alloy-control alloy-control-secondary" type="button" (click)="store.refresh()" [disabled]="store.loading()">Refresh evidence</button>
+	</header>
+	@if (store.lifecycle(); as lifecycle) {
+		<section class="grid gap-3" aria-label="Analysis actions">
+			@if (lifecycle.failure; as failure) { <p role="status">{{ failure.retryable ? 'Processing is temporarily unavailable. You can retry this analysis.' : 'This analysis cannot be retried with its current source and inputs.' }}</p> }
+			@if (lifecycle.status === 'deleting') { <p role="status">Deletion is pending. Private media cleanup will retry automatically.</p> }
+			@if (lifecycle.permanent) { <p role="status">This analysis and its private derived media have been permanently deleted.</p> }
+			<div class="flex flex-wrap gap-3">
+				@if (lifecycle.canCancel) { <button class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" (click)="store.changeLifecycle({ action: 'cancel' })">Cancel analysis</button> }
+				@if (lifecycle.canRetry) { <button class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" (click)="store.changeLifecycle({ action: 'retry' })">Retry as a new run</button> }
+				@if (!lifecycle.permanent && lifecycle.status !== 'deleting') { <button #deleteAnalysisButton class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" [attr.aria-expanded]="confirmingDeletion()" (click)="confirmingDeletion.set(true)">Delete analysis</button> }
+			</div>
+			@if (confirmingDeletion() && !lifecycle.permanent && lifecycle.status !== 'deleting') {
+				<div class="grid gap-2 rounded border border-alloy-separator p-3"><p>Delete this analysis and all derived clips? Deletion becomes permanent once private media is removed. Your source Race recording is kept.</p><div class="flex gap-3"><button class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" (click)="store.changeLifecycle({ action: 'delete' })">Confirm deletion</button><button class="alloy-control alloy-control-secondary" type="button" (click)="keepAnalysis()">Keep analysis</button></div></div>
+			}
+		</section>
+	}
+	@if (store.lifecycleError(); as error) { <p role="alert">{{ error }}</p> }
+	@if (store.lifecycleReadError(); as error) { <p role="alert">{{ error }}</p> }
+	@if (store.loading()) { <p role="status">Loading accepted Corner evidence…</p> }
+	@if (store.error(); as error) { <p class="alloy-state alloy-error-state" role="alert">{{ error }}</p> }
+	@if (store.clipsError(); as error) { <p role="status">{{ error }}</p> }
+	@if (store.review(); as review) {
+		<a class="alloy-link" [routerLink]="['/garage', review.carId, 'drive-sessions']">Back to Drive sessions</a>
+		<p class="m-0">Analysis status: <strong>{{ review.status }}</strong>. Results reflect accepted evidence from this run.</p>
+		@if (review.tieToleranceMs !== null) { <p class="m-0 text-sm">Timing is gate to gate, without clip padding. Passes within one source frame ({{ review.tieToleranceMs | number:'1.0-3' }} ms) share a rank.</p> }
+		@for (corner of review.corners; track corner.id) {
+			<section class="grid gap-3 rounded border border-alloy-separator bg-alloy-surface-subtle p-4" [attr.aria-labelledby]="'corner-' + corner.id">
+				<h3 class="m-0 text-lg font-semibold" [id]="'corner-' + corner.id">{{ corner.name }}</h3>
+				@for (pass of corner.passes; track pass.provenance.segmentId + ':' + pass.ordinal) {
+					<article class="grid gap-2 border-t border-alloy-separator pt-3" [attr.aria-label]="corner.name + ', segment ' + pass.provenance.segmentSequence + ', pass ' + pass.ordinal">
+						<h4 class="m-0 font-semibold">Segment {{ pass.provenance.segmentSequence }} · Pass {{ pass.ordinal }}</h4>
+						@if (pass.eligibility === 'eligible') {
+							<p class="m-0"><strong>{{ pass.durationMs | number:'1.0-3' }} ms</strong> · Rank {{ pass.rank }} · Tie group {{ pass.tieGroup }} @if (pass.best) { <span class="font-semibold">· Best corner pass</span> }</p>
+							<app-corner-clip [clip]="pass.clip" [contentUrl]="pass.clip?.contentUrl ?? null" [label]="corner.name + ', segment ' + pass.provenance.segmentSequence + ', pass ' + pass.ordinal" />
+						} @else {
+							<p class="m-0 font-semibold">Excluded from comparison</p>
+								<p class="m-0">{{ exclusionLabel(pass.exclusionReason) }}</p>
+						}
+						<details>
+							<summary class="cursor-pointer font-semibold">Timing and provenance</summary>
+							<dl class="mt-2 grid gap-2 text-sm">
+								@if (pass.entry; as entry) { <div><dt class="font-semibold">Entry crossing</dt><dd class="m-0 break-all">{{ entry.timestampMs }} ms, between frames {{ entry.beforeFrameIndex }} and {{ entry.afterFrameIndex }}</dd></div> }
+								@if (pass.exit; as exit) { <div><dt class="font-semibold">Exit crossing</dt><dd class="m-0 break-all">{{ exit.timestampMs }} ms, between frames {{ exit.beforeFrameIndex }} and {{ exit.afterFrameIndex }}</dd></div> }
+								<div><dt class="font-semibold">Unrounded duration</dt><dd class="m-0">{{ pass.durationMs === null ? 'Not eligible' : pass.durationMs + ' ms' }}</dd></div>
+								<div><dt class="font-semibold">Run</dt><dd class="m-0 break-all">{{ review.runId }}</dd></div>
+								<div><dt class="font-semibold">Pinned Track-map version</dt><dd class="m-0 break-all">{{ review.trackMapVersionId }}</dd></div>
+								<div><dt class="font-semibold">Inference profile digest</dt><dd class="m-0 break-all">{{ pass.provenance.profileDigest }}</dd></div>
+								<div><dt class="font-semibold">Observation checksum</dt><dd class="m-0 break-all">{{ pass.provenance.observationChecksum }}</dd></div>
+								<div><dt class="font-semibold">Frame manifest checksum</dt><dd class="m-0 break-all">{{ pass.provenance.manifestChecksum }}</dd></div>
+								<div><dt class="font-semibold">Measurement</dt><dd class="m-0 break-all">{{ pass.provenance.measurementVersion }} · {{ pass.provenance.measurementDigest }}</dd></div>
+							</dl>
+						</details>
+					</article>
+				} @empty { <p class="m-0">No accepted passes for this corner yet.</p> }
+			</section>
+		} @empty { <p>No Corner evidence is available yet.</p> }
+	}
+</section>

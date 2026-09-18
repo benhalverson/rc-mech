@@ -138,6 +138,18 @@ describe('Driving-analysis Workflow starter', () => {
 		]);
 		expect(value.get).toHaveBeenCalledWith(analysisPayload.workflowId);
 		expect(value.instance.terminate).toHaveBeenCalledOnce();
+		value.get.mockRejectedValueOnce(new Error('instance.not_found'));
+		await expect(
+			injected.startProcessing(cancellation),
+		).resolves.toBeUndefined();
+		value.get.mockRejectedValueOnce(new Error('network unavailable'));
+		await expect(injected.startProcessing(cancellation)).rejects.toThrow(
+			'network unavailable',
+		);
+		value.get.mockRejectedValueOnce('unavailable');
+		await expect(injected.startProcessing(cancellation)).rejects.toBe(
+			'unavailable',
+		);
 		value.instance.terminate.mockRejectedValue(new Error('already stopped'));
 		value.instance.status.mockResolvedValue({ status: 'terminated' });
 		await injected.startProcessing(cancellation);

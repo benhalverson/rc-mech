@@ -5,6 +5,7 @@ import {
 } from 'cloudflare:workers';
 import { z } from 'zod';
 import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
+import { completeDrivingAnalysis } from '../analysis/driving-analysis-completion';
 import {
 	type DrivingAnalysisWorkflowPayload,
 	drivingAnalysisWorkflowPayloadSchema,
@@ -14,6 +15,9 @@ import {
 	DrivingAnalysisCreationWorkflowRunner,
 	RealDrivingAnalysisContainerPort,
 } from '../analysis/driving-analysis-creation-workflow';
+import type { ClipArtifact } from '../clips/corner-clip-contracts';
+import type { ClipRenderCommand } from '../clips/corner-clip-renderer';
+import { cornerClipRenderer } from '../clips/corner-clips';
 import {
 	AcceptedCornerEvidence,
 	AcceptedCornerEvidenceError,
@@ -176,6 +180,7 @@ export type DrivingAnalysisWorkflowEnvironment = {
 	RACE_VIDEO_MEDIA_CONTAINER?: {
 		getByName(name: string): {
 			prepareTrackView(command: unknown): Promise<unknown>;
+			renderCornerClip?(command: ClipRenderCommand): Promise<ClipArtifact>;
 		};
 	};
 };
@@ -226,6 +231,12 @@ export class TrackingRunWorkflow {
 			ownerId: string,
 			analysisId: string,
 			state: PublicTrackingState,
+		) => Promise<void>,
+		private readonly renderClips: (
+			identity: TrackingWorkflowIdentity,
+		) => Promise<void>,
+		private readonly completeAnalysis: (
+			identity: TrackingWorkflowIdentity,
 		) => Promise<void>,
 	) {}
 
@@ -1347,6 +1358,18 @@ export class TrackingRunWorkflow {
 			}
 			return { committed: true };
 		});
+		await step.do(
+			`render-accepted-corner-clips-${name}`,
+			{ timeout: '30 minutes' },
+			async () => {
+				await this.renderClips(workflowIdentity);
+				return { rendered: true };
+			},
+		);
+		await step.do(`complete-accepted-analysis-${name}`, async () => {
+			await this.completeAnalysis(workflowIdentity);
+			return { checked: true };
+		});
 	}
 }
 
@@ -1390,6 +1413,25 @@ export const trackingRunWorkflow = (
 				state,
 				new Date().toISOString(),
 			);
+		},
+		cornerClipRenderer(environment),
+		async (identity) => {
+			const result = await completeDrivingAnalysis(
+				environment.DB,
+				identity,
+				new Date().toISOString(),
+			);
+			if (result === 'stale')
+				throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+			if (result === 'not-ready') {
+				const context = await new TrackingAuthority(
+					environment.DB,
+				).workflowContext(identity);
+				if (context.outcome !== 'tracking-gap')
+					throw new Error(
+						'Accepted analysis evidence is not ready for completion',
+					);
+			}
 		},
 	);
 
