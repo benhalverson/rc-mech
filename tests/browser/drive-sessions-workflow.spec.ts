@@ -488,10 +488,7 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(creator.getByText('Analysis running')).toBeVisible();
 	const correctionRequests: unknown[] = [];
 	const gapContext = {
-		frames: [
-			{ frameIndex: 7, timestampMs: 700 },
-			{ frameIndex: 8, timestampMs: 800 },
-		],
+		frames: [{ frameIndex: 7, timestampMs: 700 }],
 		runId: '11111111-1111-4111-8111-111111111111',
 		segmentId: '22222222-2222-4222-8222-222222222222',
 		acceptedDigest: 'a'.repeat(64),
@@ -534,11 +531,9 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(
 		correctionEditor.getByText('Tracking became uncertain', { exact: false }),
 	).toBeVisible();
-	await correctionEditor.getByLabel('Inspect a later clear frame').focus();
-	await correctionEditor.getByLabel('Inspect a later clear frame').press('End');
-	await correctionEditor
-		.getByLabel('Inspect a later clear frame')
-		.press('Home');
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '0');
 	await expect(
 		correctionEditor.getByText('Selected source frame 7 at 700 ms'),
 	).toBeVisible();

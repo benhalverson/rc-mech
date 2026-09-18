@@ -18,12 +18,12 @@
 		} @else {
 			<form class="grid gap-3" (submit)="submit($event)">
 				<app-subject-box-editor heading="Subject car correction" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
-					<video #player class="aspect-video w-full bg-black" preload="metadata" [src]="recording().playbackUrl" aria-label="Private recording for Subject correction">
+					<video #player class="aspect-video w-full bg-black" preload="metadata" [src]="recording().playbackUrl" (loadedmetadata)="showSelectedFrame(player)" aria-label="Private recording for Subject correction">
 						<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
 					</video>
 				</app-subject-box-editor>
 				<label class="grid gap-1 text-sm">Inspect a later clear frame
-					<input #timestampField type="range" class="w-full accent-alloy-accent" min="0" [max]="context.frames.length - 1" step="1" [value]="selectedFrame()" (input)="seek($event, player)" />
+					<input #timestampField type="range" class="w-full accent-alloy-accent" min="0" [max]="context.frames.length - 1" step="1" [value]="selectedFrame()" (input)="seek($event)" />
 				</label>
 				<p>Selected source frame {{ draft().frameIndex }} at {{ draft().timestampMs }} ms</p>
 				@if (error()) { <p role="alert">{{ error() }}</p> }
