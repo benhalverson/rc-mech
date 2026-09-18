@@ -49,6 +49,7 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 			ReidentificationGateway,
 			ReidentificationIdentity,
 			ReidentificationStore,
+			CorrectionPlayer,
 			CarStore,
 		],
 		loadComponent: () =>

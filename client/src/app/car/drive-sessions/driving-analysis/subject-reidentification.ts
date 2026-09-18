@@ -1,9 +1,13 @@
 import {
+	afterRenderEffect,
 	Component,
+	computed,
 	ElementRef,
 	inject,
 	input,
+	linkedSignal,
 	type OnChanges,
+	type OnDestroy,
 	signal,
 	viewChild,
 } from '@angular/core';
@@ -23,13 +27,23 @@ import { SubjectBoxEditor } from './subject-box-editor';
 	templateUrl: './subject-reidentification.html',
 	host: { class: 'block' },
 })
-export class SubjectReidentification implements OnChanges {
+export class SubjectReidentification implements OnChanges, OnDestroy {
 	readonly analysis = input.required<DrivingAnalysis>();
 	readonly recording = input.required<RaceRecording>();
 	protected readonly store = inject(ReidentificationStore);
-	protected readonly draft = signal({ timestampMs: 0, frameIndex: 0 });
-	protected readonly selectedFrame = signal(0);
+	protected readonly selectedFrame = linkedSignal({
+		source: () => this.store.context(),
+		computation: () => 0,
+	});
+	protected readonly draft = computed(
+		() =>
+			this.store.context()?.frames[this.selectedFrame()] ?? {
+				timestampMs: 0,
+				frameIndex: 0,
+			},
+	);
 	private readonly player = inject(CorrectionPlayer);
+	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 	protected readonly box = signal<SubjectBox>({
 		x: 0.4,
 		y: 0.4,
@@ -42,26 +56,34 @@ export class SubjectReidentification implements OnChanges {
 		viewChild.required<ElementRef<HTMLInputElement>>('timestampField');
 	private selectedId = '';
 
+	private readonly playbackSync = afterRenderEffect(() => {
+		const frame = this.draft();
+		const video = this.host.nativeElement.querySelector('video');
+		if (video) this.player.showFrame(video, frame.timestampMs);
+	});
+
+	ngOnDestroy(): void {
+		this.playbackSync.destroy();
+	}
+
+	protected showSelectedFrame(video: HTMLVideoElement): void {
+		this.player.showFrame(video, this.draft().timestampMs);
+	}
+
 	ngOnChanges(): void {
 		const analysis = this.analysis();
 		this.store.select(analysis.id, analysis.stateVersion);
 		if (this.selectedId === analysis.id) return;
 		this.selectedId = analysis.id;
 		this.box.set(analysis.subjectSeed.box);
-		this.draft.set({
-			timestampMs: analysis.subjectSeed.timestampMs,
-			frameIndex: analysis.subjectSeed.frameIndex,
-		});
 		this.error.set('');
 	}
 
-	protected seek(event: Event, player: HTMLVideoElement): void {
+	protected seek(event: Event): void {
 		const frameIndex = (event.target as HTMLInputElement).valueAsNumber;
 		const frame = this.store.context()?.frames[frameIndex];
 		if (!frame) return;
 		this.selectedFrame.set(frameIndex);
-		this.player.showFrame(player, frame.timestampMs);
-		this.draft.set(frame);
 	}
 
 	protected retrySaved(): void {
