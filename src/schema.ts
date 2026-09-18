@@ -21,6 +21,7 @@ export {
 	trackingSegment,
 	trackingTransferRequest,
 } from './driving-analysis/tracking/authority-schema';
+export { drivingAnalysisFlag } from './feature-flags/schema';
 
 const id = (name: string) => text(name).primaryKey();
 export const car = sqliteTable('car', {

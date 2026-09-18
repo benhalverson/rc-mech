@@ -10,6 +10,7 @@ import {
 } from './app-dependencies';
 import { isAllowedOrigin } from './auth-policy';
 import { createTrackMapRoutes } from './driving-analysis/track-maps/track-map-routes';
+import { createFeatureFlagRoutes } from './feature-flags/routes';
 import { openApi } from './openapi';
 import { createAuthRoutes } from './routes/auth';
 import { createCarsRoutes } from './routes/cars';
@@ -72,6 +73,7 @@ export const createApp = (
 
 	app.get('/api/v1/health', (c) => c.json({ ok: true, service: 'rc-mech' }));
 	app.route('/api/v1', createInviteRoutes());
+	app.route('/api/v1', createFeatureFlagRoutes());
 	app.route('/api/v1', createCarsRoutes());
 	app.route('/api/v1', createSetupsRoutes());
 	app.route('/api/v1', createPhotosRoutes());
