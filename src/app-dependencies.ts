@@ -18,20 +18,23 @@ export type AppDependencies = {
 	drivingAnalysisAuthority(env: Env): DrivingAnalysisAuthority;
 };
 
-export const startDrivingAnalysisCreation = async (
+export const startDrivingAnalysisWorkflow = async (
 	workflow: Env['DRIVING_ANALYSIS_WORKFLOW'],
 	payload: DrivingAnalysisWorkflowPayload,
 ): Promise<void> => {
+	const instanceId = payload.cancellation
+		? `${payload.workflowId}-cancel`
+		: payload.workflowId;
 	try {
 		const created = await workflow.createBatch([
-			{ id: payload.workflowId, params: payload },
+			{ id: instanceId, params: payload },
 		]);
-		if (created.some((instance) => instance.id === payload.workflowId)) return;
+		if (created.some((instance) => instance.id === instanceId)) return;
 	} catch {
 		// A deterministic instance may already exist; inspect it below.
 	}
 	try {
-		const existing = await workflow.get(payload.workflowId);
+		const existing = await workflow.get(instanceId);
 		const status = await existing.status();
 		if (status.status === 'errored' || status.status === 'terminated')
 			await existing.restart();
@@ -76,7 +79,23 @@ export const defaultAppDependencies: AppDependencies = {
 		}),
 	drivingAnalysisAuthority: (env) =>
 		new DrivingAnalysisAuthority(env.DB, {
-			startProcessing: (payload) =>
-				startDrivingAnalysisCreation(env.DRIVING_ANALYSIS_WORKFLOW, payload),
+			startProcessing: async (payload) => {
+				await startDrivingAnalysisWorkflow(
+					env.DRIVING_ANALYSIS_WORKFLOW,
+					payload,
+				);
+				if (payload.cancellation) {
+					const original = await env.DRIVING_ANALYSIS_WORKFLOW.get(
+						payload.workflowId,
+					);
+					try {
+						await original.terminate();
+					} catch (error) {
+						const { status } = await original.status();
+						if (!['errored', 'terminated', 'complete'].includes(status))
+							throw error;
+					}
+				}
+			},
 		}),
 };

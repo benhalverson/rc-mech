@@ -44,9 +44,11 @@ describe('Driving-analysis routes', () => {
 		const create = vi.fn(async () => ({ analysis, created: true }));
 		const get = vi.fn(async () => analysis);
 		const retry = vi.fn(async () => ({ analysis, retried: true }));
+		const cancel = vi.fn(async () => analysis);
 		const authority = {
 			create,
 			get,
+			cancel,
 			retry,
 		} as unknown as DrivingAnalysisAuthority;
 		const { request } = createHonoFixture({
@@ -54,6 +56,15 @@ describe('Driving-analysis routes', () => {
 				authority) satisfies AppDependencies['drivingAnalysisAuthority'],
 		});
 		const path = '/api/v1/cars/car-1/drives/drive-1/driving-analyses';
+		const cancelPath = '/api/v1/driving-analyses/analysis-1/cancel';
+		expect((await request(cancelPath, { ...json({}), body: '{' })).status).toBe(
+			400,
+		);
+		expect((await request(cancelPath, json({}))).status).toBe(400);
+		expect(
+			(await request(cancelPath, json({ expectedStateVersion: 1 }))).status,
+		).toBe(202);
+		expect(cancel).toHaveBeenCalledWith('owner-1', 'analysis-1', 1);
 		expect(
 			(await request(path, { ...json(createBody), body: '{' })).status,
 		).toBe(400);

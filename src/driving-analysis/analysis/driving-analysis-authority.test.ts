@@ -26,6 +26,7 @@ import {
 	inferenceProfileAuthority,
 	trackingRun,
 } from '../tracking/authority-schema';
+import { TrackingAuthority } from '../tracking/tracking-authority';
 import {
 	DrivingAnalysisAuthority,
 	DrivingAnalysisAuthorityError,
@@ -226,7 +227,12 @@ const fixture = async () => {
 		workflowId: () => RETRY_WORKFLOW_ID,
 		startProcessing,
 	});
-	return { authority, startProcessing, database: drizzle(sqlite.database) };
+	return {
+		authority,
+		startProcessing,
+		database: drizzle(sqlite.database),
+		binding: sqlite.database,
+	};
 };
 
 const expectCode = async (
@@ -240,6 +246,83 @@ const expectCode = async (
 };
 
 describe('DrivingAnalysisAuthority', () => {
+	test('fences the current run and analysis before cancellation dispatch, then replays after dispatch failure', async () => {
+		const { authority, database, startProcessing, binding } = await fixture();
+		await authority.create(command());
+		const tracking = new TrackingAuthority(binding);
+		const run = await tracking.createRun({
+			runId: RETRY_WORKFLOW_ID,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			sequence: 1,
+			profile: inferenceProfileFixture(),
+			inputDigest: 'a'.repeat(64),
+			createdAt: NOW.toISOString(),
+		});
+		await expectCode(
+			authority.cancel('another-owner', ANALYSIS_ID, 1),
+			'NOT_FOUND',
+		);
+		await expectCode(authority.cancel(OWNER_ID, ANALYSIS_ID, 2), 'CONFLICT');
+		startProcessing.mockImplementationOnce(async () => {
+			expect(await database.select().from(trackingRun)).toMatchObject([
+				{ status: 'cancelled', version: 2 },
+			]);
+			expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+				status: 'cancelled',
+				stateVersion: 2,
+			});
+			throw new Error('secret dispatch detail');
+		});
+		await expectCode(
+			authority.cancel(OWNER_ID, ANALYSIS_ID, 1),
+			'WORKFLOW_UNAVAILABLE',
+		);
+		await expect(
+			authority.cancel(OWNER_ID, ANALYSIS_ID, 1),
+		).resolves.toMatchObject({ status: 'cancelled', stateVersion: 2 });
+		expect(startProcessing).toHaveBeenLastCalledWith(
+			expect.objectContaining({ cancellation: true, workflowId: ANALYSIS_ID }),
+		);
+		expect(await database.select().from(trackingRun)).toMatchObject([
+			{ id: run.id, version: 2, completedAt: NOW.toISOString() },
+		]);
+	});
+
+	test('rejects cancellation after a completed workflow', async () => {
+		const { authority, database } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'running', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await database
+			.update(drivingAnalysis)
+			.set({
+				status: 'completed',
+				stage: 'finalization',
+				progress: 100,
+				stateVersion: 3,
+			})
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await expectCode(authority.cancel(OWNER_ID, ANALYSIS_ID, 3), 'CONFLICT');
+	});
+
+	test('a cancellation CAS loser performs no dispatch or run fencing', async () => {
+		const { authority, database, startProcessing, binding } = await fixture();
+		await authority.create(command());
+		const original = binding.batch.bind(binding);
+		vi.spyOn(binding, 'batch').mockImplementationOnce(async (statements) => {
+			await database
+				.update(drivingAnalysis)
+				.set({ status: 'running', stateVersion: 2 })
+				.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+			return original(statements);
+		});
+		await expectCode(authority.cancel(OWNER_ID, ANALYSIS_ID, 1), 'CONFLICT');
+		expect(startProcessing).toHaveBeenCalledTimes(1);
+	});
 	test('returns only the owner-scoped validated recording source facts', async () => {
 		const value = await fixture();
 		await value.authority.create(command());
