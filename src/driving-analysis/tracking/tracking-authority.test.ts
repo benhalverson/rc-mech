@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -65,6 +65,7 @@ let fixture: SqliteD1Fixture | undefined;
 afterEach(() => {
 	fixture?.close();
 	fixture = undefined;
+	vi.restoreAllMocks();
 });
 
 const authorityFixture = () => {
@@ -287,6 +288,25 @@ const expectAuthorityError = async (
 };
 
 describe('TrackingAuthority', () => {
+	test('a cancellation winning the segment insert prevents new immutable work', async () => {
+		const value = authorityFixture();
+		await value.authority.createRun(runCommand());
+		await seedPreparedTrackView(value);
+		const prepare = value.database.prepare.bind(value.database);
+		vi.spyOn(value.database, 'prepare').mockImplementation((query) => {
+			if (query.startsWith('insert into "tracking_segment"'))
+				fixture?.exec(
+					"UPDATE tracking_run SET status = 'cancelled', version = version + 1, completed_at = '2026-08-16T20:01:00.000Z'",
+				);
+			return prepare(query);
+		});
+		await expect(
+			value.authority.createSegment(segmentCommand()),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(
+			await value.database.prepare('SELECT id FROM tracking_segment').all(),
+		).toMatchObject({ results: [] });
+	});
 	test('applies nullable availability fields to populated legacy records without changing their authority', async () => {
 		const { authority, database } = await createAttemptAuthority();
 		await database
@@ -1088,12 +1108,13 @@ describe('TrackingAuthority', () => {
 				frameIndex: 0,
 			}),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
-		const next = await authority.reidentify(
-			identity,
-			SECOND_SEGMENT_ID,
-			'a'.repeat(64),
-			seed,
-		);
+		let now = Date.now();
+		vi.spyOn(Date, 'now').mockImplementation(() => now++);
+		const [next, concurrent] = await Promise.all([
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), seed),
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), seed),
+		]);
+		expect(concurrent).toEqual(next);
 		expect(next).toMatchObject({
 			segmentId: SECOND_SEGMENT_ID,
 			seed,

@@ -273,6 +273,7 @@ export class TrackingAuthority {
 
 	async createSegment(
 		commandValue: CreateTrackingSegmentCommand,
+		reusePersistedTiming = false,
 	): Promise<TrackingSegmentRecord> {
 		const command = createTrackingSegmentCommandSchema.parse(commandValue);
 		const run = await this.requireActiveRun(command.ownerId, command.runId);
@@ -411,7 +412,6 @@ export class TrackingAuthority {
 				),
 			)
 			.get();
-		/* c8 ignore next -- an insert-or-existing D1 write always yields one matching identity unless D1 fails. */
 		if (!stored) throw conflict('Tracking segment was not persisted');
 		if (
 			stored.id !== command.segmentId ||
@@ -421,8 +421,9 @@ export class TrackingAuthority {
 			stored.preparedMediaId !== command.preparedMediaId ||
 			stored.profileDigest !== run.profileDigest ||
 			stored.specificationDigest !== specification.digest ||
-			stored.availabilityDeadlineAt !== command.availabilityDeadlineAt ||
-			stored.createdAt !== command.createdAt
+			(!reusePersistedTiming &&
+				(stored.availabilityDeadlineAt !== command.availabilityDeadlineAt ||
+					stored.createdAt !== command.createdAt))
 		)
 			throw conflict(
 				'Tracking-segment identity was replayed with different immutable input',
@@ -521,22 +522,25 @@ export class TrackingAuthority {
 		)
 			throw conflict('Re-identification must start on a later clear frame');
 		const existing = await this.ownedSegment(identity.runId, correctionId);
-		const next = await this.createSegment({
-			ownerId: identity.ownerId,
-			runId: identity.runId,
-			segmentId: correctionId,
-			order: previous.order + 1,
-			seed: {
-				kind: 'reidentification',
-				sourceId: identity.segmentId,
-				value: seed,
+		const next = await this.createSegment(
+			{
+				ownerId: identity.ownerId,
+				runId: identity.runId,
+				segmentId: correctionId,
+				order: previous.order + 1,
+				seed: {
+					kind: 'reidentification',
+					sourceId: identity.segmentId,
+					value: seed,
+				},
+				preparedMediaId: previous.preparedMediaId,
+				specificationVersion: 'tracking-segment-spec.v1',
+				availabilityDeadlineAt:
+					existing?.availabilityDeadlineAt ?? Date.now() + GPU_MAX_DEADLINE_MS,
+				createdAt: existing?.createdAt ?? new Date().toISOString(),
 			},
-			preparedMediaId: previous.preparedMediaId,
-			specificationVersion: 'tracking-segment-spec.v1',
-			availabilityDeadlineAt:
-				existing?.availabilityDeadlineAt ?? Date.now() + GPU_MAX_DEADLINE_MS,
-			createdAt: existing?.createdAt ?? new Date().toISOString(),
-		});
+			true,
+		);
 		return this.workflowContext({ ...identity, segmentId: next.id });
 	}
 

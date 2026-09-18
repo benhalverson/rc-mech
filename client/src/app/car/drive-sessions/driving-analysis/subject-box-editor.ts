@@ -26,6 +26,7 @@ const percent = (value: number): string => `${round(value * 100)}%`;
 })
 export class SubjectBoxEditor {
 	readonly editorId = input.required<string>();
+	readonly heading = input('Subject car');
 	readonly box = model.required<SubjectBox>();
 	readonly valid = model(true);
 	private readonly surface =

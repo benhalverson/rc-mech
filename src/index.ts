@@ -10,6 +10,7 @@ import {
 } from './app-dependencies';
 import { isAllowedOrigin } from './auth-policy';
 import { createTrackMapRoutes } from './driving-analysis/track-maps/track-map-routes';
+import { createReidentificationRoutes } from './driving-analysis/tracking/reidentification-routes';
 import { createFeatureFlagRoutes } from './feature-flags/routes';
 import { openApi } from './openapi';
 import { createAuthRoutes } from './routes/auth';
@@ -80,6 +81,7 @@ export const createApp = (
 	app.route('/api/v1', createMaintenanceRoutes(dependencies));
 	app.route('/api/v1', createVoiceRoutes(dependencies));
 	app.route('/api/v1', createTrackMapRoutes());
+	app.route('/api/v1', createReidentificationRoutes());
 
 	app.all('/api', (c) => c.json({ error: 'Not found' }, 404));
 	app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
