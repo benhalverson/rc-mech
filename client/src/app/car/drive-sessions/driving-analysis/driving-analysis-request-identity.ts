@@ -1,7 +1,7 @@
 import { Service } from '@angular/core';
 import type { StartDrivingAnalysisCommand } from './driving-analysis.models';
 
-@Service()
+@Service({ autoProvided: false })
 export class DrivingAnalysisRequestIdentityCapability {
 	private readonly identities = new Map<
 		string,

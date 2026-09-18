@@ -5,10 +5,14 @@ import {
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { AnalysisLifecycle } from './analysis-lifecycle-gateway';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	type AnalysisLifecycle,
+	AnalysisLifecycleGateway,
+} from './analysis-lifecycle-gateway';
 import { CornerReview } from './corner-review';
 import { CornerReviewStore } from './corner-review-store';
+import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
 
 const state = (status: AnalysisLifecycle['status']): AnalysisLifecycle => ({
 	analysisId: 'analysis-1',
@@ -61,6 +65,8 @@ describe('Analysis lifecycle controls', () => {
 				provideHttpClientTesting(),
 				provideRouter([]),
 				CornerReviewStore,
+				AnalysisLifecycleGateway,
+				DrivingAnalysisRequestIdentityCapability,
 			],
 		});
 		http = TestBed.inject(HttpTestingController);
@@ -126,6 +132,10 @@ describe('Analysis lifecycle controls', () => {
 	});
 	it('cancels, replays failed retry commands, and confirms permanent deletion', async () => {
 		const store = TestBed.inject(CornerReviewStore);
+		const retryId = vi.spyOn(
+			TestBed.inject(DrivingAnalysisRequestIdentityCapability),
+			'retryId',
+		);
 		store.changeLifecycle({ action: 'cancel' });
 		const fixture = TestBed.createComponent(CornerReview);
 		fixture.componentRef.setInput('analysisId', 'analysis-1');
@@ -143,6 +153,7 @@ describe('Analysis lifecycle controls', () => {
 			fixture.detectChanges();
 		};
 		click('Cancel analysis');
+		expect(retryId).not.toHaveBeenCalled();
 		store.changeLifecycle({ action: 'cancel' });
 		const cancel = http.expectOne('/api/v1/driving-analyses/analysis-1/cancel');
 		expect(cancel.request.body).toEqual({ expectedStateVersion: 1 });
@@ -152,6 +163,7 @@ describe('Analysis lifecycle controls', () => {
 		fixture.detectChanges();
 		click('Retry as a new run');
 		const first = http.expectOne('/api/v1/driving-analyses/analysis-1/retry');
+		expect(retryId).toHaveBeenCalledOnce();
 		const commandId = first.request.body.commandId;
 		expect(commandId).toMatch(/^[0-9a-f-]{36}$/);
 		first.flush({}, { status: 503, statusText: 'Unavailable' });
@@ -170,6 +182,7 @@ describe('Analysis lifecycle controls', () => {
 		expect(root.textContent).not.toContain('Confirm deletion');
 		click('Delete analysis');
 		click('Confirm deletion');
+		expect(retryId).toHaveBeenCalledTimes(2);
 		const deletion = http.expectOne('/api/v1/driving-analyses/analysis-1');
 		expect(deletion.request.method).toBe('DELETE');
 		expect(deletion.request.withCredentials).toBe(true);

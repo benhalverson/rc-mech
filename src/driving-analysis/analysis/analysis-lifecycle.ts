@@ -12,6 +12,7 @@ import {
 	trackingSegment,
 	trackingTransferRequest,
 } from '../tracking/authority-schema';
+import { preparedObjectKeys } from '../tracking/prepared-object-keys';
 import { DrivingAnalysisAuthorityError } from './driving-analysis-authority';
 import type { DrivingAnalysisWorkflowPayload } from './driving-analysis-contracts';
 import { analysisDeletion, preparationIntent } from './lifecycle-schema';
@@ -292,10 +293,9 @@ export function createAnalysisLifecycle(options: Options) {
 						...prepared.map((row) => row.key),
 						...accepted.map((row) => row.key),
 						...promotions.flatMap((row) => [row.staging, row.accepted]),
-						...intents.flatMap((row) => [
-							`prepared/${row.preparedMediaId}/track-view.mp4`,
-							`prepared/${row.preparedMediaId}/frame-manifest.json.gz`,
-						]),
+						...intents.flatMap((row) =>
+							preparedObjectKeys(row.preparedMediaId),
+						),
 						...clips.map((row) =>
 							cornerClipObjectKey({
 								ownerId: candidate.ownerId,

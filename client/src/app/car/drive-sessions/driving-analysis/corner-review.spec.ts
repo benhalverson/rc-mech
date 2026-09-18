@@ -6,6 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AnalysisLifecycleGateway } from './analysis-lifecycle-gateway';
 import { CornerReview } from './corner-review';
 import {
 	cornerReviewResponseSchema,
@@ -13,6 +14,7 @@ import {
 } from './corner-review.models';
 import { CornerReviewGateway } from './corner-review-gateway';
 import { CornerReviewStore } from './corner-review-store';
+import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
 
 const evidence: Review = {
 	analysisId: 'analysis-1',
@@ -75,6 +77,8 @@ describe('Corner review', () => {
 				provideRouter([]),
 				CornerReviewGateway,
 				CornerReviewStore,
+				AnalysisLifecycleGateway,
+				DrivingAnalysisRequestIdentityCapability,
 			],
 		});
 		http = TestBed.inject(HttpTestingController);
