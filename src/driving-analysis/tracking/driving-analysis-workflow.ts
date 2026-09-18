@@ -214,7 +214,7 @@ const MUTABLE_ATTEMPT_STATES = [
 	'output-ready',
 ] as const;
 
-export class FirstTrackingSegmentWorkflow {
+export class TrackingRunWorkflow {
 	constructor(
 		private readonly authority: TrackingAuthority,
 		private readonly coordinator: CoordinatorPort,
@@ -233,8 +233,57 @@ export class FirstTrackingSegmentWorkflow {
 		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
 		step: WorkflowStep,
 	): Promise<FirstTrackingWorkflowResult> {
+		let currentSegmentId = event.payload.segmentId;
+		let result = await this.runOnce(event, step);
+		for (
+			let index = 0;
+			result.state.lifecycle === 'awaiting-reidentification' ||
+			result.provenance.segments.some(
+				(segment) =>
+					segment.segmentId === currentSegmentId &&
+					segment.outcome === 'tracking-gap',
+			);
+			index += 1
+		) {
+			await step.waitForEvent(`wait-for-subject-reidentification-${index}`, {
+				type: 'tracking-reidentified',
+				timeout: '365 days',
+			});
+			const identity = {
+				ownerId: event.payload.ownerId,
+				analysisId: event.payload.analysisId,
+				runId: event.payload.runId,
+				workflowId: event.instanceId,
+				segmentId: currentSegmentId,
+			};
+			const next = await step.do(`load-reidentified-subject-${index}`, () =>
+				this.authority.nextSegment(identity),
+			);
+			if (!next) continue;
+			currentSegmentId = next.segmentId;
+			result = await this.runOnce(
+				{
+					...event,
+					payload: {
+						...event.payload,
+						segmentId: next.segmentId,
+						subjectSeed: next.seed,
+					},
+				},
+				prefixedTrackingStep(step, next.segmentId),
+				next,
+			);
+		}
+		return result;
+	}
+
+	private async runOnce(
+		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
+		step: WorkflowStep,
+		resumed?: TrackingWorkflowContext,
+	): Promise<FirstTrackingWorkflowResult> {
 		try {
-			return await this.runSegment(event, step);
+			return await this.runSegment(event, step, resumed);
 		} catch (error) {
 			if (
 				!(error instanceof TrackingWorkflowError) ||
@@ -339,6 +388,7 @@ export class FirstTrackingSegmentWorkflow {
 	private async runSegment(
 		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
 		step: WorkflowStep,
+		resumed?: TrackingWorkflowContext,
 	): Promise<FirstTrackingWorkflowResult> {
 		const payload = firstTrackingWorkflowPayloadSchema.parse(event.payload);
 		const timestamp = event.timestamp.getTime();
@@ -352,22 +402,36 @@ export class FirstTrackingSegmentWorkflow {
 			workflowId: event.instanceId,
 			segmentId: payload.segmentId,
 		};
-		let context = await step.do('create-or-resume-first-segment', async () =>
-			this.authority.createFirstSegment({
-				...workflowIdentity,
-				preparedMediaId: payload.preparedMediaId,
-				order: 0,
-				seed: {
-					kind: 'initial',
-					sourceId: null,
-					value: payload.subjectSeed,
-				},
-				specificationVersion: 'tracking-segment-spec.v1',
-				availabilityDeadlineAt: Date.now() + GPU_MAX_DEADLINE_MS,
-				createdAt,
-			}),
-		);
+		let context =
+			resumed ??
+			(await step.do('create-or-resume-first-segment', async () =>
+				this.authority.createFirstSegment({
+					...workflowIdentity,
+					preparedMediaId: payload.preparedMediaId,
+					order: 0,
+					seed: {
+						kind: 'initial',
+						sourceId: null,
+						value: payload.subjectSeed,
+					},
+					specificationVersion: 'tracking-segment-spec.v1',
+					availabilityDeadlineAt: Date.now() + GPU_MAX_DEADLINE_MS,
+					createdAt,
+				}),
+			));
 		if (context.acceptedArtifactId !== null) {
+			if (context.attempt) {
+				const acceptedAttempt = attemptIdentity(context, context.attempt);
+				await step.do('release-accepted-tracking-lease', async () => {
+					const released = await this.coordinator.release({
+						...leaseIdentity(acceptedAttempt),
+						completed: true,
+					});
+					if (released.status !== 'ok')
+						throw new AcceptedEvidenceWorkflowError('TRACKING_AUTHORITY_STALE');
+					return { released: true };
+				});
+			}
 			await this.commitAcceptedEvidence(
 				workflowIdentity,
 				step,
@@ -704,7 +768,7 @@ export class FirstTrackingSegmentWorkflow {
 					return await this.coordinator.enqueue({
 						segmentId: current.segmentId,
 						deadlineAt: current.availabilityDeadlineAt,
-						kind: 'initial',
+						kind: current.seedKind,
 					});
 				} catch (error) {
 					if (Date.now() >= current.availabilityDeadlineAt)
@@ -1286,10 +1350,24 @@ export class FirstTrackingSegmentWorkflow {
 	}
 }
 
-export const firstTrackingSegmentWorkflow = (
+const prefixedTrackingStep = (
+	step: WorkflowStep,
+	segmentId: string,
+): WorkflowStep =>
+	new Proxy(step, {
+		get(target, property) {
+			return (name: string, ...arguments_: unknown[]) =>
+				Reflect.apply(Reflect.get(target, property), target, [
+					`${segmentId}-${name}`,
+					...arguments_,
+				]);
+		},
+	});
+
+export const trackingRunWorkflow = (
 	environment: DrivingAnalysisWorkflowEnvironment,
-): FirstTrackingSegmentWorkflow =>
-	new FirstTrackingSegmentWorkflow(
+): TrackingRunWorkflow =>
+	new TrackingRunWorkflow(
 		new TrackingAuthority(environment.DB),
 		environment.GPU_LEASE_COORDINATOR.getByName(
 			GPU_LEASE_COORDINATOR_OBJECT_NAME,
@@ -1361,7 +1439,7 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 			},
 			undefined,
 			async (command) => {
-				await firstTrackingSegmentWorkflow(this.env).run(
+				await trackingRunWorkflow(this.env).run(
 					{
 						...event,
 						payload: {
