@@ -91,6 +91,20 @@ describe('Corner review', () => {
 		fixture.componentRef.setInput('analysisId', analysisId);
 		fixture.detectChanges();
 		TestBed.tick();
+		for (const request of http.match((request) =>
+			request.url.endsWith('/lifecycle'),
+		))
+			request.flush({
+				lifecycle: {
+					analysisId,
+					status: 'cancelled',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: false,
+					canRetry: false,
+					failure: null,
+				},
+			});
 		return {
 			fixture,
 			routeNativeElement: fixture.nativeElement as HTMLElement,
@@ -121,6 +135,20 @@ describe('Corner review', () => {
 		root?.querySelector('button')?.click();
 		harness.detectChanges();
 		TestBed.tick();
+		for (const request of http.match((request) =>
+			request.url.endsWith('/lifecycle'),
+		))
+			request.flush({
+				lifecycle: {
+					analysisId: 'analysis-1',
+					status: 'cancelled',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: false,
+					canRetry: false,
+					failure: null,
+				},
+			});
 		const original = evidence.corners[0]?.passes[0];
 		if (!original) throw new Error('missing pass fixture');
 		http.expectOne('/api/v1/driving-analyses/analysis-1/evidence').flush({
@@ -185,6 +213,20 @@ describe('Corner review', () => {
 			harness.routeNativeElement?.querySelector('button')?.click();
 			harness.detectChanges();
 			TestBed.tick();
+			for (const request of http.match((request) =>
+				request.url.endsWith('/lifecycle'),
+			))
+				request.flush({
+					lifecycle: {
+						analysisId: 'analysis-1',
+						status: 'cancelled',
+						stateVersion: 1,
+						permanent: false,
+						canCancel: false,
+						canRetry: false,
+						failure: null,
+					},
+				});
 			http.expectOne('/api/v1/driving-analyses/analysis-1/evidence').flush({
 				evidence: {
 					...evidence,

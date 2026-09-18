@@ -43,6 +43,7 @@ const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
 	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');

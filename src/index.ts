@@ -9,6 +9,7 @@ import {
 	defaultAppDependencies,
 } from './app-dependencies';
 import { isAllowedOrigin } from './auth-policy';
+import { maintainAnalysisMedia } from './driving-analysis/analysis/lifecycle-maintenance';
 import { createTrackMapRoutes } from './driving-analysis/track-maps/track-map-routes';
 import { createFeatureFlagRoutes } from './feature-flags/routes';
 import { openApi } from './openapi';
@@ -97,12 +98,7 @@ export const createWorker = (
 			env: Env,
 			context: ExecutionContext,
 		): void {
-			context.waitUntil(
-				dependencies
-					.raceRecordingAuthority(env)
-					.recoverStale(100)
-					.then(() => undefined),
-			);
+			context.waitUntil(maintainAnalysisMedia(env, dependencies));
 		},
 	});
 };

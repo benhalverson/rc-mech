@@ -11,6 +11,7 @@ import {
 	sql,
 } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { analysisMediaScan } from '../analysis/lifecycle-schema';
 import {
 	type AcceptTrackingArtifactCommand,
 	type ActivateTrackingAttemptCommand,
@@ -1139,6 +1140,25 @@ export class TrackingAuthority {
 		/* c8 ignore next -- a zero-row result requires a concurrent D1 authority or cleanup change after the read above. */
 		if (!updated) throw stale('Tracking artifact promotion authority changed');
 		return updated;
+	}
+
+	async stagingCleanupCursor(): Promise<string | undefined> {
+		const scan = await this.database
+			.select()
+			.from(analysisMediaScan)
+			.where(eq(analysisMediaScan.name, 'tracking-staging'))
+			.get();
+		return scan?.cursor ?? undefined;
+	}
+
+	async saveStagingCleanupCursor(cursor: string | undefined): Promise<void> {
+		await this.database
+			.insert(analysisMediaScan)
+			.values({ name: 'tracking-staging', cursor: cursor ?? null })
+			.onConflictDoUpdate({
+				target: analysisMediaScan.name,
+				set: { cursor: cursor ?? null },
+			});
 	}
 
 	async cleanupPromotionCandidates(

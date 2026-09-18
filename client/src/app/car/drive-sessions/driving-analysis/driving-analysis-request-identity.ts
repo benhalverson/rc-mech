@@ -20,4 +20,12 @@ export class DrivingAnalysisRequestIdentityCapability {
 	clear(): void {
 		this.identities.clear();
 	}
+	retryId(analysisId: string, stateVersion: number): string {
+		const key = `retry:${analysisId}:${stateVersion}`;
+		const previous = this.identities.get(key);
+		if (previous) return previous.requestId;
+		const requestId = crypto.randomUUID();
+		this.identities.set(key, { fingerprint: key, requestId });
+		return requestId;
+	}
 }

@@ -3,6 +3,22 @@
 		<div><p class="alloy-eyebrow">Driving analysis</p><h2 id="corner-review-title" class="m-0 text-2xl font-semibold">Corner comparison</h2></div>
 		<button class="alloy-control alloy-control-secondary" type="button" (click)="store.refresh()" [disabled]="store.loading()">Refresh evidence</button>
 	</header>
+	@if (store.lifecycle(); as lifecycle) {
+		<section class="grid gap-3" aria-label="Analysis actions">
+			@if (lifecycle.failure; as failure) { <p role="status">{{ failure.retryable ? 'Processing is temporarily unavailable. You can retry this analysis.' : 'This analysis cannot be retried with its current source and inputs.' }}</p> }
+			@if (lifecycle.status === 'deleting') { <p role="status">Deletion is pending. Private media cleanup will retry automatically.</p> }
+			@if (lifecycle.permanent) { <p role="status">This analysis and its private derived media have been permanently deleted.</p> }
+			<div class="flex flex-wrap gap-3">
+				@if (lifecycle.canCancel) { <button class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" (click)="store.changeLifecycle({ action: 'cancel' })">Cancel analysis</button> }
+				@if (lifecycle.canRetry) { <button class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" (click)="store.changeLifecycle({ action: 'retry' })">Retry as a new run</button> }
+				@if (!lifecycle.permanent && lifecycle.status !== 'deleting') { <button class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" (click)="confirmingDeletion.set(true)">Delete analysis</button> }
+			</div>
+			@if (confirmingDeletion() && !lifecycle.permanent && lifecycle.status !== 'deleting') {
+				<div class="grid gap-2 rounded border border-alloy-separator p-3"><p>Delete this analysis and all derived clips? Deletion becomes permanent once private media is removed. Your source Race recording is kept.</p><div class="flex gap-3"><button class="alloy-control alloy-control-secondary" type="button" [disabled]="store.lifecycleBusy()" (click)="store.changeLifecycle({ action: 'delete' })">Confirm deletion</button><button class="alloy-control alloy-control-secondary" type="button" (click)="confirmingDeletion.set(false)">Keep analysis</button></div></div>
+			}
+		</section>
+	}
+	@if (store.lifecycleError(); as error) { <p role="alert">{{ error }}</p> }
 	@if (store.loading()) { <p role="status">Loading accepted Corner evidence…</p> }
 	@if (store.error(); as error) { <p class="alloy-state alloy-error-state" role="alert">{{ error }}</p> }
 	@if (store.review(); as review) {

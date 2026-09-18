@@ -297,6 +297,7 @@ describe('DrivingAnalysisStore', () => {
 					provide: DrivingAnalysisRequestIdentityCapability,
 					useValue: {
 						requestId: vi.fn(() => '55555555-5555-4555-8555-555555555555'),
+						retryId: vi.fn(() => '55555555-5555-4555-8555-555555555555'),
 						clear: vi.fn(),
 					},
 				},
@@ -493,7 +494,11 @@ describe('DrivingAnalysisStore', () => {
 		expect(store.analysisCreation().status).toBe('retrying');
 		store.retryAnalysis();
 		expect(analyses.retry).toHaveBeenCalledOnce();
-		expect(analyses.retry).toHaveBeenCalledWith(analysis().id, 3);
+		expect(analyses.retry).toHaveBeenCalledWith(
+			analysis().id,
+			3,
+			'55555555-5555-4555-8555-555555555555',
+		);
 		retried.next(analysis({ stateVersion: 4 }));
 		retried.complete();
 		await vi.waitFor(() =>

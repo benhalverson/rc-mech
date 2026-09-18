@@ -105,16 +105,18 @@ export class TrackingArtifactPublication {
 		try {
 			const candidates = await this.authority.cleanupPromotionCandidates(
 				now.toISOString(),
-				limit,
+				Math.max(1, Math.floor(limit / 2)),
 			);
-			for (const candidate of candidates) {
-				await this.store.delete([candidate.acceptedObjectKey]);
-				await this.authority.markArtifactPromotionDeleted({
-					artifactId: candidate.artifactId,
-					expectedVersion: candidate.version,
-					deletedAt: now.toISOString(),
-				});
-			}
+			const promotions = await Promise.allSettled(
+				candidates.map(async (candidate) => {
+					await this.store.delete([candidate.acceptedObjectKey]);
+					await this.authority.markArtifactPromotionDeleted({
+						artifactId: candidate.artifactId,
+						expectedVersion: candidate.version,
+						deletedAt: now.toISOString(),
+					});
+				}),
+			);
 
 			const stagingLimit = limit - candidates.length;
 			const stagingKeys =
@@ -124,8 +126,19 @@ export class TrackingArtifactPublication {
 							new Date(now.getTime() - TRACKING_ARTIFACT_GARBAGE_RETENTION_MS),
 							stagingLimit,
 						);
-			if (stagingKeys.length > 0) await this.store.delete(stagingKeys);
-			return candidates.length + stagingKeys.length;
+			const staging = await Promise.allSettled(
+				stagingKeys.map((key) => this.store.delete([key])),
+			);
+			const outcomes = [...promotions, ...staging];
+			const deleted = outcomes.filter(
+				(result) => result.status === 'fulfilled',
+			).length;
+			if (
+				deleted === 0 &&
+				outcomes.some((result) => result.status === 'rejected')
+			)
+				throw new TrackingArtifactPublicationError('CLEANUP_FAILED');
+			return deleted;
 		} catch (error) {
 			if (error instanceof TrackingArtifactPublicationError) throw error;
 			throw new TrackingArtifactPublicationError('CLEANUP_FAILED');
@@ -310,15 +323,21 @@ export class TrackingArtifactPublication {
 
 	private async dueStagingKeys(cutoff: Date, limit: number): Promise<string[]> {
 		const keys: string[] = [];
-		let cursor: string | undefined;
+		let cursor = await this.authority.stagingCleanupCursor();
+		let pages = 0;
 		do {
+			pages += 1;
 			const page = await this.store.list('tracking-staging/', cursor);
 			for (const object of page.objects) {
 				if (object.uploaded <= cutoff) keys.push(object.key);
-				if (keys.length === limit) return keys;
+				if (keys.length === limit) {
+					await this.authority.saveStagingCleanupCursor(cursor);
+					return keys;
+				}
 			}
 			cursor = page.cursor ?? undefined;
-		} while (cursor !== undefined);
+		} while (cursor !== undefined && pages < 10);
+		await this.authority.saveStagingCleanupCursor(cursor);
 		return keys;
 	}
 }
