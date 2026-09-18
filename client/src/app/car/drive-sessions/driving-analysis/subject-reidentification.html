@@ -1,0 +1,35 @@
+<section class="grid gap-4 rounded border border-alloy-separator p-4" aria-label="Re-identify the Subject car">
+	<h5 class="m-0 text-base font-semibold">Re-identify the Subject car</h5>
+	@if (store.loading()) {
+		<p role="status">Loading accepted gap context…</p>
+	} @else if (store.readFailed()) {
+		<p role="alert">Gap context could not be loaded. Refresh the analysis to try again.</p>
+	} @else if (store.context(); as context) {
+		<p class="m-0 text-sm">Tracking became uncertain at {{ context.gap.startTimestampMs }} ms ({{ context.gap.reason }}). Choose a later clear frame. The gap stays excluded from corner comparisons.</p>
+		<details><summary class="alloy-focus-ring cursor-pointer">Accepted evidence</summary><p class="alloy-technical break-all text-xs">{{ context.acceptedDigest }}</p></details>
+		@if (store.outcome().status === 'failed') { <p role="alert">The correction could not be confirmed. Retry the same frame and box to safely resume.</p> }
+		@if (store.outcome().status === 'succeeded') {
+			<p role="status">Subject correction accepted. Tracking will continue when capacity is available.</p>
+		} @else if (context.pendingCorrection; as pending) {
+			<p>Saved correction at {{ pending.subjectSeed.timestampMs }} ms. Retry to ensure tracking resumes with this exact Subject box.</p>
+			<button class="alloy-control alloy-control-primary w-fit" type="button" (click)="retrySaved()" [disabled]="store.outcome().status === 'pending'">Retry saved correction</button>
+		} @else {
+			<form class="grid gap-3" (submit)="submit($event)">
+				<app-subject-box-editor heading="Subject car correction" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
+					<video #player class="aspect-video w-full bg-black" preload="metadata" [src]="recording().playbackUrl" aria-label="Private recording for Subject correction">
+						<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
+					</video>
+				</app-subject-box-editor>
+				<label class="grid gap-1 text-sm">Inspect a later clear frame
+					<input type="range" class="w-full accent-alloy-accent" [min]="context.gap.startTimestampMs + 1" [max]="analysis().raceWindow.endTimestampMs - 1" step="1" [value]="draft().timestampMs" (input)="seek($event, player)" />
+				</label>
+				<label class="grid gap-1 text-sm">Subject timestamp (ms)<input #timestampField class="alloy-control" type="number" step="1" [formField]="fields.timestampMs" /></label>
+				<label class="grid gap-1 text-sm">Source frame index<input class="alloy-control" type="number" step="1" [formField]="fields.frameIndex" /></label>
+				@if (error()) { <p role="alert">{{ error() }}</p> }
+				<button class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.outcome().status === 'pending'" [attr.aria-busy]="store.outcome().status === 'pending'">{{ store.outcome().status === 'pending' ? 'Saving correction…' : 'Confirm Subject and resume' }}</button>
+			</form>
+		}
+	} @else {
+		<p role="status">This analysis has no unresolved tracking gap.</p>
+	}
+</section>

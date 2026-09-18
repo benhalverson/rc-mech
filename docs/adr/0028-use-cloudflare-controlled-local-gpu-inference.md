@@ -120,6 +120,16 @@ the final segment's outcome, so an earlier accepted gap does not keep a correcte
 run in awaiting-reidentification. Cancellation fences D1 and terminates the
 original Workflow, including any external wait.
 
+The owner-scoped `/driving-analyses/:analysisId/reidentification` read exposes the
+accepted gap and digest. Its correction command binds the current run, predecessor
+segment, accepted digest, immutable correction ID, and finite normalized Subject
+seed. Concurrent identical commands reuse the winning record's timing; conflicting
+seeds or IDs cannot replace it. A saved correction is committed before the Workflow
+wakeup is sent. If that delivery fails, the read exposes its safe receipt and seed
+so a refreshed client can retry the exact correction. Repeated wakeups are harmless.
+The correction editor uses private playback and the same keyboard-accessible box
+editor as initial identification, with a distinct landmark name.
+
 ## Publication recovery retention
 
 Promotion tombstones remain permanently ineligible for publication and are retained

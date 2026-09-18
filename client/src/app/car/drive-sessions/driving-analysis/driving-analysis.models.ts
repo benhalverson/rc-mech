@@ -52,7 +52,7 @@ const raceWindow = strictObject({
 				MAX_RACE_WINDOW_DURATION_MS,
 	),
 );
-const subjectSeed = strictObject({
+export const subjectSeed = strictObject({
 	timestampMs: int().check(nonnegative()),
 	frameIndex: int().check(nonnegative()),
 	identity: string().check(minLength(1), maxLength(128)),

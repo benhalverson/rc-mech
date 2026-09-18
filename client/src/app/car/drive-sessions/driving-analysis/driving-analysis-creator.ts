@@ -16,6 +16,7 @@ import {
 import { DrivingAnalysisStore } from './driving-analysis-store';
 import type { RaceRecording } from './race-recording.models';
 import { SubjectBoxEditor } from './subject-box-editor';
+import { SubjectReidentification } from './subject-reidentification';
 
 type CreationForm = {
 	approvedTrackMapVersionId: string;
@@ -40,7 +41,13 @@ const titleCase = (value: string): string =>
 
 @Component({
 	selector: 'app-driving-analysis-creator',
-	imports: [FormField, SubjectBoxEditor, TrackMapGeometry, RouterLink],
+	imports: [
+		FormField,
+		SubjectBoxEditor,
+		SubjectReidentification,
+		TrackMapGeometry,
+		RouterLink,
+	],
 	templateUrl: './driving-analysis-creator.html',
 	host: { class: 'block' },
 })
