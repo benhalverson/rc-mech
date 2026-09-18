@@ -439,6 +439,33 @@ describe('TrackingAuthority', () => {
 		});
 	});
 
+	test('failure replay does not postpone terminal prepared-media retention', async () => {
+		const { authority, preparedAuthority } = await createSegmentAuthority();
+		const expiredAt = Date.parse(LATER);
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: null,
+			expiredAt,
+		};
+		await authority.expireAvailability(command);
+		await authority.expireAvailability({
+			...command,
+			expiredAt: expiredAt + 60 * 60 * 1000,
+		});
+		expect(
+			await preparedAuthority.cleanupCandidates(
+				new Date(expiredAt + 24 * 60 * 60 * 1000).toISOString(),
+				LATER,
+			),
+		).toEqual([
+			expect.objectContaining({ runId: RUN_ID, preparedMediaId: PREPARED_ID }),
+		]);
+	});
+
 	test('fails unavailable output authority before the deadline and fences the run while retaining its original attempt', async () => {
 		const { authority, database } = await createAttemptAuthority();
 		const command = {

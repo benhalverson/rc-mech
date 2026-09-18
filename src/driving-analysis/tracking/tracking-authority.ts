@@ -1773,7 +1773,7 @@ export class TrackingAuthority {
 			.set({
 				status: 'failed',
 				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
-				completedAt: new Date(command.expiredAt).toISOString(),
+				completedAt: sql`coalesce(${trackingRun.completedAt}, ${new Date(command.expiredAt).toISOString()})`,
 			})
 			.where(
 				and(
