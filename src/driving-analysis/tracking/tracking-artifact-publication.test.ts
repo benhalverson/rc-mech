@@ -938,7 +938,7 @@ describe('TrackingArtifactPublication', () => {
 			expect(
 				await Promise.all([
 					cleaner().cleanupDue(recheckAt, 1),
-					cleaner().cleanupDue(recheckAt, 1),
+					cleaner().cleanupDue(new Date(recheckAt.getTime() + 1), 1),
 				]),
 			).toEqual([1, 1]);
 			expect(

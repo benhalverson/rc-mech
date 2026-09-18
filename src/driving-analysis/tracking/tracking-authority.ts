@@ -1225,10 +1225,11 @@ export class TrackingAuthority {
 			.from(trackingArtifactPromotion)
 			.where(eq(trackingArtifactPromotion.artifactId, command.artifactId))
 			.get();
+		// Concurrent cleaners share a deletion version but can use different clocks.
+		// Preserve the first completion; a later cleanup cycle has a new version.
 		if (
 			stored?.state === 'deleted' &&
-			stored.version === command.expectedVersion + 1 &&
-			stored.deletedAt === command.deletedAt
+			stored.version === command.expectedVersion + 1
 		)
 			return stored;
 		throw stale('Tracking artifact cleanup authority changed');

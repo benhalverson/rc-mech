@@ -911,6 +911,37 @@ describe('TrackingAuthority', () => {
 				deletedAt: LATER,
 			}),
 		).toEqual(deleted);
+		for (const offset of [-1, 1]) {
+			expect(
+				await authority.markArtifactPromotionDeleted({
+					artifactId: artifact.artifactId,
+					expectedVersion: claimed.version,
+					deletedAt: new Date(Date.parse(LATER) + offset).toISOString(),
+				}),
+			).toEqual(deleted);
+		}
+		const recheckAt = new Date(
+			Date.parse(LATER) + 24 * 60 * 60 * 1000,
+		).toISOString();
+		const [reclaimed] = await authority.cleanupPromotionCandidates(recheckAt);
+		if (!reclaimed) throw new Error('Expected a tombstone recheck claim');
+		const staleCompletion = {
+			artifactId: artifact.artifactId,
+			expectedVersion: claimed.version,
+			deletedAt: recheckAt,
+		};
+		await expectAuthorityError(
+			authority.markArtifactPromotionDeleted(staleCompletion),
+			'STALE_AUTHORITY',
+		);
+		await authority.markArtifactPromotionDeleted({
+			...staleCompletion,
+			expectedVersion: reclaimed.version,
+		});
+		await expectAuthorityError(
+			authority.markArtifactPromotionDeleted(staleCompletion),
+			'STALE_AUTHORITY',
+		);
 		await expectAuthorityError(
 			authority.markArtifactPromotionDeleted({
 				artifactId: artifact.artifactId,
