@@ -12,8 +12,8 @@ from driving_analysis_service.tracking_contracts import TrackStageRequest
 
 FIXTURES = json.loads(
     (
-        Path(__file__).resolve().parents[3]
-        / "shared/fixtures/tracking-python-canonical.json"
+        Path(__file__).resolve().parent
+        / "fixtures/tracking-canonical/tracking-python-canonical.json"
     ).read_text()
 )
 

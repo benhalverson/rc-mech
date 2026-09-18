@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import parityFixtures from '../../../shared/fixtures/tracking-python-canonical.json';
+import parityFixtures from '../../../containers/driving-analysis/tests/fixtures/tracking-canonical/tracking-python-canonical.json';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
