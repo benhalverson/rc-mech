@@ -34,7 +34,60 @@ export const CornerReviewStore = signalStore(
 			requestIdentity: inject(DrivingAnalysisRequestIdentityCapability),
 		};
 	}),
+	withProps((store) => {
+		const gateway = inject(CornerReviewGateway);
+		const correctionAnalysisResource = gateway.readAnalysis(
+			computed(() => {
+				if (!store.lifecycleResource.hasValue()) return null;
+				const lifecycle = store.lifecycleResource.value();
+				return lifecycle.analysisId === store.analysisId() &&
+					lifecycle.status === 'awaiting-reidentification'
+					? lifecycle.analysisId
+					: null;
+			}),
+		);
+		return {
+			correctionAnalysisResource,
+			correctionRecordingResource: gateway.readRecording(
+				computed(() => {
+					if (!correctionAnalysisResource.hasValue()) return null;
+					const analysis = correctionAnalysisResource.value();
+					return analysis.id === store.analysisId() &&
+						analysis.status === 'awaiting-reidentification'
+						? analysis.raceVideoId
+						: null;
+				}),
+			),
+		};
+	}),
 	withComputed((store) => ({
+		correction: computed(() => {
+			if (!store.lifecycleResource.hasValue()) return null;
+			const lifecycle = store.lifecycleResource.value();
+			if (
+				lifecycle.analysisId !== store.analysisId() ||
+				lifecycle.status !== 'awaiting-reidentification'
+			)
+				return null;
+			if (
+				!store.correctionAnalysisResource.hasValue() ||
+				!store.correctionRecordingResource.hasValue()
+			)
+				return null;
+			const analysis = store.correctionAnalysisResource.value();
+			const recording = store.correctionRecordingResource.value();
+			return analysis.id === store.analysisId() &&
+				analysis.status === 'awaiting-reidentification' &&
+				recording.id === analysis.raceVideoId
+				? { analysis, recording }
+				: null;
+		}),
+		correctionError: computed(() =>
+			store.correctionAnalysisResource.error() ||
+			store.correctionRecordingResource.error()
+				? 'The recording and analysis needed for correction could not be loaded. Refresh evidence to try again.'
+				: null,
+		),
 		lifecycle: computed(() =>
 			store.lifecycleResource.hasValue()
 				? store.lifecycleResource.value()
@@ -123,6 +176,8 @@ export const CornerReviewStore = signalStore(
 				patchState(store, command);
 			},
 			refresh(): void {
+				store.correctionAnalysisResource.reload();
+				store.correctionRecordingResource.reload();
 				store.resource.reload();
 				store.clipsResource.reload();
 				store.lifecycleResource.reload();
