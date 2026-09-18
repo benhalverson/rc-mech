@@ -1,0 +1,1379 @@
+[
+	{
+		"name": "0-0.0",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 0.0,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 0.0,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":0.0,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "e837a34ac55e770d088017f3d97c87a657fc799a838f3079792f434bdae900d5",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"e837a34ac55e770d088017f3d97c87a657fc799a838f3079792f434bdae900d5\",\"identityConfidenceThreshold\":0.0,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":0.0,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "aca1274e773fbcf04404e3b010c2a5131353014b01388b79aacb9b489be8c4a6"
+	},
+	{
+		"name": "1--0.0",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": -0.0,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": -0.0,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":-0.0,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "20baf5555c103914e15af1c0c66abaf320411db8ec05a97eba9a147577da0a29",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"20baf5555c103914e15af1c0c66abaf320411db8ec05a97eba9a147577da0a29\",\"identityConfidenceThreshold\":-0.0,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":-0.0,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "03c1e5e06298c96b7e0ef8e4cc510e2ef718f651c4af124030e75765ad623296"
+	},
+	{
+		"name": "2-1.0",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1.0,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 0.0,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1.0,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "49d6ba6b1b06c5fc738461747e8e2c316cd49038433c36122f23042984109b03",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"49d6ba6b1b06c5fc738461747e8e2c316cd49038433c36122f23042984109b03\",\"identityConfidenceThreshold\":1.0,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":0.0,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "bf553f3f4e9604d93dafdf5d6e2b004750af5d8aacf5b82ad63a277573ee1da3"
+	},
+	{
+		"name": "3-5e-324",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 5e-324,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 5e-324,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":5e-324,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "55c10a8963b21b234bac5b595b07ab4c3cc2a4b5f1c734273f5c78afc27deee3",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"55c10a8963b21b234bac5b595b07ab4c3cc2a4b5f1c734273f5c78afc27deee3\",\"identityConfidenceThreshold\":5e-324,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":5e-324,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "ec0f68e4e82be2825364746f53bf327458902a705962d4df464cb3c6f0a637de"
+	},
+	{
+		"name": "4-1e-300",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1e-300,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 1e-300,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1e-300,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "7bb6b73c218b8162af27f16d8c75cd4e0ffefa3f142e21d1883f2a0c78241a8e",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"7bb6b73c218b8162af27f16d8c75cd4e0ffefa3f142e21d1883f2a0c78241a8e\",\"identityConfidenceThreshold\":1e-300,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":1e-300,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "277f88ee61fdbd53e6605fd8248c4a621679a4998d0716f78a363e5c8058e2c1"
+	},
+	{
+		"name": "5-9.999999999999999e-05",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 9.999999999999999e-5,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 9.999999999999999e-5,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":9.999999999999999e-05,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "915c4fa354f6f25c11002339d185c7c11046d5fad06afc06dc1b4bf477d09619",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"915c4fa354f6f25c11002339d185c7c11046d5fad06afc06dc1b4bf477d09619\",\"identityConfidenceThreshold\":9.999999999999999e-05,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":9.999999999999999e-05,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "67d4a48ed141a01be86903c880098549a445b529cdeae4016448f9d0746a010d"
+	},
+	{
+		"name": "6-0.0001",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 0.0001,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 0.0001,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":0.0001,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "e0a6ca196105ada4b32b92172dd8b35e78cc05e24626e337878dfedcaa169e76",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"e0a6ca196105ada4b32b92172dd8b35e78cc05e24626e337878dfedcaa169e76\",\"identityConfidenceThreshold\":0.0001,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":0.0001,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "16940ca9b0cb10759f628ba7369a96b2f1316a417418c6cb81dfc8e980fe4c94"
+	},
+	{
+		"name": "7-0.00010000000000000002",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 0.00010000000000000002,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 0.00010000000000000002,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":0.00010000000000000002,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "d58dc9006e91f09ced9ccf49ade84324f06c79a38bcc012c0623321a419a24a7",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"d58dc9006e91f09ced9ccf49ade84324f06c79a38bcc012c0623321a419a24a7\",\"identityConfidenceThreshold\":0.00010000000000000002,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":0.00010000000000000002,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "66c2ec39376b3122dcb15d97a20283a4f42692098911281dc1f148b66677f3c4"
+	},
+	{
+		"name": "8-9.999999999999999e-06",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 9.999999999999999e-6,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 9.999999999999999e-6,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":9.999999999999999e-06,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "d10c87008dfedce8b5a96196c8a0d1750f1d0fc8c763b7157350fd07c24555f9",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"d10c87008dfedce8b5a96196c8a0d1750f1d0fc8c763b7157350fd07c24555f9\",\"identityConfidenceThreshold\":9.999999999999999e-06,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":9.999999999999999e-06,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "446ab1d043d34030d90a14b140c57216aca595d65ade6f6cf8147ef2a84167a4"
+	},
+	{
+		"name": "9-1e-05",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1e-5,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 1e-5,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1e-05,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "7ea33251d0981b500bc6c545d9ac6c83790dd8a0c055b1724db046953e91a4d5",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"7ea33251d0981b500bc6c545d9ac6c83790dd8a0c055b1724db046953e91a4d5\",\"identityConfidenceThreshold\":1e-05,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":1e-05,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "f9fece8e767551a420c0376ddde54a51bb1446f0eaa50289734efb2d2a45af40"
+	},
+	{
+		"name": "10-1.0000000000000003e-05",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1.0000000000000003e-5,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 1.0000000000000003e-5,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1.0000000000000003e-05,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "34a04d9b37b88ea6bcadedde0c2efa73091903d6983cc3f3909dd5a99f46a2ae",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"34a04d9b37b88ea6bcadedde0c2efa73091903d6983cc3f3909dd5a99f46a2ae\",\"identityConfidenceThreshold\":1.0000000000000003e-05,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":1.0000000000000003e-05,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "fd6e7d7c36388d5517d96e66fa8eacabecac4b9af57054982372c5891d77801a"
+	},
+	{
+		"name": "11-9.999999999999997e-07",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 9.999999999999997e-7,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 9.999999999999997e-7,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":9.999999999999997e-07,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "ef9cb56be9f9efa9cacf875b2faaca4cfc18b89475d7611fe421fb835f65e793",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"ef9cb56be9f9efa9cacf875b2faaca4cfc18b89475d7611fe421fb835f65e793\",\"identityConfidenceThreshold\":9.999999999999997e-07,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":9.999999999999997e-07,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "05f181e9ecc89dc6cc25804cdbec9c5723d61ba7fc92346c550b17f5370ff16a"
+	},
+	{
+		"name": "12-1e-06",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1e-6,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 1e-6,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1e-06,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "4042dbd63efda5e8b5c23253f09368a89ce8f0784bc2e681433129215fad18a6",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"4042dbd63efda5e8b5c23253f09368a89ce8f0784bc2e681433129215fad18a6\",\"identityConfidenceThreshold\":1e-06,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":1e-06,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "2d06af364a202642aecae0d627c7103662265d39470be1f8428d09604a79a2b0"
+	},
+	{
+		"name": "13-1.0000000000000002e-06",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1.0000000000000002e-6,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 1.0000000000000002e-6,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1.0000000000000002e-06,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "d1df2c58b3e2cb190673ca23657a4d672f1b95a3f059967d170e18e6610e52c2",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"d1df2c58b3e2cb190673ca23657a4d672f1b95a3f059967d170e18e6610e52c2\",\"identityConfidenceThreshold\":1.0000000000000002e-06,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":1.0000000000000002e-06,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "67bcb94abc16b9b32bb0858b5123d113eea6c49d5b00efdfdcebab9baf00c29f"
+	},
+	{
+		"name": "14-9.999999999999998e-08",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 9.999999999999998e-8,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 9.999999999999998e-8,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":9.999999999999998e-08,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "5eb6221c6ed2477195febda1fc83a55361691b837c618f6394394fe746cc2b72",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"5eb6221c6ed2477195febda1fc83a55361691b837c618f6394394fe746cc2b72\",\"identityConfidenceThreshold\":9.999999999999998e-08,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":9.999999999999998e-08,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "3e92ff3c002b4dec46548c335b1312053c33d70c45d020110decebcdd1a19fb7"
+	},
+	{
+		"name": "15-1e-07",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1e-7,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 1e-7,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1e-07,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "1dd89d1ae7118361150fc715ae6a412740cb82adec0e6965e854a537f85cd34d",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"1dd89d1ae7118361150fc715ae6a412740cb82adec0e6965e854a537f85cd34d\",\"identityConfidenceThreshold\":1e-07,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":1e-07,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "6afbff02be0d7940dc9d19b69ca1cf00cf855b6e96693a431cd97724cd35bb43"
+	},
+	{
+		"name": "16-1.0000000000000001e-07",
+		"profile": {
+			"contractVersion": "inference-profile.v1",
+			"canonicalizationVersion": "inference-profile-c14n.v1",
+			"provider": "local-sam31",
+			"model": {
+				"name": "sam3.1",
+				"version": "mod\u00e8le \ud83d\ude97",
+				"digest": "1111111111111111111111111111111111111111111111111111111111111111"
+			},
+			"pipeline": {
+				"version": "subject-tracking.v1",
+				"digest": "2222222222222222222222222222222222222222222222222222222222222222"
+			},
+			"runtimeImageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+			"preprocessing": "fixed-track-view-frames.v1",
+			"precision": "float32",
+			"confidenceCalibration": "sam31-point-mask-v1",
+			"identityConfidenceThreshold": 1.0000000000000001e-7,
+			"promptSemantics": "subject-box-center-positive-point.v1",
+			"tracking": {
+				"minimumAreaRatio": 0.05,
+				"maximumSeedAreaRatio": 25,
+				"maximumFrameAreaRatio": 8,
+				"maximumCenterDisplacement": 0.35
+			}
+		},
+		"request": {
+			"contractVersion": "subject-tracking.v1",
+			"correlationId": "66666666-6666-4666-8666-666666666666",
+			"caseId": "fixture-race",
+			"observationSegmentId": "22222222-2222-4222-8222-222222222222",
+			"prepared": {
+				"preparedMediaId": "55555555-5555-4555-8555-555555555555",
+				"caseId": "fixture-race",
+				"byteCount": 14,
+				"checksumSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+				"frameManifestByteCount": 14,
+				"frameManifestChecksumSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+				"sourceByteCount": 100,
+				"sourceChecksumSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+				"window": {
+					"startTimestampMs": 100,
+					"endTimestampMs": 400
+				},
+				"trackView": {
+					"x": 0.0,
+					"y": 0.3333333333333333,
+					"width": 1.0,
+					"height": 0.6666666666666666
+				},
+				"width": 160,
+				"height": 60,
+				"decodedFrameCount": 3,
+				"averageFrameRate": {
+					"numerator": 10,
+					"denominator": 1
+				},
+				"ffmpegVersion": "7.1.2",
+				"pipelineVersion": "subject-tracking.v1",
+				"preparationInputDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+				"preparationConfigurationDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+			},
+			"subjectSeed": {
+				"timestampMs": 100,
+				"frameIndex": 1,
+				"identity": "voiture \ud83d\ude97",
+				"box": {
+					"x": 1.0000000000000001e-7,
+					"y": 0.2,
+					"width": 0.2,
+					"height": 0.2
+				}
+			}
+		},
+		"provenanceCanonical": "{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"identityConfidenceThreshold\":1.0000000000000001e-07,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"}",
+		"provenanceDigest": "76c1f567a69af2f964e6a6b091c7722b8621157203f10bfe168fceab206d5139",
+		"trackingCanonical": "{\"caseId\":\"fixture-race\",\"contractVersion\":\"subject-tracking.v1\",\"observationSegmentId\":\"22222222-2222-4222-8222-222222222222\",\"prepared\":{\"averageFrameRate\":{\"denominator\":1,\"numerator\":10},\"byteCount\":14,\"caseId\":\"fixture-race\",\"checksumSha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"decodedFrameCount\":3,\"ffmpegVersion\":\"7.1.2\",\"frameManifestByteCount\":14,\"frameManifestChecksumSha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"height\":60,\"pipelineVersion\":\"subject-tracking.v1\",\"preparationConfigurationDigest\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"preparationInputDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"preparedMediaId\":\"55555555-5555-4555-8555-555555555555\",\"sourceByteCount\":100,\"sourceChecksumSha256\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trackView\":{\"height\":0.6666666666666666,\"width\":1.0,\"x\":0.0,\"y\":0.3333333333333333},\"width\":160,\"window\":{\"endTimestampMs\":400,\"startTimestampMs\":100}},\"providerProvenance\":{\"confidenceCalibration\":\"sam31-point-mask-v1\",\"configurationDigest\":\"76c1f567a69af2f964e6a6b091c7722b8621157203f10bfe168fceab206d5139\",\"identityConfidenceThreshold\":1.0000000000000001e-07,\"model\":\"sam3.1\",\"modelDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"modelVersion\":\"mod\\u00e8le \\ud83d\\ude97\",\"pipelineVersion\":\"subject-tracking.v1\",\"provider\":\"sam31\"},\"subjectSeed\":{\"box\":{\"height\":0.2,\"width\":0.2,\"x\":1.0000000000000001e-07,\"y\":0.2},\"frameIndex\":1,\"identity\":\"voiture \\ud83d\\ude97\",\"timestampMs\":100}}\n",
+		"trackingDigest": "bcb15e526f2576d3a29c6706ca72f6a9d6e2c85875b199cde2825b8f52c96679"
+	}
+]

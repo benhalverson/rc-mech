@@ -15,12 +15,14 @@ import {
 	uuidV4Schema,
 } from './contracts';
 import type { InferenceProfile } from './inference-profile';
+import { asPythonFloat, pythonCanonical } from './python-canonical';
 import {
 	type PrivateTrackingArtifactObject,
 	R2TrackingArtifactStore,
 	type TrackingArtifactStore,
 	TrackingArtifactStoreError,
 } from './r2-tracking-artifact-store';
+import { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 import {
 	type SubjectObservationArtifactRecord,
 	type TrackingArtifactPublicationContext,
@@ -30,7 +32,7 @@ import {
 
 export const TRACKING_ARTIFACT_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 export const TRACKING_ARTIFACT_MAX_CONTRACT_BYTES = 64 * 1024 * 1024;
-export const TRACKING_ARTIFACT_GARBAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+export { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 
 const publishTrackingArtifactCommandSchema = z.strictObject({
 	ownerId: z.string().trim().min(1).max(128),
@@ -143,7 +145,7 @@ export class TrackingArtifactPublication {
 		);
 		if (existing) {
 			await this.validateAcceptedReplay(existing, artifact, acceptedObjectKey);
-			await this.retrySuccessfulRelease(artifact);
+			await this.releaseCompletedLease(artifact);
 			return existing;
 		}
 
@@ -241,12 +243,7 @@ export class TrackingArtifactPublication {
 			throw error;
 		}
 
-		const released = await this.leaseCoordinator.release({
-			...leaseIdentity(artifact),
-			completed: true,
-		});
-		if (released.status !== 'ok')
-			throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
+		await this.releaseCompletedLease(artifact);
 		return accepted;
 	}
 
@@ -284,14 +281,14 @@ export class TrackingArtifactPublication {
 			throw new TrackingArtifactPublicationError('PROMOTION_CONFLICT');
 	}
 
-	private async retrySuccessfulRelease(
-		artifact: OutputArtifact,
-	): Promise<void> {
+	private async releaseCompletedLease(artifact: OutputArtifact): Promise<void> {
 		try {
-			await this.leaseCoordinator.release({
+			const released = await this.leaseCoordinator.release({
 				...leaseIdentity(artifact),
 				completed: true,
 			});
+			if (released.status !== 'ok')
+				throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
 		} catch {
 			throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
 		}
@@ -439,50 +436,6 @@ export const trackingInputDigestFor = async (
 			})}\n`,
 		),
 	);
-
-const pythonFloat = (value: number): string => {
-	if (Object.is(value, -0)) return '-0.0';
-	if (Number.isInteger(value)) return `${value}.0`;
-	return String(value).replace(
-		/e-(\d+)$/i,
-		(_match, exponent) => `e-${String(exponent).padStart(2, '0')}`,
-	);
-};
-
-class PythonFloatValue {
-	constructor(readonly value: number) {}
-}
-
-const asPythonFloat = (value: number): PythonFloatValue =>
-	new PythonFloatValue(value);
-
-const pythonCanonical = (value: unknown): string => {
-	if (typeof value === 'string') return pythonString(value);
-	if (typeof value === 'number') {
-		/* c8 ignore next 2 -- every plain number in the constructed digest payload is schema-bounded integer data. */
-		if (!Number.isSafeInteger(value))
-			throw new TrackingArtifactPublicationError('INVALID_ARTIFACT');
-		return String(value);
-	}
-	if (value instanceof PythonFloatValue) return pythonFloat(value.value);
-	/* c8 ignore next 2 -- digest payloads are constructed locally from strict object contracts and contain no unsupported values. */
-	if (typeof value !== 'object' || value === null || Array.isArray(value))
-		throw new TrackingArtifactPublicationError('INVALID_ARTIFACT');
-	return `{${Object.entries(value)
-		.sort(([left], [right]) => (left < right ? -1 : 1))
-		.map(([key, item]) => `${pythonString(key)}:${pythonCanonical(item)}`)
-		.join(',')}}`;
-};
-
-const pythonString = (value: string): string =>
-	JSON.stringify(value)
-		.split('')
-		.map((character) =>
-			character.charCodeAt(0) > 0x7f
-				? `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
-				: character,
-		)
-		.join('');
 
 const provenanceForDigest = (
 	provenance: Omit<SubjectProvenance, 'configurationDigest'>,

@@ -51,3 +51,35 @@ Every active local execution has a configurable liveness watchdog. Only an Acces
 The local services restart persistently after host reboot, but local state alone never authorizes computation to resume. Cloudflare must reauthorize recovery through a fresh pull-protocol interaction bound to the current segment, lease, and fencing token. Computation interrupted before artifact finalization resumes as a new execution attempt under the same immutable segment and specification; it may retain the current lease only if Cloudflare confirms that authority is still active, otherwise Cloudflare must acquire a new lease and fencing token. An already finalized `output-ready` attempt remains idempotently reportable with its original descriptor and attempt identity so Cloudflare can decide whether it is still acceptable. The worker never persists Transfer-grant URLs or credentials, and it reuses cached prepared media only after verifying the immutable source checksum.
 
 ADR 0019 remains in force for asynchronous run-level Workflow orchestration, but this decision moves GPU work out of the Cloudflare container. ADR 0020 remains in force for TypeScript orchestration and Python-owned media and computer-vision work, but this decision splits those Python responsibilities between the Cloudflare media container and the local GPU service. ADR 0021 remains in force for a versioned inference-provider boundary, but this decision locates `TrackingProvider` at the trusted TypeScript boundary rather than inside the Python container. ADR 0027 remains in force for actual Python-container egress, including its mediated R2 path. It does not require GPU control to traverse the Python container, does not extend the container's allowed logical hosts, and does not grant general container Internet access.
+
+## Publication recovery retention
+
+Promotion tombstones remain permanently ineligible for publication and are retained
+without automatic pruning. Cleanup revisits unreferenced `deleted` promotions
+24 hours after their last completed cleanup (`updatedAt`): an R2 PUT can complete
+after DELETE and recreate the object even if the publisher disappears. Each
+recheck atomically moves the tombstone into `deleting`, clears `deletedAt`, and
+advances its version before deleting the object. Failed deletions remain retryable.
+Accepted evidence references protect both artifact IDs and object keys.
+
+Repeated lifecycle cleanup calls use bounded batches ordered by effective cleanup
+due time, then artifact ID. Rechecked tombstones move behind older due work. This
+recovery guarantee incurs recurring D1 scans and R2 DELETE calls for retained
+unreferenced promotions, including keys that are already absent; this issue adds
+neither pruning nor a new cleanup scheduler. R2 concurrent PUT/DELETE operations
+are resolved by completion order ([R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)).
+
+Completed GPU releases also retain durable receipts without automatic pruning.
+Each receipt binds the segment to the exact lease ID and fence and is written in
+the same coordinator transaction that clears the active lease and records
+completion. A matching completed-release replay succeeds after eviction or a
+lost response, without changing another segment's lease. Expiration, cancellation,
+ordinary release, and mismatched identities do not prove completion. Older state
+loads with an empty receipt collection; a historical terminal reason alone never
+creates a receipt. This adds retained coordinator state per completed segment.
+
+Initial publication and accepted replay both require an `ok` completed release;
+exceptions and non-`ok` replies report `LEASE_RELEASE_FAILED`. Already accepted
+evidence remains immutable and available for inspection and retry. Older accepted
+publications whose successful releases predate receipts fail closed on replay;
+recovery does not fabricate receipts or rewrite those artifacts.

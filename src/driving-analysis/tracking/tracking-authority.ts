@@ -80,6 +80,7 @@ import {
 	FRAME_MANIFEST_CONTENT_TYPE,
 	PREPARED_MEDIA_CONTENT_TYPE,
 } from './track-view-contracts';
+import { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 import { buildTrackingSegmentSpecification } from './tracking-segment-specification';
 
 export type TrackingAuthorityErrorCode =
@@ -1131,21 +1132,33 @@ export class TrackingAuthority {
 					),
 				),
 		);
+		const recheckBefore = new Date(
+			Date.parse(now) - TRACKING_ARTIFACT_GARBAGE_RETENTION_MS,
+		).toISOString();
+		const eligible = or(
+			and(
+				inArray(trackingArtifactPromotion.state, [
+					'pending',
+					'promoted',
+					'deleting',
+				]),
+				lte(trackingArtifactPromotion.deleteAfter, now),
+			),
+			and(
+				eq(trackingArtifactPromotion.state, 'deleted'),
+				lte(trackingArtifactPromotion.updatedAt, recheckBefore),
+			),
+		);
+		// Tombstones are permanent publication fences. Revisit them because a PUT
+		// can complete after DELETE even when its publisher never runs again.
+		const cleanupDueAt = sql`CASE WHEN ${trackingArtifactPromotion.state} = 'deleted'
+            THEN julianday(${trackingArtifactPromotion.updatedAt}) + ${TRACKING_ARTIFACT_GARBAGE_RETENTION_MS / 86_400_000}
+            ELSE julianday(${trackingArtifactPromotion.deleteAfter}) END`;
 		const due = await this.database
 			.select()
 			.from(trackingArtifactPromotion)
-			.where(
-				and(
-					inArray(trackingArtifactPromotion.state, [
-						'pending',
-						'promoted',
-						'deleting',
-					]),
-					lte(trackingArtifactPromotion.deleteAfter, now),
-					unreferenced,
-				),
-			)
-			.orderBy(asc(trackingArtifactPromotion.deleteAfter))
+			.where(and(eligible, unreferenced))
+			.orderBy(asc(cleanupDueAt), asc(trackingArtifactPromotion.artifactId))
 			.limit(limit);
 		const claimed: TrackingArtifactCleanupCandidate[] = [];
 		for (const candidate of due) {
@@ -1157,13 +1170,15 @@ export class TrackingAuthority {
 				.update(trackingArtifactPromotion)
 				.set({
 					state: 'deleting',
+					deletedAt: null,
 					version: candidate.version + 1,
 					updatedAt: now,
 				})
 				.where(
 					and(
 						eq(trackingArtifactPromotion.artifactId, candidate.artifactId),
-						inArray(trackingArtifactPromotion.state, ['pending', 'promoted']),
+						eq(trackingArtifactPromotion.state, candidate.state),
+						eligible,
 						eq(trackingArtifactPromotion.version, candidate.version),
 						unreferenced,
 					),
@@ -1210,10 +1225,11 @@ export class TrackingAuthority {
 			.from(trackingArtifactPromotion)
 			.where(eq(trackingArtifactPromotion.artifactId, command.artifactId))
 			.get();
+		// Concurrent cleaners share a deletion version but can use different clocks.
+		// Preserve the first completion; a later cleanup cycle has a new version.
 		if (
 			stored?.state === 'deleted' &&
-			stored.version === command.expectedVersion + 1 &&
-			stored.deletedAt === command.deletedAt
+			stored.version === command.expectedVersion + 1
 		)
 			return stored;
 		throw stale('Tracking artifact cleanup authority changed');

@@ -1,10 +1,11 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env, evictDurableObject, runInDurableObject } from 'cloudflare:test';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
 	GPU_COMMIT_HOLD_DURATION_MS,
 	GPU_LEASE_COORDINATOR_STORAGE_KEY,
 	GPU_LEASE_DURATION_MS,
+	GpuLeaseCoordinator,
 	getGpuLeaseCoordinator,
 	type PersistedGpuLeaseState,
 } from './gpu-lease-coordinator';
@@ -31,6 +32,258 @@ afterEach(async () => {
 });
 
 describe('GpuLeaseCoordinator', () => {
+	test('rejects a coordinator with a different capacity identity', async () => {
+		await runInDurableObject(coordinator(), (_instance, state) => {
+			const identity = vi
+				.spyOn(state, 'id', 'get')
+				.mockReturnValue(
+					env.GPU_LEASE_COORDINATOR.idFromName('wrong-capacity'),
+				);
+			try {
+				expect(() => new GpuLeaseCoordinator(state, env)).toThrow(
+					'GPU lease coordinator identity mismatch',
+				);
+			} finally {
+				identity.mockRestore();
+			}
+		});
+	});
+
+	test('handles absent cancellation and expires a lease past its availability deadline', async () => {
+		const stub = coordinator();
+		expect(await stub.acquire()).toEqual({ status: 'empty' });
+		expect(await stub.cancel({ segmentId: 'missing' })).toEqual({
+			status: 'not-found',
+		});
+		expect(
+			await stub.cancel({
+				segmentId: 'missing',
+				leaseId: crypto.randomUUID(),
+				fence: 1,
+			}),
+		).toEqual({ status: 'stale' });
+		await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });
+		expect(await stub.acquire({ now })).toMatchObject({ status: 'acquired' });
+		expect(await stub.acquire({ now: deadlineAt + 1 })).toEqual({
+			status: 'empty',
+		});
+		expect(
+			await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' }),
+		).toEqual({ status: 'terminal' });
+	});
+
+	test('refuses renewal and commit holds beyond a persisted deadline', async () => {
+		const stub = coordinator();
+		await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });
+		const lease = await stub.acquire({ now });
+		if (lease.status !== 'acquired') throw new Error('expected lease');
+		await runInDurableObject(stub, async (_instance, state) => {
+			const stored = await state.storage.get<PersistedGpuLeaseState>(
+				GPU_LEASE_COORDINATOR_STORAGE_KEY,
+			);
+			if (!stored?.activeLease) throw new Error('expected persisted lease');
+			stored.activeLease.deadlineAt = now;
+			await state.storage.put(GPU_LEASE_COORDINATOR_STORAGE_KEY, stored);
+		});
+		const identity = {
+			segmentId: lease.segmentId,
+			leaseId: lease.leaseId,
+			fence: lease.fence,
+			now,
+		};
+		expect(await stub.renew(identity)).toEqual({ status: 'stale' });
+		expect(await stub.beginCommitHold(identity)).toEqual({ status: 'stale' });
+	});
+
+	test.each(['full', 'already-queued', 'terminal'] as const)(
+		'preserves capacity authority when persisted restoration is %s',
+		async (condition) => {
+			const stub = coordinator();
+			await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });
+			const lease = await stub.acquire({ now });
+			if (lease.status !== 'acquired') throw new Error('expected lease');
+			await runInDurableObject(stub, async (_instance, state) => {
+				const stored = await state.storage.get<PersistedGpuLeaseState>(
+					GPU_LEASE_COORDINATOR_STORAGE_KEY,
+				);
+				if (!stored?.activeLease) throw new Error('expected persisted lease');
+				stored.waiters = Array.from(
+					{ length: condition === 'full' ? 10_000 : 1 },
+					(_, index) => ({
+						segmentId:
+							condition === 'already-queued' ? 'one' : `other-${index}`,
+						deadlineAt,
+						kind: 'initial',
+						ordinal: index + 2,
+					}),
+				);
+				if (condition === 'terminal') stored.terminal.one = 'cancelled';
+				await state.storage.put(GPU_LEASE_COORDINATOR_STORAGE_KEY, stored);
+			});
+			const identity = {
+				segmentId: lease.segmentId,
+				leaseId: lease.leaseId,
+				fence: lease.fence,
+				now,
+			};
+			if (condition === 'full') {
+				await runInDurableObject(stub, async (instance) => {
+					await expect(instance.restoreCapacityBusy(identity)).rejects.toThrow(
+						'GPU lease queue is full',
+					);
+				});
+				expect(await stub.witness(identity)).toMatchObject({ status: 'ok' });
+			} else {
+				// Expiry must not duplicate queued or terminal work, either.
+				expect(
+					await stub.witness({ ...identity, now: lease.expiresAt }),
+				).toEqual({ status: 'stale' });
+				await runInDurableObject(stub, async (_instance, state) => {
+					const stored = await state.storage.get<PersistedGpuLeaseState>(
+						GPU_LEASE_COORDINATOR_STORAGE_KEY,
+					);
+					if (!stored) throw new Error('expected persisted state');
+					stored.activeLease = {
+						...lease,
+						kind: 'initial',
+						ordinal: 1,
+						deadlineAt,
+						holdExpiresAt: null,
+						holdId: null,
+					};
+					await state.storage.put(GPU_LEASE_COORDINATOR_STORAGE_KEY, stored);
+				});
+				expect(await stub.restoreCapacityBusy(identity)).toEqual({
+					status: 'ok',
+				});
+				expect(await stub.acquire({ now })).toMatchObject({
+					status: 'acquired',
+					segmentId: condition === 'already-queued' ? 'one' : 'other-0',
+				});
+			}
+		},
+	);
+
+	test.each([false, true])(
+		'replays completed release after eviction and a newer lease, including a lost response: %s',
+		async (loseResponse) => {
+			let stub = coordinator();
+			await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });
+			const lease = await stub.acquire({ now });
+			if (lease.status !== 'acquired') throw new Error('expected lease');
+			const release = {
+				segmentId: lease.segmentId,
+				leaseId: lease.leaseId,
+				fence: lease.fence,
+				completed: true,
+			};
+			const firstRelease = async () => {
+				const result = await stub.release(release);
+				if (loseResponse)
+					throw new Error('response lost after persisted release');
+				return result;
+			};
+			if (loseResponse)
+				await expect(firstRelease()).rejects.toThrow('response lost');
+			else expect(await firstRelease()).toEqual({ status: 'ok' });
+			expect(await stub.release(release)).toEqual({ status: 'ok' });
+			await evictDurableObject(stub as unknown as DurableObjectStub);
+			stub = coordinator();
+			expect(await stub.release(release)).toEqual({ status: 'ok' });
+			await stub.enqueue({ segmentId: 'two', deadlineAt, kind: 'initial' });
+			const newer = await stub.acquire({ now });
+			if (newer.status !== 'acquired') throw new Error('expected newer lease');
+			expect(await stub.release(release)).toEqual({ status: 'ok' });
+			expect(await stub.release({ ...release, completed: false })).toEqual({
+				status: 'stale',
+			});
+			expect(
+				await stub.release({ ...release, leaseId: crypto.randomUUID() }),
+			).toEqual({ status: 'stale' });
+			expect(
+				await stub.release({ ...release, fence: release.fence + 1 }),
+			).toEqual({ status: 'stale' });
+			expect(await stub.release({ ...release, segmentId: 'unknown' })).toEqual({
+				status: 'stale',
+			});
+			expect(
+				await stub.witness({
+					segmentId: newer.segmentId,
+					leaseId: newer.leaseId,
+					fence: newer.fence,
+					now,
+				}),
+			).toEqual({ status: 'ok', expiresAt: newer.expiresAt });
+		},
+	);
+
+	test.each(['expired', 'replaced', 'cancelled', 'ordinary'] as const)(
+		'does not create a completion receipt for %s leases',
+		async (reason) => {
+			const stub = coordinator();
+			await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });
+			const lease = await stub.acquire({ now });
+			if (lease.status !== 'acquired') throw new Error('expected lease');
+			const identity = {
+				segmentId: lease.segmentId,
+				leaseId: lease.leaseId,
+				fence: lease.fence,
+			};
+			if (reason === 'expired' || reason === 'replaced') {
+				expect(
+					await stub.witness({ ...identity, now: lease.expiresAt }),
+				).toEqual({ status: 'stale' });
+				if (reason === 'replaced')
+					expect(await stub.acquire({ now: lease.expiresAt })).toMatchObject({
+						status: 'acquired',
+					});
+			} else if (reason === 'cancelled') {
+				expect(await stub.cancel(identity)).toEqual({ status: 'cancelled' });
+			} else {
+				expect(await stub.release(identity)).toEqual({ status: 'ok' });
+			}
+			expect(await stub.release({ ...identity, completed: true })).toEqual({
+				status: 'stale',
+			});
+			await evictDurableObject(stub as unknown as DurableObjectStub);
+			expect(
+				await coordinator().release({ ...identity, completed: true }),
+			).toEqual({ status: 'stale' });
+		},
+	);
+
+	test('normalizes old state without inferring completion from a terminal reason', async () => {
+		const stub = coordinator();
+		await runInDurableObject(stub, async (_instance, state) => {
+			await state.storage.put(GPU_LEASE_COORDINATOR_STORAGE_KEY, {
+				nextOrdinal: 0,
+				fence: 7,
+				waiters: [],
+				activeLease: null,
+				terminal: { one: 'completed' },
+			});
+		});
+		expect(
+			await stub.release({
+				segmentId: 'one',
+				leaseId: crypto.randomUUID(),
+				fence: 7,
+				completed: true,
+			}),
+		).toEqual({ status: 'stale' });
+		await stub.enqueue({ segmentId: 'two', deadlineAt, kind: 'initial' });
+		const lease = await stub.acquire({ now });
+		if (lease.status !== 'acquired') throw new Error('expected lease');
+		const release = {
+			segmentId: lease.segmentId,
+			leaseId: lease.leaseId,
+			fence: lease.fence,
+			completed: true,
+		};
+		expect(await stub.release(release)).toEqual({ status: 'ok' });
+		expect(await stub.release(release)).toEqual({ status: 'ok' });
+	});
+
 	test('is FIFO, idempotently enqueues, and places re-identification at the tail', async () => {
 		const stub = coordinator();
 		expect(
@@ -306,6 +559,7 @@ describe('GpuLeaseCoordinator', () => {
 					],
 					activeLease: null,
 					terminal: {},
+					completedReleases: {},
 				},
 			);
 		});
@@ -330,6 +584,7 @@ describe('GpuLeaseCoordinator', () => {
 					],
 					activeLease: null,
 					terminal: {},
+					completedReleases: {},
 				},
 			);
 		});
@@ -370,6 +625,7 @@ describe('GpuLeaseCoordinator', () => {
 					})),
 					activeLease: null,
 					terminal: {},
+					completedReleases: {},
 				},
 			);
 		});
