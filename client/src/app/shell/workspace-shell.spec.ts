@@ -6,6 +6,7 @@ import {
 	withDisabledInitialNavigation,
 } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
@@ -86,8 +87,10 @@ describe('WorkspaceShell', () => {
 	let cars: FakeShellCarStore;
 	let transition: FakeRouteTransitionAnnouncer;
 	let offline: FakeOfflineWorkspaceStore;
+	const visible = signal(true);
 
 	beforeEach(async () => {
+		visible.set(true);
 		session = new FakeOwnerSessionStore();
 		signOut = new FakeSignOutStore();
 		viewport = new FakeResponsiveViewport();
@@ -97,6 +100,7 @@ describe('WorkspaceShell', () => {
 		await TestBed.configureTestingModule({
 			imports: [WorkspaceShell],
 			providers: [
+				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([], withDisabledInitialNavigation()),
 				{ provide: OwnerSessionStore, useValue: session },
 				{ provide: SignOutStore, useValue: signOut },
@@ -115,6 +119,23 @@ describe('WorkspaceShell', () => {
 		fixture.detectChanges();
 		return fixture.nativeElement as HTMLElement;
 	};
+
+	it.each([false, true])(
+		'hides Track maps in desktop and mobile navigation when unavailable: mobile=%s',
+		(mobile) => {
+			viewport.mobile.set(mobile);
+			visible.set(false);
+			const root = render();
+			if (mobile) {
+				root.querySelector<HTMLButtonElement>('[aria-controls]')?.click();
+				fixture.detectChanges();
+			}
+			expect(root.querySelector('[href="/track-maps"]')).toBeNull();
+			visible.set(true);
+			fixture.detectChanges();
+			expect(root.querySelector('[href="/track-maps"]')).not.toBeNull();
+		},
+	);
 
 	it('renders one desktop command bar and exposes route loading state', () => {
 		session.authenticate();

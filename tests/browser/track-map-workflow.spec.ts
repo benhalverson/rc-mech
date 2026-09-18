@@ -11,6 +11,12 @@ const browserClientPort = Number(
 );
 const baseURL = `http://127.0.0.1:${browserClientPort}`;
 
+test.afterEach(async ({ page }) => {
+	await page.request.put('/api/v1/feature-flags/driving-analysis', {
+		data: { enabled: false },
+	});
+});
+
 const authenticateOwner = async (page: Page): Promise<void> => {
 	authentication += 1;
 	const clientIp = `track-map-owner-${authentication}`;
@@ -123,6 +129,13 @@ test('approves, reuses, and retires immutable Track maps with private draft cont
 }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await authenticateOwner(page);
+	const flag = await page.request.put(
+		'/api/v1/feature-flags/driving-analysis',
+		{
+			data: { enabled: true },
+		},
+	);
+	expect(flag.ok()).toBe(true);
 	const recordingId = await createReadyRaceRecording(page);
 	await page.goto('/track-maps');
 	await expect(page.getByRole('heading', { name: 'Track maps' })).toBeVisible();

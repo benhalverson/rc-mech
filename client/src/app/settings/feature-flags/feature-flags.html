@@ -1,0 +1,21 @@
+@if (store.isOwner()) {
+	<section class="alloy-panel grid gap-4" aria-labelledby="feature-flags-title">
+		<h2 id="feature-flags-title" class="alloy-screen-title">Feature flags</h2>
+		<p id="driving-analysis-help" class="alloy-supporting-text">Show Driving analysis, Track maps, and race-recording uploads to Users. The Owner always retains access. Users see changes after refreshing or signing in again.</p>
+		@if (store.enabled() !== null) {
+			<label class="flex min-h-12 items-center gap-3 text-alloy-text">
+				<input #toggle class="alloy-focus-ring size-5" type="checkbox" [checked]="store.enabled()" [disabled]="store.status() === 'pending'" aria-describedby="driving-analysis-help" (change)="save(toggle)" />
+				<span>Driving analysis</span>
+			</label>
+		} @else {
+			<p role="status">The saved setting is unavailable while loading or after a failed read.</p>
+		}
+		@if (store.status() === 'pending') {
+			<p role="status">Saving Driving analysis…</p>
+		} @else if (store.status() === 'succeeded') {
+			<p role="status">Driving analysis setting saved.</p>
+		} @else if (store.status() === 'failed') {
+			<p role="alert">The setting could not be saved. Please try again.</p>
+		}
+	</section>
+}

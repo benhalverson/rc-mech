@@ -9,6 +9,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppearanceService } from '../appearance.service';
 import { ClipboardCapability } from './clipboard-capability';
+import { FeatureFlagStore } from './feature-flags/feature-flag-store';
 import { InviteStore } from './invite-store';
 import { PasskeyRegistrationCapability } from './passkey-registration-capability';
 import { PasskeyStore } from './passkey-store';
@@ -88,6 +89,7 @@ describe('Settings workspace', () => {
 		await TestBed.configureTestingModule({
 			imports: [Settings],
 			providers: [
+				{ provide: FeatureFlagStore, useValue: { isOwner: signal(false) } },
 				provideHttpClient(),
 				provideHttpClientTesting(),
 				ClipboardCapability,
@@ -212,6 +214,7 @@ describe('Settings workspace', () => {
 		await TestBed.configureTestingModule({
 			imports: [Settings],
 			providers: [
+				{ provide: FeatureFlagStore, useValue: { isOwner: signal(false) } },
 				{ provide: AppearanceService, useValue: appearanceService },
 				{ provide: InviteStore, useValue: unavailableInvites },
 				{ provide: PasskeyStore, useValue: unavailablePasskeys },

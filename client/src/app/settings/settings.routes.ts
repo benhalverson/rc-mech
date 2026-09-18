@@ -1,5 +1,7 @@
 import { Routes } from '@angular/router';
 import { ClipboardCapability } from './clipboard-capability';
+import { FeatureFlagGateway } from './feature-flags/feature-flag-gateway';
+import { FeatureFlagStore } from './feature-flags/feature-flag-store';
 import { InviteStore } from './invite-store';
 import { PasskeyRegistrationCapability } from './passkey-registration-capability';
 import { PasskeyStore } from './passkey-store';
@@ -11,6 +13,8 @@ export const SETTINGS_ROUTES: Routes = [
 	{
 		path: '',
 		providers: [
+			FeatureFlagGateway,
+			FeatureFlagStore,
 			ClipboardCapability,
 			InviteStore,
 			PasskeyRegistrationCapability,
