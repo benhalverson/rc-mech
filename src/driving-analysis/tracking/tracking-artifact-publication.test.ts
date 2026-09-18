@@ -67,6 +67,7 @@ const migrations = [
 	'0020_immutable_track_view.sql',
 	'0022_tracking_artifact_publication.sql',
 	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -1147,6 +1148,61 @@ describe('TrackingArtifactPublication', () => {
 				() => START,
 			).cleanupDue(cleanupAt),
 		).rejects.toEqual(new TrackingArtifactPublicationError('CLEANUP_FAILED'));
+	});
+	test('continues staging cleanup when an earlier object cannot be deleted', async () => {
+		const value = await publicationFixture();
+		const deleted: string[] = [];
+		const store: TrackingArtifactStore = {
+			read: (...args) => value.store.read(...args),
+			putIfAbsent: (...args) => value.store.putIfAbsent(...args),
+			list: async () => ({
+				objects: [
+					artifactListing('first', START),
+					artifactListing('second', START),
+				],
+				cursor: null,
+			}),
+			delete: async (keys) => {
+				if (keys.includes('tracking-staging/first'))
+					throw new Error('R2 unavailable');
+				deleted.push(...keys);
+			},
+		};
+		const cleaner = new TrackingArtifactPublication(
+			value.authority,
+			store,
+			value.lease,
+		);
+		expect(
+			await cleaner.cleanupDue(
+				new Date(START.getTime() + TRACKING_ARTIFACT_GARBAGE_RETENTION_MS + 1),
+			),
+		).toBe(1);
+		expect(deleted).toEqual(['tracking-staging/second']);
+	});
+	test('bounds scans of recent staging objects and resumes after the last page', async () => {
+		const value = await publicationFixture();
+		let pages = 0;
+		const cursors: (string | undefined)[] = [];
+		const store: TrackingArtifactStore = {
+			read: (...args) => value.store.read(...args),
+			putIfAbsent: (...args) => value.store.putIfAbsent(...args),
+			delete: (...args) => value.store.delete(...args),
+			list: async (_prefix, cursor) => {
+				cursors.push(cursor);
+				pages += 1;
+				return { objects: [], cursor: pages < 20 ? String(pages) : null };
+			},
+		};
+		const cleaner = new TrackingArtifactPublication(
+			value.authority,
+			store,
+			value.lease,
+		);
+		await cleaner.cleanupDue(START, 10);
+		expect(pages).toBe(10);
+		await cleaner.cleanupDue(START, 10);
+		expect(cursors[10]).toBe('10');
 	});
 
 	test('a cleanup claim wins safely over the final conditional commit', async () => {

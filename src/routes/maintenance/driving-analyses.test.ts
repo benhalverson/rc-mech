@@ -40,6 +40,49 @@ const json = (body: unknown): RequestInit => ({
 });
 
 describe('Driving-analysis routes', () => {
+	test('serves minimal owner-scoped lifecycle state and validates deletion commands', async () => {
+		const lifecycle = {
+			analysisId: ANALYSIS_ID,
+			status: 'deleted' as const,
+			stateVersion: 3,
+			permanent: true,
+			canCancel: false,
+			canRetry: false,
+			failure: null,
+		};
+		const get = vi.fn(async () => lifecycle);
+		const remove = vi.fn(async () => lifecycle);
+		const { request } = createHonoFixture({
+			analysisLifecycle: () => ({ get, remove, cleanup: async () => [] }),
+		});
+		expect(
+			await (
+				await request(`/api/v1/driving-analyses/${ANALYSIS_ID}/lifecycle`)
+			).json(),
+		).toEqual({ lifecycle });
+		expect(get).toHaveBeenCalledWith('owner-1', ANALYSIS_ID);
+		const path = `/api/v1/driving-analyses/${ANALYSIS_ID}`;
+		expect(
+			(await request(path, { ...json({}), method: 'DELETE', body: '{' }))
+				.status,
+		).toBe(400);
+		expect(
+			(await request(path, { ...json({}), method: 'DELETE' })).status,
+		).toBe(400);
+		expect(
+			(
+				await request(path, {
+					...json({ expectedStateVersion: 2 }),
+					method: 'DELETE',
+				})
+			).status,
+		).toBe(202);
+		expect(remove).toHaveBeenCalledWith({
+			ownerId: 'owner-1',
+			analysisId: ANALYSIS_ID,
+			expectedStateVersion: 2,
+		});
+	});
 	test('returns one stable accepted creation without waiting for processing', async () => {
 		const create = vi.fn(async () => ({ analysis, created: true }));
 		const get = vi.fn(async () => analysis);
@@ -115,6 +158,7 @@ describe('Driving-analysis routes', () => {
 			'owner-1',
 			ANALYSIS_ID,
 			analysis.stateVersion,
+			undefined,
 		);
 	});
 
@@ -122,6 +166,8 @@ describe('Driving-analysis routes', () => {
 		['INVALID_INPUT', 400],
 		['NOT_FOUND', 404],
 		['CONFLICT', 409],
+		['SOURCE_UNAVAILABLE', 409],
+		['TERMINAL_FAILURE', 409],
 		['QUOTA_EXCEEDED', 409],
 		['RATE_LIMITED', 429],
 		['WORKFLOW_UNAVAILABLE', 503],
@@ -140,7 +186,11 @@ describe('Driving-analysis routes', () => {
 			json(createBody),
 		);
 		expect(response.status).toBe(status);
-		expect(await response.json()).toEqual({ error: 'Safe analysis failure' });
+		expect(await response.json()).toEqual({
+			error: 'Safe analysis failure',
+			code,
+			retryable: code === 'WORKFLOW_UNAVAILABLE' || code === 'RATE_LIMITED',
+		});
 	});
 
 	test('does not disguise unexpected authority failures', async () => {

@@ -6,7 +6,15 @@ import {
 import { computed, inject, Service, signal } from '@angular/core';
 import { catchError, map, type Observable, throwError } from 'rxjs';
 import type * as z from 'zod/mini';
-import { minLength, safeParse, strictObject, string, trim } from 'zod/mini';
+import {
+	boolean,
+	minLength,
+	optional,
+	safeParse,
+	strictObject,
+	string,
+	trim,
+} from 'zod/mini';
 import {
 	type CreateDrivingAnalysisCommand,
 	type DrivingAnalysis,
@@ -16,6 +24,8 @@ import {
 
 const apiErrorSchema = strictObject({
 	error: string().check(trim(), minLength(1)),
+	code: optional(string()),
+	retryable: optional(boolean()),
 });
 
 class InvalidDrivingAnalysisResponse extends Error {}
@@ -94,11 +104,12 @@ export class DrivingAnalysisGateway {
 	retry(
 		analysisId: string,
 		expectedStateVersion: number,
+		commandId?: string,
 	): Observable<DrivingAnalysis> {
 		return this.parseRequest(
 			this.http.post<unknown>(
 				`/api/v1/driving-analyses/${encodeURIComponent(analysisId)}/retry`,
-				{ expectedStateVersion },
+				{ expectedStateVersion, ...(commandId ? { commandId } : {}) },
 				{ withCredentials: true },
 			),
 		);

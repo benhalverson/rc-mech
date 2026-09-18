@@ -337,30 +337,39 @@ export const DrivingAnalysisStore = signalStore(
 							error: null,
 						},
 					});
-					return store.analyses.retry(analysis.id, analysis.stateVersion).pipe(
-						tap((retried) => {
-							patchState(store, {
-								analysisCreation: {
-									status: 'accepted',
-									driveSessionId: retried.driveSessionId,
-									analysis: retried,
-									error: null,
-								},
-							});
-							store.analyses.selectAnalysis(retried.id);
-							monitorAnalysis(retried.id);
-						}),
-						catchError((error: DrivingAnalysisGatewayFailure) => {
-							patchState(store, {
-								analysisCreation: {
-									...current,
-									status: 'failed',
-									error,
-								},
-							});
-							return EMPTY;
-						}),
-					);
+					return store.analyses
+						.retry(
+							analysis.id,
+							analysis.stateVersion,
+							store.analysisRequests.retryId(
+								analysis.id,
+								analysis.stateVersion,
+							),
+						)
+						.pipe(
+							tap((retried) => {
+								patchState(store, {
+									analysisCreation: {
+										status: 'accepted',
+										driveSessionId: retried.driveSessionId,
+										analysis: retried,
+										error: null,
+									},
+								});
+								store.analyses.selectAnalysis(retried.id);
+								monitorAnalysis(retried.id);
+							}),
+							catchError((error: DrivingAnalysisGatewayFailure) => {
+								patchState(store, {
+									analysisCreation: {
+										...current,
+										status: 'failed',
+										error,
+									},
+								});
+								return EMPTY;
+							}),
+						);
 				}),
 			),
 		);

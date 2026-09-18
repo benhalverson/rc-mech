@@ -10,6 +10,12 @@ import {
 } from 'drizzle-orm/sqlite-core';
 
 export {
+	analysisDeletion,
+	analysisMediaScan,
+	analysisRetryCommand,
+	preparationIntent,
+} from './driving-analysis/analysis/lifecycle-schema';
+export {
 	inferenceProfileAuthority,
 	preparedTrackingMedia,
 	preparedTrackingObject,

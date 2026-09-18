@@ -78,6 +78,7 @@ export const drivingAnalysisWorkflowPayloadSchema = z.strictObject({
 
 export const retryDrivingAnalysisInputSchema = z.strictObject({
 	expectedStateVersion: z.number().int().positive(),
+	commandId: uuidV4Schema.optional(),
 });
 
 export const cancelDrivingAnalysisInputSchema = z.strictObject({
