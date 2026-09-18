@@ -1369,6 +1369,19 @@ describe('DrivingAnalysisAuthority', () => {
 		await expectCode(authority.get('another-owner', ANALYSIS_ID), 'NOT_FOUND');
 	});
 
+	test('rejects creating an analysis with a retired map version', async () => {
+		const { authority, database } = await fixture();
+		await database
+			.update(trackMapVersion)
+			.set({
+				status: 'retired',
+				stateVersion: 3,
+				retiredAt: NOW.toISOString(),
+			})
+			.where(eq(trackMapVersion.id, MAP_VERSION_ID));
+		await expectCode(authority.create(command()), 'CONFLICT');
+	});
+
 	test('uses defaults, surfaces Workflow outage, and rejects generated identity collision', async () => {
 		const { authority } = await fixture();
 		await authority.create(command());
