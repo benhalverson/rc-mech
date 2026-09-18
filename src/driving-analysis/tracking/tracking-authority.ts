@@ -11,6 +11,7 @@ import {
 	sql,
 } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { GPU_MAX_DEADLINE_MS } from '../gpu-lease-coordinator';
 import {
 	type AcceptTrackingArtifactCommand,
 	type ActivateTrackingAttemptCommand,
@@ -144,6 +145,7 @@ export type TrackingWorkflowContext = {
 	workflowId: string;
 	profileDigest: string;
 	segmentId: string;
+	seedKind: 'initial' | 'reidentification';
 	preparedMediaId: string;
 	specificationDigest: string;
 	availabilityDeadlineAt: number;
@@ -360,22 +362,40 @@ export class TrackingAuthority {
 		const seedJson = JSON.stringify(command.seed.value);
 		await this.database
 			.insert(trackingSegment)
-			.values({
-				id: command.segmentId,
-				runId: command.runId,
-				order: command.order,
-				seedKind: command.seed.kind,
-				seedSourceId: command.seed.sourceId,
-				seedJson,
-				preparedMediaId: command.preparedMediaId,
-				raceWindowEndTimestampMs: specification.raceWindowEndTimestampMs,
-				profileDigest: run.profileDigest,
-				specificationVersion: command.specificationVersion,
-				specificationDigest: specification.digest,
-				availabilityDeadlineAt: command.availabilityDeadlineAt,
-				version: 1,
-				createdAt: command.createdAt,
-			})
+			.select(
+				this.database
+					.select({
+						id: sql<string>`${command.segmentId}`,
+						runId: sql<string>`${command.runId}`,
+						order: sql<number>`${command.order}`,
+						seedKind: sql<'initial' | 'reidentification'>`${command.seed.kind}`,
+						seedSourceId: sql<string | null>`${command.seed.sourceId}`,
+						seedJson: sql<string>`${seedJson}`,
+						preparedMediaId: sql<string>`${command.preparedMediaId}`,
+						raceWindowEndTimestampMs: sql<number>`${specification.raceWindowEndTimestampMs}`,
+						profileDigest: sql<string>`${run.profileDigest}`,
+						specificationVersion: sql<string>`${command.specificationVersion}`,
+						specificationDigest: sql<string>`${specification.digest}`,
+						availabilityDeadlineAt: sql<number>`${command.availabilityDeadlineAt}`,
+						waitReason: sql<null>`NULL`,
+						currentAttemptId: sql<null>`NULL`,
+						authorityLeaseId: sql<null>`NULL`,
+						authorityFence: sql<null>`NULL`,
+						outcome: sql<null>`NULL`,
+						gapJson: sql<null>`NULL`,
+						acceptedArtifactId: sql<null>`NULL`,
+						version: sql<number>`1`,
+						createdAt: sql<string>`${command.createdAt}`,
+					})
+					.from(trackingRun)
+					.where(
+						and(
+							eq(trackingRun.id, run.id),
+							eq(trackingRun.status, 'active'),
+							eq(trackingRun.version, run.version),
+						),
+					),
+			)
 			.onConflictDoNothing();
 		const stored = await this.database
 			.select()
@@ -443,6 +463,83 @@ export class TrackingAuthority {
 		});
 	}
 
+	async nextSegment(
+		identity: TrackingWorkflowIdentity,
+	): Promise<TrackingWorkflowContext | null> {
+		await this.workflowContext(identity);
+		const previous = await this.ownedSegment(
+			identity.runId,
+			identity.segmentId,
+		);
+		if (previous?.outcome !== 'tracking-gap')
+			throw conflict('Re-identification requires accepted gap evidence');
+		const next = await this.database
+			.select()
+			.from(trackingSegment)
+			.where(
+				and(
+					eq(trackingSegment.runId, identity.runId),
+					eq(trackingSegment.order, previous.order + 1),
+					eq(trackingSegment.seedSourceId, identity.segmentId),
+				),
+			)
+			.get();
+		return next
+			? this.workflowContext({ ...identity, segmentId: next.id })
+			: null;
+	}
+
+	async reidentify(
+		identity: TrackingWorkflowIdentity,
+		correctionId: string,
+		acceptedDigest: string,
+		seedValue: SubjectSeed,
+	): Promise<TrackingWorkflowContext> {
+		const seed = subjectSeedSchema.parse(seedValue);
+		const context = await this.workflowContext(identity);
+		const previous = await this.ownedSegment(
+			identity.runId,
+			identity.segmentId,
+		);
+		const artifact = await this.acceptedArtifactFor(
+			identity.ownerId,
+			identity.runId,
+			identity.segmentId,
+		);
+		if (
+			!previous ||
+			!artifact ||
+			artifact.outcome !== 'tracking-gap' ||
+			artifact.checksumSha256 !== acceptedDigest ||
+			!artifact.gapJson
+		)
+			throw conflict('Re-identification requires the current accepted gap');
+		const gap = trackingGapSchema.parse(JSON.parse(artifact.gapJson));
+		if (
+			seed.timestampMs <= gap.startTimestampMs ||
+			seed.frameIndex <= context.seed.frameIndex
+		)
+			throw conflict('Re-identification must start on a later clear frame');
+		const existing = await this.ownedSegment(identity.runId, correctionId);
+		const next = await this.createSegment({
+			ownerId: identity.ownerId,
+			runId: identity.runId,
+			segmentId: correctionId,
+			order: previous.order + 1,
+			seed: {
+				kind: 'reidentification',
+				sourceId: identity.segmentId,
+				value: seed,
+			},
+			preparedMediaId: previous.preparedMediaId,
+			specificationVersion: 'tracking-segment-spec.v1',
+			availabilityDeadlineAt:
+				existing?.availabilityDeadlineAt ?? Date.now() + GPU_MAX_DEADLINE_MS,
+			createdAt: existing?.createdAt ?? new Date().toISOString(),
+		});
+		return this.workflowContext({ ...identity, segmentId: next.id });
+	}
+
 	async workflowContext(
 		identityValue: TrackingWorkflowIdentity,
 	): Promise<TrackingWorkflowContext> {
@@ -454,8 +551,7 @@ export class TrackingAuthority {
 		)
 			throw stale('Tracking Workflow does not own the current run');
 		const segment = await this.ownedSegment(identity.runId, identity.segmentId);
-		if (segment?.order !== 0 || segment.seedKind !== 'initial')
-			throw notFound('The first Tracking segment was not found');
+		if (!segment) throw notFound('The Tracking segment was not found');
 		const [prepared, profile, attempt, outputTransfer] = await Promise.all([
 			this.database
 				.select()
@@ -508,6 +604,7 @@ export class TrackingAuthority {
 			workflowId: run.workflowId,
 			profileDigest: segment.profileDigest,
 			segmentId: segment.id,
+			seedKind: segment.seedKind,
 			preparedMediaId: segment.preparedMediaId,
 			specificationDigest: segment.specificationDigest,
 			availabilityDeadlineAt: segment.availabilityDeadlineAt,
@@ -1760,9 +1857,7 @@ export class TrackingAuthority {
 			(progress, attempt) => Math.max(progress, attempt.progress),
 			0,
 		);
-		const acceptedGap = segments.some(
-			(segment) => segment.outcome === 'tracking-gap',
-		);
+		const acceptedGap = segments.at(-1)?.outcome === 'tracking-gap';
 		const hasAcceptedEvidence = segments.some(
 			(segment) => segment.acceptedArtifactId !== null,
 		);

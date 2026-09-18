@@ -40,6 +40,10 @@ import type {
 } from '../gpu-lease-coordinator';
 import { gpuLeaseEnqueueInput } from '../gpu-lease-coordinator';
 import type {
+	PublicTrackingProvenance,
+	PublicTrackingState,
+} from './authority-contracts';
+import type {
 	ExecutionIdentity,
 	JobStatus,
 	OutputArtifact,
@@ -112,6 +116,9 @@ afterEach(() => {
 });
 
 class WorkflowStepFixture {
+	readonly waitForEvent = vi.fn(async (_name: string, _options: unknown) => ({
+		payload: {},
+	}));
 	readonly names: string[] = [];
 	beforeStep?: (name: string) => void;
 	serializeErrors = false;
@@ -443,6 +450,7 @@ const coreWorkflowFixture = (
 	attempt: TrackingWorkflowContext['attempt'] = null,
 ) => {
 	let context: TrackingWorkflowContext = {
+		seedKind: 'initial',
 		ownerId: OWNER_ID,
 		runId: RUN_ID,
 		analysisId: ANALYSIS_ID,
@@ -471,6 +479,7 @@ const coreWorkflowFixture = (
 		safeFailureCode: string | null;
 	};
 	const authority = {
+		nextSegment: vi.fn<TrackingAuthority['nextSegment']>(async () => null),
 		setWaitReason: vi.fn(async () => undefined),
 		expireAvailability: vi.fn(async () => undefined),
 		failUnavailableOutput: vi.fn(async () => undefined),
@@ -506,19 +515,23 @@ const coreWorkflowFixture = (
 		retireAttempt: vi.fn(async () => {
 			if (context.attempt) context = { ...context, attempt: null };
 		}),
-		publicState: vi.fn(async () => ({
-			runId: RUN_ID,
-			lifecycle: 'running' as const,
-			stage: 'tracking' as const,
-			progress: 99,
-			waitReason: null,
-			safeFailureCode: null,
-		})),
-		publicProvenance: vi.fn(async () => ({
-			runId: RUN_ID,
-			profileDigest: PROFILE_DIGEST,
-			segments: [],
-		})),
+		publicState: vi.fn(
+			async (): Promise<PublicTrackingState> => ({
+				runId: RUN_ID,
+				lifecycle: 'running' as const,
+				stage: 'tracking' as const,
+				progress: 99,
+				waitReason: null,
+				safeFailureCode: null,
+			}),
+		),
+		publicProvenance: vi.fn(
+			async (): Promise<PublicTrackingProvenance> => ({
+				runId: RUN_ID,
+				profileDigest: PROFILE_DIGEST,
+				segments: [],
+			}),
+		),
 	};
 	const coordinator = {
 		enqueue: vi.fn<
@@ -637,6 +650,160 @@ const coreWorkflowFixture = (
 };
 
 describe('DrivingAnalysisWorkflow', () => {
+	test('waits durably after gap evidence, ignores uncommitted wakeups, and resumes one immutable segment', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		value.getContext().outcome = 'tracking-gap';
+		value.authority.publicState.mockResolvedValueOnce({
+			runId: RUN_ID,
+			lifecycle: 'awaiting-reidentification',
+			stage: 'tracking',
+			progress: 99,
+			waitReason: null,
+			safeFailureCode: null,
+		});
+		const nextId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+		value.authority.nextSegment
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce({
+				...value.getContext(),
+				segmentId: nextId,
+				outcome: 'completed',
+			});
+		value.steps.waitForEvent.mockImplementation(async () => {
+			expect(value.evidence.commit).toHaveBeenCalled();
+			expect(value.publishAnalysisState).toHaveBeenCalledWith(
+				OWNER_ID,
+				ANALYSIS_ID,
+				expect.objectContaining({ lifecycle: 'awaiting-reidentification' }),
+			);
+			expect(value.provider.submit).not.toHaveBeenCalled();
+			expect(value.coordinator.acquire).not.toHaveBeenCalled();
+			return { payload: {} };
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { lifecycle: 'running' } });
+		expect(value.steps.waitForEvent).toHaveBeenCalledTimes(2);
+		expect(value.evidence.commit).toHaveBeenLastCalledWith(
+			expect.objectContaining({ segmentId: nextId }),
+		);
+		expect(value.steps.names).toContain(
+			`${nextId}-commit-accepted-corner-evidence-accepted-replay`,
+		);
+	});
+
+	test('a correction acquires fresh FIFO capacity and replay never resubmits it', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		value.authority.publicState.mockResolvedValueOnce({
+			runId: RUN_ID,
+			lifecycle: 'awaiting-reidentification',
+			stage: 'tracking',
+			progress: 99,
+			waitReason: null,
+			safeFailureCode: null,
+		});
+		const nextId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+		value.steps.waitForEvent.mockImplementation(async () => {
+			Object.assign(value.getContext(), {
+				segmentId: nextId,
+				seedKind: 'reidentification',
+				acceptedArtifactId: null,
+				outputTransferRequestId: OUTPUT_TRANSFER_ID,
+			});
+			return { payload: {} };
+		});
+		value.authority.nextSegment.mockImplementation(async () =>
+			value.getContext(),
+		);
+		value.coordinator.acquire.mockResolvedValue({
+			status: 'acquired',
+			segmentId: nextId,
+			leaseId: LEASE_ID,
+			fence: 7,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: completedStatusFixture(submission),
+		}));
+		for (let replay = 0; replay < 2; replay += 1)
+			await value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			);
+		expect(value.coordinator.enqueue).toHaveBeenCalledOnce();
+		expect(value.coordinator.enqueue).toHaveBeenCalledWith({
+			segmentId: nextId,
+			deadlineAt: value.getContext().availabilityDeadlineAt,
+			kind: 'reidentification',
+		});
+		expect(value.provider.submit).toHaveBeenCalledOnce();
+		expect(value.provider.submit).toHaveBeenCalledWith(
+			expect.objectContaining({ segmentId: nextId }),
+			value.getContext().availabilityDeadlineAt,
+		);
+	});
+
+	test('consumes a correction already committed before the gap public result is read', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		value.authority.publicProvenance.mockResolvedValueOnce({
+			runId: RUN_ID,
+			profileDigest: PROFILE_DIGEST,
+			segments: [
+				{
+					segmentId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					order: 0,
+					outcome: 'completed',
+					gap: null,
+					artifact: null,
+				},
+				{
+					segmentId: SEGMENT_ID,
+					order: 1,
+					outcome: 'tracking-gap',
+					gap: { startTimestampMs: 250, reason: 'missing' },
+					artifact: null,
+				},
+			],
+		});
+		value.authority.nextSegment.mockResolvedValue(value.getContext());
+		await value.workflow.run(
+			workflowEvent(),
+			value.steps as unknown as WorkflowStep,
+		);
+		expect(value.steps.waitForEvent).toHaveBeenCalledOnce();
+	});
+
+	test('a cancelled gap wait cannot resume execution', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		value.authority.publicState.mockResolvedValueOnce({
+			runId: RUN_ID,
+			lifecycle: 'awaiting-reidentification',
+			stage: 'tracking',
+			progress: 99,
+			waitReason: null,
+			safeFailureCode: null,
+		});
+		value.authority.nextSegment.mockRejectedValue(
+			new Error('cancelled authority'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toThrow('cancelled authority');
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.coordinator.enqueue).not.toHaveBeenCalled();
+	});
+
 	test('replays publication after a lost acceptance acknowledgement without reauthorizing completed execution', async () => {
 		const value = coreWorkflowFixture();
 		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
@@ -2515,6 +2682,44 @@ describe('DrivingAnalysisWorkflow', () => {
 			expect.objectContaining({ nextState: 'failed' }),
 		);
 	});
+
+	test.each(['ok', 'stale'] as const)(
+		'accepted replay requires a completed release receipt: %s',
+		async (status) => {
+			const value = coreWorkflowFixture({
+				attemptId: ATTEMPT_ID,
+				leaseId: LEASE_ID,
+				fence: 7,
+				state: 'completed',
+				progress: 99,
+				safeFailureCode: null,
+			});
+			value.getContext().acceptedArtifactId = ATTEMPT_ID;
+			value.coordinator.release.mockResolvedValue({ status });
+			const running = value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			);
+			if (status === 'ok')
+				await expect(running).resolves.toMatchObject({
+					state: { progress: 99 },
+				});
+			else {
+				await expect(running).rejects.toMatchObject({
+					code: 'TRACKING_AUTHORITY_STALE',
+				});
+				expect(value.evidence.commit).not.toHaveBeenCalled();
+				expect(value.publishAnalysisState).not.toHaveBeenCalled();
+			}
+			expect(value.coordinator.release).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completed: true,
+					leaseId: LEASE_ID,
+					fence: 7,
+				}),
+			);
+		},
+	);
 
 	test('replays immutable accepted evidence before publishing Tracking state', async () => {
 		const value = coreWorkflowFixture();
