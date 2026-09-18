@@ -412,6 +412,15 @@ Lease renewal requires a matching current status response and a still-current D1
 
 Colocate the feature under `client/src/app/car/drive-sessions/driving-analysis/` and lazy-load it below the selected Car's Drive-session route.
 
+Corner comparison is available at `/garage/:carId/drive-sessions/analysis/:analysisId`.
+Its route-provided review store reads `/api/v1/driving-analyses/:analysisId/evidence`.
+The endpoint joins the current analysis Workflow/run and accepted evidence in one D1 snapshot,
+preserves every excluded traversal, and ranks eligible passes across accepted segments without
+rewriting immutable measurement batches. The shared deterministic ranking rule uses one source
+frame as the tie tolerance. Public provenance contains segment identity and evidence digests,
+crossing timestamps and bracketing frame indexes; the pinned manifest retains the source frame
+timestamps. Provider attempts, lease authority, storage keys and transfer capabilities remain private.
+
 - `DrivingAnalysisStore` owns upload creation/resume, upload and validation progress, analysis creation, progress polling, cancellation, retry, gaps, corrections, and review state for one analysis route.
 - `DrivingAnalysisGateway` owns all API URLs and Zod response parsing.
 - A focused private-video player capability owns the native video handle, seeking, current-time reads, and canvas-to-video coordinate mapping; it exposes no HTTP or workflow state.

@@ -3,6 +3,7 @@ import type { AppDependencies } from '../app-dependencies';
 import type { AppEnv } from '../types';
 import { createConsumableMaintenanceRoutes } from './maintenance/consumable-maintenance';
 import { createConsumableRoutes } from './maintenance/consumables';
+import { createCornerEvidenceRoutes } from './maintenance/corner-evidence';
 import { createDriveSessionRoutes } from './maintenance/drive-sessions';
 import { createDrivingAnalysisRoutes } from './maintenance/driving-analyses';
 import { createMaintenancePlanRoutes } from './maintenance/maintenance-plans';
@@ -15,6 +16,7 @@ export const createMaintenanceRoutes = (dependencies: AppDependencies) =>
 		.route('/', createConsumableMaintenanceRoutes())
 		.route('/', createDriveSessionRoutes())
 		.route('/', createDrivingAnalysisRoutes(dependencies))
+		.route('/', createCornerEvidenceRoutes())
 		.route('/', createRaceRecordingRoutes(dependencies))
 		.route('/', createMaintenancePlanRoutes())
 		.route('/', createServiceRecordRoutes());

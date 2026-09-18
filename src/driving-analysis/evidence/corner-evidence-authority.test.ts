@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -48,6 +48,7 @@ import {
 	CornerEvidenceAuthority,
 	CornerEvidenceAuthorityError,
 } from './corner-evidence-authority';
+import { CornerEvidenceReview } from './corner-evidence-review';
 import { cornerEvidenceBatch, cornerPassEvidence } from './evidence-schema';
 
 const OWNER_ID = 'owner-1';
@@ -518,6 +519,96 @@ const digest = async (bytes: Uint8Array): Promise<string> => {
 };
 
 describe('CornerEvidenceAuthority', () => {
+	test('reviews only the current owner-scoped run with safe timing provenance', async () => {
+		const value = await seed();
+		if (!sqlite) throw new Error('missing fixture');
+		const review = new CornerEvidenceReview(sqlite.database);
+		await expect(review.get('other-owner', ANALYSIS_ID)).resolves.toBeNull();
+		await expect(review.get(OWNER_ID, 'missing')).resolves.toBeNull();
+		expect(await review.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			analysisId: ANALYSIS_ID,
+			corners: [{ name: 'Turn one', passes: [] }],
+		});
+		await value.authority.commit({
+			...command(),
+			measurement: {
+				...measurement,
+				passes: [
+					...measurement.passes,
+					{
+						cornerId: CORNER_ID,
+						cornerKey: 'turn-one',
+						cornerOrder: 1,
+						ordinal: 2,
+						entry: null,
+						exit: null,
+						durationMs: null,
+						eligibility: 'ineligible',
+						exclusionReason: 'tracking-gap',
+						rank: null,
+						tieGroup: null,
+						best: false,
+					},
+				],
+			},
+		});
+		const result = await review.get(OWNER_ID, ANALYSIS_ID);
+		expect(result).toMatchObject({
+			runId: RUN_ID,
+			corners: [
+				{
+					name: 'Turn one',
+					passes: [
+						{
+							durationMs: 100,
+							rank: 1,
+							best: true,
+							entry: {
+								timestampMs: 150,
+								beforeFrameIndex: 1,
+								afterFrameIndex: 2,
+							},
+							exit: {
+								timestampMs: 250,
+								beforeFrameIndex: 2,
+								afterFrameIndex: 3,
+							},
+							provenance: {
+								segmentId: SEGMENT_ID,
+								profileDigest: PROFILE_DIGEST,
+							},
+						},
+						{
+							entry: null,
+							exit: null,
+							rank: null,
+							best: false,
+							exclusionReason: 'tracking-gap',
+						},
+					],
+				},
+			],
+		});
+		expect(JSON.stringify(result)).not.toMatch(
+			/attemptId|leaseId|fence|objectKey|transfer|tracking-evidence\//,
+		);
+		await value.database.update(drivingAnalysis).set({
+			status: 'failed',
+			stateVersion: sql`${drivingAnalysis.stateVersion} + 1`,
+		});
+		await value.database.update(drivingAnalysis).set({
+			workflowId: crypto.randomUUID(),
+			workflowSequence: 2,
+			status: 'queued',
+			stage: 'preparation',
+			progress: 0,
+			stateVersion: sql`${drivingAnalysis.stateVersion} + 1`,
+		});
+		expect(await review.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			runId: null,
+			corners: [{ passes: [] }],
+		});
+	});
 	test('exposes the immutable evidence schema to Drizzle tooling', () => {
 		const batchConfig = getTableConfig(cornerEvidenceBatch);
 		const passConfig = getTableConfig(cornerPassEvidence);

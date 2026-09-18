@@ -1686,6 +1686,30 @@ drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}'] = {
 		},
 	},
 };
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/evidence'] = {
+	parameters: [
+		{
+			name: 'analysisId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	get: {
+		summary:
+			'Review owner-authorized Corner passes from the current analysis run',
+		description:
+			'Returns one D1 snapshot with analysisId, carId, driveSessionId, stateVersion, status, runId, trackMapVersionId, tieToleranceMs and ordered corners. Each corner contains every accepted eligible or excluded pass, unrounded gate-to-gate duration, crossing timestamps and bracketing frame indexes, run-wide rank and tie group, and safe segment, inference-profile, observation, manifest and measurement provenance. No attempts, leases, object keys or transfer capabilities are exposed. Before evidence is accepted, corners have empty pass lists. Responses are private and never cached.',
+		responses: {
+			200: {
+				description:
+					'Current-run accepted Corner evidence, wrapped in evidence',
+			},
+			401: { description: 'Authentication required' },
+			404: { description: 'Driving analysis not found or deleted' },
+		},
+	},
+};
 drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/retry'] = {
 	parameters: [
 		{
