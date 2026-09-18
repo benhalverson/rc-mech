@@ -9,12 +9,12 @@ import {
 	signal,
 	viewChild,
 } from '@angular/core';
-import { subjectFrameContentUrl } from './driving-analysis-gateway';
 import {
 	type DrivingAnalysis,
 	type SubjectBox,
 	subjectSeed,
 } from './driving-analysis.models';
+import { subjectFrameContentUrl } from './driving-analysis-gateway';
 import type { RaceRecording } from './race-recording.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
