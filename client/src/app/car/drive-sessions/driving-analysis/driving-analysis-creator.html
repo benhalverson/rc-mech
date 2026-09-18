@@ -79,6 +79,7 @@
 			<p class="alloy-state alloy-error-state m-0" role="alert">{{ store.analysisError() }}</p>
 		}
 		@if (analysis(); as current) {
+			<a class="alloy-link" [routerLink]="['/garage', carId(), 'drive-sessions', 'analysis', current.id]">Review Corner evidence</a>
 			<div class="alloy-state m-0" role="status">
 				<strong>Analysis {{ current.status }}</strong>
 				<span>{{ stageLabel(current.stage) }} · {{ current.progress }}%</span>
