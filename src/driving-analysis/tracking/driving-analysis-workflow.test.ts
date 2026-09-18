@@ -22,6 +22,7 @@ import {
 } from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
+import { CornerClipAuthority } from '../clips/corner-clip-authority';
 import {
 	AcceptedCornerEvidence,
 	AcceptedCornerEvidenceError,
@@ -1719,6 +1720,7 @@ describe('DrivingAnalysisWorkflow', () => {
 	});
 
 	test('runs the first immutable segment through LocalSam31Provider and commits evidence before release', async () => {
+		vi.spyOn(CornerClipAuthority.prototype, 'inputs').mockResolvedValue([]);
 		const commitEvidence = vi
 			.spyOn(AcceptedCornerEvidence.prototype, 'commit')
 			.mockResolvedValue({

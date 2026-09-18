@@ -71,6 +71,7 @@ describe('Analysis lifecycle controls', () => {
 	});
 	const flushReads = (lifecycle: AnalysisLifecycle) => {
 		TestBed.tick();
+		for (const request of http.match(request => request.url.endsWith('/clips'))) request.flush({ clips: [] });
 		for (const request of http.match((request) =>
 			request.url.endsWith('/lifecycle'),
 		))

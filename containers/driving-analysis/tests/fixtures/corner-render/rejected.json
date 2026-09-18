@@ -1,0 +1,11 @@
+{
+	"contractVersion": "corner-render.v1",
+	"correlationId": null,
+	"caseId": null,
+	"outcome": "rejected",
+	"error": {
+		"code": "RENDER_FAILED",
+		"stage": "render",
+		"message": "Corner clip rendering failed safely"
+	}
+}
