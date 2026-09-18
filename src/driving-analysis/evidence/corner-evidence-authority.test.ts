@@ -28,9 +28,9 @@ import { MockR2Controller } from '../../testing/hono-fixture';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import type { AppEnv } from '../../types';
 import { createAnalysisLifecycle } from '../analysis/analysis-lifecycle';
+import { completeDrivingAnalysis } from '../analysis/driving-analysis-completion';
 import { preparationIntent } from '../analysis/lifecycle-schema';
 import { cornerClipObjectKey } from '../clips/clip-object-key';
-import { completeDrivingAnalysis } from '../analysis/driving-analysis-completion';
 import { cornerClip, cornerClipPublication } from '../clips/clip-schema';
 import {
 	ClipAuthorityError,
@@ -152,47 +152,41 @@ describe('private Corner clips on real SQL authority', () => {
 			'/' +
 			transferId +
 			'/subject-observations.json.gz';
-		await value.database
-			.insert(trackingTransferRequest)
-			.values({
-				id: transferId,
-				attemptId: ATTEMPT_ID,
-				role: 'observation-artifact',
-				method: 'PUT',
-				objectScope: ATTEMPT_ID,
-				state: 'granted',
-				version: 1,
-				createdAt: NOW.toISOString(),
-				updatedAt: NOW.toISOString(),
-			});
-		await value.database
-			.insert(trackingArtifactPromotion)
-			.values({
-				artifactId: ATTEMPT_ID,
-				runId: RUN_ID,
-				segmentId: SEGMENT_ID,
-				attemptId: ATTEMPT_ID,
-				transferRequestId: transferId,
-				stagingObjectKey: staging,
-				acceptedObjectKey: OBSERVATION_KEY,
-				checksumSha256: OBSERVATION_CHECKSUM,
-				contractDigest: CONTRACT_DIGEST,
-				byteCount: 20,
-				state: 'accepted',
-				deleteAfter: NOW.toISOString(),
-				version: 1,
-				createdAt: NOW.toISOString(),
-				updatedAt: NOW.toISOString(),
-			});
-		await value.database
-			.insert(preparationIntent)
-			.values({
-				preparedMediaId: PREPARED_MEDIA_ID,
-				runId: RUN_ID,
-				ownerId: OWNER_ID,
-				state: 'preparing',
-				deleteAfter: NOW.toISOString(),
-			});
+		await value.database.insert(trackingTransferRequest).values({
+			id: transferId,
+			attemptId: ATTEMPT_ID,
+			role: 'observation-artifact',
+			method: 'PUT',
+			objectScope: ATTEMPT_ID,
+			state: 'granted',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			updatedAt: NOW.toISOString(),
+		});
+		await value.database.insert(trackingArtifactPromotion).values({
+			artifactId: ATTEMPT_ID,
+			runId: RUN_ID,
+			segmentId: SEGMENT_ID,
+			attemptId: ATTEMPT_ID,
+			transferRequestId: transferId,
+			stagingObjectKey: staging,
+			acceptedObjectKey: OBSERVATION_KEY,
+			checksumSha256: OBSERVATION_CHECKSUM,
+			contractDigest: CONTRACT_DIGEST,
+			byteCount: 20,
+			state: 'accepted',
+			deleteAfter: NOW.toISOString(),
+			version: 1,
+			createdAt: NOW.toISOString(),
+			updatedAt: NOW.toISOString(),
+		});
+		await value.database.insert(preparationIntent).values({
+			preparedMediaId: PREPARED_MEDIA_ID,
+			runId: RUN_ID,
+			ownerId: OWNER_ID,
+			state: 'preparing',
+			deleteAfter: NOW.toISOString(),
+		});
 		for (const objectKey of [
 			key,
 			staging,

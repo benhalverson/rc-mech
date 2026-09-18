@@ -71,7 +71,10 @@ describe('Analysis lifecycle controls', () => {
 	});
 	const flushReads = (lifecycle: AnalysisLifecycle) => {
 		TestBed.tick();
-		for (const request of http.match(request => request.url.endsWith('/clips'))) request.flush({ clips: [] });
+		for (const request of http.match((request) =>
+			request.url.endsWith('/clips'),
+		))
+			request.flush({ clips: [] });
 		for (const request of http.match((request) =>
 			request.url.endsWith('/lifecycle'),
 		))
@@ -93,6 +96,34 @@ describe('Analysis lifecycle controls', () => {
 				},
 			});
 	};
+	it('reports lifecycle read failures safely and recovers through Refresh', async () => {
+		const fixture = TestBed.createComponent(CornerReview);
+		fixture.componentRef.setInput('analysisId', 'analysis-1');
+		fixture.detectChanges();
+		TestBed.tick();
+		http
+			.expectOne('/api/v1/driving-analyses/analysis-1/lifecycle')
+			.flush(
+				{ error: 'private provider diagnostics' },
+				{ status: 503, statusText: 'Unavailable' },
+			);
+		flushReads(state('running'));
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const root: HTMLElement = fixture.nativeElement;
+		expect(root.textContent).toContain('Analysis controls could not be loaded');
+		expect(root.textContent).not.toContain('private provider');
+		Array.from(root.querySelectorAll('button'))
+			.find((button) => button.textContent?.trim() === 'Refresh evidence')
+			?.click();
+		flushReads(state('running'));
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect(root.textContent).not.toContain(
+			'Analysis controls could not be loaded',
+		);
+		expect(root.textContent).toContain('Cancel analysis');
+	});
 	it('cancels, replays failed retry commands, and confirms permanent deletion', async () => {
 		const store = TestBed.inject(CornerReviewStore);
 		store.changeLifecycle({ action: 'cancel' });
@@ -147,11 +178,13 @@ describe('Analysis lifecycle controls', () => {
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(root.textContent).toContain('cleanup will retry automatically');
+		expect(store.review()).toBeNull();
 		store.refresh();
 		flushReads(state('deleted'));
 		await fixture.whenStable();
 		fixture.detectChanges();
 		expect(root.textContent).toContain('permanently deleted');
+		expect(store.review()).toBeNull();
 	});
 	it('shows safe terminal and retryable lifecycle failures', async () => {
 		const fixture = TestBed.createComponent(CornerReview);

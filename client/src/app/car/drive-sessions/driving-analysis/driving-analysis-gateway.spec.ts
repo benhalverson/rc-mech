@@ -55,6 +55,18 @@ const command = {
 };
 
 describe('DrivingAnalysisGateway', () => {
+	it('sends a stable retry command identity with the optimistic version', async () => {
+		const gateway = TestBed.inject(DrivingAnalysisGateway);
+		const requestId = '55555555-5555-4555-8555-555555555555';
+		const result = firstValueFrom(gateway.retry('analysis-1', 3, requestId));
+		const request = http.expectOne('/api/v1/driving-analyses/analysis-1/retry');
+		expect(request.request.body).toEqual({
+			expectedStateVersion: 3,
+			commandId: requestId,
+		});
+		request.flush(response);
+		await expect(result).resolves.toEqual(response.drivingAnalysis);
+	});
 	let gateway: DrivingAnalysisGateway;
 	let http: HttpTestingController;
 

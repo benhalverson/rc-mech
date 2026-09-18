@@ -305,6 +305,17 @@ const expectCode = async (
 };
 
 describe('DrivingAnalysisAuthority', () => {
+	test('creation replay does not restart a terminal workflow', async () => {
+		const { authority, startProcessing } = await fixture();
+		await authority.create(command());
+		await authority.cancel(OWNER_ID, ANALYSIS_ID, 1);
+		startProcessing.mockClear();
+		await expect(authority.create(command())).resolves.toMatchObject({
+			created: false,
+			analysis: { status: 'cancelled' },
+		});
+		expect(startProcessing).not.toHaveBeenCalled();
+	});
 	test('a source deletion that wins after retry preflight prevents a fresh workflow', async () => {
 		const { authority, database, binding, startProcessing } = await fixture();
 		await authority.create(command());
