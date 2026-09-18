@@ -52,13 +52,53 @@ class SourceFrameRequest(StrictContract):
     include_image: bool = Field(alias="includeImage", strict=True)
 
 
-def frame_error(code: str, status: int) -> JSONResponse:
+class SourceFrameResponse(StrictContract):
+    contract_version: Literal["source-frame.v1"] = Field(alias="contractVersion")
+    frame_index: int = Field(alias="frameIndex", ge=0, le=MAX_SAFE_INTEGER, strict=True)
+    timestamp_ms: int = Field(
+        alias="timestampMs", ge=0, le=MAX_SAFE_INTEGER, strict=True
+    )
+    source_checksum_sha256: Annotated[
+        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
+    ] = Field(alias="sourceChecksumSha256")
+    image_base64: (
+        Annotated[
+            str,
+            StringConstraints(max_length=((MAX_IMAGE_BYTES + 2) // 3) * 4, strict=True),
+        ]
+        | None
+    ) = Field(alias="imageBase64")
+
+
+FrameErrorCode = Literal[
+    "INVALID_REQUEST",
+    "SERVICE_BUSY",
+    "PROCESS_TIMEOUT",
+    "RESOURCE_LIMIT",
+    "FRAME_UNAVAILABLE",
+    "SOURCE_MISMATCH",
+]
+
+
+class SourceFrameError(StrictContract):
+    code: FrameErrorCode
+    message: Literal["source frame selection rejected"]
+
+
+class SourceFrameErrorResponse(StrictContract):
+    contract_version: Literal["source-frame.v1"] = Field(alias="contractVersion")
+    error: SourceFrameError
+
+
+def frame_error(code: FrameErrorCode, status: int) -> JSONResponse:
     return JSONResponse(
         status_code=status,
-        content={
-            "contractVersion": "source-frame.v1",
-            "error": {"code": code, "message": "source frame selection rejected"},
-        },
+        content=SourceFrameErrorResponse(
+            contractVersion="source-frame.v1",
+            error=SourceFrameError(
+                code=code, message="source frame selection rejected"
+            ),
+        ).model_dump(by_alias=True),
     )
 
 
@@ -158,11 +198,11 @@ class SourceFrameService:
                 image = base64.b64encode(result.stdout).decode("ascii")
             check_deadline(deadline)
             return JSONResponse(
-                content={
-                    "contractVersion": "source-frame.v1",
-                    "frameIndex": selected.frame_index,
-                    "timestampMs": selected.timestamp_ms,
-                    "sourceChecksumSha256": checksum,
-                    "imageBase64": image,
-                }
+                content=SourceFrameResponse(
+                    contractVersion="source-frame.v1",
+                    frameIndex=selected.frame_index,
+                    timestampMs=selected.timestamp_ms,
+                    sourceChecksumSha256=checksum,
+                    imageBase64=image,
+                ).model_dump(by_alias=True)
             )

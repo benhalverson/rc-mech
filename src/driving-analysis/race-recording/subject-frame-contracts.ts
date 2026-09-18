@@ -36,6 +36,20 @@ export const sourceFrameResponseSchema = z.strictObject({
 		.max(Math.ceil(MAX_SUBJECT_FRAME_BYTES / 3) * 4)
 		.nullable(),
 });
+export const sourceFrameErrorResponseSchema = z.strictObject({
+	contractVersion: z.literal('source-frame.v1'),
+	error: z.strictObject({
+		code: z.enum([
+			'INVALID_REQUEST',
+			'SERVICE_BUSY',
+			'PROCESS_TIMEOUT',
+			'RESOURCE_LIMIT',
+			'FRAME_UNAVAILABLE',
+			'SOURCE_MISMATCH',
+		]),
+		message: z.literal('source frame selection rejected'),
+	}),
+});
 export const sourceFrameCommandSchema = z.strictObject({
 	source: z.strictObject({
 		objectKey: z
