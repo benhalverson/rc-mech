@@ -30,6 +30,7 @@ import type { AppEnv } from '../../types';
 import { createAnalysisLifecycle } from '../analysis/analysis-lifecycle';
 import { preparationIntent } from '../analysis/lifecycle-schema';
 import { cornerClipObjectKey } from '../clips/clip-object-key';
+import { completeDrivingAnalysis } from '../analysis/driving-analysis-completion';
 import { cornerClip, cornerClipPublication } from '../clips/clip-schema';
 import {
 	ClipAuthorityError,
@@ -62,6 +63,7 @@ import { subjectObservationSegmentSchema } from '../tracking/contracts';
 import { R2TrackingArtifactStore } from '../tracking/r2-tracking-artifact-store';
 import type { PreparedFrameManifest } from '../tracking/track-view-contracts';
 import { subjectProvenanceForProfile } from '../tracking/tracking-artifact-publication';
+import { TrackingAuthority } from '../tracking/tracking-authority';
 import {
 	AcceptedCornerEvidence,
 	type AcceptedCornerEvidenceIdentity,
@@ -227,6 +229,98 @@ describe('private Corner clips on real SQL authority', () => {
 		).toHaveLength(1);
 		expect(await value.database.select().from(cornerClip)).toHaveLength(1);
 	});
+	test('completes the current run only after every eligible clip has a verified receipt', async () => {
+		const value = await setup();
+		if (!sqlite) throw new Error('Missing SQL fixture');
+		await expect(
+			completeDrivingAnalysis(sqlite.database, identity, NOW.toISOString()),
+		).resolves.toBe('not-ready');
+		await renderAcceptedCornerClips(
+			identity,
+			value.clips,
+			value.r2.bucket,
+			value.render,
+		);
+		await expect(
+			completeDrivingAnalysis(sqlite.database, identity, NOW.toISOString()),
+		).resolves.toBe('completed');
+		const review = new CornerEvidenceReview(sqlite.database);
+		expect(
+			await new TrackingAuthority(sqlite.database).publicState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				RUN_ID,
+			),
+		).toMatchObject({
+			lifecycle: 'completed',
+			progress: 100,
+			waitReason: null,
+			safeFailureCode: null,
+		});
+		expect(await review.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'completed',
+			stateVersion: 4,
+		});
+		await expect(
+			completeDrivingAnalysis(
+				sqlite.database,
+				identity,
+				'2026-08-18T21:00:00.000Z',
+			),
+		).resolves.toBe('completed');
+		expect(await review.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'completed',
+			stateVersion: 4,
+		});
+	});
+
+	test('requires a measured batch but completes a run with no eligible clips', async () => {
+		await seed();
+		if (!sqlite) throw new Error('Missing SQL fixture');
+		await expect(
+			completeDrivingAnalysis(sqlite.database, identity, NOW.toISOString()),
+		).resolves.toBe('not-ready');
+		sqlite.close();
+		await setup([]);
+		await expect(
+			completeDrivingAnalysis(sqlite.database, identity, NOW.toISOString()),
+		).resolves.toBe('completed');
+	});
+
+	test.each(['cancelled', 'failed', 'deleting'] as const)(
+		'rejects finalization after the analysis becomes %s',
+		async (status) => {
+			const value = await setup([]);
+			if (!sqlite) throw new Error('Missing SQL fixture');
+			await value.database
+				.update(drivingAnalysis)
+				.set({ status, stateVersion: 4 })
+				.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+			await expect(
+				completeDrivingAnalysis(sqlite.database, identity, NOW.toISOString()),
+			).resolves.toBe('stale');
+			const run = await value.database.select().from(trackingRun).get();
+			expect(run).toMatchObject({ status: 'active', completedAt: null });
+		},
+	);
+
+	test('rejects another owner or superseded Workflow at finalization', async () => {
+		await setup([]);
+		if (!sqlite) throw new Error('Missing SQL fixture');
+		for (const staleIdentity of [
+			{ ...identity, ownerId: 'other-owner' },
+			{ ...identity, workflowId: 'superseded-workflow' },
+		]) {
+			await expect(
+				completeDrivingAnalysis(
+					sqlite.database,
+					staleIdentity,
+					NOW.toISOString(),
+				),
+			).resolves.toBe('stale');
+		}
+	});
+
 	test('builds fixed Track-view specs, publishes once, and privately streams every eligible clip', async () => {
 		const value = await setup();
 		await renderAcceptedCornerClips(

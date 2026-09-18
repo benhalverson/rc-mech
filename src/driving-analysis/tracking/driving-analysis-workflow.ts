@@ -5,6 +5,7 @@ import {
 } from 'cloudflare:workers';
 import { z } from 'zod';
 import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
+import { completeDrivingAnalysis } from '../analysis/driving-analysis-completion';
 import {
 	type DrivingAnalysisWorkflowPayload,
 	drivingAnalysisWorkflowPayloadSchema,
@@ -233,7 +234,10 @@ export class TrackingRunWorkflow {
 		) => Promise<void>,
 		private readonly renderClips: (
 			identity: TrackingWorkflowIdentity,
-		) => Promise<void> = async () => undefined,
+		) => Promise<void>,
+		private readonly completeAnalysis: (
+			identity: TrackingWorkflowIdentity,
+		) => Promise<void>,
 	) {}
 
 	async run(
@@ -1362,6 +1366,10 @@ export class TrackingRunWorkflow {
 				return { rendered: true };
 			},
 		);
+		await step.do(`complete-accepted-analysis-${name}`, async () => {
+			await this.completeAnalysis(workflowIdentity);
+			return { checked: true };
+		});
 	}
 }
 
@@ -1407,6 +1415,24 @@ export const trackingRunWorkflow = (
 			);
 		},
 		cornerClipRenderer(environment),
+		async (identity) => {
+			const result = await completeDrivingAnalysis(
+				environment.DB,
+				identity,
+				new Date().toISOString(),
+			);
+			if (result === 'stale')
+				throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+			if (result === 'not-ready') {
+				const context = await new TrackingAuthority(
+					environment.DB,
+				).workflowContext(identity);
+				if (context.outcome !== 'tracking-gap')
+					throw new Error(
+						'Accepted analysis evidence is not ready for completion',
+					);
+			}
+		},
 	);
 
 export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
