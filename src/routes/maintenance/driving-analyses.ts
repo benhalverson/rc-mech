@@ -92,5 +92,24 @@ export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 		);
 	});
 
+	routes.post('/driving-analyses/:analysisId/cancel', async (c) => {
+		const parsed = retryDrivingAnalysisInputSchema.safeParse(
+			await c.req.json().catch(() => undefined),
+		);
+		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+		return handle(
+			() =>
+				dependencies
+					.drivingAnalysisAuthority(c.env)
+					.cancel(
+						c.get('userId'),
+						c.req.param('analysisId'),
+						parsed.data.expectedStateVersion,
+					),
+			(analysis) =>
+				Response.json({ drivingAnalysis: analysis }, { status: 202 }),
+		);
+	});
+
 	return routes;
 };

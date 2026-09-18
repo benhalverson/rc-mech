@@ -44,6 +44,20 @@ Version one gives each ready Tracking segment a configurable 24-hour provider-av
 
 Cancellation is fenced immediately in D1 before any external action, and Cloudflare stops issuing Transfer grants or renewing execution authority. It then sends an idempotent cancel command bound to the segment, lease, and fencing identities. A GPU lease is released when the local worker confirms cancellation or when a bounded cancellation grace expires because the worker is unreachable. Lease release does not assert that physical computation has stopped; stale results remain fenced, and the local service's capacity-one rule safely rejects new work until the old execution actually exits.
 
+The authenticated `POST /driving-analyses/:analysisId/cancel` command accepts the
+expected public state version. Its D1 batch conditionally fences the current run
+and analysis before dispatching cleanup. Repeating cancellation after a dispatch
+failure preserves the original fence and timestamp. A deterministic sibling
+Workflow instance (`<workflowId>-cancel`) reloads fenced segment identities,
+issues exact attempt-bound cancellation, and releases capacity after confirmation
+or a 30-second grace measured from the persisted cancellation timestamp. The
+original Workflow is terminated after cleanup dispatch, including a wait for
+Re-identification.
+Previously accepted evidence remains immutable. Grant signing and lease renewal
+both recheck current authority; a capability signed across cancellation is
+discarded before delivery. Worker cancellation and its watchdog remain physical
+cleanup mechanisms and never confer publication authority.
+
 If Cloudflare assigns a new lease while stale computation still occupies the physical GPU, the local worker rejects the new submission with `GPU_CAPACITY_BUSY`; it neither queues the submission nor creates pending local job state. Cloudflare releases that unstarted lease and restores the same segment waiter at the head of the coordinator queue with its original ordering and unchanged provider-availability deadline. A capacity-busy response cannot renew execution authority.
 
 Every active local execution has a configurable liveness watchdog. Only an Access-authenticated control request that Cloudflare has first verified against the active segment, lease, and fencing token refreshes it. If verified control traffic stops beyond the watchdog grace, the worker cooperatively aborts computation and records the attempt as interrupted. This watchdog limits wasted GPU work and helps physical capacity recover; it neither renews nor replaces the Durable Object lease, and D1 fencing remains authoritative.

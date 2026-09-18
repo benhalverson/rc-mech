@@ -68,6 +68,7 @@ export const createDrivingAnalysisInputSchema = z
 
 export const drivingAnalysisWorkflowPayloadSchema = z.strictObject({
 	kind: z.literal('analysis-creation.v1'),
+	cancellation: z.literal(true).optional(),
 	ownerId: z.string().min(1).max(128),
 	analysisId: uuidV4Schema,
 	workflowId: uuidV4Schema,

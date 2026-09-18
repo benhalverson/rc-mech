@@ -25,6 +25,8 @@ import {
 	type GpuLeaseAcquireInput,
 	type GpuLeaseAcquireResult,
 	type GpuLeaseBusyInput,
+	type GpuLeaseCancelInput,
+	type GpuLeaseCancelMutationResult,
 	type GpuLeaseEnqueueInput,
 	type GpuLeaseEnqueueResult,
 	type GpuLeaseHoldInput,
@@ -69,6 +71,7 @@ import {
 	TrackingAuthority,
 	type TrackingWorkflowContext,
 } from './tracking-authority';
+import { TrackingCancellation } from './tracking-cancellation';
 
 const SINGLE_ATTEMPT_STEP = {
 	retries: {
@@ -142,6 +145,7 @@ class RetryableProviderError extends TrackingWorkflowError {
 }
 
 type CoordinatorPort = {
+	cancel(input: GpuLeaseCancelInput): Promise<GpuLeaseCancelMutationResult>;
 	enqueue(input: GpuLeaseEnqueueInput): Promise<GpuLeaseEnqueueResult>;
 	acquire(input: GpuLeaseAcquireInput): Promise<GpuLeaseAcquireResult>;
 	witness(input: GpuLeaseWitnessInput): Promise<GpuLeaseMutationResult>;
@@ -1125,6 +1129,8 @@ export class FirstTrackingSegmentWorkflow {
 		const result = await step.do(
 			`renew-tracking-lease-${identity.attemptId}-${statusIndex}`,
 			async () => {
+				const authority = await this.retryAuthority(workflowIdentity, identity);
+				if (authority.ok === false) return authority;
 				const renewed = await this.coordinator.renew(leaseIdentity(identity));
 				if (renewed.status !== 'ok') {
 					const current = await this.retryAuthority(workflowIdentity, identity);
@@ -1316,8 +1322,25 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 	async run(
 		event: Readonly<WorkflowEvent<DrivingAnalysisWorkflowPayload>>,
 		step: WorkflowStep,
-	): Promise<DrivingAnalysisCreationWorkflowResult> {
+	): Promise<DrivingAnalysisCreationWorkflowResult | { kind: 'cancelled' }> {
 		const payload = drivingAnalysisWorkflowPayloadSchema.parse(event.payload);
+		if (payload.cancellation) {
+			const result = await new TrackingCancellation(
+				new TrackingAuthority(this.env.DB),
+				{
+					cancel: (command) =>
+						new LocalSam31Provider({
+							origin: this.env.GPU_PROVIDER_ORIGIN ?? '',
+							accessClientId: this.env.GPU_ACCESS_CLIENT_ID ?? '',
+							accessClientSecret: this.env.GPU_ACCESS_CLIENT_SECRET ?? '',
+						}).cancel(command),
+				},
+				this.env.GPU_LEASE_COORDINATOR.getByName(
+					GPU_LEASE_COORDINATOR_OBJECT_NAME,
+				),
+			).run(payload, step);
+			return result;
+		}
 		/* c8 ignore next -- real profile/container wiring is exercised by deployment acceptance. */
 		const authority = new DrivingAnalysisAuthority(this.env.DB);
 		return new DrivingAnalysisCreationWorkflowRunner(

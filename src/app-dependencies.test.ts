@@ -30,6 +30,7 @@ const workflow = (
 ) => {
 	const restart = vi.fn(async () => undefined);
 	const instance = {
+		terminate: vi.fn(async () => undefined),
 		status: vi.fn(async () => ({ status })),
 		restart,
 	};
@@ -117,6 +118,34 @@ describe('Race-video validation Workflow starter', () => {
 });
 
 describe('Driving-analysis creation Workflow starter', () => {
+	test('starts deterministic cancellation cleanup then terminates the fenced original', async () => {
+		const cancellation = { ...analysisPayload, cancellation: true as const };
+		const value = workflow(
+			'queued',
+			false,
+			`${analysisPayload.workflowId}-cancel`,
+		);
+		const authority = defaultAppDependencies.drivingAnalysisAuthority({
+			DB: {} as D1Database,
+			DRIVING_ANALYSIS_WORKFLOW: value.binding,
+		} as unknown as Env);
+		const injected = authority as unknown as {
+			startProcessing(payload: DrivingAnalysisWorkflowPayload): Promise<void>;
+		};
+		await injected.startProcessing(cancellation);
+		expect(value.createBatch).toHaveBeenCalledWith([
+			{ id: `${analysisPayload.workflowId}-cancel`, params: cancellation },
+		]);
+		expect(value.get).toHaveBeenCalledWith(analysisPayload.workflowId);
+		expect(value.instance.terminate).toHaveBeenCalledOnce();
+		value.instance.terminate.mockRejectedValue(new Error('already stopped'));
+		value.instance.status.mockResolvedValue({ status: 'terminated' });
+		await injected.startProcessing(cancellation);
+		value.instance.status.mockResolvedValue({ status: 'running' });
+		await expect(injected.startProcessing(cancellation)).rejects.toThrow(
+			'already stopped',
+		);
+	});
 	test('creates, accepts live replay, restarts failures, and rejects unknown state', async () => {
 		let value = workflow('queued', false, analysisPayload.analysisId);
 		await expect(
