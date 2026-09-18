@@ -173,6 +173,7 @@ export class R2TransferGrantAuthority {
 				: OUTPUT_TRANSFER_GRANT_SECONDS;
 		try {
 			const url = await this.signer.sign(binding, expiresInSeconds, now);
+			await this.authority.authorizeTransferGrant(authorityCommand);
 			return transferGrantCommandSchema.parse({
 				contractVersion: 'tracking-provider.v1',
 				runId: command.runId,

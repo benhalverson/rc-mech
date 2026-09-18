@@ -1527,6 +1527,9 @@ describe('TrackingAuthority', () => {
 
 	test('fences every late mutation after cancellation and replays the fence', async () => {
 		const { authority } = await createAttemptAuthority();
+		expect(
+			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+		).toEqual([]);
 		const fenced = await authority.fenceRun({
 			ownerId: OWNER_ID,
 			runId: RUN_ID,
@@ -1534,6 +1537,34 @@ describe('TrackingAuthority', () => {
 			status: 'cancelled',
 			completedAt: LATER,
 		});
+		expect(
+			await authority.cancellationTargets(
+				'other-owner',
+				ANALYSIS_ID,
+				WORKFLOW_ID,
+			),
+		).toEqual([]);
+		expect(
+			await authority.cancellationTargets(
+				OWNER_ID,
+				ANALYSIS_ID,
+				'other-workflow',
+			),
+		).toEqual([]);
+		expect(
+			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+		).toMatchObject([
+			{
+				segmentId: SEGMENT_ID,
+				cancelledAt: LATER,
+				identity: {
+					runId: RUN_ID,
+					attemptId: ATTEMPT_ID,
+					leaseId: LEASE_ID,
+					fencingToken: 7,
+				},
+			},
+		]);
 		expect(
 			await authority.fenceRun({
 				ownerId: OWNER_ID,
@@ -1564,6 +1595,37 @@ describe('TrackingAuthority', () => {
 			}),
 			'STALE_AUTHORITY',
 		);
+	});
+
+	test('cancellation cleanup snapshots queued segments and preserves accepted evidence', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest),
+		);
+		await authority.createSegment(
+			segmentCommand({
+				segmentId: SECOND_SEGMENT_ID,
+				order: 1,
+				seed: {
+					kind: 'reidentification',
+					sourceId: REIDENTIFICATION_ID,
+					value: submissionFixture().trackingRequest.subjectSeed,
+				},
+			}),
+		);
+		await authority.fenceRun({
+			ownerId: OWNER_ID,
+			runId: RUN_ID,
+			expectedVersion: 1,
+			status: 'cancelled',
+			completedAt: LATER,
+		});
+		expect(
+			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+		).toEqual([
+			{ segmentId: SECOND_SEGMENT_ID, identity: null, cancelledAt: LATER },
+		]);
 	});
 
 	test('enforces immutable database records below the gateway', async () => {

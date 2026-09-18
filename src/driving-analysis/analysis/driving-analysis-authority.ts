@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, exists, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import {
 	authRateLimit,
@@ -293,6 +293,90 @@ export class DrivingAnalysisAuthority {
 		}
 		await this.start(record);
 		return { analysis: publicAnalysis(record), created: true };
+	}
+
+	async cancel(
+		ownerId: string,
+		analysisId: string,
+		expectedStateVersion: number,
+	): Promise<PublicDrivingAnalysis> {
+		const current = await this.find(ownerId, analysisId);
+		if (!current)
+			throw authorityError('NOT_FOUND', 'Driving analysis not found');
+		if (current.status !== 'cancelled') {
+			if (
+				current.stateVersion !== expectedStateVersion ||
+				!['queued', 'running', 'awaiting-reidentification'].includes(
+					current.status,
+				)
+			)
+				throw authorityError(
+					'CONFLICT',
+					'Driving analysis changed; reload and retry',
+				);
+			const timestamp = this.clock().toISOString();
+			const witness = and(
+				eq(drivingAnalysis.id, analysisId),
+				eq(drivingAnalysis.ownerId, ownerId),
+				eq(drivingAnalysis.workflowId, current.workflowId),
+				eq(drivingAnalysis.stateVersion, expectedStateVersion),
+				eq(drivingAnalysis.status, current.status),
+			);
+			const [, rows] = await this.database.batch([
+				this.database
+					.update(trackingRun)
+					.set({
+						status: 'cancelled',
+						version: sql`${trackingRun.version} + 1`,
+						completedAt: timestamp,
+					})
+					.where(
+						and(
+							eq(trackingRun.ownerId, ownerId),
+							eq(trackingRun.analysisId, analysisId),
+							eq(trackingRun.workflowId, current.workflowId),
+							eq(trackingRun.status, 'active'),
+							exists(
+								this.database
+									.select({ id: drivingAnalysis.id })
+									.from(drivingAnalysis)
+									.where(witness),
+							),
+						),
+					),
+				this.database
+					.update(drivingAnalysis)
+					.set({
+						status: 'cancelled',
+						stateVersion: expectedStateVersion + 1,
+						updatedAt: timestamp,
+					})
+					.where(witness)
+					.returning(),
+			]);
+			if (!rows[0])
+				throw authorityError(
+					'CONFLICT',
+					'Driving analysis changed; reload and retry',
+				);
+		}
+		try {
+			await this.startProcessing({
+				kind: 'analysis-creation.v1',
+				cancellation: true,
+				ownerId,
+				analysisId,
+				workflowId: current.workflowId,
+				workflowSequence: current.workflowSequence,
+				expectedStateVersion,
+			});
+		} catch {
+			throw authorityError(
+				'WORKFLOW_UNAVAILABLE',
+				'Driving-analysis cancellation is pending; retry cancellation',
+			);
+		}
+		return this.get(ownerId, analysisId);
 	}
 
 	async get(

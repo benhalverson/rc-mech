@@ -264,6 +264,30 @@ describe('R2TransferGrantAuthority', () => {
 		await expect(promise).rejects.not.toThrow(/secret|signature/i);
 	});
 
+	test('discards a signed capability when cancellation wins during signing', async () => {
+		const { authority, segment } = await authorityFixture();
+		const grants = new R2TransferGrantAuthority(
+			authority,
+			successfulWitness(),
+			{
+				sign: async () => {
+					await authority.fenceRun({
+						ownerId: OWNER_ID,
+						runId: RUN_ID,
+						expectedVersion: 1,
+						status: 'cancelled',
+						completedAt: NOW,
+					});
+					return 'https://secret.example/object?signature=do-not-leak';
+				},
+			},
+			() => NOW_SECONDS,
+		);
+		await expect(
+			grants.issue(issueCommand(segment.specificationDigest)),
+		).rejects.toMatchObject({ code: 'SIGNING_FAILED' });
+	});
+
 	test('redacts malformed signer output instead of exposing it through validation', async () => {
 		const { authority, segment } = await authorityFixture();
 		const grants = new R2TransferGrantAuthority(
