@@ -92,6 +92,7 @@ it.each([
 	'missing-analysis',
 	'missing-recording',
 	'ready',
+	'failed-context',
 	'already-running',
 	'wrong-recording',
 ] as const)('reopens correction with %s context', async (scenario) => {
@@ -186,18 +187,36 @@ it.each([
 			});
 	}
 	TestBed.tick();
-	if (scenario === 'ready') {
+	if (scenario === 'ready' || scenario === 'failed-context') {
 		await vi.waitFor(() =>
 			expect(store.correction()).toEqual({ analysis, recording }),
 		);
 		expect(store.correctionError()).toBeNull();
 		fixture.detectChanges();
-		const context = await vi.waitFor(() => {
+		let context = await vi.waitFor(() => {
 			TestBed.tick();
 			return http.expectOne((request) =>
 				request.url.endsWith('/reidentification'),
 			);
 		});
+		if (scenario === 'failed-context') {
+			context.flush({}, { status: 503, statusText: 'Unavailable' });
+			await fixture.whenStable();
+			fixture.detectChanges();
+			const element: HTMLElement = fixture.nativeElement;
+			const retry = Array.from(element.querySelectorAll('button')).find(
+				(button) => button.textContent?.trim() === 'Retry gap context',
+			);
+			expect(retry).toBeDefined();
+			retry?.click();
+			context = await vi.waitFor(() => {
+				TestBed.tick();
+				return http.expectOne((request) =>
+					request.url.endsWith('/reidentification'),
+				);
+			});
+			expect(context.request.params.get('version')).toBe('3');
+		}
 		context.flush({
 			context: {
 				runId: 'run-1',

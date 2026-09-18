@@ -7,7 +7,8 @@
 	@if (store.loading()) {
 		<p role="status">Loading accepted gap context…</p>
 	} @else if (store.readFailed()) {
-		<p role="alert">Gap context could not be loaded. Refresh the analysis to try again.</p>
+		<p role="alert">Gap context could not be loaded. Retry to load the accepted evidence.</p>
+		<button class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.retryContext()">Retry gap context</button>
 	} @else if (store.context(); as context) {
 		<p class="m-0 text-sm">Tracking became uncertain at {{ context.gap.startTimestampMs }} ms ({{ context.gap.reason }}). Choose a later clear frame. The gap stays excluded from corner comparisons.</p>
 		<details><summary class="alloy-focus-ring cursor-pointer">Accepted evidence</summary><p class="alloy-technical break-all text-xs">{{ context.acceptedDigest }}</p></details>

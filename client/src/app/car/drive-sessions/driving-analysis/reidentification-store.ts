@@ -89,6 +89,9 @@ export const ReidentificationStore = signalStore(
 			),
 		);
 		return {
+			retryContext(): void {
+				store.remote.reload();
+			},
 			select(analysisId: string, selectionVersion = 0): void {
 				if (
 					analysisId === store.analysisId() &&

@@ -664,10 +664,16 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		acceptedDigest: 'a'.repeat(64),
 		gap: { startTimestampMs: 600, reason: 'missing' },
 	};
+	let failGapContext = false;
 	await page.route(
 		`**/api/v1/driving-analyses/${drivingAnalysis.id}/reidentification*`,
 		async (route) => {
 			if (route.request().method() === 'GET') {
+				if (failGapContext) {
+					failGapContext = false;
+					await route.fulfill({ status: 503, json: { error: 'Unavailable' } });
+					return;
+				}
 				await route.fulfill({ json: { context: gapContext } });
 				return;
 			}
@@ -805,12 +811,21 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		`**/api/v1/driving-analyses/${drivingAnalysis.id}/clips`,
 		(route) => route.fulfill({ json: { clips: [] } }),
 	);
+	failGapContext = true;
 	await page.goto(
 		`/garage/${created.car.id}/drive-sessions/analysis/${drivingAnalysis.id}`,
 	);
 	const reopenedCorrection = page.locator(
 		'app-corner-review app-subject-reidentification',
 	);
+	await expect(reopenedCorrection.getByRole('alert')).toContainText(
+		'Gap context could not be loaded',
+	);
+	expect(await scan(page)).toEqual([]);
+	await reopenedCorrection
+		.getByRole('button', { name: 'Retry gap context' })
+		.focus();
+	await page.keyboard.press('Enter');
 	await expect(
 		reopenedCorrection.getByText('Selected source frame 7 at 700 ms'),
 	).toBeVisible();
