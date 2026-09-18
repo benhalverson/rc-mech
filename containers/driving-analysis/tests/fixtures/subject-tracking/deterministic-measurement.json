@@ -1,0 +1,765 @@
+{
+	"manifest": {
+		"contractVersion": "subject-tracking.v1",
+		"preparedMediaId": "88888888-8888-4888-8888-888888888888",
+		"caseId": "fixture-race",
+		"sourceChecksumSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+		"sourceByteCount": 100,
+		"window": {
+			"startTimestampMs": 0,
+			"endTimestampMs": 1300
+		},
+		"trackView": {
+			"x": 0,
+			"y": 0.3333333333333333,
+			"width": 1,
+			"height": 0.6666666666666666
+		},
+		"mediaByteCount": 50,
+		"mediaChecksumSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+		"width": 160,
+		"height": 60,
+		"averageFrameRate": {
+			"numerator": 10,
+			"denominator": 1
+		},
+		"ffmpegVersion": "7.1.2",
+		"pipelineVersion": "subject-tracking.v1",
+		"preparationInputDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+		"preparationConfigurationDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"frames": [
+			{
+				"preparedFrameIndex": 0,
+				"frameIndex": 1,
+				"timestampMs": 100
+			},
+			{
+				"preparedFrameIndex": 1,
+				"frameIndex": 2,
+				"timestampMs": 200
+			},
+			{
+				"preparedFrameIndex": 2,
+				"frameIndex": 3,
+				"timestampMs": 300
+			},
+			{
+				"preparedFrameIndex": 3,
+				"frameIndex": 4,
+				"timestampMs": 400
+			},
+			{
+				"preparedFrameIndex": 4,
+				"frameIndex": 5,
+				"timestampMs": 500
+			},
+			{
+				"preparedFrameIndex": 5,
+				"frameIndex": 6,
+				"timestampMs": 600
+			},
+			{
+				"preparedFrameIndex": 6,
+				"frameIndex": 7,
+				"timestampMs": 700
+			},
+			{
+				"preparedFrameIndex": 7,
+				"frameIndex": 8,
+				"timestampMs": 800
+			},
+			{
+				"preparedFrameIndex": 8,
+				"frameIndex": 9,
+				"timestampMs": 1200
+			}
+		]
+	},
+	"seed": {
+		"timestampMs": 100,
+		"frameIndex": 1,
+		"identity": "subject-car",
+		"box": {
+			"x": 0.15,
+			"y": 0.45,
+			"width": 0.1,
+			"height": 0.1
+		}
+	},
+	"corners": [
+		{
+			"id": "55555555-5555-4555-8555-555555555555",
+			"key": "turn-one",
+			"order": 1,
+			"entryGate": {
+				"start": {
+					"x": 0.4,
+					"y": 1
+				},
+				"end": {
+					"x": 0.4,
+					"y": 0
+				},
+				"direction": "forward"
+			},
+			"exitGate": {
+				"start": {
+					"x": 0.75,
+					"y": 1
+				},
+				"end": {
+					"x": 0.75,
+					"y": 0
+				},
+				"direction": "forward"
+			}
+		}
+	],
+	"cases": [
+		{
+			"name": "complete",
+			"frameCount": 3,
+			"segment": {
+				"contractVersion": "subject-observation-segment.v1",
+				"outcome": "accepted",
+				"caseId": "fixture-race",
+				"observations": [
+					{
+						"timestampMs": 100,
+						"frameIndex": 1,
+						"box": {
+							"x": 0.15,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.2,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 200,
+						"frameIndex": 2,
+						"box": {
+							"x": 0.55,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.6,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 300,
+						"frameIndex": 3,
+						"box": {
+							"x": 0.85,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.9,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					}
+				],
+				"openGap": null,
+				"provenance": {
+					"provider": "sam31",
+					"model": "sam3.1",
+					"modelVersion": "1",
+					"pipelineVersion": "subject-tracking.v1",
+					"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+					"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+					"identityConfidenceThreshold": 0.9,
+					"confidenceCalibration": "sam31-binary-v1"
+				}
+			},
+			"expected": {
+				"version": "corner-evidence.v1",
+				"passes": [
+					{
+						"cornerId": "55555555-5555-4555-8555-555555555555",
+						"cornerKey": "turn-one",
+						"cornerOrder": 1,
+						"ordinal": 1,
+						"entry": {
+							"timestampMs": 150,
+							"beforeFrameIndex": 1,
+							"afterFrameIndex": 2
+						},
+						"exit": {
+							"timestampMs": 250,
+							"beforeFrameIndex": 2,
+							"afterFrameIndex": 3
+						},
+						"durationMs": 100,
+						"eligibility": "eligible",
+						"exclusionReason": null,
+						"rank": 1,
+						"tieGroup": 1,
+						"best": true
+					}
+				]
+			}
+		},
+		{
+			"name": "open-gap",
+			"frameCount": 3,
+			"segment": {
+				"contractVersion": "subject-observation-segment.v1",
+				"outcome": "accepted",
+				"caseId": "fixture-race",
+				"observations": [
+					{
+						"timestampMs": 100,
+						"frameIndex": 1,
+						"box": {
+							"x": 0.15,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.2,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 200,
+						"frameIndex": 2,
+						"box": {
+							"x": 0.55,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.6,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					}
+				],
+				"openGap": {
+					"startTimestampMs": 300,
+					"reason": "ambiguous-identity"
+				},
+				"provenance": {
+					"provider": "sam31",
+					"model": "sam3.1",
+					"modelVersion": "1",
+					"pipelineVersion": "subject-tracking.v1",
+					"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+					"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+					"identityConfidenceThreshold": 0.9,
+					"confidenceCalibration": "sam31-binary-v1"
+				}
+			},
+			"expected": {
+				"version": "corner-evidence.v1",
+				"passes": [
+					{
+						"cornerId": "55555555-5555-4555-8555-555555555555",
+						"cornerKey": "turn-one",
+						"cornerOrder": 1,
+						"ordinal": 1,
+						"entry": {
+							"timestampMs": 150,
+							"beforeFrameIndex": 1,
+							"afterFrameIndex": 2
+						},
+						"exit": null,
+						"durationMs": null,
+						"eligibility": "ineligible",
+						"exclusionReason": "tracking-gap",
+						"rank": null,
+						"tieGroup": null,
+						"best": false
+					}
+				]
+			}
+		},
+		{
+			"name": "ranked-ties",
+			"frameCount": 9,
+			"segment": {
+				"contractVersion": "subject-observation-segment.v1",
+				"outcome": "accepted",
+				"caseId": "fixture-race",
+				"observations": [
+					{
+						"timestampMs": 100,
+						"frameIndex": 1,
+						"box": {
+							"x": 0.15000000000000002,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.2,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 200,
+						"frameIndex": 2,
+						"box": {
+							"x": 0.5499999999999999,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.6,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 300,
+						"frameIndex": 3,
+						"box": {
+							"x": 0.85,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.9,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 400,
+						"frameIndex": 4,
+						"box": {
+							"x": 0.15000000000000002,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.2,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 500,
+						"frameIndex": 5,
+						"box": {
+							"x": 0.5499999999999999,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.6,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 600,
+						"frameIndex": 6,
+						"box": {
+							"x": 0.85,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.9,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 700,
+						"frameIndex": 7,
+						"box": {
+							"x": 0.15000000000000002,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.2,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 800,
+						"frameIndex": 8,
+						"box": {
+							"x": 0.5499999999999999,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.6,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 1200,
+						"frameIndex": 9,
+						"box": {
+							"x": 0.85,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.9,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					}
+				],
+				"openGap": null,
+				"provenance": {
+					"provider": "sam31",
+					"model": "sam3.1",
+					"modelVersion": "1",
+					"pipelineVersion": "subject-tracking.v1",
+					"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+					"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+					"identityConfidenceThreshold": 0.9,
+					"confidenceCalibration": "sam31-binary-v1"
+				}
+			},
+			"expected": {
+				"version": "corner-evidence.v1",
+				"passes": [
+					{
+						"cornerId": "55555555-5555-4555-8555-555555555555",
+						"cornerKey": "turn-one",
+						"cornerOrder": 1,
+						"ordinal": 1,
+						"entry": {
+							"timestampMs": 150,
+							"beforeFrameIndex": 1,
+							"afterFrameIndex": 2
+						},
+						"exit": {
+							"timestampMs": 250,
+							"beforeFrameIndex": 2,
+							"afterFrameIndex": 3
+						},
+						"durationMs": 100,
+						"eligibility": "eligible",
+						"exclusionReason": null,
+						"rank": 1,
+						"tieGroup": 1,
+						"best": true
+					},
+					{
+						"cornerId": "55555555-5555-4555-8555-555555555555",
+						"cornerKey": "turn-one",
+						"cornerOrder": 1,
+						"ordinal": 2,
+						"entry": {
+							"timestampMs": 450,
+							"beforeFrameIndex": 4,
+							"afterFrameIndex": 5
+						},
+						"exit": {
+							"timestampMs": 550,
+							"beforeFrameIndex": 5,
+							"afterFrameIndex": 6
+						},
+						"durationMs": 100,
+						"eligibility": "eligible",
+						"exclusionReason": null,
+						"rank": 1,
+						"tieGroup": 1,
+						"best": true
+					},
+					{
+						"cornerId": "55555555-5555-4555-8555-555555555555",
+						"cornerKey": "turn-one",
+						"cornerOrder": 1,
+						"ordinal": 3,
+						"entry": {
+							"timestampMs": 750,
+							"beforeFrameIndex": 7,
+							"afterFrameIndex": 8
+						},
+						"exit": {
+							"timestampMs": 1000,
+							"beforeFrameIndex": 8,
+							"afterFrameIndex": 9
+						},
+						"durationMs": 250,
+						"eligibility": "eligible",
+						"exclusionReason": null,
+						"rank": 2,
+						"tieGroup": 2,
+						"best": false
+					}
+				]
+			}
+		},
+		{
+			"name": "missing-frame",
+			"frameCount": 3,
+			"segment": {
+				"contractVersion": "subject-observation-segment.v1",
+				"outcome": "accepted",
+				"caseId": "fixture-race",
+				"observations": [
+					{
+						"timestampMs": 100,
+						"frameIndex": 1,
+						"box": {
+							"x": 0.15,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.2,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					},
+					{
+						"timestampMs": 300,
+						"frameIndex": 3,
+						"box": {
+							"x": 0.85,
+							"y": 0.45,
+							"width": 0.1,
+							"height": 0.1
+						},
+						"center": {
+							"x": 0.9,
+							"y": 0.5
+						},
+						"visibility": "visible",
+						"identityConfidence": 0.99,
+						"origin": "detected",
+						"provenance": {
+							"provider": "sam31",
+							"model": "sam3.1",
+							"modelVersion": "1",
+							"pipelineVersion": "subject-tracking.v1",
+							"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+							"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+							"identityConfidenceThreshold": 0.9,
+							"confidenceCalibration": "sam31-binary-v1"
+						}
+					}
+				],
+				"openGap": null,
+				"provenance": {
+					"provider": "sam31",
+					"model": "sam3.1",
+					"modelVersion": "1",
+					"pipelineVersion": "subject-tracking.v1",
+					"configurationDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+					"modelDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+					"identityConfidenceThreshold": 0.9,
+					"confidenceCalibration": "sam31-binary-v1"
+				}
+			},
+			"expectedError": "INVALID_OBSERVATIONS"
+		}
+	]
+}
