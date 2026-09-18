@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -65,6 +65,7 @@ let fixture: SqliteD1Fixture | undefined;
 afterEach(() => {
 	fixture?.close();
 	fixture = undefined;
+	vi.restoreAllMocks();
 });
 
 const authorityFixture = () => {
@@ -287,6 +288,25 @@ const expectAuthorityError = async (
 };
 
 describe('TrackingAuthority', () => {
+	test('a cancellation winning the segment insert prevents new immutable work', async () => {
+		const value = authorityFixture();
+		await value.authority.createRun(runCommand());
+		await seedPreparedTrackView(value);
+		const prepare = value.database.prepare.bind(value.database);
+		vi.spyOn(value.database, 'prepare').mockImplementation((query) => {
+			if (query.startsWith('insert into "tracking_segment"'))
+				fixture?.exec(
+					"UPDATE tracking_run SET status = 'cancelled', version = version + 1, completed_at = '2026-08-16T20:01:00.000Z'",
+				);
+			return prepare(query);
+		});
+		await expect(
+			value.authority.createSegment(segmentCommand()),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(
+			await value.database.prepare('SELECT id FROM tracking_segment').all(),
+		).toMatchObject({ results: [] });
+	});
 	test('applies nullable availability fields to populated legacy records without changing their authority', async () => {
 		const { authority, database } = await createAttemptAuthority();
 		await database
@@ -1035,8 +1055,37 @@ describe('TrackingAuthority', () => {
 		});
 	});
 
+	test('loads only the current prepared manifest and rejects missing authority', async () => {
+		const { authority, database } = await createAttemptAuthority();
+		const identity = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+		};
+		const store = { read: vi.fn(async () => null) };
+		await expect(
+			authority.reidentificationFrames(identity, store),
+		).rejects.toThrow('unavailable');
+		expect(store.read).toHaveBeenCalledWith(
+			`prepared/${PREPARED_ID}/frame-manifest.json.gz`,
+			15,
+		);
+		await database.exec(
+			"DROP TRIGGER prepared_tracking_object_immutable_delete; DELETE FROM prepared_tracking_object WHERE role = 'frame-manifest'",
+		);
+		await expect(
+			authority.reidentificationFrames(identity, store),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+	});
+
 	test('resumes only accepted owner-scoped gaps once and preserves immutable evidence', async () => {
 		const { authority, segment } = await createAttemptAuthority();
+		const manifestStore = { read: vi.fn() };
+		vi.spyOn(authority, 'reidentificationFrames').mockResolvedValue([
+			{ frameIndex: 3, timestampMs: 300 },
+		]);
 		const identity = {
 			ownerId: OWNER_ID,
 			analysisId: ANALYSIS_ID,
@@ -1053,7 +1102,13 @@ describe('TrackingAuthority', () => {
 			code: 'CONFLICT',
 		});
 		await expect(
-			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), seed),
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
 		await makeOutputReady(authority);
 		await authority.acceptArtifact(
@@ -1071,29 +1126,71 @@ describe('TrackingAuthority', () => {
 				SECOND_SEGMENT_ID,
 				'a'.repeat(64),
 				seed,
+				manifestStore,
 			),
 		).rejects.toMatchObject({ code: 'NOT_FOUND' });
 		await expect(
-			authority.reidentify(identity, SECOND_SEGMENT_ID, 'f'.repeat(64), seed),
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'f'.repeat(64),
+				seed,
+				manifestStore,
+			),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
 		await expect(
-			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), {
-				...seed,
-				timestampMs: 250,
-			}),
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{
+					...seed,
+					timestampMs: 250,
+				},
+				manifestStore,
+			),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
 		await expect(
-			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), {
-				...seed,
-				frameIndex: 0,
-			}),
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{
+					...seed,
+					frameIndex: 0,
+				},
+				manifestStore,
+			),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
-		const next = await authority.reidentify(
-			identity,
-			SECOND_SEGMENT_ID,
-			'a'.repeat(64),
-			seed,
-		);
+		await expect(
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{ ...seed, timestampMs: 301 },
+				manifestStore,
+			),
+		).rejects.toThrow('Subject frame must match');
+		expect(await authority.nextSegment(identity)).toBeNull();
+		let now = Date.now();
+		vi.spyOn(Date, 'now').mockImplementation(() => now++);
+		const [next, concurrent] = await Promise.all([
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+		]);
+		expect(concurrent).toEqual(next);
 		expect(next).toMatchObject({
 			segmentId: SECOND_SEGMENT_ID,
 			seed,
@@ -1106,17 +1203,30 @@ describe('TrackingAuthority', () => {
 				SECOND_SEGMENT_ID,
 				'a'.repeat(64),
 				seed,
+				manifestStore,
 			),
 		).toEqual(next);
 		expect(await authority.nextSegment(identity)).toEqual(next);
 		await expect(
-			authority.reidentify(identity, REIDENTIFICATION_ID, 'a'.repeat(64), seed),
+			authority.reidentify(
+				identity,
+				REIDENTIFICATION_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
 		await expect(
-			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), {
-				...seed,
-				timestampMs: 400,
-			}),
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{
+					...seed,
+					timestampMs: 400,
+				},
+				manifestStore,
+			),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
 		expect(
 			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),

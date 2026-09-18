@@ -3,12 +3,15 @@ import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackMapVersion } from '../../../track-maps/track-map.models';
+import { CorrectionPlayer } from './correction-player';
 import type { DrivingAnalysis } from './driving-analysis.models';
 import { DrivingAnalysisCreator } from './driving-analysis-creator';
 import type { ApprovedTrackMapOption } from './driving-analysis-store';
 import { DrivingAnalysisStore } from './driving-analysis-store';
 import type { RaceRecording } from './race-recording.models';
+import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
+import { SubjectReidentification } from './subject-reidentification';
 
 const recording: RaceRecording = {
 	id: '33333333-3333-4333-8333-333333333333',
@@ -138,6 +141,52 @@ describe('DrivingAnalysisCreator', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		TestBed.resetTestingModule();
+	});
+
+	it('renders the correction workflow for an accepted tracking gap', async () => {
+		const corrections = {
+			select: vi.fn(),
+			context: signal(null),
+			loading: signal(false),
+			readFailed: signal(false),
+		};
+		TestBed.configureTestingModule({
+			providers: [
+				CorrectionPlayer,
+				{ provide: ReidentificationStore, useValue: corrections },
+			],
+		});
+		store.analysisCreation.set({
+			status: 'accepted',
+			driveSessionId: 'drive-1',
+			error: null,
+			analysis: {
+				id: 'analysis-1',
+				status: 'awaiting-reidentification',
+				stateVersion: 1,
+				stage: 'tracking',
+				progress: 99,
+				subjectSeed: {
+					timestampMs: 100,
+					frameIndex: 1,
+					identity: 'car',
+					box: { x: 0.1, y: 0.1, width: 0.1, height: 0.1 },
+				},
+			} as DrivingAnalysis,
+		});
+		const fixture = TestBed.createComponent(DrivingAnalysisCreator);
+		fixture.componentRef.setInput('carId', 'car-1');
+		fixture.componentRef.setInput('driveSessionId', 'drive-1');
+		fixture.componentRef.setInput('recording', recording);
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const child = fixture.debugElement.query(
+			By.directive(SubjectReidentification),
+		).componentInstance as SubjectReidentification;
+		expect(child.analysis().id).toBe('analysis-1');
+		expect(child.recording()).toEqual(recording);
+		expect(corrections.select).toHaveBeenCalledWith('analysis-1', 1);
 	});
 
 	it('marks absolute timestamps and submits the normalized Track-view seed', async () => {

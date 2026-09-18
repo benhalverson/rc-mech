@@ -273,6 +273,7 @@ test('keeps dark Drive session editing, history, and archive states accessible',
 test('creates a queued Driving analysis from a ready private Race recording', async ({
 	page,
 }) => {
+	test.setTimeout(45_000);
 	await authenticateOwner(page);
 	const created = await createCar(page, 'Driving analysis browser fixture');
 	const driveResponse = await page.request.post(
@@ -485,6 +486,85 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	};
 	await creator.getByRole('button', { name: 'Check status' }).click();
 	await expect(creator.getByText('Analysis running')).toBeVisible();
+	const correctionRequests: unknown[] = [];
+	const gapContext = {
+		frames: [{ frameIndex: 7, timestampMs: 700 }],
+		runId: '11111111-1111-4111-8111-111111111111',
+		segmentId: '22222222-2222-4222-8222-222222222222',
+		acceptedDigest: 'a'.repeat(64),
+		gap: { startTimestampMs: 600, reason: 'missing' },
+	};
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/reidentification*`,
+		async (route) => {
+			if (route.request().method() === 'GET') {
+				await route.fulfill({ json: { context: gapContext } });
+				return;
+			}
+			const correction = route.request().postDataJSON() as {
+				correctionId: string;
+			};
+			correctionRequests.push(correction);
+			await route.fulfill(
+				correctionRequests.length === 1
+					? { status: 503, json: { error: 'Retry saved correction' } }
+					: {
+							status: 202,
+							json: {
+								correctionId: correction.correctionId,
+								runId: gapContext.runId,
+								segmentId: correction.correctionId,
+							},
+						},
+			);
+		},
+	);
+	trackingState = {
+		...trackingState,
+		stateVersion: trackingState.stateVersion + 1,
+		lifecycle: 'awaiting-reidentification',
+		status: 'awaiting-reidentification',
+		waitReason: null,
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	const correctionEditor = creator.locator('app-subject-reidentification');
+	await expect(
+		correctionEditor.getByText('Tracking became uncertain', { exact: false }),
+	).toBeVisible();
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '0');
+	await expect(
+		correctionEditor.getByText('Selected source frame 7 at 700 ms'),
+	).toBeVisible();
+	expect(
+		await correctionEditor
+			.locator('video')
+			.evaluate((video: HTMLVideoElement) => video.currentTime),
+	).toBe(0.7);
+	await correctionEditor.getByLabel('Width', { exact: true }).fill('0.12');
+	expect(await scan(page)).toEqual([]);
+	await correctionEditor
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.click();
+	await expect(correctionEditor.getByRole('alert')).toContainText(
+		'Retry the same frame',
+	);
+	await correctionEditor
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.click();
+	await expect(correctionEditor.getByRole('status')).toContainText(
+		'Subject correction accepted',
+	);
+	expect(correctionRequests).toHaveLength(2);
+	expect(correctionRequests[1]).toEqual(correctionRequests[0]);
+	expect(correctionRequests[0]).toMatchObject({
+		runId: gapContext.runId,
+		segmentId: gapContext.segmentId,
+		acceptedDigest: gapContext.acceptedDigest,
+		subjectSeed: { timestampMs: 700, frameIndex: 7 },
+	});
+	expect(await scan(page)).toEqual([]);
 	trackingState = {
 		...trackingState,
 		lifecycle: 'failed',

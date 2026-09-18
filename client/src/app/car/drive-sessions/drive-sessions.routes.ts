@@ -4,12 +4,16 @@ import { CarGateway } from '../car-gateway';
 import { CarStore } from '../car-store';
 import { DriveSessionGateway } from './drive-session-gateway';
 import { DriveSessionStore } from './drive-session-store';
+import { CorrectionPlayer } from './driving-analysis/correction-player';
 import { DrivingAnalysisGateway } from './driving-analysis/driving-analysis-gateway';
 import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis/driving-analysis-request-identity';
 import { DrivingAnalysisStore } from './driving-analysis/driving-analysis-store';
 import { PageVisibilityCapability } from './driving-analysis/page-visibility';
 import { RaceRecordingFileCapability } from './driving-analysis/race-recording-file';
 import { RaceRecordingGateway } from './driving-analysis/race-recording-gateway';
+import { ReidentificationGateway } from './driving-analysis/reidentification-gateway';
+import { ReidentificationIdentity } from './driving-analysis/reidentification-identity';
+import { ReidentificationStore } from './driving-analysis/reidentification-store';
 
 export const DRIVE_SESSIONS_ROUTES: Routes = [
 	{
@@ -25,6 +29,10 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 			DrivingAnalysisRequestIdentityCapability,
 			TrackMapGateway,
 			DrivingAnalysisStore,
+			ReidentificationGateway,
+			ReidentificationIdentity,
+			ReidentificationStore,
+			CorrectionPlayer,
 			CarStore,
 		],
 		loadComponent: () =>

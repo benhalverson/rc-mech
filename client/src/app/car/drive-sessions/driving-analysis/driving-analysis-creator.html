@@ -104,4 +104,9 @@
 			{{ creation()?.status === 'creating' ? 'Starting…' : 'Start analysis' }}
 		</button>
 	</form>
+	@if (analysis(); as current) {
+		@if (current.status === 'awaiting-reidentification') {
+			<app-subject-reidentification [analysis]="current" [recording]="recording()" />
+		}
+	}
 </section>
