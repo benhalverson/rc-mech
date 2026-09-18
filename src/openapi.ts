@@ -115,6 +115,49 @@ export const openApi = {
 	openapi: '3.1.0',
 	info: { title: 'Chassis Notes API', version: '0.1.0' },
 	paths: {
+		'/api/v1/feature-flags/owner': {
+			get: {
+				summary: 'Read configured Owner identity independently of flag storage',
+				responses: {
+					200: {
+						description: 'Authenticated identity with an isOwner boolean',
+					},
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
+		'/api/v1/feature-flags/driving-analysis': {
+			get: {
+				summary:
+					'Read the global Driving analysis UI flag; missing configuration is off',
+				responses: {
+					200: { description: 'Flag with an enabled boolean' },
+					401: { description: 'Authentication required' },
+				},
+			},
+			put: {
+				summary: 'Set the Driving analysis UI flag as the configured Owner',
+				requestBody: {
+					required: true,
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								required: ['enabled'],
+								additionalProperties: false,
+								properties: { enabled: { type: 'boolean' } },
+							},
+						},
+					},
+				},
+				responses: {
+					200: { description: 'Persisted enabled value' },
+					400: { description: 'Invalid boolean payload' },
+					401: { description: 'Authentication required' },
+					403: { description: 'Owner access required' },
+				},
+			},
+		},
 		'/api/v1/cars': {
 			get: {
 				summary: "List the authenticated owner's cars",
