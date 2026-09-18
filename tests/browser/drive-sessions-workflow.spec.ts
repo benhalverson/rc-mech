@@ -650,13 +650,14 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(creator.getByText('Analysis running')).toBeVisible();
 	const correctionRequests: unknown[] = [];
 	const gapContext = {
+		frames: [{ frameIndex: 7, timestampMs: 700 }],
 		runId: '11111111-1111-4111-8111-111111111111',
 		segmentId: '22222222-2222-4222-8222-222222222222',
 		acceptedDigest: 'a'.repeat(64),
 		gap: { startTimestampMs: 600, reason: 'missing' },
 	};
 	await page.route(
-		`**/api/v1/driving-analyses/${drivingAnalysis.id}/reidentification`,
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/reidentification*`,
 		async (route) => {
 			if (route.request().method() === 'GET') {
 				await route.fulfill({ json: { context: gapContext } });
@@ -692,8 +693,17 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(
 		correctionEditor.getByText('Tracking became uncertain', { exact: false }),
 	).toBeVisible();
-	await correctionEditor.getByLabel('Subject timestamp (ms)').fill('700');
-	await correctionEditor.getByLabel('Source frame index').fill('7');
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '0');
+	await expect(
+		correctionEditor.getByText('Selected source frame 7 at 700 ms'),
+	).toBeVisible();
+	expect(
+		await correctionEditor
+			.locator('video')
+			.evaluate((video: HTMLVideoElement) => video.currentTime),
+	).toBe(0.7);
 	await correctionEditor.getByLabel('Width', { exact: true }).fill('0.12');
 	expect(await scan(page)).toEqual([]);
 	await correctionEditor

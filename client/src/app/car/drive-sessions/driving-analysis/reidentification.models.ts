@@ -1,5 +1,6 @@
 import type * as z from 'zod/mini';
 import {
+	array,
 	int,
 	literal,
 	minLength,
@@ -16,6 +17,12 @@ export const reidentificationContextSchema = strictObject({
 	runId: string().check(minLength(1)),
 	segmentId: string().check(minLength(1)),
 	acceptedDigest: string().check(minLength(1)),
+	frames: array(
+		strictObject({
+			frameIndex: int().check(nonnegative()),
+			timestampMs: int().check(nonnegative()),
+		}),
+	),
 	pendingCorrection: optional(
 		strictObject({ correctionId: string().check(minLength(1)), subjectSeed }),
 	),

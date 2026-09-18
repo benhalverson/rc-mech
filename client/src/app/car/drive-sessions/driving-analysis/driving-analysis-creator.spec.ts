@@ -4,6 +4,7 @@ import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackMapVersion } from '../../../track-maps/track-map.models';
+import { CorrectionPlayer } from './correction-player';
 import type { DrivingAnalysis } from './driving-analysis.models';
 import { DrivingAnalysisCreator } from './driving-analysis-creator';
 import type { ApprovedTrackMapOption } from './driving-analysis-store';
@@ -154,7 +155,10 @@ describe('DrivingAnalysisCreator', () => {
 			readFailed: signal(false),
 		};
 		TestBed.configureTestingModule({
-			providers: [{ provide: ReidentificationStore, useValue: corrections }],
+			providers: [
+				CorrectionPlayer,
+				{ provide: ReidentificationStore, useValue: corrections },
+			],
 		});
 		store.analysisCreation.set({
 			status: 'accepted',

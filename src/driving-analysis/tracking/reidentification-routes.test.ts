@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
 	RUN_ID,
 	SEGMENT_ID,
@@ -31,6 +31,12 @@ const queueRun = (fixture: ReturnType<typeof createHonoFixture>) =>
 		value: { id: RUN_ID, workflowId: 'workflow-1' },
 	});
 
+beforeEach(() => {
+	vi.spyOn(
+		TrackingAuthority.prototype,
+		'reidentificationFrames',
+	).mockResolvedValue([{ frameIndex: 3, timestampMs: 300 }]);
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('Subject re-identification routes', () => {
@@ -87,6 +93,7 @@ describe('Subject re-identification routes', () => {
 								runId: RUN_ID,
 								segmentId: SEGMENT_ID,
 								acceptedDigest: command.acceptedDigest,
+								frames: [{ frameIndex: 3, timestampMs: 300 }],
 								gap: { startTimestampMs: 50, reason: 'missing' },
 								pendingCorrection: {
 									correctionId,
@@ -152,6 +159,7 @@ describe('Subject re-identification routes', () => {
 							runId: RUN_ID,
 							segmentId: SEGMENT_ID,
 							acceptedDigest: command.acceptedDigest,
+							frames: [{ frameIndex: 3, timestampMs: 300 }],
 							gap: { startTimestampMs: 250, reason: 'missing' },
 						}
 					: null,
@@ -198,6 +206,7 @@ describe('Subject re-identification routes', () => {
 			correctionId,
 			command.acceptedDigest,
 			command.subjectSeed,
+			expect.anything(),
 		);
 		expect(trace).toEqual(['commit', 'commit', 'wake']);
 		expect(sendEvent).toHaveBeenLastCalledWith({

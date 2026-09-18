@@ -6,6 +6,7 @@ import { drivingAnalysis } from '../../schema';
 import type { AppEnv } from '../../types';
 import { trackingRun, trackingSegment } from './authority-schema';
 import { sha256Schema, subjectSeedSchema, uuidV4Schema } from './contracts';
+import { R2TrackingArtifactStore } from './r2-tracking-artifact-store';
 import {
 	TrackingAuthority,
 	TrackingAuthorityError,
@@ -105,13 +106,20 @@ export const createReidentificationRoutes = () => {
 				};
 			}
 		}
+		const gap = segment?.gap;
 		const context =
-			segment?.gap && segment.artifact
+			gap && segment.artifact
 				? {
 						runId: identity.runId,
 						segmentId: segment.segmentId,
 						acceptedDigest: segment.artifact.digest,
 						gap: segment.gap,
+						frames: (
+							await new TrackingAuthority(c.env.DB).reidentificationFrames(
+								{ ...identity, segmentId: segment.segmentId },
+								new R2TrackingArtifactStore(c.env.ANALYSIS_MEDIA),
+							)
+						).filter((frame) => frame.timestampMs > gap.startTimestampMs),
 						...(pendingCorrection ? { pendingCorrection } : {}),
 					}
 				: null;
@@ -139,6 +147,7 @@ export const createReidentificationRoutes = () => {
 			command.correctionId,
 			command.acceptedDigest,
 			command.subjectSeed,
+			new R2TrackingArtifactStore(c.env.ANALYSIS_MEDIA),
 		);
 		try {
 			const workflow = await c.env.DRIVING_ANALYSIS_WORKFLOW.get(

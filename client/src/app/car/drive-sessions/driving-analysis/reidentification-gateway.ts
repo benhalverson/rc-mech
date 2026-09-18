@@ -1,5 +1,5 @@
 import { HttpClient, httpResource } from '@angular/common/http';
-import { inject, Service, signal } from '@angular/core';
+import { inject, Service, type Signal } from '@angular/core';
 import { map, type Observable } from 'rxjs';
 import {
 	type CorrectionReceipt,
@@ -14,22 +14,20 @@ const url = (analysisId: string) =>
 @Service()
 export class ReidentificationGateway {
 	private readonly http = inject(HttpClient);
-	private readonly selected = signal('');
-	readonly context = httpResource(
-		() =>
-			this.selected()
-				? { url: url(this.selected()), withCredentials: true }
-				: undefined,
-		{
-			parse: (value) => reidentificationResponseSchema.parse(value).context,
-		},
-	);
-	select(analysisId: string): void {
-		if (analysisId === this.selected()) {
-			this.context.reload();
-			return;
-		}
-		this.selected.set(analysisId);
+	read(selection: Signal<{ analysisId: string; version: number }>) {
+		return httpResource(
+			() =>
+				selection().analysisId
+					? {
+							url: url(selection().analysisId),
+							withCredentials: true,
+							params: { version: selection().version },
+						}
+					: undefined,
+			{
+				parse: (value) => reidentificationResponseSchema.parse(value).context,
+			},
+		);
 	}
 	correct(
 		command: ReidentifySubjectCommand,

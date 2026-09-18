@@ -1,13 +1,17 @@
 import {
+	afterRenderEffect,
 	Component,
+	computed,
 	ElementRef,
 	inject,
 	input,
+	linkedSignal,
 	type OnChanges,
+	type OnDestroy,
 	signal,
 	viewChild,
 } from '@angular/core';
-import { FormField, form } from '@angular/forms/signals';
+import { CorrectionPlayer } from './correction-player';
 import {
 	type DrivingAnalysis,
 	type SubjectBox,
@@ -19,16 +23,27 @@ import { SubjectBoxEditor } from './subject-box-editor';
 
 @Component({
 	selector: 'app-subject-reidentification',
-	imports: [FormField, SubjectBoxEditor],
+	imports: [SubjectBoxEditor],
 	templateUrl: './subject-reidentification.html',
 	host: { class: 'block' },
 })
-export class SubjectReidentification implements OnChanges {
+export class SubjectReidentification implements OnChanges, OnDestroy {
 	readonly analysis = input.required<DrivingAnalysis>();
 	readonly recording = input.required<RaceRecording>();
 	protected readonly store = inject(ReidentificationStore);
-	protected readonly draft = signal({ timestampMs: 0, frameIndex: 0 });
-	protected readonly fields = form(this.draft);
+	protected readonly selectedFrame = linkedSignal({
+		source: () => this.store.context(),
+		computation: () => 0,
+	});
+	protected readonly draft = computed(
+		() =>
+			this.store.context()?.frames[this.selectedFrame()] ?? {
+				timestampMs: 0,
+				frameIndex: 0,
+			},
+	);
+	private readonly player = inject(CorrectionPlayer);
+	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 	protected readonly box = signal<SubjectBox>({
 		x: 0.4,
 		y: 0.4,
@@ -41,25 +56,34 @@ export class SubjectReidentification implements OnChanges {
 		viewChild.required<ElementRef<HTMLInputElement>>('timestampField');
 	private selectedId = '';
 
+	private readonly playbackSync = afterRenderEffect(() => {
+		const frame = this.draft();
+		const video = this.host.nativeElement.querySelector('video');
+		if (video) this.player.showFrame(video, frame.timestampMs);
+	});
+
+	ngOnDestroy(): void {
+		this.playbackSync.destroy();
+	}
+
+	protected showSelectedFrame(video: HTMLVideoElement): void {
+		this.player.showFrame(video, this.draft().timestampMs);
+	}
+
 	ngOnChanges(): void {
 		const analysis = this.analysis();
 		this.store.select(analysis.id, analysis.stateVersion);
 		if (this.selectedId === analysis.id) return;
 		this.selectedId = analysis.id;
 		this.box.set(analysis.subjectSeed.box);
-		this.draft.set({
-			timestampMs: analysis.subjectSeed.timestampMs,
-			frameIndex: analysis.subjectSeed.frameIndex,
-		});
 		this.error.set('');
 	}
 
-	protected seek(event: Event, player: HTMLVideoElement): void {
-		const timestampMs = (event.target as HTMLInputElement).valueAsNumber;
-		if (!Number.isFinite(timestampMs)) return;
-		player.pause();
-		player.currentTime = timestampMs / 1000;
-		this.draft.update((value) => ({ ...value, timestampMs }));
+	protected seek(event: Event): void {
+		const frameIndex = (event.target as HTMLInputElement).valueAsNumber;
+		const frame = this.store.context()?.frames[frameIndex];
+		if (!frame) return;
+		this.selectedFrame.set(frameIndex);
 	}
 
 	protected retrySaved(): void {
@@ -86,6 +110,11 @@ export class SubjectReidentification implements OnChanges {
 			!context ||
 			!parsed.success ||
 			!this.boxValid() ||
+			!context.frames.some(
+				(frame) =>
+					frame.frameIndex === candidate.frameIndex &&
+					frame.timestampMs === candidate.timestampMs,
+			) ||
 			candidate.timestampMs <= context.gap.startTimestampMs ||
 			candidate.timestampMs >= analysis.raceWindow.endTimestampMs ||
 			candidate.frameIndex >= (this.recording().media?.decodedFrameCount ?? 0)

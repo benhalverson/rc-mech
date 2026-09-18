@@ -130,6 +130,13 @@ so a refreshed client can retry the exact correction. Repeated wakeups are harml
 The correction editor uses private playback and the same keyboard-accessible box
 editor as initial identification, with a distinct landmark name.
 
+Correction frame choices come from the immutable prepared frame manifest after
+bounded reads, checksum verification, and contract validation. The slider selects
+one manifest entry, preserving its exact source frame index and timestamp even
+for variable frame rates and noncontiguous source indexes. Private playback seeks
+to that entry's source timestamp. The command authority independently verifies
+the pair against the manifest before inserting any immutable continuation.
+
 ## Publication recovery retention
 
 Promotion tombstones remain permanently ineligible for publication and are retained
