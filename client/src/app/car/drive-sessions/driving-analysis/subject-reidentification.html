@@ -21,17 +21,26 @@
 			<p role="status">No later prepared frames are available for this gap.</p>
 		} @else {
 			<form class="grid gap-3" (submit)="submit($event)">
-				<app-subject-box-editor heading="Subject car correction" [headingLevel]="headingLevel() === 3 ? 4 : 6" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
-					<video #player class="aspect-video w-full bg-black" preload="metadata" [src]="recording().playbackUrl" (loadedmetadata)="showSelectedFrame(player)" aria-label="Private recording for Subject correction">
-						<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
-					</video>
-				</app-subject-box-editor>
+				@if (previewUrl(); as url) {
+					<fieldset class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
+						<legend class="sr-only">Verified correction frame</legend>
+						<app-subject-box-editor heading="Subject car correction" [headingLevel]="headingLevel() === 3 ? 4 : 6" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
+							@if (failedFrameUrl() !== url) {
+								<img class="block h-auto w-full" [src]="url" alt="Exact source frame for correcting the Subject car" (load)="loadedFrameUrl.set(url); failedFrameUrl.set('')" (error)="failedFrameUrl.set(url)" />
+							}
+						</app-subject-box-editor>
+					</fieldset>
+					@if (failedFrameUrl() === url) {
+						<p role="alert">The exact frame image could not be loaded. Retry the image before confirming the Subject.</p>
+						<button class="alloy-control alloy-control-secondary w-fit" type="button" (click)="loadedFrameUrl.set(''); failedFrameUrl.set('')">Retry frame image</button>
+					}
+				} @else { <p role="alert">The source recording is unavailable for correction.</p> }
 				<label class="grid gap-1 text-sm">Inspect a later clear frame
-					<input #timestampField type="range" class="w-full accent-alloy-accent" min="0" [max]="context.frames.length - 1" step="1" [value]="selectedFrame()" (input)="seek($event)" />
+					<input #timestampField type="range" class="w-full accent-alloy-accent" min="0" [max]="context.frames.length - 1" step="1" [value]="selectedFrame()" (change)="selectFrame($event)" />
 				</label>
 				<p>Selected source frame {{ draft().frameIndex }} at {{ draft().timestampMs }} ms</p>
 				@if (error()) { <p role="alert">{{ error() }}</p> }
-				<button class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.outcome().status === 'pending'" [attr.aria-busy]="store.outcome().status === 'pending'">{{ store.outcome().status === 'pending' ? 'Saving correction…' : 'Confirm Subject and resume' }}</button>
+				<button class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.outcome().status === 'pending' || !frameReady()" [attr.aria-busy]="store.outcome().status === 'pending'">{{ store.outcome().status === 'pending' ? 'Saving correction…' : 'Confirm Subject and resume' }}</button>
 			</form>
 		}
 	} @else {

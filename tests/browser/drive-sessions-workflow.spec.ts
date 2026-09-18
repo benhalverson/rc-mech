@@ -707,11 +707,17 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(
 		correctionEditor.getByText('Selected source frame 7 at 700 ms'),
 	).toBeVisible();
-	expect(
-		await correctionEditor
-			.locator('video')
-			.evaluate((video: HTMLVideoElement) => video.currentTime),
-	).toBe(0.7);
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	await expect
+		.poll(() =>
+			correctionEditor
+				.locator('img')
+				.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		)
+		.toBeGreaterThan(0);
 	await correctionEditor.getByLabel('Width', { exact: true }).fill('0.12');
 	expect(await scan(page)).toEqual([]);
 	await correctionEditor
@@ -808,10 +814,17 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(
 		reopenedCorrection.getByText('Selected source frame 7 at 700 ms'),
 	).toBeVisible();
-	await expect(reopenedCorrection.locator('video')).toHaveJSProperty(
-		'currentTime',
-		0.7,
+	await expect(reopenedCorrection.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
 	);
+	await expect
+		.poll(() =>
+			reopenedCorrection
+				.locator('img')
+				.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		)
+		.toBeGreaterThan(0);
 	await expect(
 		reopenedCorrection.getByRole('heading', {
 			name: 'Subject car correction',

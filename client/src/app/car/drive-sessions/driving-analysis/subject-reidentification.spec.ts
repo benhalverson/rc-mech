@@ -2,7 +2,6 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CorrectionPlayer } from './correction-player';
 import type { DrivingAnalysis } from './driving-analysis.models';
 import type { RaceRecording } from './race-recording.models';
 import type { ReidentificationContext } from './reidentification.models';
@@ -84,9 +83,6 @@ const gap: ReidentificationContext = {
 };
 
 const setup = async () => {
-	vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(
-		() => undefined,
-	);
 	const store = {
 		context: signal<ReidentificationContext | null>(gap),
 		loading: signal(false),
@@ -99,10 +95,7 @@ const setup = async () => {
 	};
 	TestBed.configureTestingModule({
 		imports: [SubjectReidentification],
-		providers: [
-			CorrectionPlayer,
-			{ provide: ReidentificationStore, useValue: store },
-		],
+		providers: [{ provide: ReidentificationStore, useValue: store }],
 	});
 	const fixture = TestBed.createComponent(SubjectReidentification);
 	fixture.componentRef.setInput('analysis', analysis);
@@ -114,11 +107,15 @@ const setup = async () => {
 		const field = element.querySelector<HTMLInputElement>(selector);
 		if (!field) throw new Error('Missing input');
 		field.value = value;
-		field.dispatchEvent(new Event('input', { bubbles: true }));
+		field.dispatchEvent(
+			new Event(field.type === 'range' ? 'change' : 'input', { bubbles: true }),
+		);
 		fixture.detectChanges();
 		return field;
 	};
-	const submit = () => {
+	const submit = (loadImage = true) => {
+		if (loadImage)
+			element.querySelector('img')?.dispatchEvent(new Event('load'));
 		element
 			.querySelector('form')
 			?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
@@ -132,6 +129,42 @@ afterEach(() => {
 });
 
 describe('SubjectReidentification', () => {
+	it('uses the exact source frame image and waits for it before accepting a correction', async () => {
+		const f = await setup();
+		const context = { ...gap, frames: [{ frameIndex: 10, timestampMs: 333 }] };
+		f.store.context.set(context);
+		f.fixture.detectChanges();
+		const image = f.element.querySelector('img');
+		expect(image?.getAttribute('src')).toBe(
+			`/api/v1/race-videos/video/subject-frames/10/content?checksum=${'a'.repeat(64)}`,
+		);
+		f.submit(false);
+		expect(f.store.correct).not.toHaveBeenCalled();
+		image?.dispatchEvent(new Event('error'));
+		f.fixture.detectChanges();
+		f.submit(false);
+		expect(f.store.correct).not.toHaveBeenCalled();
+		expect(f.element.textContent).toContain(
+			'exact frame image could not be loaded',
+		);
+		const retry = Array.from(f.element.querySelectorAll('button')).find(
+			(button) => button.textContent?.includes('Retry frame image'),
+		);
+		expect(retry).toBeDefined();
+		retry?.click();
+		f.fixture.detectChanges();
+		f.element.querySelector('img')?.dispatchEvent(new Event('load'));
+		f.fixture.detectChanges();
+		f.submit();
+		expect(f.store.correct).toHaveBeenCalledWith(
+			expect.objectContaining({
+				subjectSeed: expect.objectContaining({
+					frameIndex: 10,
+					timestampMs: 333,
+				}),
+			}),
+		);
+	});
 	it('retries the immutable saved correction after remount and ignores stale clicks', async () => {
 		const f = await setup();
 		const saved = {
@@ -180,18 +213,12 @@ describe('SubjectReidentification', () => {
 		const f = await setup();
 		expect(f.element.textContent).toContain('250 ms (missing)');
 		expect(f.element.textContent).toContain(gap.acceptedDigest);
-		const player = f.element.querySelector('video');
-		if (!player) throw new Error('Missing video');
-		const pause = vi.mocked(player.pause);
+		const image = f.element.querySelector('img');
+		if (!image) throw new Error('Missing source frame');
 		expect(
 			f.element.querySelector<HTMLInputElement>('input[type=range]')?.max,
 		).toBe('0');
-		expect(player.currentTime).toBe(0.5);
-		expect(pause).toHaveBeenCalledOnce();
-		player.currentTime = 0;
-		player.dispatchEvent(new Event('loadedmetadata'));
-		expect(player.currentTime).toBe(0.5);
-		expect(pause).toHaveBeenCalledTimes(2);
+		expect(image.getAttribute('src')).toContain('/subject-frames/15/content');
 		f.submit();
 		expect(f.store.correct).toHaveBeenCalledWith({
 			analysisId: analysis.id,
@@ -209,10 +236,10 @@ describe('SubjectReidentification', () => {
 			f.element.querySelector<HTMLInputElement>('input[type=range]');
 		if (!range) throw new Error('Missing range');
 		Object.defineProperty(range, 'valueAsNumber', { value: Number.NaN });
-		range.dispatchEvent(new Event('input'));
-		expect(pause).toHaveBeenCalledTimes(2);
+		range.dispatchEvent(new Event('change'));
+		expect(image.getAttribute('src')).toContain('/subject-frames/15/content');
 	});
-	it('seeks selected frames and resets to the first frame of a subsequent gap', async () => {
+	it('loads exact selected frames and resets to the first frame of a subsequent gap', async () => {
 		const f = await setup();
 		f.store.context.set({
 			...gap,
@@ -220,7 +247,9 @@ describe('SubjectReidentification', () => {
 		});
 		f.fixture.detectChanges();
 		f.input('input[type=range]', '1');
-		expect(f.element.querySelector('video')?.currentTime).toBe(0.65);
+		expect(f.element.querySelector('img')?.getAttribute('src')).toContain(
+			'/subject-frames/19/content',
+		);
 		f.store.context.set({
 			...gap,
 			segmentId: 'next',
@@ -230,7 +259,9 @@ describe('SubjectReidentification', () => {
 		expect(
 			f.element.querySelector<HTMLInputElement>('input[type=range]')?.value,
 		).toBe('0');
-		expect(f.element.querySelector('video')?.currentTime).toBe(0.7);
+		expect(f.element.querySelector('img')?.getAttribute('src')).toContain(
+			'/subject-frames/21/content',
+		);
 		f.submit();
 		expect(f.store.correct).toHaveBeenCalledWith(
 			expect.objectContaining({

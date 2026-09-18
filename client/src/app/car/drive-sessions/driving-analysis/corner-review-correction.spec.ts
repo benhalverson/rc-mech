@@ -9,7 +9,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { AnalysisLifecycleGateway } from './analysis-lifecycle-gateway';
 import { CornerReview } from './corner-review';
 import { CornerReviewStore } from './corner-review-store';
-import { CorrectionPlayer } from './correction-player';
 import type { DrivingAnalysis } from './driving-analysis.models';
 import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
 import {
@@ -104,7 +103,6 @@ it.each([
 			CornerReviewStore,
 			AnalysisLifecycleGateway,
 			DrivingAnalysisRequestIdentityCapability,
-			CorrectionPlayer,
 			ReidentificationStore,
 		],
 	});
