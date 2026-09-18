@@ -162,9 +162,11 @@ describe('application routes', () => {
 			const lazyRoutes = await route.loadChildren?.();
 			expect(Array.isArray(lazyRoutes)).toBe(true);
 			if (!Array.isArray(lazyRoutes)) continue;
-			expect(lazyRoutes[0]?.providers).toBeDefined();
-			expect(lazyRoutes[0]?.loadComponent).toBeTypeOf('function');
-			expect(await lazyRoutes[0]?.loadComponent?.()).toBeTypeOf('function');
+			for (const leaf of lazyRoutes) {
+				expect(leaf.providers).toBeDefined();
+				expect(leaf.loadComponent).toBeTypeOf('function');
+				expect(await leaf.loadComponent?.()).toBeTypeOf('function');
+			}
 		}
 	});
 

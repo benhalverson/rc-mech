@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
+import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackMapVersion } from '../../../track-maps/track-map.models';
 import type { DrivingAnalysis } from './driving-analysis.models';
@@ -131,7 +132,10 @@ describe('DrivingAnalysisCreator', () => {
 		store = new FakeStore();
 		TestBed.configureTestingModule({
 			imports: [DrivingAnalysisCreator],
-			providers: [{ provide: DrivingAnalysisStore, useValue: store }],
+			providers: [
+				provideRouter([]),
+				{ provide: DrivingAnalysisStore, useValue: store },
+			],
 		});
 	});
 
