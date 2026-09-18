@@ -94,6 +94,21 @@ test('reviews private Corner comparisons with keyboard-accessible provenance and
 			},
 		}),
 	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/lifecycle', (route) =>
+		route.fulfill({
+			json: {
+				lifecycle: {
+					analysisId: 'analysis-1',
+					status: 'running',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: true,
+					canRetry: false,
+					failure: null,
+				},
+			},
+		}),
+	);
 	await page.route(
 		'**/api/v1/driving-analyses/analysis-1/clips/*/content',
 		(route) =>
@@ -138,6 +153,18 @@ test('reviews private Corner comparisons with keyboard-accessible provenance and
 		page.getByRole('link', { name: 'Back to Drive sessions' }),
 	).toHaveAttribute('href', `/garage/${created.car.id}/drive-sessions`);
 	expect(await scan(page)).toEqual([]);
+	const deleteButton = page.getByRole('button', {
+		name: 'Delete analysis',
+		exact: true,
+	});
+	await deleteButton.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		page.getByRole('button', { name: 'Confirm deletion' }),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Keep analysis' }).click();
+	await expect(deleteButton).toBeFocused();
 });
 const playableRaceVideo = readFileSync(
 	new URL('./support/race-video.mp4', import.meta.url),

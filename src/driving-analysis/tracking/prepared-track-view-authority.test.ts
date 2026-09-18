@@ -115,6 +115,14 @@ describe('PreparedTrackViewAuthority', () => {
 			{ preparedMediaId: PREPARED_MEDIA_ID, state: 'deleting' },
 		]);
 		await expect(
+			authority.recordPreparationIntent(
+				OWNER_ID,
+				RUN_ID,
+				PREPARED_MEDIA_ID,
+				DELETE_AFTER,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
 			authority.acceptPreparedTrackView(acceptCommand(inputDigest)),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
 	});

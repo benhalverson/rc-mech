@@ -88,12 +88,21 @@ export const CornerReviewStore = signalStore(
 				? 'The recording and analysis needed for correction could not be loaded. Refresh evidence to try again.'
 				: null,
 		),
+		lifecycleReadError: computed(() =>
+			store.lifecycleResource.error()
+				? 'Analysis controls could not be loaded. Refresh evidence to try again.'
+				: null,
+		),
 		lifecycle: computed(() =>
 			store.lifecycleResource.hasValue()
 				? store.lifecycleResource.value()
 				: null,
 		),
+	})),
+	withComputed((store) => ({
 		review: computed(() => {
+			const status = store.lifecycle()?.status;
+			if (status === 'deleting' || status === 'deleted') return null;
 			if (!store.resource.hasValue()) return null;
 			const review = store.resource.value();
 			const clips = store.clipsResource.hasValue()

@@ -8,6 +8,11 @@ CREATE TABLE `analysis_deletion` (
 );
 --> statement-breakpoint
 CREATE INDEX `analysis_deletion_cleanup` ON `analysis_deletion` (`next_cleanup_at`);--> statement-breakpoint
+CREATE TABLE `analysis_media_scan` (
+	`name` text PRIMARY KEY NOT NULL,
+	`cursor` text
+);
+--> statement-breakpoint
 CREATE TABLE `analysis_retry_command` (
 	`owner_id` text NOT NULL,
 	`command_id` text NOT NULL,
@@ -27,8 +32,3 @@ CREATE TABLE `preparation_intent` (
 );
 --> statement-breakpoint
 CREATE INDEX `preparation_intent_cleanup` ON `preparation_intent` (`delete_after`);
---> statement-breakpoint
-CREATE TABLE `analysis_media_scan` (
-	`name` text PRIMARY KEY NOT NULL,
-	`cursor` text
-);

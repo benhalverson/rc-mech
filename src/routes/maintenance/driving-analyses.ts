@@ -68,13 +68,11 @@ export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 		return handle(
 			() =>
-				dependencies
-					.analysisLifecycle(c.env)
-					.remove({
-						ownerId: c.get('userId'),
-						analysisId: c.req.param('analysisId'),
-						expectedStateVersion: parsed.data.expectedStateVersion,
-					}),
+				dependencies.analysisLifecycle(c.env).remove({
+					ownerId: c.get('userId'),
+					analysisId: c.req.param('analysisId'),
+					expectedStateVersion: parsed.data.expectedStateVersion,
+				}),
 			(lifecycle) => Response.json({ lifecycle }, { status: 202 }),
 		);
 	});

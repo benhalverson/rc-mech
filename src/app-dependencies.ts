@@ -99,7 +99,13 @@ async function dispatchDrivingAnalysis(
 	if (payload.cancellation) {
 		const original = await env.DRIVING_ANALYSIS_WORKFLOW.get(
 			payload.workflowId,
-		);
+		).catch((error: unknown) => {
+			// A failed initial dispatch may never have created the original instance.
+			if (error instanceof Error && error.message === 'instance.not_found')
+				return null;
+			throw error;
+		});
+		if (!original) return;
 		try {
 			await original.terminate();
 		} catch (error) {

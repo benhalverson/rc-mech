@@ -27,7 +27,10 @@ import {
 import { MockR2Controller } from '../../testing/hono-fixture';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import type { AppEnv } from '../../types';
+import { createAnalysisLifecycle } from '../analysis/analysis-lifecycle';
 import { completeDrivingAnalysis } from '../analysis/driving-analysis-completion';
+import { preparationIntent } from '../analysis/lifecycle-schema';
+import { cornerClipObjectKey } from '../clips/clip-object-key';
 import { cornerClip, cornerClipPublication } from '../clips/clip-schema';
 import {
 	ClipAuthorityError,
@@ -49,10 +52,12 @@ import {
 	preparedTrackingMedia,
 	preparedTrackingObject,
 	subjectObservationArtifact,
+	trackingArtifactPromotion,
 	trackingExecutionAttempt,
 	trackingRun,
 	trackingRunInput,
 	trackingSegment,
+	trackingTransferRequest,
 } from '../tracking/authority-schema';
 import { subjectObservationSegmentSchema } from '../tracking/contracts';
 import { R2TrackingArtifactStore } from '../tracking/r2-tracking-artifact-store';
@@ -124,6 +129,103 @@ describe('private Corner clips on real SQL authority', () => {
 		return { ...value, clips, r2, render, segment };
 	};
 
+	test('deletion removes planned clips, accepted observations, staging and abandoned preparation without deleting provenance', async () => {
+		const value = await setup();
+		await expect(
+			renderAcceptedCornerClips(
+				identity,
+				value.clips,
+				value.r2.bucket,
+				async () => {
+					throw new Error('render stopped after planning');
+				},
+			),
+		).rejects.toThrow();
+		const planned = (await value.clips.list(OWNER_ID, ANALYSIS_ID))[0]!;
+		const key = cornerClipObjectKey({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			inputDigest: planned.clip.inputDigest,
+		});
+		const transferId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		const staging =
+			'tracking-staging/' +
+			ATTEMPT_ID +
+			'/' +
+			transferId +
+			'/subject-observations.json.gz';
+		await value.database.insert(trackingTransferRequest).values({
+			id: transferId,
+			attemptId: ATTEMPT_ID,
+			role: 'observation-artifact',
+			method: 'PUT',
+			objectScope: ATTEMPT_ID,
+			state: 'granted',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			updatedAt: NOW.toISOString(),
+		});
+		await value.database.insert(trackingArtifactPromotion).values({
+			artifactId: ATTEMPT_ID,
+			runId: RUN_ID,
+			segmentId: SEGMENT_ID,
+			attemptId: ATTEMPT_ID,
+			transferRequestId: transferId,
+			stagingObjectKey: staging,
+			acceptedObjectKey: OBSERVATION_KEY,
+			checksumSha256: OBSERVATION_CHECKSUM,
+			contractDigest: CONTRACT_DIGEST,
+			byteCount: 20,
+			state: 'accepted',
+			deleteAfter: NOW.toISOString(),
+			version: 1,
+			createdAt: NOW.toISOString(),
+			updatedAt: NOW.toISOString(),
+		});
+		await value.database.insert(preparationIntent).values({
+			preparedMediaId: PREPARED_MEDIA_ID,
+			runId: RUN_ID,
+			ownerId: OWNER_ID,
+			state: 'preparing',
+			deleteAfter: NOW.toISOString(),
+		});
+		for (const objectKey of [
+			key,
+			staging,
+			MANIFEST_KEY,
+			'prepared/' + PREPARED_MEDIA_ID + '/track-view.mp4',
+			'prepared/' + PREPARED_MEDIA_ID + '/frame-manifest.json.gz',
+		])
+			value.r2.seed(objectKey, new Uint8Array([1]));
+		const current = await value.database.select().from(drivingAnalysis).get();
+		const lifecycle = createAnalysisLifecycle({
+			binding: sqlite!.database,
+			bucket: value.r2.bucket,
+			startCancellation: async () => undefined,
+		});
+		await lifecycle.remove({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			expectedStateVersion: current!.stateVersion,
+		});
+		expect(
+			await new CornerEvidenceReview(sqlite!.database).get(
+				OWNER_ID,
+				ANALYSIS_ID,
+			),
+		).toBeNull();
+		await lifecycle.cleanup(10);
+		expect(value.r2.objects.size).toBe(0);
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'deleted',
+			permanent: true,
+		});
+		expect(
+			await value.database.select().from(cornerEvidenceBatch),
+		).toHaveLength(1);
+		expect(await value.database.select().from(cornerClip)).toHaveLength(1);
+	});
 	test('completes the current run only after every eligible clip has a verified receipt', async () => {
 		const value = await setup();
 		if (!sqlite) throw new Error('Missing SQL fixture');
