@@ -4,6 +4,7 @@ import { DrivingAnalysisAuthority } from './driving-analysis/analysis/driving-an
 import type { DrivingAnalysisWorkflowPayload } from './driving-analysis/analysis/driving-analysis-contracts';
 import { RaceRecordingAuthority } from './driving-analysis/race-recording/race-recording-authority';
 import type { RaceVideoValidationWorkflowPayload } from './driving-analysis/race-recording/race-video-validation-contracts';
+import { subjectFrames } from './driving-analysis/race-recording/subject-frames';
 import {
 	createWorkersAiVoiceProcessor,
 	type VoiceProcessor,
@@ -87,6 +88,7 @@ export const defaultAppDependencies: AppDependencies = {
 		}),
 	drivingAnalysisAuthority: (env) =>
 		new DrivingAnalysisAuthority(env.DB, {
+			verifySubjectFrame: (command) => subjectFrames(env).verify(command),
 			startProcessing: (payload) => dispatchDrivingAnalysis(env, payload),
 		}),
 };

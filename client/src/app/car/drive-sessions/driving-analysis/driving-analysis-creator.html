@@ -34,7 +34,6 @@
 			}
 		</div>
 
-		<app-subject-box-editor [editorId]="'analysis-' + driveSessionId()" [(box)]="box" [(valid)]="boxValid">
 			<video
 				#player
 				class="aspect-video w-full bg-black"
@@ -47,7 +46,18 @@
 			>
 				<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
 			</video>
-		</app-subject-box-editor>
+		@if(store.subjectFrameLoading()){<p role="status">Finding the exact source frame…</p>}
+		@if(store.subjectFrameError();as error){<p role="alert">{{error}}</p>}
+		@if(selectedFrame();as frame){
+			<p>Verified frame {{frame.frameIndex}} · {{frame.timestampMs}} ms. Draw the Subject box on this frozen image.</p>
+			<fieldset data-frame-editor class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
+				<legend class="sr-only">Verified Subject frame</legend>
+				<app-subject-box-editor [editorId]="'analysis-' + driveSessionId()" [(box)]="box" [(valid)]="boxValid">
+					<img data-subject-frame class="block h-auto w-full" [src]="frame.contentUrl" alt="Verified source frame for selecting the Subject car" (load)="loadedFrameUrl.set(frame.contentUrl)" (error)="failedFrameUrl.set(frame.contentUrl)" />
+				</app-subject-box-editor>
+			</fieldset>
+			@if(failedFrameUrl()===frame.contentUrl){<p role="alert">The verified image could not be loaded. Choose the frame again.</p>}
+		}
 
 		<div class="grid gap-2">
 			<button data-toggle-playback class="alloy-control alloy-control-secondary w-fit" type="button" (click)="togglePlayback(player)" [attr.aria-label]="playing() ? 'Pause private Race recording' : 'Play private Race recording'">{{ playing() ? 'Pause recording' : 'Play recording' }}</button>
@@ -59,7 +69,7 @@
 			<div class="flex flex-wrap gap-2" role="group" aria-label="Race-window timestamp markers">
 				<button data-mark-start class="alloy-control alloy-control-secondary" type="button" (click)="mark('startTimestampMs')">Mark Race start</button>
 				<button data-mark-end class="alloy-control alloy-control-secondary" type="button" (click)="mark('endTimestampMs')">Mark Race end</button>
-				<button data-mark-seed class="alloy-control alloy-control-secondary" type="button" (click)="mark('seedTimestampMs')">Mark Subject frame</button>
+				<button data-mark-seed class="alloy-control alloy-control-secondary" type="button" (click)="selectFrame(player)">Mark Subject frame</button>
 			</div>
 		</div>
 
@@ -67,8 +77,8 @@
 			<legend class="col-span-full text-sm font-semibold">Immutable Race window and Subject seed</legend>
 			<label class="grid gap-1 text-xs font-semibold">Race start<input class="alloy-control" data-window-start type="number" step="1" [formField]="fields.startTimestampMs" /></label>
 			<label class="grid gap-1 text-xs font-semibold">Race end<input class="alloy-control" data-window-end type="number" step="1" [formField]="fields.endTimestampMs" /></label>
-			<label class="grid gap-1 text-xs font-semibold">Subject timestamp (ms)<input class="alloy-control" data-seed-timestamp type="number" step="1" [formField]="fields.seedTimestampMs" /></label>
-			<label class="grid gap-1 text-xs font-semibold">Source frame index<input class="alloy-control" data-seed-frame-index type="number" step="1" [formField]="fields.seedFrameIndex" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Verified Subject timestamp (ms)<input class="alloy-control" data-seed-timestamp type="number" readonly [value]="selectedFrame()?.timestampMs ?? ''" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Verified source frame index<input class="alloy-control" data-seed-frame-index type="number" readonly [value]="selectedFrame()?.frameIndex ?? ''" /></label>
 			<label class="grid gap-1 text-xs font-semibold">Subject identity<input class="alloy-control" data-subject-identity type="text" autocomplete="off" [formField]="fields.subjectIdentity" /></label>
 		</fieldset>
 

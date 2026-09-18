@@ -497,8 +497,16 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		.click();
 	await creator.getByLabel('Race start').fill('100');
 	await creator.getByLabel('Race end').fill('900');
-	await creator.getByLabel('Subject timestamp (ms)').fill('500');
-	await creator.getByLabel('Source frame index').fill('5');
+	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-mark-seed]').click();
+	await expect(creator.locator('[data-subject-frame]')).toBeVisible();
+	await expect(creator.locator('[data-frame-editor]')).toBeEnabled();
+	await expect(
+		creator.getByLabel('Verified Subject timestamp (ms)'),
+	).toHaveValue('200');
+	await expect(creator.getByLabel('Verified source frame index')).toHaveValue(
+		'2',
+	);
 	await creator.getByLabel('Subject identity').fill('car-44');
 	const subjectBox = creator.locator('[data-subject-box]');
 	const surface = creator.locator('[data-box-surface]');
@@ -578,8 +586,8 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		approvedTrackMapVersionId: trackMap.id,
 		raceWindow: { startTimestampMs: 100, endTimestampMs: 900 },
 		subjectSeed: {
-			timestampMs: 500,
-			frameIndex: 5,
+			timestampMs: 200,
+			frameIndex: 2,
 			identity: 'car-44',
 			box: expectedSubjectBox,
 		},

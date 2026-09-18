@@ -8,6 +8,8 @@ import {
 	RACE_VIDEO_VALIDATION_CONTRACT_VERSION,
 	type RaceVideoValidationWorkflowPayload,
 } from '../driving-analysis/race-recording/race-video-validation-contracts';
+import type { SourceFrameCommand } from '../driving-analysis/race-recording/subject-frame-contracts';
+import { subjectFrames } from '../driving-analysis/race-recording/subject-frames';
 import { createWorker } from '../index';
 
 const browserReferenceFrame = Uint8Array.from(
@@ -20,6 +22,26 @@ const browserReferenceFrame = Uint8Array.from(
 export class BrowserRaceVideoMediaContainer extends DurableObject<
 	Pick<Env, 'ANALYSIS_MEDIA'>
 > {
+	async selectSubjectFrame(command: SourceFrameCommand) {
+		const frames = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900].map(
+			(timestampMs, frameIndex) => ({ timestampMs, frameIndex }),
+		);
+		const selection = command.selection;
+		const frame = frames.find((frame) =>
+			selection.kind === 'frame'
+				? frame.frameIndex === selection.frameIndex
+				: frame.timestampMs >= selection.timestampMs,
+		);
+		if (!frame) throw new Error('Fixture frame unavailable');
+		return {
+			contractVersion: 'source-frame.v1' as const,
+			...frame,
+			sourceChecksumSha256: command.source.checksumSha256,
+			imageBase64: command.includeImage
+				? '/9j/4AAQSkZJRgABAgAAAQABAAD//gARTGF2YzU4LjEzNC4xMDAA/9sAQwAIBAQEBAQFBQUFBQUGBgYGBgYGBgYGBgYGBwcHCAgIBwcHBgYHBwgICAgJCQkICAgICQkKCgoMDAsLDg4OEREU/8QATQABAQAAAAAAAAAAAAAAAAAAAAcBAQEBAAAAAAAAAAAAAAAAAAAFBxABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAFoAoAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AI4A39LAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/Z'
+				: null,
+		};
+	}
 	async extractReferenceFrame(command: ReferenceFrameExtractionCommand) {
 		const checksumSha256 = [
 			...new Uint8Array(
@@ -96,5 +118,8 @@ export default createWorker({
 			startValidation: (payload) =>
 				publishBrowserValidation(env.DB, env.ANALYSIS_MEDIA, payload),
 		}),
-	drivingAnalysisAuthority: (env) => new DrivingAnalysisAuthority(env.DB),
+	drivingAnalysisAuthority: (env) =>
+		new DrivingAnalysisAuthority(env.DB, {
+			verifySubjectFrame: (command) => subjectFrames(env).verify(command),
+		}),
 });
