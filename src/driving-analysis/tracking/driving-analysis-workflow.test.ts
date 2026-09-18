@@ -22,6 +22,7 @@ import {
 } from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
+import * as analysisCompletion from '../analysis/driving-analysis-completion';
 import { CornerClipAuthority } from '../clips/corner-clip-authority';
 import {
 	AcceptedCornerEvidence,
@@ -629,6 +630,8 @@ const coreWorkflowFixture = (
 		})),
 	};
 	const publishAnalysisState = vi.fn(async () => undefined);
+	const renderClips = vi.fn(async () => undefined);
+	const completeAnalysis = vi.fn(async () => undefined);
 	const workflow = new TrackingRunWorkflow(
 		authority as unknown as TrackingAuthority,
 		coordinator as unknown as ConstructorParameters<
@@ -639,6 +642,8 @@ const coreWorkflowFixture = (
 		publication,
 		evidence,
 		publishAnalysisState,
+		renderClips,
+		completeAnalysis,
 	);
 	return {
 		authority,
@@ -649,12 +654,34 @@ const coreWorkflowFixture = (
 		publication,
 		evidence,
 		publishAnalysisState,
+		renderClips,
+		completeAnalysis,
 		steps: new WorkflowStepFixture(),
 		workflow,
 	};
 };
 
 describe('DrivingAnalysisWorkflow', () => {
+	test('finalizes only after evidence and clips, and replays the durable completion step', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		value.completeAnalysis.mockImplementation(async () => {
+			expect(value.evidence.commit).toHaveBeenCalledOnce();
+			expect(value.renderClips).toHaveBeenCalledOnce();
+			expect(value.publishAnalysisState).not.toHaveBeenCalled();
+		});
+		await value.workflow.run(
+			workflowEvent(),
+			value.steps as unknown as WorkflowStep,
+		);
+		await value.workflow.run(
+			workflowEvent(),
+			value.steps as unknown as WorkflowStep,
+		);
+		expect(value.completeAnalysis).toHaveBeenCalledOnce();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+
 	test('rejects a lease renewal when cancellation wins after the last valid status', async () => {
 		const value = coreWorkflowFixture();
 		value.provider.submit.mockImplementation(async (submission) => ({
@@ -1885,6 +1912,9 @@ describe('DrivingAnalysisWorkflow', () => {
 	});
 
 	test('runs the first immutable segment through LocalSam31Provider and commits evidence before release', async () => {
+		const completion = vi
+			.spyOn(analysisCompletion, 'completeDrivingAnalysis')
+			.mockResolvedValue('completed');
 		vi.spyOn(CornerClipAuthority.prototype, 'inputs').mockResolvedValue([]);
 		const commitEvidence = vi
 			.spyOn(AcceptedCornerEvidence.prototype, 'commit')
@@ -2068,6 +2098,35 @@ describe('DrivingAnalysisWorkflow', () => {
 				name.startsWith('submit-tracking-segment'),
 			)?.[1],
 		).toMatchObject({ retries: { limit: 0 }, timeout: 30000 });
+		completion.mockResolvedValue('stale');
+		await expect(
+			workflow.run(
+				workflowEvent(),
+				new WorkflowStepFixture() as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_AUTHORITY_STALE' });
+		completion.mockResolvedValue('not-ready');
+		await expect(
+			workflow.run(
+				workflowEvent(),
+				new WorkflowStepFixture() as unknown as WorkflowStep,
+			),
+		).rejects.toThrow('Accepted analysis evidence is not ready for completion');
+		const originalContext = TrackingAuthority.prototype.workflowContext;
+		vi.spyOn(TrackingAuthority.prototype, 'workflowContext').mockImplementation(
+			async function (this: TrackingAuthority, identity) {
+				return {
+					...(await originalContext.call(this, identity)),
+					outcome: 'tracking-gap',
+				};
+			},
+		);
+		await expect(
+			workflow.run(
+				workflowEvent(),
+				new WorkflowStepFixture() as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
 	});
 
 	test('derives stable version-four attempt identities', async () => {

@@ -1924,12 +1924,12 @@ export class TrackingAuthority {
 			(progress, attempt) => Math.max(progress, attempt.progress),
 			0,
 		);
+		const currentWaitReason = segments.at(-1)?.waitReason;
 		const acceptedGap = segments.at(-1)?.outcome === 'tracking-gap';
 		const hasAcceptedEvidence = segments.some(
 			(segment) => segment.acceptedArtifactId !== null,
 		);
 		let state: Omit<PublicTrackingState, 'runId' | 'stage'>;
-		/* c8 ignore next 7 -- final run completion belongs to the later measurement/finalization slice; this projection is reserved for that D1 transition. */
 		if (run.status === 'completed') {
 			state = {
 				lifecycle: 'completed',
@@ -1953,11 +1953,11 @@ export class TrackingAuthority {
 					run.safeFailureCode ?? latestAttempt?.safeFailureCode,
 				),
 			};
-		} else if (segments.at(-1)?.waitReason) {
+		} else if (currentWaitReason) {
 			state = {
 				lifecycle: hasAcceptedEvidence ? 'running' : 'queued',
 				progress: hasAcceptedEvidence ? 99 : Math.min(highWater, 99),
-				waitReason: segments.at(-1)?.waitReason ?? null,
+				waitReason: currentWaitReason,
 				safeFailureCode: null,
 			};
 		} else if (acceptedGap) {
