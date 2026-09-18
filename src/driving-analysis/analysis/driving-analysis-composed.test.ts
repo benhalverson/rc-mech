@@ -214,6 +214,7 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 		const prepared = new PreparedTrackViewAuthority(sqlite.database);
 		const profile = inferenceProfileFixture();
 		const analysis = new DrivingAnalysisAuthority(sqlite.database, {
+			verifySubjectFrame: async () => undefined,
 			clock: () => NOW,
 			id: () => ANALYSIS_ID,
 		});

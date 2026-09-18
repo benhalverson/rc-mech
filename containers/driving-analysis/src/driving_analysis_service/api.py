@@ -25,6 +25,11 @@ from driving_analysis_service.rendering_contracts import (
 )
 from driving_analysis_service.request_limits import RequestBodyLimitMiddleware
 from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.source_frames import (
+    SourceFrameRequest,
+    SourceFrameService,
+    frame_error,
+)
 from driving_analysis_service.tracking_contracts import (
     PROCESSING_CONTRACT_VERSION,
     PrepareStageRequest,
@@ -34,7 +39,7 @@ from driving_analysis_service.tracking_contracts import (
 )
 
 
-def create_app(
+def create_app(  # noqa: C901 - versioned routes and their safe errors stay together
     settings: ServiceSettings | None = None,
 ) -> FastAPI:
     resolved_settings = settings or ServiceSettings.from_environment()
@@ -47,6 +52,7 @@ def create_app(
         processing_admission,
     )
     rendering_service = CornerRenderService(resolved_settings, processing_admission)
+    frame_service = SourceFrameService(resolved_settings, processing_admission)
 
     application = FastAPI(
         title="RC Mech driving-analysis media service",
@@ -65,6 +71,8 @@ def create_app(
         request: Request,
         _error: RequestValidationError,
     ) -> JSONResponse:
+        if request.url.path == "/v1/frames/select":
+            return frame_error("INVALID_REQUEST", 422)
         if request.url.path == "/v1/stages/render":
             render_response = RenderStageRejected(
                 contractVersion="corner-render.v1",
@@ -159,6 +167,10 @@ def create_app(
     )
     def render_corner(request: RenderStageRequest) -> RenderStageResponse:
         return rendering_service.render(request)
+
+    @application.post("/v1/frames/select")
+    def select_source_frame(request: SourceFrameRequest) -> JSONResponse:
+        return frame_service.select(request)
 
     return application
 

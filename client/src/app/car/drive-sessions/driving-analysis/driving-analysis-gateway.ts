@@ -3,7 +3,7 @@ import {
 	HttpErrorResponse,
 	httpResource,
 } from '@angular/common/http';
-import { computed, inject, Service, signal } from '@angular/core';
+import { computed, inject, Service, type Signal, signal } from '@angular/core';
 import { catchError, map, type Observable, throwError } from 'rxjs';
 import type * as z from 'zod/mini';
 import {
@@ -21,6 +21,17 @@ import {
 	type DrivingAnalysisGatewayFailure,
 	drivingAnalysisResponseSchema,
 } from './driving-analysis.models';
+import {
+	type SubjectFrameRequest,
+	subjectFrameResponseSchema,
+} from './subject-frame.models';
+
+export const subjectFrameContentUrl = (
+	recordingId: string,
+	frameIndex: number,
+	checksum: string,
+): string =>
+	`/api/v1/race-videos/${encodeURIComponent(recordingId)}/subject-frames/${frameIndex}/content?checksum=${encodeURIComponent(checksum)}`;
 
 const apiErrorSchema = strictObject({
 	error: string().check(trim(), minLength(1)),
@@ -66,6 +77,32 @@ const createUrl = (carId: string, driveSessionId: string): string =>
 
 @Service()
 export class DrivingAnalysisGateway {
+	readSubjectFrame(selection: Signal<SubjectFrameRequest | null>) {
+		return httpResource(
+			() => {
+				const selected = selection();
+				return selected
+					? {
+							url: `/api/v1/race-videos/${encodeURIComponent(selected.recordingId)}/subject-frame?timestampMs=${selected.timestampMs}`,
+							withCredentials: true,
+						}
+					: undefined;
+			},
+			{
+				parse: (value: unknown) => {
+					const frame = subjectFrameResponseSchema.parse(value).frame;
+					return {
+						...frame,
+						contentUrl: subjectFrameContentUrl(
+							frame.recordingId,
+							frame.frameIndex,
+							frame.sourceChecksumSha256,
+						),
+					};
+				},
+			},
+		);
+	}
 	private readonly http = inject(HttpClient);
 	private readonly analysisId = signal('');
 	readonly analysis = httpResource<DrivingAnalysis>(

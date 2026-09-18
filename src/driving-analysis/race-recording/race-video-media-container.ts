@@ -19,6 +19,8 @@ import {
 	raceVideoValidationRequest,
 	raceVideoValidationResponseSchema,
 } from './race-video-validation-contracts';
+import type { SourceFrameCommand } from './subject-frame-contracts';
+import { selectSubjectFrame } from './subject-frame-media';
 
 const uuidV4Schema = z
 	.string()
@@ -580,6 +582,19 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 					throw new Error('Corner clip stream is unavailable');
 				return { body: process.stdout, waitForExit: () => process.exitCode };
 			},
+			cleanup: (path) => this.cleanup(path),
+		});
+	}
+	/* c8 ignore end */
+
+	/* c8 ignore start -- Thin Cloudflare Container process adapter; the injected media runtime is tested directly. */
+	async selectSubjectFrame(command: SourceFrameCommand) {
+		return selectSubjectFrame(command, {
+			bucket: this.env.ANALYSIS_MEDIA,
+			start: () => this.startRuntime(),
+			stage: (path, body) => this.stage(path, body),
+			checksum: (path) => this.stagedChecksum(path),
+			select: (request) => this.containerFetch(request, 8080),
 			cleanup: (path) => this.cleanup(path),
 		});
 	}

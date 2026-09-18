@@ -12,6 +12,7 @@ import { DrivingAnalysisStore } from './driving-analysis-store';
 import type { RaceRecording } from './race-recording.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
+import type { SubjectFrame } from './subject-frame.models';
 import { SubjectReidentification } from './subject-reidentification';
 
 const recording: RaceRecording = {
@@ -104,6 +105,10 @@ const selectedVersion: TrackMapVersion = {
 };
 
 class FakeStore {
+	readonly selectedSubjectFrame = signal<SubjectFrame | null>(null);
+	readonly subjectFrameLoading = signal(false);
+	readonly subjectFrameError = signal<string | null>(null);
+	readonly selectSubjectFrame = vi.fn();
 	readonly approvedTrackMaps = signal(maps);
 	readonly trackMapsLoading = signal(false);
 	readonly trackMapsFailure = signal<unknown>(null);
@@ -132,6 +137,9 @@ describe('DrivingAnalysisCreator', () => {
 	let store: FakeStore;
 
 	beforeEach(() => {
+		vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(
+			() => undefined,
+		);
 		store = new FakeStore();
 		TestBed.configureTestingModule({
 			imports: [DrivingAnalysisCreator],
@@ -147,6 +155,102 @@ describe('DrivingAnalysisCreator', () => {
 		TestBed.resetTestingModule();
 	});
 
+	it('resolves an actual frame before enabling the frozen Subject box', async () => {
+		const fixture = TestBed.createComponent(DrivingAnalysisCreator);
+		fixture.componentRef.setInput('carId', 'car-1');
+		fixture.componentRef.setInput('driveSessionId', 'drive-1');
+		fixture.componentRef.setInput('recording', recording);
+		fixture.detectChanges();
+		const root = fixture.nativeElement as HTMLElement;
+		expect(root.querySelector('app-subject-box-editor')).toBeNull();
+		store.subjectFrameLoading.set(true);
+		fixture.detectChanges();
+		expect(root.textContent).toContain('Finding the exact source frame');
+		store.subjectFrameLoading.set(false);
+		store.subjectFrameError.set('Frame extraction is unavailable');
+		fixture.detectChanges();
+		expect(root.textContent).toContain('Frame extraction is unavailable');
+		store.subjectFrameError.set(null);
+		const seek = root.querySelector<HTMLInputElement>('[data-race-seek]');
+		if (!seek) throw new Error('Missing seek');
+		seek.value = '125';
+		seek.dispatchEvent(new Event('input', { bubbles: true }));
+		root.querySelector<HTMLButtonElement>('[data-mark-seed]')?.click();
+		expect(store.selectSubjectFrame).toHaveBeenCalledWith({
+			recordingId: recording.id,
+			timestampMs: 125,
+		});
+		store.selectedSubjectFrame.set({
+			recordingId: recording.id,
+			requestedTimestampMs: 125,
+			frameIndex: 4,
+			timestampMs: 133,
+			sourceChecksumSha256: 'a'.repeat(64),
+			contentUrl: '/api/v1/verified-frame',
+		});
+		fixture.detectChanges();
+		const image = root.querySelector<HTMLImageElement>('[data-subject-frame]');
+		expect(image?.src).toContain('/api/v1/verified-frame');
+		expect(
+			root.querySelector<HTMLFieldSetElement>('[data-frame-editor]')?.disabled,
+		).toBe(true);
+		image?.dispatchEvent(new Event('load'));
+		fixture.detectChanges();
+		expect(
+			root.querySelector<HTMLFieldSetElement>('[data-frame-editor]')?.disabled,
+		).toBe(false);
+		expect(
+			root.querySelector<HTMLInputElement>('[data-seed-frame-index]')?.value,
+		).toBe('4');
+		expect(
+			root.querySelector<HTMLInputElement>('[data-seed-timestamp]')?.value,
+		).toBe('133');
+		image?.dispatchEvent(new Event('error'));
+		fixture.detectChanges();
+		expect(root.textContent).toContain(
+			'The verified image could not be loaded',
+		);
+		expect(
+			root.querySelector<HTMLFieldSetElement>('[data-frame-editor]')?.disabled,
+		).toBe(true);
+		root
+			.querySelector('form')
+			?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+		expect(store.createAnalysis).not.toHaveBeenCalled();
+		const verified = store.selectedSubjectFrame();
+		if (!verified) throw new Error('Verified frame missing');
+		for (const change of [
+			{ recordingId: 'another' },
+			{ requestedTimestampMs: 126 },
+			{ sourceChecksumSha256: 'b'.repeat(64) },
+			{ timestampMs: -1 },
+			{ timestampMs: 900_000 },
+		]) {
+			store.selectedSubjectFrame.set({ ...verified, ...change });
+			fixture.detectChanges();
+			expect(root.querySelector('app-subject-box-editor')).toBeNull();
+		}
+		store.selectedSubjectFrame.set(verified);
+		fixture.detectChanges();
+		for (const selector of ['[data-window-start]', '[data-window-end]']) {
+			const control = root.querySelector<HTMLInputElement>(selector);
+			if (!control) throw new Error('Race window control missing');
+			const previous = control.value;
+			control.value = selector.includes('start') ? '1' : '800000';
+			control.dispatchEvent(new Event('input', { bubbles: true }));
+			fixture.detectChanges();
+			expect(root.querySelector('app-subject-box-editor')).toBeNull();
+			control.value = previous;
+			control.dispatchEvent(new Event('input', { bubbles: true }));
+			fixture.detectChanges();
+		}
+		fixture.componentRef.setInput('recording', {
+			...recording,
+			id: 'different-recording',
+		});
+		fixture.detectChanges();
+		expect(root.querySelector('app-subject-box-editor')).toBeNull();
+	});
 	it('renders the correction workflow for an accepted tracking gap', async () => {
 		const corrections = {
 			select: vi.fn(),
@@ -206,13 +310,6 @@ describe('DrivingAnalysisCreator', () => {
 		expect(root.textContent).toContain('Inspect immutable Track-map geometry');
 		expect(store.selectTrackMap).toHaveBeenCalledWith(maps[0]?.id);
 		expect(root.textContent).toContain('Absolute recording timestamp');
-		const boxWidth = root.querySelector<HTMLInputElement>('[data-box-width]');
-		if (!boxWidth) throw new Error('Subject-box width input missing');
-		for (const value of ['0.12', '0.1']) {
-			boxWidth.value = value;
-			boxWidth.dispatchEvent(new Event('input', { bubbles: true }));
-			fixture.detectChanges();
-		}
 		const video = root.querySelector<HTMLVideoElement>('video');
 		if (!video) throw new Error('Video missing');
 		Object.defineProperty(video, 'currentTime', {
@@ -228,7 +325,26 @@ describe('DrivingAnalysisCreator', () => {
 		video.currentTime = 180;
 		video.dispatchEvent(new Event('timeupdate'));
 		root.querySelector<HTMLButtonElement>('[data-mark-seed]')?.click();
+		store.selectedSubjectFrame.set({
+			recordingId: recording.id,
+			requestedTimestampMs: 180_000,
+			frameIndex: 5_400,
+			timestampMs: 180_000,
+			sourceChecksumSha256: 'a'.repeat(64),
+			contentUrl: '/api/v1/verified-frame',
+		});
 		fixture.detectChanges();
+		root
+			.querySelector('[data-subject-frame]')
+			?.dispatchEvent(new Event('load'));
+		fixture.detectChanges();
+		const boxWidth = root.querySelector<HTMLInputElement>('[data-box-width]');
+		if (!boxWidth) throw new Error('Subject-box width input missing');
+		for (const value of ['0.12', '0.1']) {
+			boxWidth.value = value;
+			boxWidth.dispatchEvent(new Event('input', { bubbles: true }));
+			fixture.detectChanges();
+		}
 
 		root
 			.querySelector('form')
@@ -289,19 +405,7 @@ describe('DrivingAnalysisCreator', () => {
 		}
 		identity.value = 'subject-1';
 		identity.dispatchEvent(new Event('input', { bubbles: true }));
-		for (const value of ['-1', '36000', '1.5']) {
-			frameIndex.value = value;
-			frameIndex.dispatchEvent(new Event('input', { bubbles: true }));
-			root
-				.querySelector('form')
-				?.dispatchEvent(
-					new Event('submit', { bubbles: true, cancelable: true }),
-				);
-			fixture.detectChanges();
-			expect(root.textContent).toContain(
-				'Subject frame must identify a decoded recording frame',
-			);
-		}
+		expect(frameIndex.readOnly).toBe(true);
 		expect(store.createAnalysis).toHaveBeenCalledTimes(3);
 
 		const editor = fixture.debugElement.query(By.directive(SubjectBoxEditor))
