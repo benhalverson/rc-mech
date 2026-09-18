@@ -13,6 +13,7 @@ import {
 import type { PublicTrackingState } from '../tracking/authority-contracts';
 import { trackingRun } from '../tracking/authority-schema';
 import { uuidV4Schema } from '../tracking/contracts';
+import { TrackingAuthority } from '../tracking/tracking-authority';
 import {
 	createDrivingAnalysisInputSchema,
 	DRIVING_ANALYSIS_CREATION_WINDOW_MS,
@@ -162,6 +163,24 @@ const publicAnalysis = (
 	updatedAt: record.updatedAt,
 });
 
+const publicTrackingAnalysis = (
+	record: DrivingAnalysisRecord,
+	state: PublicTrackingState,
+): PublicDrivingAnalysis => ({
+	...publicAnalysis(record),
+	...(state.waitReason !== null
+		? {
+				status:
+					state.lifecycle === 'queued'
+						? ('queued' as const)
+						: ('running' as const),
+				lifecycle: 'tracking' as const,
+			}
+		: {}),
+	waitReason: state.waitReason,
+	safeFailureCode: state.safeFailureCode,
+});
+
 export class DrivingAnalysisAuthority {
 	private readonly database;
 	private readonly clock: () => Date;
@@ -172,7 +191,7 @@ export class DrivingAnalysisAuthority {
 	) => Promise<void>;
 
 	constructor(
-		binding: D1Database,
+		private readonly binding: D1Database,
 		options: DrivingAnalysisAuthorityOptions = {},
 	) {
 		this.database = drizzle(binding);
@@ -283,6 +302,31 @@ export class DrivingAnalysisAuthority {
 		const record = await this.find(ownerId, analysisId);
 		if (!record)
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
+		if (
+			record.stage === 'tracking' &&
+			(record.status === 'running' || record.status === 'failed')
+		) {
+			const run = await this.database
+				.select({ id: trackingRun.id })
+				.from(trackingRun)
+				.where(
+					and(
+						eq(trackingRun.ownerId, ownerId),
+						eq(trackingRun.analysisId, analysisId),
+						eq(trackingRun.workflowId, record.workflowId),
+					),
+				)
+				.get();
+			if (run)
+				return publicTrackingAnalysis(
+					record,
+					await new TrackingAuthority(this.binding).publicState(
+						ownerId,
+						analysisId,
+						run.id,
+					),
+				);
+		}
 		return publicAnalysis(record);
 	}
 
@@ -547,7 +591,12 @@ export class DrivingAnalysisAuthority {
 				),
 			)
 			.get();
-		if (run?.status !== 'active') return { kind: 'stale' };
+		if (
+			!run ||
+			(run.status !== 'active' &&
+				!(run.status === 'failed' && state.lifecycle === 'failed'))
+		)
+			return { kind: 'stale' };
 		const current = await this.find(ownerId, analysisId);
 		/* c8 ignore next -- a Tracking run linked to a missing analysis is corruption defense. */
 		if (current?.stage !== 'tracking' || current.workflowId !== run.workflowId)
@@ -557,7 +606,10 @@ export class DrivingAnalysisAuthority {
 			current.status === target.status &&
 			current.progress === target.progress
 		)
-			return { kind: 'replayed', analysis: publicAnalysis(current) };
+			return {
+				kind: 'replayed',
+				analysis: publicTrackingAnalysis(current, state),
+			};
 		if (
 			current.status !== 'running' &&
 			current.status !== 'awaiting-reidentification'
@@ -584,7 +636,10 @@ export class DrivingAnalysisAuthority {
 			.get();
 		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
 		return published
-			? { kind: 'published', analysis: publicAnalysis(published) }
+			? {
+					kind: 'published',
+					analysis: publicTrackingAnalysis(published, state),
+				}
 			: { kind: 'stale' };
 	}
 

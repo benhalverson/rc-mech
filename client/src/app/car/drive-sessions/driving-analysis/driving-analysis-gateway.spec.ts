@@ -76,6 +76,16 @@ describe('DrivingAnalysisGateway', () => {
 	});
 
 	it('strictly parses immutable analysis and lifecycle facts', () => {
+		const waiting = {
+			...response.drivingAnalysis,
+			lifecycle: 'tracking',
+			status: 'queued',
+			stage: 'tracking',
+			progress: 50,
+			waitReason: 'waiting-for-provider',
+			safeFailureCode: null,
+		};
+		expect(parseDrivingAnalysis({ drivingAnalysis: waiting })).toEqual(waiting);
 		expect(parseDrivingAnalysis(response)).toEqual(response.drivingAnalysis);
 		for (const lifecycle of [
 			{ status: 'running', stage: 'tracking', progress: 50 },

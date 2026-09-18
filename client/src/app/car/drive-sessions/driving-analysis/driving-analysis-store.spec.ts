@@ -443,6 +443,34 @@ describe('DrivingAnalysisStore', () => {
 		expect(analyses.refresh).toHaveBeenCalledOnce();
 	});
 
+	it('refreshes durable wait and failure details at the same analysis version', async () => {
+		store.selectCar('car-1');
+		store.createAnalysis(analysisCommand());
+		const waiting = analysis({
+			stateVersion: 2,
+			lifecycle: 'tracking',
+			stage: 'tracking',
+			waitReason: 'waiting-for-provider',
+		});
+		analyses.analysisValue.set(waiting);
+		analyses.analysisHasValue.set(true);
+		await vi.waitFor(() =>
+			expect(store.analysis()?.waitReason).toBe('waiting-for-provider'),
+		);
+		analyses.analysisValue.set({ ...waiting, waitReason: null });
+		await vi.waitFor(() => expect(store.analysis()?.waitReason).toBeNull());
+		analyses.analysisValue.set({
+			...waiting,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+		});
+		await vi.waitFor(() =>
+			expect(store.analysis()?.safeFailureCode).toBe(
+				'TRACKING_PROVIDER_UNAVAILABLE',
+			),
+		);
+	});
+
 	it('retries an eligible analysis through a fresh monitored workflow', async () => {
 		store.retryAnalysis();
 		expect(analyses.retry).not.toHaveBeenCalled();

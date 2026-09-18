@@ -2,7 +2,7 @@ import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -38,6 +38,7 @@ import type {
 	GpuLeaseRenewInput,
 	GpuLeaseWitnessInput,
 } from '../gpu-lease-coordinator';
+import { gpuLeaseEnqueueInput } from '../gpu-lease-coordinator';
 import type {
 	ExecutionIdentity,
 	JobStatus,
@@ -90,13 +91,20 @@ const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
 	'0022_tracking_artifact_publication.sql',
+	'0034_tracking_availability.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
 
 let sqlite: SqliteD1Fixture | undefined;
 
+beforeEach(() => {
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(NOW);
+});
+
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 	sqlite?.close();
@@ -105,6 +113,8 @@ afterEach(() => {
 
 class WorkflowStepFixture {
 	readonly names: string[] = [];
+	beforeStep?: (name: string) => void;
+	serializeErrors = false;
 	readonly configurations = new Map<
 		string,
 		{
@@ -142,24 +152,35 @@ class WorkflowStepFixture {
 				? callbackOrConfiguration
 				: configuredCallback;
 		if (!callback) throw new Error('missing Workflow callback');
-		const attemptLimit = configuration?.retries?.limit ?? 5;
+		const attemptLimit = (configuration?.retries?.limit ?? 5) + 1;
 		let failure: unknown;
 		for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
 			try {
+				this.beforeStep?.(name);
 				const output = await callback();
-				this.outputs.set(name, output);
-				return output;
+				const persisted = JSON.parse(JSON.stringify(output)) as T;
+				this.outputs.set(name, persisted);
+				return persisted;
 			} catch (error) {
 				const delay = configuration?.retries?.delay;
-				if (delay) delay({ ctx: { attempt: attempt + 1 } });
-				failure = error;
+				if (typeof delay === 'function')
+					delay({ ctx: { attempt: attempt + 1 } });
+				failure =
+					this.serializeErrors && error instanceof Error
+						? new Error(error.message)
+						: error;
 			}
 		}
 		throw failure;
 	}
 
-	async sleep(name: string): Promise<void> {
+	async sleep(name: string, duration: number | string): Promise<void> {
 		this.names.push(name);
+		if (this.outputs.has(name)) return;
+		this.outputs.set(name, true);
+		vi.setSystemTime(
+			Date.now() + (typeof duration === 'number' ? duration : 15_000),
+		);
 	}
 }
 
@@ -306,9 +327,7 @@ const status = (
 	error: null,
 });
 
-const completedStatusFixture = (
-	submission: TrackingJobSubmission,
-): JobStatus => {
+const completedStatusFixture = (submission: ExecutionIdentity): JobStatus => {
 	const fixture = jobStatusFixture(true).artifact;
 	if (!fixture) throw new Error('missing artifact fixture');
 	return status(submission, 'completed', 99, null, {
@@ -452,6 +471,9 @@ const coreWorkflowFixture = (
 		safeFailureCode: string | null;
 	};
 	const authority = {
+		setWaitReason: vi.fn(async () => undefined),
+		expireAvailability: vi.fn(async () => undefined),
+		failUnavailableOutput: vi.fn(async () => undefined),
 		createFirstSegment: vi.fn(async () => context),
 		workflowContext: vi.fn(async () => context),
 		activateAttempt: vi.fn(async (command: Activation) => {
@@ -501,7 +523,10 @@ const coreWorkflowFixture = (
 	const coordinator = {
 		enqueue: vi.fn<
 			(input: GpuLeaseEnqueueInput) => Promise<GpuLeaseEnqueueResult>
-		>(async () => ({ status: 'enqueued' })),
+		>(async (input) => {
+			gpuLeaseEnqueueInput.parse(input);
+			return { status: 'enqueued' };
+		}),
 		acquire: vi.fn<
 			(input: GpuLeaseAcquireInput) => Promise<GpuLeaseAcquireResult>
 		>(async () => ({
@@ -612,6 +637,974 @@ const coreWorkflowFixture = (
 };
 
 describe('DrivingAnalysisWorkflow', () => {
+	test('replays publication after a lost acceptance acknowledgement without reauthorizing completed execution', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: completedStatusFixture(submission),
+		}));
+		value.publication.publish.mockImplementationOnce(async () => {
+			value.getContext().acceptedArtifactId =
+				'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+			throw new Error('lost acceptance acknowledgement');
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.publication.publish).toHaveBeenCalledTimes(2);
+		expect(value.provider.submit).toHaveBeenCalledOnce();
+		expect(value.evidence.commit).toHaveBeenCalledOnce();
+	});
+	test('expires before recovery without retiring or replacing computation after the deadline', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'GPU_CAPACITY_BUSY',
+			retryable: true,
+		});
+		value.steps.beforeStep = (name) => {
+			if (name.startsWith('retire-lost-tracking-attempt'))
+				vi.setSystemTime(value.getContext().availabilityDeadlineAt);
+		};
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.authority.retireAttempt).not.toHaveBeenCalled();
+		expect(value.coordinator.acquire).toHaveBeenCalledOnce();
+		expect(value.authority.expireAvailability).toHaveBeenCalledOnce();
+	});
+
+	test('retries lost deadline-write acknowledgements without reloading the now-failed run', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().availabilityDeadlineAt = NOW.getTime();
+		value.authority.expireAvailability.mockImplementationOnce(async () => {
+			value.authority.workflowContext.mockRejectedValue(
+				new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'),
+			);
+			throw new Error('lost acknowledgement');
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.authority.expireAvailability).toHaveBeenCalledTimes(2);
+		expect(value.coordinator.acquire).not.toHaveBeenCalled();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+
+	test('rejects a capacity grant for a different segment', async () => {
+		const value = coreWorkflowFixture();
+		value.coordinator.acquire.mockResolvedValue({
+			status: 'acquired',
+			segmentId: 'wrong-segment',
+			leaseId: LEASE_ID,
+			fence: 7,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_AUTHORITY_STALE' });
+		expect(value.authority.activateAttempt).not.toHaveBeenCalled();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+	test.each(['capacity', 'provider'] as const)(
+		'reloads cancelled authority after a %s sleep before further contact',
+		async (wait) => {
+			const value = coreWorkflowFixture();
+			if (wait === 'capacity')
+				value.coordinator.acquire.mockResolvedValue({ status: 'busy' });
+			const sleep = value.steps.sleep.bind(value.steps);
+			vi.spyOn(value.steps, 'sleep').mockImplementation(
+				async (name, duration) => {
+					await sleep(name, duration);
+					value.authority.workflowContext.mockRejectedValue(
+						new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'),
+					);
+				},
+			);
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).rejects.toMatchObject({ code: 'TRACKING_AUTHORITY_STALE' });
+			expect(value.coordinator.acquire).toHaveBeenCalledOnce();
+			expect(value.provider.submit).toHaveBeenCalledTimes(
+				wait === 'capacity' ? 0 : 1,
+			);
+			expect(value.grants.issue).not.toHaveBeenCalled();
+			expect(value.authority.expireAvailability).not.toHaveBeenCalled();
+		},
+	);
+
+	test('does not renew expired output-ready authority after a provider retry sleep', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.provider.status.mockResolvedValue({
+			ok: false,
+			code: 'TRACKING_PROVIDER_UNAVAILABLE',
+			retryable: true,
+		});
+		value.coordinator.witness.mockImplementation(async () => ({
+			status: Date.now() === NOW.getTime() ? 'ok' : 'stale',
+		}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.provider.status).toHaveBeenCalledOnce();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.coordinator.renew).not.toHaveBeenCalled();
+	});
+	test.each([false, true])(
+		'stays within the configured durable step budget for a full day of status polling with intermittent outages: %s',
+		async (intermittent) => {
+			const value = coreWorkflowFixture();
+			value.provider.submit.mockImplementation(async (submission) => ({
+				ok: true,
+				value: status(submission, 'processing', 50, null, null),
+			}));
+			let contacts = 0;
+			value.provider.status.mockImplementation(async (identity) => {
+				contacts += 1;
+				return intermittent && contacts % 2 === 1
+					? {
+							ok: false,
+							code: 'TRACKING_PROVIDER_UNAVAILABLE',
+							retryable: true,
+						}
+					: { ok: true, value: status(identity, 'processing', 50, null, null) };
+			});
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+			expect(value.steps.configurations.size).toBeLessThan(25_000);
+			expect(Date.now()).toBe(NOW.getTime() + 86_400_000);
+		},
+	);
+	test('does not replace output-ready computation after a contradictory interrupted response', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.provider.status.mockResolvedValue({
+			ok: false,
+			code: 'JOB_INTERRUPTED',
+			retryable: true,
+		});
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'TRACKING_PROVIDER_RESPONSE_INVALID',
+			retryable: false,
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_FAILED' });
+		expect(value.authority.retireAttempt).not.toHaveBeenCalled();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+	test('publishes safe deadline expiry when recovery wakes after the original deadline', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().availabilityDeadlineAt = Date.now() + 1_000;
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'GPU_CAPACITY_BUSY',
+			retryable: true,
+		});
+		const sleep = value.steps.sleep.bind(value.steps);
+		vi.spyOn(value.steps, 'sleep').mockImplementation(
+			async (name, duration) => {
+				await sleep(name, duration);
+				vi.setSystemTime(Date.now() + 1);
+			},
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.authority.expireAvailability).toHaveBeenCalledOnce();
+		expect(value.coordinator.acquire).toHaveBeenCalledOnce();
+	});
+
+	test('publishes safe expiry if the deadline crosses during enqueue', async () => {
+		const value = coreWorkflowFixture();
+		value.coordinator.enqueue.mockImplementation(async (input) => {
+			vi.setSystemTime(input.deadlineAt + 1);
+			gpuLeaseEnqueueInput.parse(input);
+			return { status: 'enqueued' };
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.authority.expireAvailability).toHaveBeenCalledOnce();
+		expect(value.coordinator.acquire).not.toHaveBeenCalled();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+
+	test('replaces a still-current processing attempt when an ordinary status sleep wakes after lease expiry', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		const replacementLease = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		value.coordinator.acquire
+			.mockResolvedValueOnce({
+				status: 'acquired',
+				segmentId: SEGMENT_ID,
+				leaseId: LEASE_ID,
+				fence: 7,
+				expiresAt: NOW.getTime() + 90_000,
+			})
+			.mockResolvedValue({
+				status: 'acquired',
+				segmentId: SEGMENT_ID,
+				leaseId: replacementLease,
+				fence: 8,
+				expiresAt: NOW.getTime() + 200_000,
+			});
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value:
+				submission.leaseId === LEASE_ID
+					? status(submission, 'processing', 50, null, null)
+					: completedStatusFixture(submission),
+		}));
+		value.coordinator.witness.mockImplementation(async (identity) => ({
+			status:
+				identity.leaseId === LEASE_ID && Date.now() >= NOW.getTime() + 90_000
+					? 'stale'
+					: 'ok',
+		}));
+		const sleep = value.steps.sleep.bind(value.steps);
+		vi.spyOn(value.steps, 'sleep').mockImplementation(
+			async (name, duration) => {
+				await sleep(name, duration);
+				if (name.startsWith('wait-for-tracking-status'))
+					vi.setSystemTime(Date.now() + 90_000);
+			},
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.provider.status).not.toHaveBeenCalled();
+		expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+		expect(value.provider.submit).toHaveBeenCalledTimes(2);
+		expect(value.authority.createFirstSegment).toHaveBeenCalledOnce();
+	});
+
+	test.each([
+		'deadline',
+		'lost-output',
+		'lost-processing',
+		'cancelled',
+	] as const)(
+		'rechecks %s authority during a long retry sleep',
+		async (mode) => {
+			const value = coreWorkflowFixture({
+				attemptId: ATTEMPT_ID,
+				leaseId: LEASE_ID,
+				fence: 7,
+				state: mode === 'lost-processing' ? 'processing' : 'output-ready',
+				progress: 90,
+				safeFailureCode: null,
+			});
+			value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+			value.provider.status.mockResolvedValue({
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			});
+			value.provider.submit.mockImplementation(async (identity) =>
+				identity.attemptId === ATTEMPT_ID
+					? {
+							ok: false,
+							code: 'TRACKING_PROVIDER_UNAVAILABLE',
+							retryable: true,
+						}
+					: { ok: true, value: completedStatusFixture(identity) },
+			);
+			let interrupted = false;
+			value.steps.beforeStep = (name) => {
+				if (!name.includes('-heartbeat-') || interrupted) return;
+				interrupted = true;
+				if (mode === 'deadline')
+					vi.setSystemTime(value.getContext().availabilityDeadlineAt);
+				else if (mode === 'cancelled')
+					value.authority.workflowContext.mockRejectedValue(
+						new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'),
+					);
+				else
+					value.coordinator.witness.mockResolvedValueOnce({ status: 'stale' });
+			};
+			const run = value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			);
+			if (mode === 'lost-processing') {
+				await expect(run).resolves.toMatchObject({ state: { progress: 99 } });
+				expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+			} else {
+				await expect(run).rejects.toMatchObject({
+					code:
+						mode === 'deadline' || mode === 'lost-output'
+							? 'TRACKING_PROVIDER_UNAVAILABLE'
+							: 'TRACKING_AUTHORITY_STALE',
+				});
+				expect(value.authority.retireAttempt).not.toHaveBeenCalled();
+				expect(value.publication.publish).not.toHaveBeenCalled();
+			}
+			expect(interrupted).toBe(true);
+		},
+	);
+
+	test('fails unavailable output authority lost while a transient response is in flight', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.provider.status.mockImplementation(async () => {
+			value.coordinator.witness.mockResolvedValue({ status: 'stale' });
+			return {
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			};
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.provider.status).toHaveBeenCalledOnce();
+		expect(value.authority.retireAttempt).not.toHaveBeenCalled();
+		expect(value.coordinator.renew).not.toHaveBeenCalled();
+	});
+
+	test('durably retries an enqueue transport failure before its deadline', async () => {
+		const value = coreWorkflowFixture();
+		value.coordinator.enqueue.mockRejectedValueOnce(
+			new Error('temporary coordinator transport'),
+		);
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'INVALID_REQUEST',
+			retryable: false,
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_FAILED' });
+		expect(value.coordinator.enqueue).toHaveBeenCalledTimes(2);
+	});
+
+	test('rejects a completed response if its lease expires during provider contact', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit.mockImplementation(async (identity) => {
+			value.coordinator.witness.mockResolvedValue({ status: 'stale' });
+			return { ok: true, value: completedStatusFixture(identity) };
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_AUTHORITY_STALE' });
+		expect(value.publication.publish).not.toHaveBeenCalled();
+		expect(value.authority.retireAttempt).not.toHaveBeenCalled();
+	});
+
+	test('fails retryably without renewing or duplicating output-ready work when its lease expires during an outage', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		let leaseExpiresAt = Date.now() + 90_000;
+		value.coordinator.witness.mockImplementation(async () => ({
+			status: Date.now() < leaseExpiresAt ? 'ok' : 'stale',
+		}));
+		value.coordinator.renew.mockImplementation(async () => {
+			if (Date.now() >= leaseExpiresAt) return { status: 'stale' };
+			leaseExpiresAt = Date.now() + 90_000;
+			return { status: 'ok', expiresAt: leaseExpiresAt };
+		});
+		value.provider.status.mockImplementation(async (identity) =>
+			Date.now() < NOW.getTime() + 600_000
+				? { ok: false, code: 'TRACKING_PROVIDER_UNAVAILABLE', retryable: true }
+				: { ok: true, value: completedStatusFixture(identity) },
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.authority.retireAttempt).not.toHaveBeenCalled();
+		expect(value.coordinator.renew).not.toHaveBeenCalled();
+		expect(value.publication.publish).not.toHaveBeenCalled();
+		expect(value.authority.failUnavailableOutput).toHaveBeenCalledOnce();
+		expect(value.authority.expireAvailability).not.toHaveBeenCalled();
+		expect(value.coordinator.release).toHaveBeenCalledOnce();
+	});
+
+	test.each([
+		{ phase: 'grant', loss: 'lease' },
+		{ phase: 'acceptance', loss: 'lease' },
+		{ phase: 'grant', loss: 'deadline' },
+		{ phase: 'acceptance', loss: 'deadline' },
+		{ phase: 'grant-rejection', loss: 'lease' },
+		{ phase: 'grant-rejection', loss: 'deadline' },
+		{ phase: 'publication-rejection', loss: 'lease' },
+		{ phase: 'publication-rejection', loss: 'deadline' },
+		{ phase: 'renewal', loss: 'lease' },
+		{ phase: 'renewal', loss: 'deadline' },
+	] as const)(
+		'persists $loss authority loss during $phase without relying on exception prototypes',
+		async ({ phase, loss }) => {
+			const value = coreWorkflowFixture({
+				attemptId: ATTEMPT_ID,
+				leaseId: LEASE_ID,
+				fence: 7,
+				state: 'output-ready',
+				progress: 90,
+				safeFailureCode: null,
+			});
+			value.steps.serializeErrors = true;
+			value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+			const loseAuthority = () => {
+				if (loss === 'deadline')
+					vi.setSystemTime(value.getContext().availabilityDeadlineAt);
+				else value.coordinator.witness.mockResolvedValue({ status: 'stale' });
+			};
+			value.provider.status.mockImplementation(async (identity) => ({
+				ok: true,
+				value:
+					phase.startsWith('grant') || phase === 'renewal'
+						? {
+								...completedStatusFixture(identity),
+								state: 'output-ready',
+								transferRequest: {
+									transferRequestId: OUTPUT_TRANSFER_ID,
+									role: 'observation-artifact',
+									method: 'PUT',
+								},
+							}
+						: completedStatusFixture(identity),
+			}));
+			if (phase === 'publication-rejection') {
+				value.publication.publish.mockImplementation(async () => {
+					loseAuthority();
+					throw new TrackingArtifactPublicationError('STALE_AUTHORITY');
+				});
+			} else if (phase === 'renewal') {
+				value.coordinator.renew.mockImplementation(async () => {
+					loseAuthority();
+					return { status: 'stale' };
+				});
+			} else if (phase.startsWith('grant')) {
+				const issue = value.grants.issue.getMockImplementation();
+				if (!issue) throw new Error('missing grant fixture');
+				value.grants.issue.mockImplementation(async (command) => {
+					if (phase === 'grant-rejection') {
+						loseAuthority();
+						throw new TrackingTransferGrantError('LEASE_MISMATCH');
+					}
+					const grant = await issue(command);
+					loseAuthority();
+					return grant;
+				});
+			} else
+				value.steps.beforeStep = (name) => {
+					if (name === 'accept-first-tracking-evidence') loseAuthority();
+				};
+			for (let replay = 0; replay < 2; replay += 1)
+				await expect(
+					value.workflow.run(
+						workflowEvent(),
+						value.steps as unknown as WorkflowStep,
+					),
+				).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+			expect(value.authority.failUnavailableOutput).toHaveBeenCalledTimes(
+				loss === 'lease' ? 1 : 0,
+			);
+			expect(value.authority.expireAvailability).toHaveBeenCalledTimes(
+				loss === 'deadline' ? 1 : 0,
+			);
+			expect(value.publication.publish).toHaveBeenCalledTimes(
+				phase === 'publication-rejection' ? 1 : 0,
+			);
+			expect(value.provider.deliverTransferGrant).not.toHaveBeenCalled();
+			expect(value.provider.submit).not.toHaveBeenCalled();
+		},
+	);
+
+	test('retries an authority read outage before accepting output', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit.mockImplementation(async (identity) => ({
+			ok: true,
+			value: completedStatusFixture(identity),
+		}));
+		let interrupted = false;
+		value.steps.beforeStep = (name) => {
+			if (name !== 'accept-first-tracking-evidence' || interrupted) return;
+			interrupted = true;
+			value.authority.workflowContext
+				.mockResolvedValueOnce(value.getContext())
+				.mockRejectedValueOnce(new Error('transient D1 outage'));
+		};
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.publication.publish).toHaveBeenCalledOnce();
+	});
+
+	test('replays output authority failure and lost release acknowledgements without reloading the failed run', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.coordinator.witness.mockResolvedValue({ status: 'stale' });
+		value.authority.failUnavailableOutput.mockImplementation(async () => {
+			value.authority.workflowContext.mockRejectedValue(
+				new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'),
+			);
+		});
+		value.coordinator.release.mockRejectedValueOnce(
+			new Error('lost release acknowledgement'),
+		);
+		for (let replay = 0; replay < 2; replay += 1)
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.authority.failUnavailableOutput).toHaveBeenCalledOnce();
+		expect(value.coordinator.release).toHaveBeenCalledTimes(2);
+		expect(value.authority.expireAvailability).not.toHaveBeenCalled();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+	});
+
+	test('recovers output-ready status and transfer outages without resubmission or duplicate commits on replay', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.status
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			})
+			.mockImplementation(async (identity) => ({
+				ok: true,
+				value: {
+					...completedStatusFixture(identity as TrackingJobSubmission),
+					state: 'output-ready',
+					transferRequest: {
+						transferRequestId: OUTPUT_TRANSFER_ID,
+						role: 'observation-artifact',
+						method: 'PUT',
+					},
+				},
+			}));
+		value.provider.deliverTransferGrant
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			})
+			.mockImplementation(async (grant) => ({
+				ok: true,
+				value: completedStatusFixture(grant),
+			}));
+		for (let replay = 0; replay < 2; replay += 1) {
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).resolves.toMatchObject({ state: { progress: 99 } });
+		}
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.provider.deliverTransferGrant).toHaveBeenCalledTimes(2);
+		expect(value.provider.status).toHaveBeenCalledTimes(2);
+		expect(value.evidence.commit).toHaveBeenCalledOnce();
+		expect(value.publication.publish).toHaveBeenCalledOnce();
+	});
+	test('never resubmits finalized computation when its resumed lease has expired', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.coordinator.witness.mockResolvedValue({ status: 'stale' });
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.coordinator.acquire).not.toHaveBeenCalled();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.publication.publish).not.toHaveBeenCalled();
+	});
+	test('reacquires with a new attempt when a transport retry outlives its lease', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 6,
+			expiresAt: NOW.getTime() + 1_000,
+		});
+		value.provider.submit
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			})
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+		value.coordinator.witness.mockImplementation(async (input) => ({
+			status: input.fence === 6 && Date.now() > NOW.getTime() ? 'stale' : 'ok',
+		}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+		expect(value.provider.submit).toHaveBeenCalledTimes(2);
+		expect(value.provider.submit.mock.calls[0]?.[0].attemptId).not.toBe(
+			value.provider.submit.mock.calls[1]?.[0].attemptId,
+		);
+	});
+
+	test('replaces processing work when renewal discovers an expired lease', async () => {
+		const value = coreWorkflowFixture();
+		value.steps.serializeErrors = true;
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 6,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.provider.submit
+			.mockImplementationOnce(async (submission) => ({
+				ok: true,
+				value: status(submission, 'processing', 40, null, null),
+			}))
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+		value.coordinator.renew.mockImplementationOnce(async () => {
+			value.coordinator.witness.mockImplementation(async (input) => ({
+				status: input.fence === 6 ? 'stale' : 'ok',
+			}));
+			return { status: 'stale' };
+		});
+		for (let replay = 0; replay < 2; replay += 1)
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.authority.createFirstSegment).toHaveBeenCalledOnce();
+		expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+		expect(value.provider.submit).toHaveBeenCalledTimes(2);
+		expect(value.provider.submit.mock.calls[0]?.[0].attemptId).not.toBe(
+			value.provider.submit.mock.calls[1]?.[0].attemptId,
+		);
+	});
+
+	test('rejects a completed response arriving at the deadline before publication', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().availabilityDeadlineAt = NOW.getTime() + 1_000;
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit.mockImplementation(async (submission) => {
+			vi.setSystemTime(NOW.getTime() + 1_000);
+			return { ok: true, value: completedStatusFixture(submission) };
+		});
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.publication.publish).not.toHaveBeenCalled();
+	});
+
+	test('restarts confirmed interrupted computation under one immutable segment', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 6,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.provider.submit
+			.mockImplementationOnce(async (submission) => ({
+				ok: true,
+				value: status(submission, 'interrupted', 40, null, null),
+			}))
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.authority.createFirstSegment).toHaveBeenCalledOnce();
+		expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+		expect(value.provider.submit.mock.calls[0]?.[0].attemptId).not.toBe(
+			value.provider.submit.mock.calls[1]?.[0].attemptId,
+		);
+	});
+
+	test('restores the original FIFO waiter before sleeping after GPU capacity busy', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.coordinator.acquire.mockResolvedValueOnce({
+			status: 'acquired',
+			segmentId: SEGMENT_ID,
+			leaseId: LEASE_ID,
+			fence: 6,
+			expiresAt: NOW.getTime() + 90_000,
+		});
+		value.provider.submit
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'GPU_CAPACITY_BUSY',
+				retryable: true,
+			})
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+		const sleep = value.steps.sleep.bind(value.steps);
+		vi.spyOn(value.steps, 'sleep').mockImplementation(
+			async (name, duration) => {
+				expect(value.coordinator.requeueProviderLoss).toHaveBeenCalledOnce();
+				expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+				return sleep(name, duration);
+			},
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+	});
+
+	test('persists and clears the provider wait around transient retries', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			})
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+		await value.workflow.run(
+			workflowEvent(),
+			value.steps as unknown as WorkflowStep,
+		);
+		expect(value.authority.setWaitReason.mock.calls).toEqual(
+			expect.arrayContaining([
+				[expect.objectContaining({ waitReason: 'waiting-for-provider' })],
+				[expect.objectContaining({ waitReason: null })],
+			]),
+		);
+	});
+
+	test('publishes capacity waits and records expiry before any attempt is acquired', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().availabilityDeadlineAt = NOW.getTime() + 2_000;
+		value.coordinator.acquire.mockResolvedValue({ status: 'busy' });
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.authority.setWaitReason).toHaveBeenCalledWith(
+			expect.objectContaining({
+				waitReason: 'waiting-for-capacity',
+				expectedCurrentAttemptId: null,
+			}),
+		);
+		expect(value.authority.expireAvailability).toHaveBeenCalledWith(
+			expect.objectContaining({
+				expectedCurrentAttemptId: null,
+				expiredAt: NOW.getTime() + 2_000,
+			}),
+		);
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.coordinator.acquire).toHaveBeenCalledOnce();
+		expect(Date.now()).toBe(NOW.getTime() + 2_000);
+	});
+
+	test('waits durably for capacity and resumes the same queued segment', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.coordinator.acquire.mockResolvedValueOnce({ status: 'busy' });
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: completedStatusFixture(submission),
+		}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.coordinator.enqueue).toHaveBeenCalledOnce();
+		expect(value.coordinator.acquire).toHaveBeenCalledTimes(2);
+		expect(Date.now()).toBe(NOW.getTime() + 15_000);
+	});
+
+	test('retries a temporary submission outage under the original attempt', async () => {
+		const value = coreWorkflowFixture();
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.submit
+			.mockResolvedValueOnce({
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: true,
+			})
+			.mockImplementation(async (submission) => ({
+				ok: true,
+				value: completedStatusFixture(submission),
+			}));
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).resolves.toMatchObject({ state: { progress: 99 } });
+		expect(value.authority.retireAttempt).not.toHaveBeenCalled();
+		expect(value.coordinator.acquire).toHaveBeenCalledOnce();
+		expect(Date.now()).toBeGreaterThan(NOW.getTime());
+		expect(value.provider.submit.mock.calls[0]?.[0].attemptId).toBe(
+			value.provider.submit.mock.calls[1]?.[0].attemptId,
+		);
+	});
+
+	test('replays a serialized permanent provider rejection as the same safe failure', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'AUTHORITY_MISMATCH',
+			retryable: false,
+		});
+		for (let replay = 0; replay < 2; replay += 1) {
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
+		}
+		expect(value.provider.submit).toHaveBeenCalledOnce();
+	});
+
+	test('starts the fixed deadline when prepared tracking becomes executable', async () => {
+		const value = coreWorkflowFixture();
+		vi.setSystemTime(new Date('2026-08-17T02:00:00.000Z'));
+		await value.workflow
+			.run(workflowEvent(), value.steps as unknown as WorkflowStep)
+			.catch(() => undefined);
+		expect(value.authority.createFirstSegment).toHaveBeenCalledWith(
+			expect.objectContaining({
+				availabilityDeadlineAt: Date.parse('2026-08-18T02:00:00.000Z'),
+			}),
+		);
+	});
+
 	test('runs the first immutable segment through LocalSam31Provider and commits evidence before release', async () => {
 		const commitEvidence = vi
 			.spyOn(AcceptedCornerEvidence.prototype, 'commit')
@@ -794,7 +1787,7 @@ describe('DrivingAnalysisWorkflow', () => {
 			[...steps.configurations.entries()].find(([name]) =>
 				name.startsWith('submit-tracking-segment'),
 			)?.[1],
-		).toMatchObject({ retries: { limit: 1 }, timeout: '30 seconds' });
+		).toMatchObject({ retries: { limit: 0 }, timeout: 30000 });
 	});
 
 	test('derives stable version-four attempt identities', async () => {
@@ -856,7 +1849,7 @@ describe('DrivingAnalysisWorkflow', () => {
 		).toBe(true);
 	});
 
-	test('replaces an attempt when polling loses the provider', async () => {
+	test('keeps the attempt when polling temporarily loses the provider', async () => {
 		const value = coreWorkflowFixture();
 		value.getContext().availabilityDeadlineAt = Date.now() + 86_400_000;
 		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
@@ -915,12 +1908,17 @@ describe('DrivingAnalysisWorkflow', () => {
 				value.steps as unknown as WorkflowStep,
 			),
 		).resolves.toMatchObject({ state: { progress: 99 } });
-		expect(value.provider.status).toHaveBeenCalledOnce();
-		expect(value.authority.retireAttempt).toHaveBeenCalledOnce();
+		expect(value.provider.status).toHaveBeenCalledTimes(2);
+		expect(value.authority.retireAttempt).not.toHaveBeenCalled();
 	});
 
 	test('fails safely when provider-loss requeue is fenced by a newer lease', async () => {
 		const value = coreWorkflowFixture();
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'GPU_CAPACITY_BUSY',
+			retryable: true,
+		});
 		value.getContext().availabilityDeadlineAt = Date.now() + 86_400_000;
 		value.coordinator.requeueProviderLoss.mockResolvedValue({
 			status: 'stale',
@@ -1088,11 +2086,8 @@ describe('DrivingAnalysisWorkflow', () => {
 			new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE'),
 		);
 		expect(value.coordinator.acquire).not.toHaveBeenCalled();
-		expect(value.authority.transitionAttempt).toHaveBeenLastCalledWith(
-			expect.objectContaining({
-				nextState: 'failed',
-				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
-			}),
+		expect(value.authority.expireAvailability).toHaveBeenCalledWith(
+			expect.objectContaining({ expectedCurrentAttemptId: ATTEMPT_ID }),
 		);
 		expect(value.coordinator.release).toHaveBeenCalledOnce();
 	});
@@ -1114,8 +2109,11 @@ describe('DrivingAnalysisWorkflow', () => {
 			),
 		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
 		expect(value.coordinator.acquire).toHaveBeenCalledOnce();
+		expect(value.authority.retireAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({ attemptId: ATTEMPT_ID, nextState: 'expired' }),
+		);
 		expect(value.authority.activateAttempt).toHaveBeenCalledWith(
-			expect.objectContaining({ expectedCurrentAttemptId: ATTEMPT_ID }),
+			expect.objectContaining({ expectedCurrentAttemptId: null }),
 		);
 	});
 
@@ -1133,10 +2131,17 @@ describe('DrivingAnalysisWorkflow', () => {
 		expect(value.authority.activateAttempt).not.toHaveBeenCalled();
 	});
 
-	test('keeps D1 safely queued after the single capacity attempt is unavailable', async () => {
+	test('publishes a retryable D1 failure when capacity remains unavailable until deadline', async () => {
+		vi.spyOn(
+			DrivingAnalysisAuthority.prototype,
+			'publishTrackingState',
+		).mockResolvedValue({ kind: 'stale' });
 		const { authority, database } = await prepareAuthority();
 		const coordinator = new CoordinatorFixture(authority);
-		vi.spyOn(coordinator, 'acquire').mockResolvedValue({ status: 'busy' });
+		vi.spyOn(coordinator, 'acquire').mockImplementation(async () => {
+			vi.setSystemTime(NOW.getTime() + 86_400_000);
+			return { status: 'busy' };
+		});
 		const environment: DrivingAnalysisWorkflowEnvironment = {
 			DB: database,
 			ANALYSIS_MEDIA: new MockR2Controller().bucket,
@@ -1159,16 +2164,21 @@ describe('DrivingAnalysisWorkflow', () => {
 		);
 		expect(await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID)).toEqual({
 			runId: RUN_ID,
-			lifecycle: 'queued',
+			lifecycle: 'failed',
 			stage: 'tracking',
 			progress: 0,
-			waitReason: 'waiting-for-capacity',
-			safeFailureCode: null,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
 		});
 	});
 
 	test('retries an idempotent D1 activation without retrying provider contact', async () => {
 		const value = coreWorkflowFixture();
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'TRACKING_PROVIDER_RESPONSE_INVALID',
+			retryable: false,
+		});
 		value.authority.activateAttempt.mockRejectedValueOnce(
 			new Error('transient D1 failure'),
 		);
@@ -1177,9 +2187,7 @@ describe('DrivingAnalysisWorkflow', () => {
 				workflowEvent(),
 				value.steps as unknown as WorkflowStep,
 			),
-		).rejects.toEqual(
-			new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE'),
-		);
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'));
 		expect(value.authority.activateAttempt).toHaveBeenCalledTimes(2);
 		expect(value.provider.submit).toHaveBeenCalledOnce();
 	});
@@ -1199,9 +2207,12 @@ describe('DrivingAnalysisWorkflow', () => {
 		expect(value.provider.submit).not.toHaveBeenCalled();
 	});
 
-	test('never contacts the provider after a stale lease witness', async () => {
+	test('never contacts the provider when an expired lease cannot be requeued', async () => {
 		const value = coreWorkflowFixture();
 		value.coordinator.witness.mockResolvedValue({ status: 'stale' });
+		value.coordinator.requeueProviderLoss.mockResolvedValue({
+			status: 'stale',
+		});
 		await expect(
 			value.workflow.run(
 				workflowEvent(),
@@ -1461,7 +2472,11 @@ describe('DrivingAnalysisWorkflow', () => {
 				),
 			).rejects.toEqual(new TrackingWorkflowError(expected));
 			expect(value.publication.publish).toHaveBeenCalledOnce();
-			expect(value.publishAnalysisState).not.toHaveBeenCalled();
+			expect(value.publishAnalysisState).not.toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.objectContaining({ lifecycle: 'completed' }),
+			);
 			expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
 				expect.objectContaining({ nextState: 'failed' }),
 			);
@@ -1491,7 +2506,11 @@ describe('DrivingAnalysisWorkflow', () => {
 			),
 		).rejects.toEqual(failure);
 		expect(value.publication.publish).toHaveBeenCalledOnce();
-		expect(value.publishAnalysisState).not.toHaveBeenCalled();
+		expect(value.publishAnalysisState).not.toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.objectContaining({ lifecycle: 'completed' }),
+		);
 		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
 			expect.objectContaining({ nextState: 'failed' }),
 		);

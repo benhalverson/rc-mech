@@ -221,7 +221,9 @@ export const DrivingAnalysisStore = signalStore(
 					if (
 						['accepted', 'retrying'].includes(current.status) &&
 						current.analysis?.id === analysis.id &&
-						current.analysis.stateVersion === analysis.stateVersion
+						current.analysis.stateVersion === analysis.stateVersion &&
+						current.analysis.waitReason === analysis.waitReason &&
+						current.analysis.safeFailureCode === analysis.safeFailureCode
 					)
 						return;
 					patchState(store, {

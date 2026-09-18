@@ -82,6 +82,12 @@
 			<div class="alloy-state m-0" role="status">
 				<strong>Analysis {{ current.status }}</strong>
 				<span>{{ stageLabel(current.stage) }} · {{ current.progress }}%</span>
+				@if (current.waitReason) {
+					<p class="m-0">Waiting to continue tracking. We’ll retry automatically.</p>
+				}
+				@if (current.safeFailureCode === 'TRACKING_PROVIDER_UNAVAILABLE') {
+					<p class="m-0">Tracking could not resume in time. You can retry this analysis.</p>
+				}
 				<progress class="mt-2 h-2 w-full accent-alloy-accent" max="100" [value]="current.progress" [attr.aria-label]="'Driving analysis ' + current.progress + ' percent complete'"></progress>
 				<div class="mt-2 flex flex-wrap gap-2">
 					<button data-refresh-analysis class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.refreshAnalysis()">Check status</button>
