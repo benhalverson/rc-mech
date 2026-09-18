@@ -18,6 +18,9 @@ import {
 import type { TrackingWorkflowIdentity } from '../tracking/authority-contracts';
 import { trackingRun, trackingSegment } from '../tracking/authority-schema';
 
+const MUTABLE_ANALYSIS_STATUSES: (typeof drivingAnalysis.$inferSelect)['status'][] =
+	['queued', 'running', 'awaiting-reidentification'];
+
 /** Publish completion in one D1 transaction after every accepted segment is reviewable. */
 export const completeDrivingAnalysis = async (
 	binding: D1Database,
@@ -36,11 +39,10 @@ export const completeDrivingAnalysis = async (
 		eq(drivingAnalysis.ownerId, identity.ownerId),
 		eq(drivingAnalysis.workflowId, identity.workflowId),
 	);
-	const mutableAnalysis = inArray(drivingAnalysis.status, [
-		'queued',
-		'running',
-		'awaiting-reidentification',
-	]);
+	const mutableAnalysis = inArray(
+		drivingAnalysis.status,
+		MUTABLE_ANALYSIS_STATUSES,
+	);
 	const missingEvidence = database
 		.select({ id: trackingSegment.id })
 		.from(trackingSegment)
@@ -180,9 +182,7 @@ export const completeDrivingAnalysis = async (
 	)
 		return 'completed';
 	return current?.runStatus === 'active' &&
-		['queued', 'running', 'awaiting-reidentification'].includes(
-			current.analysisStatus,
-		)
+		MUTABLE_ANALYSIS_STATUSES.includes(current.analysisStatus)
 		? 'not-ready'
 		: 'stale';
 };
