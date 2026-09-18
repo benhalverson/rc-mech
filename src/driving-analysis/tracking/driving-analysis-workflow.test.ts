@@ -56,9 +56,9 @@ import {
 	deployedInferenceProfile,
 	deterministicJitter,
 	deterministicUuidV4,
-	FirstTrackingSegmentWorkflow,
+	TrackingRunWorkflow,
 	type FirstTrackingWorkflowPayload,
-	firstTrackingSegmentWorkflow,
+	trackingRunWorkflow,
 	raceVideoTrackViewPreparationPort,
 	TrackingWorkflowError,
 } from './driving-analysis-workflow';
@@ -624,10 +624,10 @@ const coreWorkflowFixture = (
 		})),
 	};
 	const publishAnalysisState = vi.fn(async () => undefined);
-	const workflow = new FirstTrackingSegmentWorkflow(
+	const workflow = new TrackingRunWorkflow(
 		authority as unknown as TrackingAuthority,
 		coordinator as unknown as ConstructorParameters<
-			typeof FirstTrackingSegmentWorkflow
+			typeof TrackingRunWorkflow
 		>[1],
 		provider,
 		grants,
@@ -1883,7 +1883,7 @@ describe('DrivingAnalysisWorkflow', () => {
 			R2_ACCESS_KEY_ID: 'access-key',
 			R2_SECRET_ACCESS_KEY: 'secret-key',
 		};
-		const workflow = firstTrackingSegmentWorkflow(environment);
+		const workflow = trackingRunWorkflow(environment);
 		const steps = new WorkflowStepFixture();
 		const result = await workflow.run(
 			workflowEvent(),
@@ -2320,7 +2320,7 @@ describe('DrivingAnalysisWorkflow', () => {
 			R2_ACCESS_KEY_ID: 'access-key',
 			R2_SECRET_ACCESS_KEY: 'secret-key',
 		};
-		const workflow = firstTrackingSegmentWorkflow(environment);
+		const workflow = trackingRunWorkflow(environment);
 		await expect(
 			workflow.run(
 				workflowEvent(),
@@ -2861,7 +2861,7 @@ describe('DrivingAnalysisWorkflow', () => {
 				R2_SECRET_ACCESS_KEY: 'secret-key',
 				...config,
 			};
-			expect(() => firstTrackingSegmentWorkflow(environment)).toThrow(expected);
+			expect(() => trackingRunWorkflow(environment)).toThrow(expected);
 		},
 	);
 

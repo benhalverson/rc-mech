@@ -210,7 +210,7 @@ const MUTABLE_ATTEMPT_STATES = [
 	'output-ready',
 ] as const;
 
-export class FirstTrackingSegmentWorkflow {
+export class TrackingRunWorkflow {
 	constructor(
 		private readonly authority: TrackingAuthority,
 		private readonly coordinator: CoordinatorPort,
@@ -1358,10 +1358,10 @@ const prefixedTrackingStep = (
 		},
 	});
 
-export const firstTrackingSegmentWorkflow = (
+export const trackingRunWorkflow = (
 	environment: DrivingAnalysisWorkflowEnvironment,
-): FirstTrackingSegmentWorkflow =>
-	new FirstTrackingSegmentWorkflow(
+): TrackingRunWorkflow =>
+	new TrackingRunWorkflow(
 		new TrackingAuthority(environment.DB),
 		environment.GPU_LEASE_COORDINATOR.getByName(
 			GPU_LEASE_COORDINATOR_OBJECT_NAME,
@@ -1416,7 +1416,7 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 			},
 			undefined,
 			async (command) => {
-				await firstTrackingSegmentWorkflow(this.env).run(
+				await trackingRunWorkflow(this.env).run(
 					{
 						...event,
 						payload: {

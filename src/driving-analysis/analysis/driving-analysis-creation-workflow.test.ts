@@ -4,7 +4,7 @@ import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking
 import {
 	DrivingAnalysisWorkflow,
 	type DrivingAnalysisWorkflowEnvironment,
-	FirstTrackingSegmentWorkflow,
+	TrackingRunWorkflow,
 } from '../tracking/driving-analysis-workflow';
 import { DrivingAnalysisAuthority } from './driving-analysis-authority';
 import {
@@ -330,7 +330,7 @@ describe('Driving-analysis creation Workflow', () => {
 			.spyOn(RealDrivingAnalysisContainerPort.prototype, 'startPreparation')
 			.mockResolvedValue({ progress: 20, runId, preparedMediaId });
 		const runFirst = vi
-			.spyOn(FirstTrackingSegmentWorkflow.prototype, 'run')
+			.spyOn(TrackingRunWorkflow.prototype, 'run')
 			.mockResolvedValue({
 				state: {
 					runId,
