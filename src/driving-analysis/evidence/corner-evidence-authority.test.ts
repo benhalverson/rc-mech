@@ -718,6 +718,40 @@ describe('CornerEvidenceAuthority', () => {
 		]);
 	});
 
+	test.each(['before-first-commit', 'before-replay'] as const)(
+		'retains pinned map authority after retirement $case',
+		async (retirement) => {
+			const value = await seed();
+			if (retirement === 'before-replay')
+				await value.authority.commit(command());
+			await value.database
+				.update(trackMapVersion)
+				.set({
+					status: 'retired',
+					stateVersion: 3,
+					retiredAt: NOW.toISOString(),
+				})
+				.where(eq(trackMapVersion.id, MAP_VERSION_ID));
+			await expect(value.authority.load(identity)).resolves.toMatchObject({
+				approvedTrackMapVersionId: MAP_VERSION_ID,
+				corners: [{ id: CORNER_ID }],
+			});
+			await expect(value.authority.commit(command())).resolves.toEqual({
+				status: retirement === 'before-first-commit' ? 'committed' : 'replayed',
+				measurement,
+			});
+			await expect(value.authority.load(identity)).resolves.toMatchObject({
+				existingMeasurement: measurement,
+			});
+			expect(
+				await value.database.select().from(cornerEvidenceBatch),
+			).toHaveLength(1);
+			expect(
+				await value.database.select().from(cornerPassEvidence),
+			).toHaveLength(1);
+		},
+	);
+
 	test('atomically fences concurrent conflicting measurements at the child rows', async () => {
 		const value = await seed();
 		if (!sqlite) throw new Error('SQLite fixture unavailable');

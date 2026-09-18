@@ -215,7 +215,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 						'running',
 						'awaiting-reidentification',
 					]),
-					eq(trackMapVersion.status, 'approved'),
+					inArray(trackMapVersion.status, ['approved', 'retired']),
 					eq(
 						drivingAnalysis.raceWindowStartMs,
 						trackingRunInput.windowStartTimestampMs,
@@ -353,7 +353,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 				trackMapVersion,
 				and(
 					eq(trackMapVersion.id, command.approvedTrackMapVersionId),
-					eq(trackMapVersion.status, 'approved'),
+					inArray(trackMapVersion.status, ['approved', 'retired']),
 				),
 			)
 			.where(
