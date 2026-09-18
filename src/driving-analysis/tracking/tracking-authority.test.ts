@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -66,6 +66,7 @@ let fixture: SqliteD1Fixture | undefined;
 afterEach(() => {
 	fixture?.close();
 	fixture = undefined;
+	vi.restoreAllMocks();
 });
 
 const authorityFixture = () => {
@@ -288,6 +289,25 @@ const expectAuthorityError = async (
 };
 
 describe('TrackingAuthority', () => {
+	test('a cancellation winning the segment insert prevents new immutable work', async () => {
+		const value = authorityFixture();
+		await value.authority.createRun(runCommand());
+		await seedPreparedTrackView(value);
+		const prepare = value.database.prepare.bind(value.database);
+		vi.spyOn(value.database, 'prepare').mockImplementation((query) => {
+			if (query.startsWith('insert into "tracking_segment"'))
+				fixture?.exec(
+					"UPDATE tracking_run SET status = 'cancelled', version = version + 1, completed_at = '2026-08-16T20:01:00.000Z'",
+				);
+			return prepare(query);
+		});
+		await expect(
+			value.authority.createSegment(segmentCommand()),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(
+			await value.database.prepare('SELECT id FROM tracking_segment').all(),
+		).toMatchObject({ results: [] });
+	});
 	test('applies nullable availability fields to populated legacy records without changing their authority', async () => {
 		const { authority, database } = await createAttemptAuthority();
 		await database
@@ -1033,6 +1053,112 @@ describe('TrackingAuthority', () => {
 		).toMatchObject({
 			lifecycle: 'awaiting-reidentification',
 			progress: 99,
+		});
+	});
+
+	test('resumes only accepted owner-scoped gaps once and preserves immutable evidence', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		const identity = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+		};
+		const seed = {
+			...submissionFixture().trackingRequest.subjectSeed,
+			timestampMs: 300,
+			frameIndex: 3,
+		};
+		await expect(authority.nextSegment(identity)).rejects.toMatchObject({
+			code: 'CONFLICT',
+		});
+		await expect(
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), seed),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await makeOutputReady(authority);
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest, {
+				outcome: 'tracking-gap',
+				gap: { startTimestampMs: 250, reason: 'ambiguous-identity' },
+				firstTimestampMs: null,
+				lastTimestampMs: null,
+			}),
+		);
+		expect(await authority.nextSegment(identity)).toBeNull();
+		await expect(
+			authority.reidentify(
+				{ ...identity, ownerId: 'other' },
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+			),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await expect(
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'f'.repeat(64), seed),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), {
+				...seed,
+				timestampMs: 250,
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), {
+				...seed,
+				frameIndex: 0,
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		let now = Date.now();
+		vi.spyOn(Date, 'now').mockImplementation(() => now++);
+		const [next, concurrent] = await Promise.all([
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), seed),
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), seed),
+		]);
+		expect(concurrent).toEqual(next);
+		expect(next).toMatchObject({
+			segmentId: SECOND_SEGMENT_ID,
+			seed,
+			attempt: null,
+			acceptedArtifactId: null,
+		});
+		expect(
+			await authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+			),
+		).toEqual(next);
+		expect(await authority.nextSegment(identity)).toEqual(next);
+		await expect(
+			authority.reidentify(identity, REIDENTIFICATION_ID, 'a'.repeat(64), seed),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.reidentify(identity, SECOND_SEGMENT_ID, 'a'.repeat(64), {
+				...seed,
+				timestampMs: 400,
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'running' });
+		const provenance = await authority.publicProvenance(
+			OWNER_ID,
+			ANALYSIS_ID,
+			RUN_ID,
+		);
+		expect(provenance.segments).toHaveLength(2);
+		expect(provenance.segments[0]?.gap?.startTimestampMs).toBe(250);
+		await authority.fenceRun({
+			ownerId: OWNER_ID,
+			runId: RUN_ID,
+			expectedVersion: 1,
+			status: 'cancelled',
+			completedAt: LATER,
+		});
+		await expect(authority.nextSegment(identity)).rejects.toMatchObject({
+			code: 'STALE_AUTHORITY',
 		});
 	});
 

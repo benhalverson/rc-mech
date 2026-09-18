@@ -12,6 +12,9 @@ import { DrivingAnalysisStore } from './driving-analysis/driving-analysis-store'
 import { PageVisibilityCapability } from './driving-analysis/page-visibility';
 import { RaceRecordingFileCapability } from './driving-analysis/race-recording-file';
 import { RaceRecordingGateway } from './driving-analysis/race-recording-gateway';
+import { ReidentificationGateway } from './driving-analysis/reidentification-gateway';
+import { ReidentificationIdentity } from './driving-analysis/reidentification-identity';
+import { ReidentificationStore } from './driving-analysis/reidentification-store';
 
 export const DRIVE_SESSIONS_ROUTES: Routes = [
 	{
@@ -35,6 +38,9 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 			DrivingAnalysisRequestIdentityCapability,
 			TrackMapGateway,
 			DrivingAnalysisStore,
+			ReidentificationGateway,
+			ReidentificationIdentity,
+			ReidentificationStore,
 			CarStore,
 		],
 		loadComponent: () =>
