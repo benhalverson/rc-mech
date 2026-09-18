@@ -56,11 +56,11 @@ import {
 	deployedInferenceProfile,
 	deterministicJitter,
 	deterministicUuidV4,
-	TrackingRunWorkflow,
 	type FirstTrackingWorkflowPayload,
-	trackingRunWorkflow,
 	raceVideoTrackViewPreparationPort,
+	TrackingRunWorkflow,
 	TrackingWorkflowError,
+	trackingRunWorkflow,
 } from './driving-analysis-workflow';
 import { inferenceProfileSchema } from './inference-profile';
 import type { TrackingProvider } from './local-sam31-provider';
