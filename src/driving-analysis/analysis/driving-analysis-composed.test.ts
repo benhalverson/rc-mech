@@ -27,12 +27,21 @@ import { CornerEvidenceReview } from '../evidence/corner-evidence-review';
 import { cornerEvidenceBatch } from '../evidence/evidence-schema';
 import type { TrackingWorkflowIdentity } from '../tracking/authority-contracts';
 import { trackingSegment } from '../tracking/authority-schema';
-import type { OutputArtifact } from '../tracking/contracts';
+import type {
+	JobStatus,
+	OutputArtifact,
+	TrackingJobSubmission,
+} from '../tracking/contracts';
+import { TrackingRunWorkflow } from '../tracking/driving-analysis-workflow';
+import type { TrackingProvider } from '../tracking/local-sam31-provider';
 import { PreparedTrackViewAuthority } from '../tracking/prepared-track-view-authority';
 import { R2PreparedTrackViewStore } from '../tracking/r2-prepared-track-view-store';
 import { R2TrackingArtifactStore } from '../tracking/r2-tracking-artifact-store';
 import {
-	stagingArtifactObjectKey,
+	Aws4FetchR2TransferGrantSigner,
+	R2TransferGrantAuthority,
+} from '../tracking/r2-transfer-grant-authority';
+import {
 	subjectProvenanceForProfile,
 	TrackingArtifactPublication,
 	trackingInputDigestFor,
@@ -200,6 +209,8 @@ const seedReadyInput = async (database: D1Database) => {
 };
 
 test('composes preparation, accepted gap, exact-frame correction, Corner clips and replay on real authority', async () => {
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(NOW);
 	const sqlite = createSqliteD1();
 	try {
 		for (const name of readdirSync(resolve('migrations'))
@@ -320,6 +331,7 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 			},
 		} as unknown as WorkflowStep;
 		let identity: TrackingWorkflowIdentity | undefined;
+		let firstPreparedMediaId = '';
 		const runner = new DrivingAnalysisCreationWorkflowRunner(
 			analysis,
 			new RealDrivingAnalysisContainerPort({
@@ -340,15 +352,7 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 					runId: command.runId,
 					segmentId: command.segmentId,
 				};
-				await tracking.createFirstSegment({
-					...identity,
-					order: 0,
-					seed: { kind: 'initial', sourceId: null, value: command.subjectSeed },
-					preparedMediaId: command.preparedMediaId,
-					specificationVersion: 'tracking-segment-spec.v1',
-					availabilityDeadlineAt: NOW.getTime() + 86400000,
-					createdAt: timestamp,
-				});
+				firstPreparedMediaId = command.preparedMediaId;
 			},
 		);
 		const event = {
@@ -370,6 +374,31 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 		if (!identity) throw new Error('Creation did not dispatch Tracking');
 		expect(media.prepare).toHaveBeenCalledOnce();
 		const coordinator = {
+			cancel: vi.fn(async () => ({ status: 'cancelled' as const })),
+			enqueue: vi.fn(async () => ({ status: 'enqueued' as const })),
+			acquire: vi.fn(
+				async (
+					input: import('../gpu-lease-coordinator').GpuLeaseAcquireInput,
+				) => {
+					if (!input.segmentId) throw new Error('Expected a queued segment');
+					return {
+						status: 'acquired' as const,
+						segmentId: input.segmentId,
+						leaseId: crypto.randomUUID(),
+						fence: 1,
+						expiresAt: Date.now() + 90000,
+					};
+				},
+			),
+			witness: vi.fn(async () => ({
+				status: 'ok' as const,
+				expiresAt: Date.now() + 90000,
+			})),
+			renew: vi.fn(async () => ({
+				status: 'ok' as const,
+				expiresAt: Date.now() + 90000,
+			})),
+			requeueProviderLoss: vi.fn(async () => ({ status: 'ok' as const })),
 			beginCommitHold: vi.fn(async () => ({
 				status: 'ok' as const,
 				holdId: crypto.randomUUID(),
@@ -388,57 +417,27 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 			store,
 		);
 		const clips = new CornerClipAuthority(sqlite.database);
-		const publishProvider = async (
-			current: TrackingWorkflowIdentity,
-			gap: boolean,
-		) => {
-			const context = await tracking.workflowContext(current);
-			const attemptId = crypto.randomUUID(),
-				leaseId = crypto.randomUUID(),
-				transferRequestId = crypto.randomUUID();
-			const authority = {
-				ownerId: current.ownerId,
-				runId: current.runId,
-				segmentId: current.segmentId,
-				attemptId,
-				leaseId,
-				fence: 1,
+		const artifacts = new Map<
+			string,
+			{
+				artifact: OutputArtifact;
+				bytes: Uint8Array<ArrayBuffer>;
+				status: JobStatus;
+			}
+		>();
+		const createProviderOutput = async (submission: TrackingJobSubmission) => {
+			const { trackingRequest, ...execution } = submission;
+			const context = {
+				prepared: trackingRequest.prepared,
+				seed: trackingRequest.subjectSeed,
+				profile,
 			};
-			await tracking.activateAttempt({
-				...authority,
-				expectedCurrentAttemptId: null,
-				createdAt: timestamp,
-			});
-			await tracking.transitionAttempt({
-				...authority,
-				expectedState: 'active',
-				nextState: 'processing',
-				progress: 50,
-				safeFailureCode: null,
-				updatedAt: timestamp,
-			});
-			await tracking.transitionAttempt({
-				...authority,
-				expectedState: 'processing',
-				nextState: 'output-ready',
-				progress: 90,
-				safeFailureCode: null,
-				updatedAt: timestamp,
-			});
-			const execution = {
-				...authority,
-				profileDigest: context.profileDigest,
-				specificationDigest: context.specificationDigest,
-				transferRequestId,
+			const gap = trackingRequest.subjectSeed.frameIndex === 1;
+			const current = {
+				runId: submission.runId,
+				segmentId: submission.segmentId,
 			};
-			await tracking.authorizeTransferGrant({
-				...execution,
-				role: 'observation-artifact',
-				method: 'PUT',
-				requestedAt: timestamp,
-			});
-			const publicationContext =
-				await tracking.prepareArtifactPublication(execution);
+			const { attemptId, leaseId } = submission;
 			const provenance = await subjectProvenanceForProfile(profile);
 			const openGap = gap
 				? { startTimestampMs: 300, reason: 'missing' as const }
@@ -468,8 +467,8 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 				attemptId,
 				leaseId,
 				fencingToken: 1,
-				specificationDigest: context.specificationDigest,
-				profileDigest: context.profileDigest,
+				specificationDigest: submission.specificationDigest,
+				profileDigest: submission.profileDigest,
 				segment: {
 					observationSegmentId: current.segmentId,
 					caseId: current.runId,
@@ -487,62 +486,110 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 					preparationConfigurationDigest:
 						context.prepared.preparationConfigurationDigest,
 					trackingInputDigest: await trackingInputDigestFor(
-						publicationContext,
+						context,
 						current.segmentId,
 						provenance,
 					),
 				},
 			};
-			r2.seed(stagingArtifactObjectKey(attemptId, transferRequestId), bytes);
-			const command = { ownerId: OWNER_ID, transferRequestId, artifact };
-			const accepted = await publication.publish(command);
-			await evidence.commit(current);
-			await analysis.publishTrackingState(
-				OWNER_ID,
-				ANALYSIS_ID,
-				await tracking.publicState(OWNER_ID, ANALYSIS_ID, current.runId),
-				timestamp,
-			);
-			return { accepted, command };
+
+			const status: JobStatus = {
+				...execution,
+				state: 'transfer-grant-required',
+				resolvedProfileDigest: submission.profileDigest,
+				progress: 0,
+				transferRequest: {
+					transferRequestId: crypto.randomUUID(),
+					role: 'prepared-media',
+					method: 'GET',
+				},
+				artifact: null,
+				error: null,
+			};
+			artifacts.set(attemptId, { artifact, bytes, status });
+			return status;
 		};
-		const first = await publishProvider(identity, true);
-		expect((await analysis.get(OWNER_ID, ANALYSIS_ID)).status).toBe(
-			'awaiting-reidentification',
-		);
-		expect(
-			await completeDrivingAnalysis(sqlite.database, identity, timestamp),
-		).toBe('not-ready');
-		const correctionId = crypto.randomUUID();
-		const correctedSeed = { ...seed, timestampMs: 400, frameIndex: 4 };
-		await expect(
-			tracking.reidentify(
-				identity,
-				correctionId,
-				first.accepted.checksumSha256,
-				{ ...correctedSeed, frameIndex: 5 },
-				store,
+		const provider: TrackingProvider = {
+			submit: vi.fn<TrackingProvider['submit']>(async (submission) => ({
+				ok: true,
+				value: await createProviderOutput(submission),
+			})),
+			status: vi.fn<TrackingProvider['status']>(async (execution) => {
+				const job = artifacts.get(execution.attemptId);
+				if (!job) throw new Error('Unknown provider job');
+				job.status = {
+					...job.status,
+					state: 'output-ready',
+					progress: 90,
+					artifact: job.artifact,
+					transferRequest: {
+						transferRequestId: crypto.randomUUID(),
+						role: 'observation-artifact',
+						method: 'PUT',
+					},
+				};
+				return { ok: true, value: job.status };
+			}),
+			cancel: vi.fn(async () => {
+				throw new Error('Unexpected cancellation');
+			}),
+			deliverTransferGrant: vi.fn<TrackingProvider['deliverTransferGrant']>(
+				async (grant) => {
+					const job = artifacts.get(grant.attemptId);
+					if (!job) throw new Error('Unknown provider job');
+					const url = new URL(grant.url);
+					expect(url.searchParams.get('X-Amz-Signature')).toMatch(
+						/^[a-f0-9]{64}$/,
+					);
+					const objectKey = decodeURIComponent(
+						url.pathname.split('/').slice(2).join('/'),
+					);
+					if (grant.method === 'GET') {
+						expect(await r2.bucket.get(objectKey)).not.toBeNull();
+						job.status = {
+							...job.status,
+							state:
+								grant.role === 'prepared-media'
+									? 'transfer-grant-required'
+									: 'processing',
+							progress: 20,
+							transferRequest:
+								grant.role === 'prepared-media'
+									? {
+											transferRequestId: crypto.randomUUID(),
+											role: 'frame-manifest',
+											method: 'GET',
+										}
+									: null,
+						};
+					} else {
+						expect(grant.role).toBe('observation-artifact');
+						await r2.bucket.put(objectKey, job.bytes);
+						job.status = {
+							...job.status,
+							state: 'completed',
+							progress: 99,
+							transferRequest: null,
+							artifact: job.artifact,
+						};
+					}
+					return { ok: true, value: job.status };
+				},
 			),
-		).rejects.toThrow('Subject frame must match');
-		const next = await tracking.reidentify(
-			identity,
-			correctionId,
-			first.accepted.checksumSha256,
-			correctedSeed,
-			store,
+		};
+		const grants = new R2TransferGrantAuthority(
+			tracking,
+			coordinator,
+			new Aws4FetchR2TransferGrantSigner({
+				accountId: 'a'.repeat(32),
+				accessKeyId: 'fixture-access',
+				secretAccessKey: 'fixture-secret',
+				bucketName: 'rc-mech-analysis-media',
+			}),
+			() => Math.floor(Date.now() / 1000),
 		);
-		expect(next.seed).toEqual(correctedSeed);
-		await tracking.reidentify(
-			identity,
-			correctionId,
-			first.accepted.checksumSha256,
-			correctedSeed,
-			store,
-		);
+		const correctionId = crypto.randomUUID();
 		const continuation = { ...identity, segmentId: correctionId };
-		const second = await publishProvider(continuation, false);
-		expect(
-			await completeDrivingAnalysis(sqlite.database, continuation, timestamp),
-		).toBe('not-ready');
 		const render = vi.fn(
 			async (
 				command: import('../clips/corner-clip-renderer').ClipRenderCommand,
@@ -567,15 +614,113 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 				};
 			},
 		);
-		await renderAcceptedCornerClips(continuation, clips, r2.bucket, render);
+
+		const currentIdentity = identity;
+		const waitForEvent = vi.fn(async (name: string) => {
+			if (cache.has(name)) return structuredClone(cache.get(name));
+			expect((await analysis.get(OWNER_ID, ANALYSIS_ID)).status).toBe(
+				'awaiting-reidentification',
+			);
+			const first = await tracking.acceptedArtifactFor(
+				OWNER_ID,
+				currentIdentity.runId,
+				currentIdentity.segmentId,
+			);
+			if (!first)
+				throw new Error('Gap evidence was not accepted before waiting');
+			const correctedSeed = { ...seed, timestampMs: 400, frameIndex: 4 };
+			await expect(
+				tracking.reidentify(
+					currentIdentity,
+					correctionId,
+					first.checksumSha256,
+					{ ...correctedSeed, frameIndex: 5 },
+					store,
+				),
+			).rejects.toThrow('Subject frame must match');
+			const next = await tracking.reidentify(
+				currentIdentity,
+				correctionId,
+				first.checksumSha256,
+				correctedSeed,
+				store,
+			);
+			expect(next.seed).toEqual(correctedSeed);
+			await tracking.reidentify(
+				currentIdentity,
+				correctionId,
+				first.checksumSha256,
+				correctedSeed,
+				store,
+			);
+			const receipt = { payload: { correctionId } };
+			cache.set(name, receipt);
+			return receipt;
+		});
+		const trackingStep = {
+			do: step.do.bind(step),
+			waitForEvent,
+			sleep: async (name: string, duration: number | string) => {
+				if (cache.has(name)) return;
+				vi.setSystemTime(
+					Date.now() + (typeof duration === 'number' ? duration : 15000),
+				);
+				cache.set(name, true);
+			},
+		} as unknown as WorkflowStep;
+		const workflow = new TrackingRunWorkflow(
+			tracking,
+			coordinator,
+			provider,
+			grants,
+			publication,
+			evidence,
+			async (ownerId, analysisId, state) => {
+				await analysis.publishTrackingState(
+					ownerId,
+					analysisId,
+					state,
+					new Date().toISOString(),
+				);
+			},
+			async (current) => {
+				expect(
+					await completeDrivingAnalysis(sqlite.database, current, timestamp),
+				).toBe('not-ready');
+				await renderAcceptedCornerClips(current, clips, r2.bucket, render);
+			},
+			async (current) => {
+				const result = await completeDrivingAnalysis(
+					sqlite.database,
+					current,
+					timestamp,
+				);
+				expect(result).toBe(
+					current.segmentId === correctionId ? 'completed' : 'not-ready',
+				);
+			},
+		);
+		const trackingEvent = {
+			...event,
+			payload: {
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				runId: identity.runId,
+				segmentId: identity.segmentId,
+				preparedMediaId: firstPreparedMediaId,
+				subjectSeed: seed,
+			},
+		};
+		const result = await workflow.run(trackingEvent, trackingStep);
+		expect(result.state.lifecycle).toBe('completed');
+		expect(waitForEvent).toHaveBeenCalledOnce();
+		expect(provider.submit).toHaveBeenCalledTimes(2);
+		expect(provider.deliverTransferGrant).toHaveBeenCalledTimes(6);
 		expect(render).toHaveBeenCalledOnce();
-		await publication.publish(second.command);
-		expect((await evidence.commit(continuation)).status).toBe('replayed');
-		await renderAcceptedCornerClips(continuation, clips, r2.bucket, render);
+		await workflow.run(trackingEvent, trackingStep);
+		expect(provider.submit).toHaveBeenCalledTimes(2);
+		expect(provider.deliverTransferGrant).toHaveBeenCalledTimes(6);
 		expect(render).toHaveBeenCalledOnce();
-		expect(
-			await completeDrivingAnalysis(sqlite.database, continuation, timestamp),
-		).toBe('completed');
 		const review = await new CornerEvidenceReview(sqlite.database).get(
 			OWNER_ID,
 			ANALYSIS_ID,
@@ -612,5 +757,6 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 		expect(await orm.select().from(cornerClipPublication)).toHaveLength(1);
 	} finally {
 		sqlite.close();
+		vi.useRealTimers();
 	}
 });
