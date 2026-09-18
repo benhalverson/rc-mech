@@ -1852,6 +1852,28 @@ describe('DrivingAnalysisAuthority', () => {
 });
 
 describe('verified source-frame selection', () => {
+	test.each(['deleting', 'deleted'] as const)(
+		'does not create after the verified source is %s',
+		async (state) => {
+			const value = await fixture();
+			value.verifySubjectFrame.mockImplementation(async () => {
+				if (state === 'deleted')
+					await value.database
+						.delete(raceVideo)
+						.where(eq(raceVideo.id, RACE_VIDEO_ID));
+				else
+					await value.database
+						.update(raceVideo)
+						.set({ status: 'deleting' })
+						.where(eq(raceVideo.id, RACE_VIDEO_ID));
+			});
+			await expect(value.authority.create(command())).rejects.toMatchObject({
+				code: 'CONFLICT',
+			});
+			expect(await value.database.select().from(drivingAnalysis)).toEqual([]);
+			expect(value.startProcessing).not.toHaveBeenCalled();
+		},
+	);
 	const frame: SourceFrameResult = {
 		contractVersion: 'source-frame.v1',
 		frameIndex: 2,
