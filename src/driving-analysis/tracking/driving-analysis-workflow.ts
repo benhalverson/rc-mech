@@ -14,6 +14,9 @@ import {
 	DrivingAnalysisCreationWorkflowRunner,
 	RealDrivingAnalysisContainerPort,
 } from '../analysis/driving-analysis-creation-workflow';
+import type { ClipArtifact } from '../clips/corner-clip-contracts';
+import type { ClipRenderCommand } from '../clips/corner-clip-renderer';
+import { cornerClipRenderer } from '../clips/corner-clips';
 import {
 	AcceptedCornerEvidence,
 	AcceptedCornerEvidenceError,
@@ -172,6 +175,7 @@ export type DrivingAnalysisWorkflowEnvironment = {
 	RACE_VIDEO_MEDIA_CONTAINER?: {
 		getByName(name: string): {
 			prepareTrackView(command: unknown): Promise<unknown>;
+			renderCornerClip?(command: ClipRenderCommand): Promise<ClipArtifact>;
 		};
 	};
 };
@@ -223,6 +227,9 @@ export class FirstTrackingSegmentWorkflow {
 			analysisId: string,
 			state: PublicTrackingState,
 		) => Promise<void>,
+		private readonly renderClips: (
+			identity: TrackingWorkflowIdentity,
+		) => Promise<void> = async () => undefined,
 	) {}
 
 	async run(
@@ -1277,6 +1284,14 @@ export class FirstTrackingSegmentWorkflow {
 			}
 			return { committed: true };
 		});
+		await step.do(
+			`render-accepted-corner-clips-${name}`,
+			{ timeout: '30 minutes' },
+			async () => {
+				await this.renderClips(workflowIdentity);
+				return { rendered: true };
+			},
+		);
 	}
 }
 
@@ -1307,6 +1322,7 @@ export const firstTrackingSegmentWorkflow = (
 				new Date().toISOString(),
 			);
 		},
+		cornerClipRenderer(environment),
 	);
 
 export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<

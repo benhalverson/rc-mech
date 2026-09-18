@@ -1,0 +1,38 @@
+import { z } from 'zod';
+
+const opaqueId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const identitySchema = z.strictObject({
+	ownerId: opaqueId,
+	analysisId: opaqueId,
+	runId: opaqueId,
+	inputDigest: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+const objectKeyPartsSchema = z.tuple([
+	z.literal('corner-clips'),
+	identitySchema.shape.ownerId,
+	identitySchema.shape.analysisId,
+	identitySchema.shape.runId,
+	z
+		.string()
+		.endsWith('.mp4')
+		.transform((name) => name.slice(0, -4))
+		.pipe(identitySchema.shape.inputDigest),
+]);
+
+export const parseCornerClipObjectKey = (
+	key: string,
+): z.infer<typeof identitySchema> => {
+	const [, ownerId, analysisId, runId, inputDigest] =
+		objectKeyPartsSchema.parse(key.split('/'));
+	return { ownerId, analysisId, runId, inputDigest };
+};
+
+/** Shared by publication and lifecycle cleanup; never accepts user-chosen paths. */
+export const cornerClipObjectKey = (
+	identity: z.infer<typeof identitySchema>,
+): string => {
+	const { ownerId, analysisId, runId, inputDigest } =
+		identitySchema.parse(identity);
+	return `corner-clips/${ownerId}/${analysisId}/${runId}/${inputDigest}.mp4`;
+};

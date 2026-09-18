@@ -77,6 +77,28 @@ test('reviews private Corner comparisons with keyboard-accessible provenance and
 			},
 		}),
 	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/clips', (route) =>
+		route.fulfill({
+			json: {
+				clips: [1, 2].map((ordinal) => ({
+					id: `clip-${ordinal}`,
+					cornerId: 'corner-1',
+					ordinal,
+					segmentId: 'segment-1',
+					status: 'ready',
+					inputDigest: 'e'.repeat(64),
+					checksum: 'f'.repeat(64),
+					durationMs: 1500,
+					pipelineVersion: 'corner-render.v1',
+				})),
+			},
+		}),
+	);
+	await page.route(
+		'**/api/v1/driving-analyses/analysis-1/clips/*/content',
+		(route) =>
+			route.fulfill({ body: playableRaceVideo, contentType: 'video/mp4' }),
+	);
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(
 		`/garage/${created.car.id}/drive-sessions/analysis/analysis-1`,
@@ -90,7 +112,21 @@ test('reviews private Corner comparisons with keyboard-accessible provenance and
 	await expect(
 		page.getByText('Tracking lost the Subject car during this pass.'),
 	).toBeVisible();
-	const details = page.locator('summary').first();
+	const videos = page.locator('video');
+	await expect(videos).toHaveCount(2);
+	await expect(videos.first()).toHaveAttribute('controls', '');
+	await videos.first().evaluate(async (video: HTMLVideoElement) => {
+		await video.play();
+		video.pause();
+	});
+	await expect
+		.poll(() =>
+			videos.first().evaluate((video: HTMLVideoElement) => video.readyState),
+		)
+		.toBeGreaterThan(0);
+	const details = page
+		.getByText('Timing and provenance', { exact: true })
+		.first();
 	await details.focus();
 	await page.keyboard.press('Enter');
 	await expect(

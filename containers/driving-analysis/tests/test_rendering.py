@@ -291,8 +291,8 @@ def test_render_produces_cropped_h264_clip_and_recovers_identical_retry(
     assert '"codec_name": "h264"' in probe.stdout
     assert '"width": 80' in probe.stdout
     # Corner geometry is normalized inside the fixed bottom-two-thirds Track
-    # view, so this half-height Corner occupies 30 full-frame source pixels.
-    assert '"height": 30' in probe.stdout
+    # view. Its 30-pixel height encloses to 32 pixels on the even-pixel grid.
+    assert '"height": 32' in probe.stdout
     assert '"codec_type": "audio"' not in probe.stdout
     frame = subprocess.run(
         (
@@ -697,16 +697,20 @@ def test_render_request_validation_uses_render_contract(
     }
 
 
-def test_render_rejects_overlay_outside_corner_view_at_endpoint(
+def test_render_clips_overlay_outside_fixed_corner_view(
     settings: ServiceSettings,
+    tmp_path: Path,
 ) -> None:
-    body = _body(1, SHA)
+    source = _video(tmp_path)
+    body = _body(
+        stage_media(settings, source), hashlib.sha256(source.read_bytes()).hexdigest()
+    )
     specification = cast("dict[str, object]", body["specification"])
     specification["overlay"] = {
         "subjectCenter": {"x": 0.1, "y": 0.5},
         "entryGate": {
-            "entry": {"x": 0.3, "y": 0.4},
-            "exit": {"x": 0.3, "y": 0.6},
+            "entry": {"x": 0.1, "y": 0.0},
+            "exit": {"x": 0.8, "y": 1.0},
             "direction": "positive",
         },
         "exitGate": {
@@ -717,8 +721,19 @@ def test_render_rejects_overlay_outside_corner_view_at_endpoint(
     }
     with _client(settings) as client:
         response = client.post("/v1/stages/render", json=body)
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "accepted"
+    assert response.json()["artifact"]["durationMs"] == 1500
+    request = RenderStageRequest.model_validate(body)
+    metadata = _metadata(duration_ms=2000)
+    crop = rendering._pixel_crop(request.specification, metadata)
+    overlay_path = tmp_path / "overlay.ass"
+    rendering._write_overlay_script(
+        overlay_path, request.specification.overlay, metadata, crop
+    )
+    overlay = overlay_path.read_text()
+    assert "\\clip(0,0,80,32)" in overlay
+    assert "m -24 -14 l 88 46" in overlay
 
 
 @pytest.mark.parametrize(
@@ -799,7 +814,7 @@ def test_render_validation_clamps_padding_at_source_boundaries() -> None:
         )
 
 
-def test_render_validation_rejects_a_gate_collapsed_by_pixel_mapping() -> None:
+def test_render_validation_retains_a_gate_collapsed_by_pixel_mapping() -> None:
     body = _body(1, SHA)
     specification = cast("dict[str, object]", body["specification"])
     overlay = cast("dict[str, object]", specification["overlay"])
@@ -810,8 +825,12 @@ def test_render_validation_rejects_a_gate_collapsed_by_pixel_mapping() -> None:
     }
     request = RenderStageRequest.model_validate(body)
 
-    with pytest.raises(rendering.RenderInvalidMediaError):
-        rendering._validate_specification(request.specification, 1, _metadata())
+    rendering._validate_specification(request.specification, 1, _metadata())
+    assert rendering._pixel_gate(
+        request.specification.overlay.entry_gate,
+        _metadata(),
+        rendering._pixel_crop(request.specification, _metadata()),
+    ) == ((8, 10), (8, 10))
 
 
 def test_render_validates_actual_duration_with_one_frame_tolerance() -> None:
@@ -859,7 +878,7 @@ def test_overlay_coordinates_follow_even_pixel_crop_rounding() -> None:
     request = RenderStageRequest.model_validate(_body(1, SHA))
     metadata = _metadata(duration_ms=2000)
     crop = rendering._pixel_crop(request.specification, metadata)
-    assert crop == rendering._PixelCrop(width=80, height=30, x=40, y=44)
+    assert crop == rendering._PixelCrop(width=80, height=32, x=40, y=44)
     assert rendering._pixel_gate(
         request.specification.overlay.entry_gate, metadata, crop
     ) == ((8, 10), (8, 22))
@@ -1128,10 +1147,11 @@ def test_render_rejects_failed_ffmpeg_process(
         rendering._validate_render_output(1, oversized, 1)
 
 
-def test_render_rejects_subpixel_corner_view_before_ffmpeg(
+@pytest.mark.parametrize("origin", [0.0, 0.999])
+def test_render_accepts_subpixel_corner_view_at_source_boundaries(
     settings: ServiceSettings,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    origin: float,
 ) -> None:
     source = _video(tmp_path)
     checksum = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -1139,8 +1159,8 @@ def test_render_rejects_subpixel_corner_view_before_ffmpeg(
     body = _body(byte_count, checksum)
     specification = cast("dict[str, object]", body["specification"])
     specification["cornerView"] = {
-        "x": 0.0,
-        "y": 0.0,
+        "x": origin,
+        "y": origin,
         "width": 0.001,
         "height": 0.001,
     }
@@ -1158,14 +1178,16 @@ def test_render_rejects_subpixel_corner_view_before_ffmpeg(
         },
     }
 
-    def unexpected_ffmpeg(*_args: object, **_kwargs: object) -> str:
-        raise AssertionError("FFmpeg was invoked before crop validation")
-
-    monkeypatch.setattr(rendering, "_ffmpeg_version", unexpected_ffmpeg)
     with _client(settings) as client:
         response = client.post("/v1/stages/render", json=body)
-    assert response.json()["outcome"] == "rejected"
-    assert response.json()["error"]["code"] == "MEDIA_UNAVAILABLE"
+    assert response.json()["outcome"] == "accepted"
+    assert response.json()["artifact"]["durationMs"] == 1500
+    crop = rendering._pixel_crop(
+        RenderStageRequest.model_validate(body).specification, _metadata()
+    )
+    assert (crop.width, crop.height) == (2, 2)
+    assert 0 <= crop.x <= 158
+    assert 30 <= crop.y <= 88
 
 
 def test_render_publish_race_recovers_verified_artifact(

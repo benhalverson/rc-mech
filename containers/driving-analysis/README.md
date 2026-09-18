@@ -42,6 +42,8 @@ uv run --frozen uvicorn driving_analysis_service.api:app --host 127.0.0.1 --port
 
 Rendered clips are published as owner-only immutable artifact bundles beneath `RC_MECH_ANALYSIS_ARTIFACT_ROOT`. The completion descriptor records content type, size, checksum, measured output duration, render-input digest, FFmpeg version, pipeline version, and elapsed time. Identical retries recover only after verifying the descriptor and media checksum; conflicting render IDs, malformed outputs, process timeouts, and output limits return canonical safe errors.
 
+The normalized Corner view stays immutable. Rasterization encloses it on the codec's even-pixel grid, with a minimum 2-by-2-pixel cell kept inside the source at frame boundaries. Gates that round to one pixel remain valid. Overlay coordinates retain their source position and drawings are clipped at the Corner-view output boundary, so a gate outside the view does not move or invalidate the crop.
+
 Saturated stage admission returns `SERVICE_BUSY`; an invalid Race-window limit returns `INVALID_REQUEST`; serialization limits remain `RESOURCE_LIMIT`. Reusing an immutable output ID with different staged input, prepared descriptor, seed, or provider configuration returns `ARTIFACT_CONFLICT`.
 
 ### Ollama local adapter
