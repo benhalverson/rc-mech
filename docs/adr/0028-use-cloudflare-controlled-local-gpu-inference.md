@@ -68,3 +68,18 @@ recovery guarantee incurs recurring D1 scans and R2 DELETE calls for retained
 unreferenced promotions, including keys that are already absent; this issue adds
 neither pruning nor a new cleanup scheduler. R2 concurrent PUT/DELETE operations
 are resolved by completion order ([R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)).
+
+Completed GPU releases also retain durable receipts without automatic pruning.
+Each receipt binds the segment to the exact lease ID and fence and is written in
+the same coordinator transaction that clears the active lease and records
+completion. A matching completed-release replay succeeds after eviction or a
+lost response, without changing another segment's lease. Expiration, cancellation,
+ordinary release, and mismatched identities do not prove completion. Older state
+loads with an empty receipt collection; a historical terminal reason alone never
+creates a receipt. This adds retained coordinator state per completed segment.
+
+Initial publication and accepted replay both require an `ok` completed release;
+exceptions and non-`ok` replies report `LEASE_RELEASE_FAILED`. Already accepted
+evidence remains immutable and available for inspection and retry. Older accepted
+publications whose successful releases predate receipts fail closed on replay;
+recovery does not fabricate receipts or rewrite those artifacts.

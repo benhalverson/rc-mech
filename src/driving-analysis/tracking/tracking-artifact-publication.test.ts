@@ -361,6 +361,36 @@ const wrappingStore = (
 });
 
 describe('TrackingArtifactPublication', () => {
+	test.each(['stale', 'not-found', 'exception'] as const)(
+		'requires proven release on initial publication and accepted replay: %s',
+		async (failure) => {
+			const value = await publicationFixture();
+			const artifact = await artifactFixture(value);
+			seedStaging(value, artifact.bytes);
+			if (failure === 'exception')
+				value.lease.releaseError = new Error('lost coordinator response');
+			else value.lease.releaseResult = { status: failure };
+			await expect(publish(value, artifact.artifact)).rejects.toEqual(
+				new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED'),
+			);
+			const accepted = await value.authority.acceptedArtifactFor(
+				OWNER_ID,
+				RUN_ID,
+				SEGMENT_ID,
+			);
+			expect(accepted).not.toBeNull();
+			await expect(publish(value, artifact.artifact)).rejects.toEqual(
+				new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED'),
+			);
+			expect(
+				await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
+			).toEqual(accepted);
+			value.lease.releaseError = undefined;
+			value.lease.releaseResult = { status: 'ok' };
+			expect(await publish(value, artifact.artifact)).toEqual(accepted);
+		},
+	);
+
 	test.each(parityFixtures)(
 		'matches Python production bytes and digests: $name',
 		async (fixture) => {

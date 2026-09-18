@@ -121,6 +121,7 @@ export type PersistedGpuLeaseState = {
 	waiters: Waiter[];
 	activeLease: Lease | null;
 	terminal: Record<string, TerminalReason>;
+	completedReleases: Record<string, { leaseId: string; fence: number }>;
 };
 
 const emptyState = (): PersistedGpuLeaseState => ({
@@ -129,6 +130,7 @@ const emptyState = (): PersistedGpuLeaseState => ({
 	waiters: [],
 	activeLease: null,
 	terminal: {},
+	completedReleases: {},
 });
 
 /** The sole serialized authority for the physical GPU capacity. */
@@ -244,11 +246,25 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 	async release(raw: GpuLeaseReleaseInput): Promise<GpuLeaseMutationResult> {
 		const input = gpuLeaseReleaseInput.parse(raw);
 		const result = await this.mutate((state) => {
+			const receipt = state.completedReleases[input.segmentId];
+			if (
+				input.completed &&
+				receipt?.leaseId === input.leaseId &&
+				receipt.fence === input.fence
+			)
+				return { status: 'ok' } as const;
 			this.expire(state, Date.now());
 			if (!this.current(state, input)) return { status: 'stale' } as const;
 			state.activeLease = null;
-			if (input.completed)
+			if (input.completed) {
 				this.markTerminal(state, input.segmentId, 'completed');
+				// Persist proof in the same transaction that clears capacity.
+				// Retain receipts so lost responses remain replayable after eviction.
+				state.completedReleases[input.segmentId] = {
+					leaseId: input.leaseId,
+					fence: input.fence,
+				};
+			}
 			return { status: 'ok' } as const;
 		});
 		await this.scheduleAlarm();
@@ -389,6 +405,7 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 				(await transaction.get<PersistedGpuLeaseState>(
 					GPU_LEASE_COORDINATOR_STORAGE_KEY,
 				)) ?? emptyState();
+			state.completedReleases ??= {};
 			const result = mutator(state);
 			await transaction.put(GPU_LEASE_COORDINATOR_STORAGE_KEY, state);
 			return result;

@@ -145,7 +145,7 @@ export class TrackingArtifactPublication {
 		);
 		if (existing) {
 			await this.validateAcceptedReplay(existing, artifact, acceptedObjectKey);
-			await this.retrySuccessfulRelease(artifact);
+			await this.releaseCompletedLease(artifact);
 			return existing;
 		}
 
@@ -243,12 +243,7 @@ export class TrackingArtifactPublication {
 			throw error;
 		}
 
-		const released = await this.leaseCoordinator.release({
-			...leaseIdentity(artifact),
-			completed: true,
-		});
-		if (released.status !== 'ok')
-			throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
+		await this.releaseCompletedLease(artifact);
 		return accepted;
 	}
 
@@ -286,14 +281,14 @@ export class TrackingArtifactPublication {
 			throw new TrackingArtifactPublicationError('PROMOTION_CONFLICT');
 	}
 
-	private async retrySuccessfulRelease(
-		artifact: OutputArtifact,
-	): Promise<void> {
+	private async releaseCompletedLease(artifact: OutputArtifact): Promise<void> {
 		try {
-			await this.leaseCoordinator.release({
+			const released = await this.leaseCoordinator.release({
 				...leaseIdentity(artifact),
 				completed: true,
 			});
+			if (released.status !== 'ok')
+				throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
 		} catch {
 			throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
 		}
