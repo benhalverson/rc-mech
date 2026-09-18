@@ -7,7 +7,7 @@ import {
 	signal,
 	viewChild,
 } from '@angular/core';
-import { FormField, form } from '@angular/forms/signals';
+import { CorrectionPlayer } from './correction-player';
 import {
 	type DrivingAnalysis,
 	type SubjectBox,
@@ -19,7 +19,7 @@ import { SubjectBoxEditor } from './subject-box-editor';
 
 @Component({
 	selector: 'app-subject-reidentification',
-	imports: [FormField, SubjectBoxEditor],
+	imports: [SubjectBoxEditor],
 	templateUrl: './subject-reidentification.html',
 	host: { class: 'block' },
 })
@@ -28,7 +28,8 @@ export class SubjectReidentification implements OnChanges {
 	readonly recording = input.required<RaceRecording>();
 	protected readonly store = inject(ReidentificationStore);
 	protected readonly draft = signal({ timestampMs: 0, frameIndex: 0 });
-	protected readonly fields = form(this.draft);
+	protected readonly selectedFrame = signal(0);
+	private readonly player = inject(CorrectionPlayer);
 	protected readonly box = signal<SubjectBox>({
 		x: 0.4,
 		y: 0.4,
@@ -55,11 +56,12 @@ export class SubjectReidentification implements OnChanges {
 	}
 
 	protected seek(event: Event, player: HTMLVideoElement): void {
-		const timestampMs = (event.target as HTMLInputElement).valueAsNumber;
-		if (!Number.isFinite(timestampMs)) return;
-		player.pause();
-		player.currentTime = timestampMs / 1000;
-		this.draft.update((value) => ({ ...value, timestampMs }));
+		const frameIndex = (event.target as HTMLInputElement).valueAsNumber;
+		const frame = this.store.context()?.frames[frameIndex];
+		if (!frame) return;
+		this.selectedFrame.set(frameIndex);
+		this.player.showFrame(player, frame.timestampMs);
+		this.draft.set(frame);
 	}
 
 	protected retrySaved(): void {
@@ -86,6 +88,11 @@ export class SubjectReidentification implements OnChanges {
 			!context ||
 			!parsed.success ||
 			!this.boxValid() ||
+			!context.frames.some(
+				(frame) =>
+					frame.frameIndex === candidate.frameIndex &&
+					frame.timestampMs === candidate.timestampMs,
+			) ||
 			candidate.timestampMs <= context.gap.startTimestampMs ||
 			candidate.timestampMs >= analysis.raceWindow.endTimestampMs ||
 			candidate.frameIndex >= (this.recording().media?.decodedFrameCount ?? 0)

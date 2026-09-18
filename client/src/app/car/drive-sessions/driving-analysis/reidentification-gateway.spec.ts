@@ -3,6 +3,7 @@ import {
 	HttpTestingController,
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,6 +17,7 @@ const command: ReidentifySubjectCommand = {
 		runId: 'run',
 		segmentId: 'segment',
 		acceptedDigest: 'digest',
+		frames: [{ frameIndex: 2, timestampMs: 200 }],
 		gap: { startTimestampMs: 100, reason: 'missing' },
 	},
 	subjectSeed: {
@@ -39,26 +41,32 @@ describe('ReidentificationGateway', () => {
 		});
 		const gateway = TestBed.inject(ReidentificationGateway);
 		const http = TestBed.inject(HttpTestingController);
+		const selection = signal({ analysisId: '', version: 0 });
+		const context = TestBed.runInInjectionContext(() =>
+			gateway.read(selection),
+		);
 		TestBed.tick();
 		http.expectNone('/api/v1/driving-analyses//reidentification');
-		gateway.select(command.analysisId);
+		selection.set({ analysisId: command.analysisId, version: 0 });
 		TestBed.tick();
 		const read = http.expectOne(
-			'/api/v1/driving-analyses/analysis%2Fone/reidentification',
+			'/api/v1/driving-analyses/analysis%2Fone/reidentification?version=0',
 		);
 		expect(read.request.withCredentials).toBe(true);
 		read.flush({ context: command.context });
 		await Promise.resolve();
 		TestBed.tick();
-		expect(gateway.context.value()).toEqual(command.context);
-		gateway.select(command.analysisId);
+		expect(context.value()).toEqual(command.context);
+		selection.set({ analysisId: command.analysisId, version: 1 });
 		TestBed.tick();
 		http
-			.expectOne('/api/v1/driving-analyses/analysis%2Fone/reidentification')
+			.expectOne(
+				'/api/v1/driving-analyses/analysis%2Fone/reidentification?version=1',
+			)
 			.flush({ context: null });
 		await Promise.resolve();
 		TestBed.tick();
-		expect(gateway.context.value()).toBeNull();
+		expect(context.value()).toBeNull();
 		const result = firstValueFrom(gateway.correct(command, 'correction'));
 		const write = http.expectOne(
 			'/api/v1/driving-analyses/analysis%2Fone/reidentification',

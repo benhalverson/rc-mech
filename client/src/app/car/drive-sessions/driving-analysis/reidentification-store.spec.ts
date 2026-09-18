@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { type Signal, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of, Subject, throwError } from 'rxjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +15,7 @@ const context: ReidentificationContext = {
 	runId: 'run',
 	segmentId: 'segment',
 	acceptedDigest: 'digest',
+	frames: [{ frameIndex: 2, timestampMs: 200 }],
 	gap: { startTimestampMs: 100, reason: 'missing' },
 };
 const command: ReidentifySubjectCommand = {
@@ -38,8 +39,12 @@ const setup = () => {
 	const loading = signal(false);
 	const error = signal<unknown>(null);
 	const gateway = {
-		context: { value, hasValue, isLoading: loading, error },
-		select: vi.fn(),
+		read: vi.fn(
+			(selection: Signal<{ analysisId: string; version: number }>) => {
+				expect(selection()).toEqual({ analysisId: '', version: 0 });
+				return { value, hasValue, isLoading: loading, error };
+			},
+		),
 		correct: vi.fn(() => of(receipt)),
 	};
 	TestBed.configureTestingModule({
@@ -96,7 +101,7 @@ describe('ReidentificationStore', () => {
 		expect(f.gateway.correct).not.toHaveBeenCalled();
 		f.store.select('analysis');
 		f.store.select('analysis');
-		expect(f.gateway.select).toHaveBeenCalledOnce();
+		expect(f.gateway.read).toHaveBeenCalledOnce();
 		f.store.correct(command);
 		expect(f.gateway.correct).not.toHaveBeenCalled();
 		f.hasValue.set(true);

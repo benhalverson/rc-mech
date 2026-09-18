@@ -84,6 +84,8 @@ import {
 	type InferenceProfile,
 	inferenceProfileSchema,
 } from './inference-profile';
+import type { TrackingArtifactStore } from './r2-tracking-artifact-store';
+import { readReidentificationFrames } from './reidentification-frames';
 import {
 	FRAME_MANIFEST_CONTENT_TYPE,
 	PREPARED_MEDIA_CONTENT_TYPE,
@@ -274,7 +276,7 @@ export class TrackingAuthority {
 
 	async createSegment(
 		commandValue: CreateTrackingSegmentCommand,
-		reusePersistedTiming = false,
+		timingPolicy: 'exact' | 'reuse-persisted' = 'exact',
 	): Promise<TrackingSegmentRecord> {
 		const command = createTrackingSegmentCommandSchema.parse(commandValue);
 		const run = await this.requireActiveRun(command.ownerId, command.runId);
@@ -422,7 +424,7 @@ export class TrackingAuthority {
 			stored.preparedMediaId !== command.preparedMediaId ||
 			stored.profileDigest !== run.profileDigest ||
 			stored.specificationDigest !== specification.digest ||
-			(!reusePersistedTiming &&
+			(timingPolicy === 'exact' &&
 				(stored.availabilityDeadlineAt !== command.availabilityDeadlineAt ||
 					stored.createdAt !== command.createdAt))
 		)
@@ -496,6 +498,7 @@ export class TrackingAuthority {
 		correctionId: string,
 		acceptedDigest: string,
 		seedValue: SubjectSeed,
+		manifestStore: Pick<TrackingArtifactStore, 'read'>,
 	): Promise<TrackingWorkflowContext> {
 		const seed = subjectSeedSchema.parse(seedValue);
 		const context = await this.workflowContext(identity);
@@ -522,6 +525,15 @@ export class TrackingAuthority {
 			seed.frameIndex <= context.seed.frameIndex
 		)
 			throw conflict('Re-identification must start on a later clear frame');
+		const frames = await this.reidentificationFrames(identity, manifestStore);
+		if (
+			!frames.some(
+				(frame) =>
+					frame.frameIndex === seed.frameIndex &&
+					frame.timestampMs === seed.timestampMs,
+			)
+		)
+			throw conflict('Subject frame must match the prepared frame manifest');
 		const existing = await this.ownedSegment(identity.runId, correctionId);
 		const next = await this.createSegment(
 			{
@@ -540,9 +552,33 @@ export class TrackingAuthority {
 					existing?.availabilityDeadlineAt ?? Date.now() + GPU_MAX_DEADLINE_MS,
 				createdAt: existing?.createdAt ?? new Date().toISOString(),
 			},
-			true,
+			'reuse-persisted',
 		);
 		return this.workflowContext({ ...identity, segmentId: next.id });
+	}
+
+	async reidentificationFrames(
+		identity: TrackingWorkflowIdentity,
+		store: Pick<TrackingArtifactStore, 'read'>,
+	) {
+		const context = await this.workflowContext(identity);
+		const object = await this.database
+			.select({ objectKey: preparedTrackingObject.objectKey })
+			.from(preparedTrackingObject)
+			.where(
+				and(
+					eq(preparedTrackingObject.preparedMediaId, context.preparedMediaId),
+					eq(preparedTrackingObject.runId, identity.runId),
+					eq(preparedTrackingObject.role, 'frame-manifest'),
+				),
+			)
+			.get();
+		if (!object) throw notFound('Prepared frame manifest was not found');
+		return readReidentificationFrames(
+			store,
+			object.objectKey,
+			context.prepared,
+		);
 	}
 
 	async workflowContext(
