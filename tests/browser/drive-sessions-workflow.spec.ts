@@ -717,6 +717,82 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		creator.getByRole('button', { name: 'Retry workflow' }),
 	).toBeVisible();
 	expect(await scan(page)).toEqual([]);
+	trackingState = {
+		...trackingState,
+		lifecycle: 'awaiting-reidentification',
+		status: 'awaiting-reidentification',
+		stateVersion: trackingState.stateVersion + 1,
+		safeFailureCode: null,
+	};
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/lifecycle`,
+		(route) =>
+			route.fulfill({
+				json: {
+					lifecycle: {
+						analysisId: drivingAnalysis.id,
+						status: trackingState.status,
+						stateVersion: trackingState.stateVersion,
+						permanent: false,
+						canCancel: true,
+						canRetry: false,
+						failure: null,
+					},
+				},
+			}),
+	);
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/evidence`,
+		(route) =>
+			route.fulfill({
+				json: {
+					evidence: {
+						analysisId: drivingAnalysis.id,
+						carId: created.car.id,
+						driveSessionId: drive.driveSession.id,
+						stateVersion: trackingState.stateVersion,
+						status: trackingState.status,
+						runId: gapContext.runId,
+						trackMapVersionId: trackMap.id,
+						tieToleranceMs: null,
+						corners: [],
+					},
+				},
+			}),
+	);
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/clips`,
+		(route) => route.fulfill({ json: { clips: [] } }),
+	);
+	await page.goto(
+		`/garage/${created.car.id}/drive-sessions/analysis/${drivingAnalysis.id}`,
+	);
+	const reopenedCorrection = page.locator(
+		'app-corner-review app-subject-reidentification',
+	);
+	await expect(
+		reopenedCorrection.getByText('Selected source frame 7 at 700 ms'),
+	).toBeVisible();
+	await expect(reopenedCorrection.locator('video')).toHaveJSProperty(
+		'currentTime',
+		0.7,
+	);
+	await expect(
+		reopenedCorrection.getByRole('heading', {
+			name: 'Subject car correction',
+			level: 4,
+		}),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	await reopenedCorrection
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.focus();
+	await page.keyboard.press('Enter');
+	await expect(reopenedCorrection.getByRole('status')).toContainText(
+		'Subject correction accepted',
+	);
+	expect(correctionRequests).toHaveLength(3);
+	expect(await scan(page)).toEqual([]);
 });
 
 test('resumes a Race recording from authoritative multipart progress without retransmitting completed parts', async ({

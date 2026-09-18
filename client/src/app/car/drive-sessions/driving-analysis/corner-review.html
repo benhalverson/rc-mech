@@ -21,7 +21,7 @@
 	@if (store.lifecycleError(); as error) { <p role="alert">{{ error }}</p> }
 	@if (store.correctionError(); as error) { <p role="alert">{{ error }}</p> }
 	@if (store.correction(); as correction) {
-		<app-subject-reidentification [analysis]="correction.analysis" [recording]="correction.recording" />
+		<app-subject-reidentification [headingLevel]="3" [analysis]="correction.analysis" [recording]="correction.recording" />
 	}
 	@if (store.loading()) { <p role="status">Loading accepted Corner evidence…</p> }
 	@if (store.error(); as error) { <p class="alloy-state alloy-error-state" role="alert">{{ error }}</p> }

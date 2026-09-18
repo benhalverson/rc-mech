@@ -28,6 +28,7 @@ import { SubjectBoxEditor } from './subject-box-editor';
 	host: { class: 'block' },
 })
 export class SubjectReidentification implements OnChanges, OnDestroy {
+	readonly headingLevel = input<3 | 5>(5);
 	readonly analysis = input.required<DrivingAnalysis>();
 	readonly recording = input.required<RaceRecording>();
 	protected readonly store = inject(ReidentificationStore);

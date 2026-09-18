@@ -1,5 +1,9 @@
 <section class="grid gap-4 rounded border border-alloy-separator p-4" aria-label="Re-identify the Subject car">
-	<h5 class="m-0 text-base font-semibold">Re-identify the Subject car</h5>
+	@if (headingLevel() === 3) {
+		<h3 class="m-0 text-base font-semibold">Re-identify the Subject car</h3>
+	} @else {
+		<h5 class="m-0 text-base font-semibold">Re-identify the Subject car</h5>
+	}
 	@if (store.loading()) {
 		<p role="status">Loading accepted gap context…</p>
 	} @else if (store.readFailed()) {
@@ -17,7 +21,7 @@
 			<p role="status">No later prepared frames are available for this gap.</p>
 		} @else {
 			<form class="grid gap-3" (submit)="submit($event)">
-				<app-subject-box-editor heading="Subject car correction" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
+				<app-subject-box-editor heading="Subject car correction" [headingLevel]="headingLevel() === 3 ? 4 : 6" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
 					<video #player class="aspect-video w-full bg-black" preload="metadata" [src]="recording().playbackUrl" (loadedmetadata)="showSelectedFrame(player)" aria-label="Private recording for Subject correction">
 						<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
 					</video>
