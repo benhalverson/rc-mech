@@ -1,33 +1,31 @@
 import { z } from 'zod';
+import {
+	safeIdentifierSchema as identifier,
+	normalizedBoxSchema,
+	uuidV4Schema as uuid,
+} from '../tracking/contracts';
 import { asPythonFloat, pythonCanonical } from '../tracking/python-canonical';
 
 export const MAX_CLIP_BYTES = 16 * 1024 * 1024;
 const digest = z.string().regex(/^[0-9a-f]{64}$/);
-const uuid = z.string().uuid();
-const identifier = z
-	.string()
-	.min(1)
-	.max(200)
-	.regex(/^[A-Za-z0-9._-]+$/);
 const coordinate = z.number().finite().min(0).max(1);
 const point = z.strictObject({ x: coordinate, y: coordinate });
-const gate = z.strictObject({
-	entry: point,
-	exit: point,
-	direction: z.enum(['positive', 'negative']),
-});
+const gate = z
+	.strictObject({
+		entry: point,
+		exit: point,
+		direction: z.enum(['positive', 'negative']),
+	})
+	.refine(
+		(value) => value.entry.x !== value.exit.x || value.entry.y !== value.exit.y,
+	);
 export const clipSpecificationSchema = z
 	.strictObject({
 		sourceChecksumSha256: digest,
 		runId: identifier,
 		trackMapVersion: identifier,
 		cornerId: identifier,
-		cornerView: z.strictObject({
-			x: coordinate,
-			y: coordinate,
-			width: coordinate,
-			height: coordinate,
-		}),
+		cornerView: normalizedBoxSchema,
 		entryTimestampMs: z.number().int().nonnegative().max(86_400_000),
 		exitTimestampMs: z.number().int().positive().max(86_400_000),
 		padding: z.strictObject({
@@ -45,11 +43,7 @@ export const clipSpecificationSchema = z
 	.refine(
 		(value) =>
 			value.exitTimestampMs > value.entryTimestampMs &&
-			value.exitTimestampMs - value.entryTimestampMs + 1000 <= 900_000 &&
-			value.cornerView.width > 0 &&
-			value.cornerView.height > 0 &&
-			value.cornerView.x + value.cornerView.width <= 1 &&
-			value.cornerView.y + value.cornerView.height <= 1,
+			value.exitTimestampMs - value.entryTimestampMs + 1000 <= 900_000,
 	);
 
 export const clipRequestSchema = z.strictObject({
@@ -72,7 +66,7 @@ export const clipArtifactSchema = z.strictObject({
 	durationMs: z.number().int().positive().max(900_000),
 	renderInputDigest: digest,
 	sourceChecksumSha256: digest,
-	ffmpegVersion: z.string().min(1).max(200),
+	ffmpegVersion: identifier,
 	pipelineVersion: z.literal('corner-render.v1'),
 	elapsedMs: z.number().int().nonnegative().safe(),
 });

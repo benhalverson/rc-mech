@@ -1,6 +1,7 @@
 import type { AcceptedCornerEvidenceIdentity } from '../evidence/accepted-corner-evidence';
 import { subjectObservationSegmentSchema } from '../tracking/contracts';
 import { pythonCanonical } from '../tracking/python-canonical';
+import { cornerClipObjectKey } from './clip-object-key';
 import {
 	ClipAuthorityError,
 	CornerClipAuthority,
@@ -127,7 +128,12 @@ export const renderAcceptedCornerClips = async (
 			},
 		);
 		if (await authority.publication(clip.id)) continue;
-		const objectKey = `corner-clips/${clip.runId}/${clip.inputDigest}.mp4`;
+		const objectKey = cornerClipObjectKey({
+			ownerId: clip.ownerId,
+			analysisId: clip.analysisId,
+			runId: clip.runId,
+			inputDigest: clip.inputDigest,
+		});
 		const artifact = await render({
 			sourceObjectKey: clip.sourceObjectKey,
 			outputObjectKey: objectKey,

@@ -64,9 +64,10 @@ export const renderCornerClip = async (
 		!/^race-recordings\/[0-9a-f-]{36}\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/.test(
 			command.sourceObjectKey,
 		) ||
-		!new RegExp(
-			`^corner-clips/${request.specification.runId}/[0-9a-f]{64}\\.mp4$`,
-		).test(command.outputObjectKey)
+		!/^corner-clips\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/[0-9a-f]{64}\.mp4$/.test(
+			command.outputObjectKey,
+		) ||
+		command.outputObjectKey.split('/')[3] !== request.specification.runId
 	)
 		throw new Error('CLIP_INPUT_INVALID');
 	await runtime.start();
