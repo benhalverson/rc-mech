@@ -75,6 +75,8 @@ export class DrivingAnalysisCreator {
 		timestampMs: number;
 	} | null>(null);
 	protected readonly selectedFrame = computed(() => {
+		if (this.store.subjectFrameLoading() || this.store.subjectFrameError())
+			return null;
 		const selection = this.selectionWindow();
 		const frame = this.store.selectedSubjectFrame();
 		const form = this.form();
