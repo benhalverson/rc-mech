@@ -73,6 +73,7 @@ import {
 	trackingTransferRequest,
 } from './authority-schema';
 import {
+	type ExecutionIdentity,
 	type PreparedMediaArtifact,
 	preparedMediaArtifactSchema,
 	type SubjectSeed,
@@ -1637,6 +1638,68 @@ export class TrackingAuthority {
 		/* c8 ignore next -- a zero-row result requires a concurrent D1 witness change after the read above. */
 		if (!updated) throw stale('Tracking run fencing witness is stale');
 		return updated;
+	}
+
+	/** Read cleanup identities only after the durable lifecycle fence exists. */
+	async cancellationTargets(
+		ownerId: string,
+		analysisId: string,
+		workflowId: string,
+	) {
+		const runs = await this.database
+			.select()
+			.from(trackingRun)
+			.where(
+				and(
+					eq(trackingRun.ownerId, ownerId),
+					eq(trackingRun.analysisId, analysisId),
+					eq(trackingRun.workflowId, workflowId),
+					eq(trackingRun.status, 'cancelled'),
+				),
+			);
+		const targets: {
+			segmentId: string;
+			cancelledAt: string;
+			identity: ExecutionIdentity | null;
+		}[] = [];
+		for (const run of runs) {
+			const cancelledAt = fenceTrackingRunCommandSchema.shape.completedAt.parse(
+				run.completedAt,
+			);
+			const segments = await this.database
+				.select()
+				.from(trackingSegment)
+				.where(eq(trackingSegment.runId, run.id));
+			for (const segment of segments) {
+				if (segment.acceptedArtifactId !== null) continue;
+				const attempt =
+					segment.currentAttemptId === null
+						? null
+						: await this.database
+								.select()
+								.from(trackingExecutionAttempt)
+								.where(
+									eq(trackingExecutionAttempt.id, segment.currentAttemptId),
+								)
+								.get();
+				targets.push({
+					segmentId: segment.id,
+					cancelledAt,
+					identity: attempt
+						? {
+								runId: run.id,
+								segmentId: segment.id,
+								attemptId: attempt.id,
+								leaseId: attempt.leaseId,
+								fencingToken: attempt.fence,
+								specificationDigest: segment.specificationDigest,
+								profileDigest: run.profileDigest,
+							}
+						: null,
+				});
+			}
+		}
+		return targets;
 	}
 
 	async publicProvenance(

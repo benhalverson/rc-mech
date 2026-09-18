@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
 	ATTEMPT_ID,
+	executionIdentityFixture,
 	inferenceProfileFixture,
 	jobStatusFixture,
 	LEASE_ID,
@@ -52,6 +53,7 @@ import type {
 	TransferGrantCommand,
 } from './contracts';
 import {
+	DrivingAnalysisWorkflow,
 	type DrivingAnalysisWorkflowEnvironment,
 	deployedInferenceProfile,
 	deterministicJitter,
@@ -192,6 +194,7 @@ class WorkflowStepFixture {
 }
 
 class CoordinatorFixture {
+	readonly cancel = vi.fn(async () => ({ status: 'cancelled' as const }));
 	readonly calls: string[] = [];
 	private readonly authority: TrackingAuthority;
 	private readonly trace: string[];
@@ -534,6 +537,7 @@ const coreWorkflowFixture = (
 		),
 	};
 	const coordinator = {
+		cancel: vi.fn(async () => ({ status: 'cancelled' as const })),
 		enqueue: vi.fn<
 			(input: GpuLeaseEnqueueInput) => Promise<GpuLeaseEnqueueResult>
 		>(async (input) => {
@@ -650,6 +654,114 @@ const coreWorkflowFixture = (
 };
 
 describe('DrivingAnalysisWorkflow', () => {
+	test('rejects a lease renewal when cancellation wins after the last valid status', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: {
+				...jobStatusFixture(),
+				...submission,
+				state: 'processing',
+				transferRequest: null,
+			},
+		}));
+		value.steps.beforeStep = (name) => {
+			if (name.startsWith('renew-tracking-lease'))
+				value.authority.workflowContext.mockRejectedValue(
+					new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'),
+				);
+		};
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_AUTHORITY_STALE' });
+		expect(value.coordinator.renew).not.toHaveBeenCalled();
+		expect(value.grants.issue).not.toHaveBeenCalled();
+	});
+
+	test('dispatches the cancellation instance through persisted fenced targets', async () => {
+		const identity = executionIdentityFixture();
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					...jobStatusFixture(),
+					state: 'cancelled',
+					transferRequest: null,
+				}),
+			),
+		);
+		const targets = vi
+			.spyOn(TrackingAuthority.prototype, 'cancellationTargets')
+			.mockResolvedValue([
+				{
+					segmentId: SEGMENT_ID,
+					cancelledAt: '2020-01-01T00:00:00Z',
+					identity,
+				},
+			]);
+		const environment = {
+			DB: {} as D1Database,
+			GPU_PROVIDER_ORIGIN: 'https://gpu.example',
+			GPU_ACCESS_CLIENT_ID: 'client',
+			GPU_ACCESS_CLIENT_SECRET: 'secret',
+			GPU_LEASE_COORDINATOR: {
+				getByName: () => ({
+					cancel: vi.fn(async () => ({ status: 'cancelled' })),
+				}),
+			},
+		} as unknown as DrivingAnalysisWorkflowEnvironment;
+		const event = {
+			payload: {
+				kind: 'analysis-creation.v1' as const,
+				cancellation: true as const,
+				ownerId: OWNER_ID,
+				analysisId: RUN_ID,
+				workflowId: RUN_ID,
+				workflowSequence: 1,
+				expectedStateVersion: 1,
+			},
+		} as unknown as Parameters<DrivingAnalysisWorkflow['run']>[0];
+		await expect(
+			new DrivingAnalysisWorkflow({} as ExecutionContext, environment).run(
+				event,
+				new WorkflowStepFixture() as unknown as WorkflowStep,
+			),
+		).resolves.toEqual({ kind: 'cancelled' });
+		expect(targets).toHaveBeenCalledWith(OWNER_ID, RUN_ID, RUN_ID);
+		await expect(
+			new DrivingAnalysisWorkflow({} as ExecutionContext, {
+				...environment,
+				GPU_PROVIDER_ORIGIN: undefined,
+				GPU_ACCESS_CLIENT_ID: undefined,
+				GPU_ACCESS_CLIENT_SECRET: undefined,
+			}).run(event, new WorkflowStepFixture() as unknown as WorkflowStep),
+		).resolves.toEqual({ kind: 'cancelled' });
+	});
+	test('does not renew after the persisted availability deadline', async () => {
+		const value = coreWorkflowFixture();
+		value.provider.submit.mockImplementation(async (submission) => ({
+			ok: true,
+			value: {
+				...jobStatusFixture(),
+				...submission,
+				state: 'processing',
+				transferRequest: null,
+			},
+		}));
+		value.steps.beforeStep = (name) => {
+			if (name.startsWith('renew-tracking-lease'))
+				value.getContext().availabilityDeadlineAt = Date.now();
+		};
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_UNAVAILABLE' });
+		expect(value.coordinator.renew).not.toHaveBeenCalled();
+	});
 	test('waits durably after gap evidence, ignores uncommitted wakeups, and resumes one immutable segment', async () => {
 		const value = coreWorkflowFixture();
 		value.getContext().acceptedArtifactId = ATTEMPT_ID;
@@ -803,7 +915,6 @@ describe('DrivingAnalysisWorkflow', () => {
 		expect(value.provider.submit).not.toHaveBeenCalled();
 		expect(value.coordinator.enqueue).not.toHaveBeenCalled();
 	});
-
 	test('replays publication after a lost acceptance acknowledgement without reauthorizing completed execution', async () => {
 		const value = coreWorkflowFixture();
 		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
