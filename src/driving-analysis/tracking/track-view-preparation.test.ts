@@ -175,6 +175,24 @@ const expectPreparationError = async (
 };
 
 describe('TrackViewPreparation', () => {
+	test('continues abandoned cleanup when accepted-retention scanning fails', async () => {
+		const value = await preparationFixture(async () => undefined);
+		await value.authority.recordPreparationIntent(
+			OWNER_ID,
+			RUN_ID,
+			PREPARED_MEDIA_ID,
+			TERMINAL_AT.toISOString(),
+		);
+		value.analysisMedia.seed(
+			'prepared/' + PREPARED_MEDIA_ID + '/track-view.mp4',
+			new Uint8Array([1]),
+		);
+		vi.spyOn(sqlite!.database, 'prepare').mockImplementationOnce(() => {
+			throw new Error('temporary D1 failure');
+		});
+		expect(await value.preparation.cleanupDue(CLEANUP_AT)).toBe(1);
+		expect(value.analysisMedia.objects.size).toBe(0);
+	});
 	test('recovers abandoned preparation outputs and cleans later candidates after an R2 failure', async () => {
 		const blockedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 		const value = await preparationFixture(
