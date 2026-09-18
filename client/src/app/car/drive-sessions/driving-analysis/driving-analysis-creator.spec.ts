@@ -218,6 +218,20 @@ describe('DrivingAnalysisCreator', () => {
 		expect(store.createAnalysis).not.toHaveBeenCalled();
 		const verified = store.selectedSubjectFrame();
 		if (!verified) throw new Error('Verified frame missing');
+		root.querySelector<HTMLButtonElement>('[data-mark-seed]')?.click();
+		store.subjectFrameLoading.set(true);
+		fixture.detectChanges();
+		expect(root.querySelector('[data-subject-frame]')).toBeNull();
+		store.selectedSubjectFrame.set({ ...verified });
+		store.subjectFrameLoading.set(false);
+		fixture.detectChanges();
+		root
+			.querySelector('[data-subject-frame]')
+			?.dispatchEvent(new Event('load'));
+		fixture.detectChanges();
+		expect(
+			root.querySelector<HTMLFieldSetElement>('[data-frame-editor]')?.disabled,
+		).toBe(false);
 		for (const change of [
 			{ recordingId: 'another' },
 			{ requestedTimestampMs: 126 },
