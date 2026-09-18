@@ -171,15 +171,22 @@ export const CornerReviewStore = signalStore(
 			): void {
 				const current = store.lifecycle();
 				if (!current || store.lifecycleBusy()) return;
-				execute({
-					action: command.action,
+				const identity = {
 					analysisId: current.analysisId,
 					expectedStateVersion: current.stateVersion,
-					commandId: store.requestIdentity.retryId(
-						current.analysisId,
-						current.stateVersion,
-					),
-				});
+				};
+				execute(
+					command.action === 'retry'
+						? {
+								...identity,
+								action: 'retry',
+								commandId: store.requestIdentity.retryId(
+									current.analysisId,
+									current.stateVersion,
+								),
+							}
+						: { ...identity, action: command.action },
+				);
 			},
 			selectAnalysis(command: Readonly<{ analysisId: string }>): void {
 				patchState(store, command);

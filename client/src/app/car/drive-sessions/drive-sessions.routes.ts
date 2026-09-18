@@ -4,6 +4,7 @@ import { CarGateway } from '../car-gateway';
 import { CarStore } from '../car-store';
 import { DriveSessionGateway } from './drive-session-gateway';
 import { DriveSessionStore } from './drive-session-store';
+import { AnalysisLifecycleGateway } from './driving-analysis/analysis-lifecycle-gateway';
 import { CornerReviewGateway } from './driving-analysis/corner-review-gateway';
 import { CornerReviewStore } from './driving-analysis/corner-review-store';
 import { CorrectionPlayer } from './driving-analysis/correction-player';
@@ -27,6 +28,8 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 			ReidentificationGateway,
 			ReidentificationIdentity,
 			ReidentificationStore,
+			AnalysisLifecycleGateway,
+			DrivingAnalysisRequestIdentityCapability,
 		],
 		loadComponent: () =>
 			import('./driving-analysis/corner-review').then(

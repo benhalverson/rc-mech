@@ -26,14 +26,14 @@ export const analysisLifecycleSchema = z.strictObject({
 });
 export type AnalysisLifecycle = z.infer<typeof analysisLifecycleSchema>;
 const responseSchema = z.strictObject({ lifecycle: analysisLifecycleSchema });
-export type AnalysisLifecycleCommand = Readonly<{
-	analysisId: string;
-	expectedStateVersion: number;
-	action: 'cancel' | 'retry' | 'delete';
-	commandId: string;
-}>;
+export type AnalysisLifecycleCommand = Readonly<
+	{ analysisId: string; expectedStateVersion: number } & (
+		| { action: 'cancel' | 'delete' }
+		| { action: 'retry'; commandId: string }
+	)
+>;
 
-@Service()
+@Service({ autoProvided: false })
 export class AnalysisLifecycleGateway {
 	private readonly http = inject(HttpClient);
 	read(analysisId: Signal<string>) {

@@ -1,3 +1,4 @@
+import { preparedObjectKeys } from './prepared-object-keys';
 import {
 	type AcceptedPreparedTrackView,
 	PreparedTrackViewAuthority,
@@ -122,10 +123,8 @@ export class TrackViewPreparation {
 
 		const preparedMediaId = this.id();
 		const correlationId = this.id();
-		const prefix = `prepared/${preparedMediaId}`;
-		const mediaObjectKey = `${prefix}/track-view.mp4`;
-		const frameManifestObjectKey = `${prefix}/frame-manifest.json.gz`;
-		const candidateKeys = [mediaObjectKey, frameManifestObjectKey] as const;
+		const candidateKeys = preparedObjectKeys(preparedMediaId);
+		const [mediaObjectKey, frameManifestObjectKey] = candidateKeys;
 		const request = prepareStageRequestSchema.parse({
 			contractVersion: 'subject-tracking.v1',
 			correlationId,
@@ -351,10 +350,7 @@ export async function cleanupPreparedTrackViews(
 			);
 			const cleaned = await Promise.allSettled(
 				abandoned.map((candidate) =>
-					store.delete([
-						`prepared/${candidate.preparedMediaId}/track-view.mp4`,
-						`prepared/${candidate.preparedMediaId}/frame-manifest.json.gz`,
-					]),
+					store.delete(preparedObjectKeys(candidate.preparedMediaId)),
 				),
 			);
 			return cleaned.filter((result) => result.status === 'fulfilled').length;
