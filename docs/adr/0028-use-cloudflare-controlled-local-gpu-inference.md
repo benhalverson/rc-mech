@@ -50,7 +50,7 @@ and analysis before dispatching cleanup. Repeating cancellation after a dispatch
 failure preserves the original fence and timestamp. A deterministic sibling
 Workflow instance (`<workflowId>-cancel`) reloads fenced segment identities,
 issues exact attempt-bound cancellation, and releases capacity after confirmation
-or a 30-second grace measured from the persisted cancellation timestamp. The
+or a 60-second grace measured from the persisted cancellation timestamp. The
 original Workflow is terminated after cleanup dispatch, including a wait for
 Re-identification.
 Previously accepted evidence remains immutable. Grant signing and lease renewal

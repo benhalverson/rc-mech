@@ -7,7 +7,7 @@ import type {
 import type { TrackingProvider } from './local-sam31-provider';
 import type { TrackingAuthority } from './tracking-authority';
 
-export const TRACKING_CANCELLATION_GRACE_MS = 30_000;
+export const TRACKING_CANCELLATION_GRACE_MS = 60_000;
 
 /** D1 fencing precedes this runner. Release never asserts physical GPU shutdown. */
 export class TrackingCancellation {

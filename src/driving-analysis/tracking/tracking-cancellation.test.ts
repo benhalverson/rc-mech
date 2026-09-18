@@ -25,6 +25,7 @@ test.each([
 	'unreachable',
 	'requested',
 	'throws',
+	'partially-elapsed',
 	'elapsed',
 ] as const)(
 	'cancellation %s releases only after confirmation or persisted grace',
@@ -39,7 +40,12 @@ test.each([
 					segmentId: identity.segmentId,
 					identity,
 					cancelledAt: new Date(
-						NOW.getTime() - (mode === 'elapsed' ? 60_000 : 0),
+						NOW.getTime() -
+							(mode === 'elapsed'
+								? 60_000
+								: mode === 'partially-elapsed'
+									? 15_000
+									: 0),
 					).toISOString(),
 				},
 			]),
@@ -77,7 +83,7 @@ test.each([
 			},
 			sleep: vi.fn(async (_name: string, duration: number) => {
 				trace.push('grace');
-				expect(duration).toBe(30_000);
+				expect(duration).toBe(mode === 'partially-elapsed' ? 45_000 : 60_000);
 				vi.advanceTimersByTime(duration);
 			}),
 		};
@@ -121,4 +127,55 @@ test('queued cancellation removes the waiter without contacting the provider', a
 	);
 	expect(provider.cancel).not.toHaveBeenCalled();
 	expect(coordinator.cancel).toHaveBeenCalledWith({ segmentId: 'queued' });
+});
+
+test('unreachable cancellation keeps capacity reserved for the full sixty-second grace', async () => {
+	vi.useFakeTimers();
+	vi.setSystemTime(NOW);
+	const { contractVersion: _, ...identity } = cancelFixture();
+	const authority = {
+		cancellationTargets: vi.fn(async () => [
+			{
+				segmentId: identity.segmentId,
+				identity,
+				cancelledAt: NOW.toISOString(),
+			},
+		]),
+	};
+	const provider = {
+		cancel: vi.fn<TrackingProvider['cancel']>(async () => ({
+			ok: false,
+			code: 'TRACKING_PROVIDER_UNAVAILABLE',
+			retryable: true,
+		})),
+	};
+	const coordinator = {
+		cancel: vi.fn(async () => ({ status: 'cancelled' as const })),
+	};
+	const step = {
+		do: async <T>(_name: string, callback: () => Promise<T>) => callback(),
+		sleep: vi.fn(
+			async (_name: string, duration: number) =>
+				new Promise<void>((resolve) => {
+					setTimeout(resolve, duration);
+				}),
+		),
+	};
+	const completion = new TrackingCancellation(
+		authority,
+		provider,
+		coordinator,
+	).run(payload, step as unknown as WorkflowStep);
+	await vi.advanceTimersByTimeAsync(0);
+	expect(step.sleep).toHaveBeenCalledWith(
+		`wait-cancellation-${identity.attemptId}`,
+		60_000,
+	);
+	await vi.advanceTimersByTimeAsync(59_999);
+	expect(coordinator.cancel).not.toHaveBeenCalled();
+	expect(provider.cancel).toHaveBeenCalledOnce();
+	expect(authority.cancellationTargets).toHaveBeenCalledOnce();
+	await vi.advanceTimersByTimeAsync(1);
+	await expect(completion).resolves.toEqual({ kind: 'cancelled' });
+	expect(coordinator.cancel).toHaveBeenCalledOnce();
 });

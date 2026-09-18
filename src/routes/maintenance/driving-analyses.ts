@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppDependencies } from '../../app-dependencies';
 import { DrivingAnalysisAuthorityError } from '../../driving-analysis/analysis/driving-analysis-authority';
 import {
+	cancelDrivingAnalysisInputSchema,
 	createDrivingAnalysisInputSchema,
 	retryDrivingAnalysisInputSchema,
 } from '../../driving-analysis/analysis/driving-analysis-contracts';
@@ -93,7 +94,7 @@ export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 	});
 
 	routes.post('/driving-analyses/:analysisId/cancel', async (c) => {
-		const parsed = retryDrivingAnalysisInputSchema.safeParse(
+		const parsed = cancelDrivingAnalysisInputSchema.safeParse(
 			await c.req.json().catch(() => undefined),
 		);
 		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);

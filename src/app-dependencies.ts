@@ -18,7 +18,7 @@ export type AppDependencies = {
 	drivingAnalysisAuthority(env: Env): DrivingAnalysisAuthority;
 };
 
-export const startDrivingAnalysisCreation = async (
+export const startDrivingAnalysisWorkflow = async (
 	workflow: Env['DRIVING_ANALYSIS_WORKFLOW'],
 	payload: DrivingAnalysisWorkflowPayload,
 ): Promise<void> => {
@@ -80,7 +80,7 @@ export const defaultAppDependencies: AppDependencies = {
 	drivingAnalysisAuthority: (env) =>
 		new DrivingAnalysisAuthority(env.DB, {
 			startProcessing: async (payload) => {
-				await startDrivingAnalysisCreation(
+				await startDrivingAnalysisWorkflow(
 					env.DRIVING_ANALYSIS_WORKFLOW,
 					payload,
 				);

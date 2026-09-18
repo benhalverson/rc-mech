@@ -80,6 +80,10 @@ export const retryDrivingAnalysisInputSchema = z.strictObject({
 	expectedStateVersion: z.number().int().positive(),
 });
 
+export const cancelDrivingAnalysisInputSchema = z.strictObject({
+	expectedStateVersion: z.number().int().positive(),
+});
+
 export type CreateDrivingAnalysisInput = z.infer<
 	typeof createDrivingAnalysisInputSchema
 >;

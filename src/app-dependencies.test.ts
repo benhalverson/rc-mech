@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import {
 	defaultAppDependencies,
-	startDrivingAnalysisCreation,
+	startDrivingAnalysisWorkflow,
 	startRaceVideoValidation,
 } from './app-dependencies';
 import type { DrivingAnalysisWorkflowPayload } from './driving-analysis/analysis/driving-analysis-contracts';
@@ -117,7 +117,7 @@ describe('Race-video validation Workflow starter', () => {
 	});
 });
 
-describe('Driving-analysis creation Workflow starter', () => {
+describe('Driving-analysis Workflow starter', () => {
 	test('starts deterministic cancellation cleanup then terminates the fenced original', async () => {
 		const cancellation = { ...analysisPayload, cancellation: true as const };
 		const value = workflow(
@@ -149,7 +149,7 @@ describe('Driving-analysis creation Workflow starter', () => {
 	test('creates, accepts live replay, restarts failures, and rejects unknown state', async () => {
 		let value = workflow('queued', false, analysisPayload.analysisId);
 		await expect(
-			startDrivingAnalysisCreation(
+			startDrivingAnalysisWorkflow(
 				value.binding as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'],
 				analysisPayload,
 			),
@@ -160,7 +160,7 @@ describe('Driving-analysis creation Workflow starter', () => {
 		expect(value.get).not.toHaveBeenCalled();
 		value = workflow('queued', false);
 		await expect(
-			startDrivingAnalysisCreation(
+			startDrivingAnalysisWorkflow(
 				value.binding as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'],
 				analysisPayload,
 			),
@@ -169,7 +169,7 @@ describe('Driving-analysis creation Workflow starter', () => {
 		for (const status of ['queued', 'running', 'complete']) {
 			value = workflow(status);
 			await expect(
-				startDrivingAnalysisCreation(
+				startDrivingAnalysisWorkflow(
 					value.binding as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'],
 					analysisPayload,
 				),
@@ -179,7 +179,7 @@ describe('Driving-analysis creation Workflow starter', () => {
 		for (const status of ['errored', 'terminated']) {
 			value = workflow(status);
 			await expect(
-				startDrivingAnalysisCreation(
+				startDrivingAnalysisWorkflow(
 					value.binding as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'],
 					analysisPayload,
 				),
@@ -188,14 +188,14 @@ describe('Driving-analysis creation Workflow starter', () => {
 		}
 		value = workflow('unknown');
 		await expect(
-			startDrivingAnalysisCreation(
+			startDrivingAnalysisWorkflow(
 				value.binding as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'],
 				analysisPayload,
 			),
 		).rejects.toThrow('Workflow is unavailable');
 		value = workflow('queued', true, undefined, true);
 		await expect(
-			startDrivingAnalysisCreation(
+			startDrivingAnalysisWorkflow(
 				value.binding as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'],
 				analysisPayload,
 			),
