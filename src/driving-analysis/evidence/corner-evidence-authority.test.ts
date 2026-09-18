@@ -5,6 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import { afterEach, describe, expect, test } from 'vitest';
+import sharedMeasurement from '../../../containers/driving-analysis/tests/fixtures/subject-tracking/deterministic-measurement.json';
 import {
 	car,
 	driveSession,
@@ -20,7 +21,6 @@ import {
 import {
 	inferenceProfileFixture,
 	PROFILE_DIGEST,
-	submissionFixture,
 } from '../../testing/driving-analysis-tracking-fixtures';
 import { MockR2Controller } from '../../testing/hono-fixture';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
@@ -35,7 +35,10 @@ import {
 	trackingSegment,
 } from '../tracking/authority-schema';
 import { R2TrackingArtifactStore } from '../tracking/r2-tracking-artifact-store';
-import type { PreparedFrameManifest } from '../tracking/track-view-contracts';
+import {
+	type PreparedFrameManifest,
+	preparedFrameManifestSchema,
+} from '../tracking/track-view-contracts';
 import { subjectProvenanceForProfile } from '../tracking/tracking-artifact-publication';
 import {
 	AcceptedCornerEvidence,
@@ -367,7 +370,7 @@ const seed = async (
 		order: 0,
 		seedKind: 'initial',
 		seedSourceId: null,
-		seedJson: JSON.stringify(submissionFixture().trackingRequest.subjectSeed),
+		seedJson: JSON.stringify(sharedMeasurement.seed),
 		preparedMediaId: PREPARED_MEDIA_ID,
 		raceWindowEndTimestampMs: 400,
 		profileDigest: PROFILE_DIGEST,
@@ -638,66 +641,22 @@ describe('CornerEvidenceAuthority', () => {
 	test('integrates bounded R2 contracts with one atomic D1 measurement commit', async () => {
 		const profile = inferenceProfileFixture();
 		const provenance = await subjectProvenanceForProfile(profile);
-		const frameManifest: PreparedFrameManifest = {
-			contractVersion: 'subject-tracking.v1',
-			preparedMediaId: PREPARED_MEDIA_ID,
-			caseId: RUN_ID,
-			sourceChecksumSha256: SOURCE_CHECKSUM,
-			sourceByteCount: 100,
-			window: { startTimestampMs: 0, endTimestampMs: 400 },
-			trackView: { x: 0, y: 1 / 3, width: 1, height: 2 / 3 },
-			mediaByteCount: 50,
-			mediaChecksumSha256: MEDIA_CHECKSUM,
-			width: 160,
-			height: 60,
-			averageFrameRate: { numerator: 10, denominator: 1 },
-			ffmpegVersion: '7.1.2',
-			pipelineVersion: 'subject-tracking.v1',
-			preparationInputDigest: INPUT_DIGEST,
-			preparationConfigurationDigest: 'a'.repeat(64),
-			frames: [
-				{ preparedFrameIndex: 0, frameIndex: 1, timestampMs: 100 },
-				{ preparedFrameIndex: 1, frameIndex: 2, timestampMs: 200 },
-				{ preparedFrameIndex: 2, frameIndex: 3, timestampMs: 300 },
-			],
-		};
+		const scenario = sharedMeasurement.cases[0];
+		if (!scenario) throw new Error('missing complete measurement fixture');
+		const frameManifest: PreparedFrameManifest =
+			preparedFrameManifestSchema.parse({
+				...sharedMeasurement.manifest,
+				caseId: RUN_ID,
+				window: { startTimestampMs: 0, endTimestampMs: 400 },
+				frames: sharedMeasurement.manifest.frames.slice(0, scenario.frameCount),
+			});
 		const segment = {
-			contractVersion: 'subject-observation-segment.v1' as const,
-			outcome: 'accepted' as const,
+			...scenario.segment,
 			caseId: RUN_ID,
-			observations: [
-				{
-					timestampMs: 100,
-					frameIndex: 1,
-					box: { x: 0.15, y: 0.45, width: 0.1, height: 0.1 },
-					center: { x: 0.2, y: 0.5 },
-					visibility: 'visible' as const,
-					identityConfidence: 0.99,
-					origin: 'detected' as const,
-					provenance,
-				},
-				{
-					timestampMs: 200,
-					frameIndex: 2,
-					box: { x: 0.55, y: 0.45, width: 0.1, height: 0.1 },
-					center: { x: 0.6, y: 0.5 },
-					visibility: 'visible' as const,
-					identityConfidence: 0.99,
-					origin: 'detected' as const,
-					provenance,
-				},
-				{
-					timestampMs: 300,
-					frameIndex: 3,
-					box: { x: 0.85, y: 0.45, width: 0.1, height: 0.1 },
-					center: { x: 0.9, y: 0.5 },
-					visibility: 'visible' as const,
-					identityConfidence: 0.99,
-					origin: 'detected' as const,
-					provenance,
-				},
-			],
-			openGap: null,
+			observations: scenario.segment.observations.map((observation) => ({
+				...observation,
+				provenance,
+			})),
 			provenance,
 		};
 		const [manifestBytes, observationBytes] = await Promise.all([
@@ -721,20 +680,16 @@ describe('CornerEvidenceAuthority', () => {
 			value.authority,
 			new R2TrackingArtifactStore(r2.bucket),
 		);
-		await expect(evidence.commit(identity)).resolves.toMatchObject({
+		const context = await value.authority.load(identity);
+		expect(context.seed).toEqual(sharedMeasurement.seed);
+		expect(context.corners).toEqual(sharedMeasurement.corners);
+		await expect(evidence.commit(identity)).resolves.toEqual({
 			status: 'committed',
-			measurement: {
-				version: 'corner-evidence.v1',
-				passes: [
-					{
-						cornerId: CORNER_ID,
-						durationMs: 100,
-						eligibility: 'eligible',
-						rank: 1,
-						best: true,
-					},
-				],
-			},
+			measurement: scenario.expected,
+		});
+		await expect(evidence.commit(identity)).resolves.toEqual({
+			status: 'replayed',
+			measurement: scenario.expected,
 		});
 		expect(await value.database.select().from(cornerEvidenceBatch)).toEqual([
 			expect.objectContaining({
@@ -808,6 +763,40 @@ describe('CornerEvidenceAuthority', () => {
 			}),
 		]);
 	});
+
+	test.each(['before-first-commit', 'before-replay'] as const)(
+		'retains pinned map authority after retirement $case',
+		async (retirement) => {
+			const value = await seed();
+			if (retirement === 'before-replay')
+				await value.authority.commit(command());
+			await value.database
+				.update(trackMapVersion)
+				.set({
+					status: 'retired',
+					stateVersion: 3,
+					retiredAt: NOW.toISOString(),
+				})
+				.where(eq(trackMapVersion.id, MAP_VERSION_ID));
+			await expect(value.authority.load(identity)).resolves.toMatchObject({
+				approvedTrackMapVersionId: MAP_VERSION_ID,
+				corners: [{ id: CORNER_ID }],
+			});
+			await expect(value.authority.commit(command())).resolves.toEqual({
+				status: retirement === 'before-first-commit' ? 'committed' : 'replayed',
+				measurement,
+			});
+			await expect(value.authority.load(identity)).resolves.toMatchObject({
+				existingMeasurement: measurement,
+			});
+			expect(
+				await value.database.select().from(cornerEvidenceBatch),
+			).toHaveLength(1);
+			expect(
+				await value.database.select().from(cornerPassEvidence),
+			).toHaveLength(1);
+		},
+	);
 
 	test('atomically fences concurrent conflicting measurements at the child rows', async () => {
 		const value = await seed();

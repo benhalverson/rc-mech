@@ -33,6 +33,8 @@ import { MAX_CORNER_EVIDENCE_PASSES } from './corner-evidence';
 import { cornerEvidenceBatch, cornerPassEvidence } from './evidence-schema';
 
 const PASS_INSERT_CHUNK_SIZE = 100;
+const PINNED_EVIDENCE_MAP_STATUSES: (typeof trackMapVersion.$inferSelect)['status'][] =
+	['approved', 'retired'];
 
 export class CornerEvidenceAuthorityError extends Error {
 	constructor(readonly code: 'STALE_AUTHORITY' | 'RETRYABLE_INFRASTRUCTURE') {
@@ -215,7 +217,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 						'running',
 						'awaiting-reidentification',
 					]),
-					eq(trackMapVersion.status, 'approved'),
+					inArray(trackMapVersion.status, PINNED_EVIDENCE_MAP_STATUSES),
 					eq(
 						drivingAnalysis.raceWindowStartMs,
 						trackingRunInput.windowStartTimestampMs,
@@ -353,7 +355,7 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 				trackMapVersion,
 				and(
 					eq(trackMapVersion.id, command.approvedTrackMapVersionId),
-					eq(trackMapVersion.status, 'approved'),
+					inArray(trackMapVersion.status, PINNED_EVIDENCE_MAP_STATUSES),
 				),
 			)
 			.where(
