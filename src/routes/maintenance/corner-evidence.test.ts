@@ -1,5 +1,8 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { CornerEvidenceReview } from '../../driving-analysis/evidence/corner-evidence-review';
+import {
+	CornerEvidenceReview,
+	type CornerReview,
+} from '../../driving-analysis/evidence/corner-evidence-review';
 import { createHonoFixture } from '../../testing/hono-fixture';
 
 afterEach(() => vi.restoreAllMocks());
@@ -15,7 +18,7 @@ test('returns private owner-scoped accepted evidence and hides missing analyses'
 		trackMapVersionId: 'map-1',
 		tieToleranceMs: null,
 		corners: [],
-	};
+	} satisfies CornerReview;
 	const get = vi
 		.spyOn(CornerEvidenceReview.prototype, 'get')
 		.mockResolvedValue(evidence);

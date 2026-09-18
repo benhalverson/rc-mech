@@ -28,7 +28,7 @@ export type CornerReview = Readonly<{
 	carId: string;
 	driveSessionId: string;
 	stateVersion: number;
-	status: string;
+	status: (typeof drivingAnalysis.$inferSelect)['status'];
 	runId: string | null;
 	trackMapVersionId: string;
 	tieToleranceMs: number | null;
