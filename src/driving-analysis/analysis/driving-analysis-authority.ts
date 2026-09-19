@@ -26,6 +26,7 @@ import {
 	MAX_DRIVING_ANALYSIS_CREATIONS_PER_HOUR,
 	type PublicDrivingAnalysis,
 } from './driving-analysis-contracts';
+import { analysisRetryCommand } from './lifecycle-schema';
 
 type DrivingAnalysisRecord = typeof drivingAnalysis.$inferSelect;
 
@@ -35,6 +36,8 @@ export type DrivingAnalysisAuthorityErrorCode =
 	| 'NOT_FOUND'
 	| 'QUOTA_EXCEEDED'
 	| 'RATE_LIMITED'
+	| 'SOURCE_UNAVAILABLE'
+	| 'TERMINAL_FAILURE'
 	| 'WORKFLOW_UNAVAILABLE';
 
 export class DrivingAnalysisAuthorityError extends Error {
@@ -60,6 +63,7 @@ export type DrivingAnalysisAuthorityOptions = Readonly<{
 	id?: () => string;
 	workflowId?: () => string;
 	startProcessing?: (payload: DrivingAnalysisWorkflowPayload) => Promise<void>;
+	verifySubjectFrame?: (command: CreateDrivingAnalysisCommand) => Promise<void>;
 }>;
 
 export type DrivingAnalysisTransition =
@@ -186,6 +190,9 @@ export class DrivingAnalysisAuthority {
 	private readonly clock: () => Date;
 	private readonly id: () => string;
 	private readonly workflowId: () => string;
+	private readonly verifySubjectFrame: (
+		command: CreateDrivingAnalysisCommand,
+	) => Promise<void>;
 	private readonly startProcessing: (
 		payload: DrivingAnalysisWorkflowPayload,
 	) => Promise<void>;
@@ -200,6 +207,14 @@ export class DrivingAnalysisAuthority {
 		/* c8 ignore next -- production UUID generation is exercised by live Workflow retry acceptance. */
 		this.workflowId = options.workflowId ?? (() => crypto.randomUUID());
 		this.startProcessing = options.startProcessing ?? (async () => undefined);
+		this.verifySubjectFrame =
+			options.verifySubjectFrame ??
+			(async () => {
+				throw authorityError(
+					'SOURCE_UNAVAILABLE',
+					'Verified Subject-frame selection is unavailable',
+				);
+			});
 	}
 
 	async create(commandValue: CreateDrivingAnalysisCommand): Promise<{
@@ -236,6 +251,7 @@ export class DrivingAnalysisAuthority {
 				'Race window must stay inside the ready Race recording',
 			);
 		await this.requireApprovedTrackMap(parsed.data.approvedTrackMapVersionId);
+		await this.verifySubjectFrame(command);
 		await this.requireOwnerWithinAnalysisQuota(command.ownerId);
 		await this.consumeCreationPermit(command.ownerId);
 
@@ -384,7 +400,7 @@ export class DrivingAnalysisAuthority {
 		analysisId: string,
 	): Promise<PublicDrivingAnalysis> {
 		const record = await this.find(ownerId, analysisId);
-		if (!record)
+		if (!record || record.status === 'deleting' || record.status === 'deleted')
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
 		if (
 			record.stage === 'tracking' &&
@@ -418,12 +434,38 @@ export class DrivingAnalysisAuthority {
 		ownerId: string,
 		analysisId: string,
 		expectedStateVersion: number,
+		commandId = `${analysisId}:${expectedStateVersion}`,
 	): Promise<{ analysis: PublicDrivingAnalysis; retried: boolean }> {
 		if (!Number.isInteger(expectedStateVersion) || expectedStateVersion < 1)
 			throw authorityError('INVALID_INPUT', 'Invalid analysis state revision');
 		const current = await this.find(ownerId, analysisId);
 		if (!current)
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
+		const receipt = await this.database
+			.select()
+			.from(analysisRetryCommand)
+			.where(
+				and(
+					eq(analysisRetryCommand.ownerId, ownerId),
+					eq(analysisRetryCommand.commandId, commandId),
+				),
+			)
+			.get();
+		if (receipt) {
+			if (
+				receipt.analysisId !== analysisId ||
+				receipt.expectedStateVersion !== expectedStateVersion ||
+				receipt.workflowId !== current.workflowId ||
+				current.status === 'deleting' ||
+				current.status === 'deleted'
+			)
+				throw authorityError(
+					'CONFLICT',
+					'Retry command no longer matches this analysis',
+				);
+			if (current.status === 'queued') await this.start(current);
+			return { analysis: await this.get(ownerId, analysisId), retried: false };
+		}
 		if (current.stateVersion !== expectedStateVersion)
 			throw authorityError(
 				'CONFLICT',
@@ -438,11 +480,75 @@ export class DrivingAnalysisAuthority {
 				'CONFLICT',
 				'Driving analysis is not eligible for retry',
 			);
+		const failedRun = await this.database
+			.select({ code: trackingRun.safeFailureCode })
+			.from(trackingRun)
+			.where(
+				and(
+					eq(trackingRun.ownerId, ownerId),
+					eq(trackingRun.workflowId, current.workflowId),
+				),
+			)
+			.get();
+		if (failedRun?.code === 'TRACKING_ARTIFACT_INVALID')
+			throw authorityError(
+				'TERMINAL_FAILURE',
+				'Processing rejected these inputs; start a new analysis with corrected inputs',
+			);
+		try {
+			await this.requireReadyRaceVideo(
+				ownerId,
+				current.carId,
+				current.driveSessionId,
+				current.raceVideoId,
+			);
+		} catch {
+			throw authorityError(
+				'SOURCE_UNAVAILABLE',
+				'The source Race recording is no longer available for retry',
+			);
+		}
 		const workflowId = uuidV4Schema.parse(this.workflowId());
 		const timestamp = this.clock().toISOString();
+		const witness = and(
+			eq(drivingAnalysis.id, analysisId),
+			eq(drivingAnalysis.ownerId, ownerId),
+			eq(drivingAnalysis.workflowId, current.workflowId),
+			eq(drivingAnalysis.stateVersion, current.stateVersion),
+			exists(
+				this.database
+					.select({ id: raceVideo.id })
+					.from(raceVideo)
+					.innerJoin(
+						raceVideoValidation,
+						eq(raceVideoValidation.raceVideoId, raceVideo.id),
+					)
+					.where(
+						and(
+							eq(raceVideo.id, current.raceVideoId),
+							eq(raceVideo.ownerId, ownerId),
+							eq(raceVideo.status, 'validating'),
+							eq(raceVideoValidation.status, 'ready'),
+						),
+					),
+			),
+		);
 		let rows: DrivingAnalysisRecord[] | undefined;
 		try {
-			const [, retriedRows] = await this.database.batch([
+			const [, , retriedRows] = await this.database.batch([
+				this.database.insert(analysisRetryCommand).select(
+					this.database
+						.select({
+							ownerId: drivingAnalysis.ownerId,
+							commandId: sql<string>`${commandId}`,
+							analysisId: drivingAnalysis.id,
+							expectedStateVersion: sql<number>`${expectedStateVersion}`,
+							workflowId: sql<string>`${workflowId}`,
+							createdAt: sql<string>`${timestamp}`,
+						})
+						.from(drivingAnalysis)
+						.where(witness),
+				),
 				this.database
 					.update(trackingRun)
 					.set({
@@ -455,6 +561,12 @@ export class DrivingAnalysisAuthority {
 							eq(trackingRun.ownerId, ownerId),
 							eq(trackingRun.analysisId, analysisId),
 							eq(trackingRun.status, 'active'),
+							exists(
+								this.database
+									.select({ id: drivingAnalysis.id })
+									.from(drivingAnalysis)
+									.where(witness),
+							),
 						),
 					),
 				this.database
@@ -468,14 +580,7 @@ export class DrivingAnalysisAuthority {
 						stateVersion: current.stateVersion + 1,
 						updatedAt: timestamp,
 					})
-					.where(
-						and(
-							eq(drivingAnalysis.id, analysisId),
-							eq(drivingAnalysis.ownerId, ownerId),
-							eq(drivingAnalysis.workflowId, current.workflowId),
-							eq(drivingAnalysis.stateVersion, current.stateVersion),
-						),
-					)
+					.where(witness)
 					.returning(),
 			]);
 			rows = retriedRows;
@@ -699,25 +804,47 @@ export class DrivingAnalysisAuthority {
 			current.status !== 'awaiting-reidentification'
 		)
 			return { kind: 'stale' };
-		const published = await this.database
-			.update(drivingAnalysis)
-			.set({
-				status: target.status,
-				progress: target.progress,
-				stateVersion: current.stateVersion + 1,
-				updatedAt,
-			})
-			.where(
-				and(
-					eq(drivingAnalysis.id, analysisId),
-					eq(drivingAnalysis.ownerId, ownerId),
-					eq(drivingAnalysis.workflowId, run.workflowId),
-					eq(drivingAnalysis.stateVersion, current.stateVersion),
-					eq(drivingAnalysis.stage, 'tracking'),
+		const witness = and(
+			eq(drivingAnalysis.id, analysisId),
+			eq(drivingAnalysis.ownerId, ownerId),
+			eq(drivingAnalysis.workflowId, run.workflowId),
+			eq(drivingAnalysis.stateVersion, current.stateVersion),
+			eq(drivingAnalysis.stage, 'tracking'),
+		);
+		const [, rows] = await this.database.batch([
+			this.database
+				.update(trackingRun)
+				.set({
+					status: 'failed',
+					safeFailureCode: state.safeFailureCode,
+					completedAt: updatedAt,
+					version: sql`${trackingRun.version} + 1`,
+				})
+				.where(
+					and(
+						eq(trackingRun.id, run.id),
+						eq(trackingRun.status, 'active'),
+						sql`${target.status} = 'failed'`,
+						exists(
+							this.database
+								.select({ id: drivingAnalysis.id })
+								.from(drivingAnalysis)
+								.where(witness),
+						),
+					),
 				),
-			)
-			.returning()
-			.get();
+			this.database
+				.update(drivingAnalysis)
+				.set({
+					status: target.status,
+					progress: target.progress,
+					stateVersion: current.stateVersion + 1,
+					updatedAt,
+				})
+				.where(witness)
+				.returning(),
+		]);
+		const published = rows[0];
 		/* c8 ignore next 2 -- the optimistic write can miss only under a concurrent authority transition. */
 		return published
 			? {
@@ -792,12 +919,14 @@ export class DrivingAnalysisAuthority {
 		record: DrivingAnalysisRecord,
 		requestDigest: string,
 	): Promise<{ analysis: PublicDrivingAnalysis; created: false }> {
+		if (record.status === 'deleting' || record.status === 'deleted')
+			throw authorityError('NOT_FOUND', 'Driving analysis not found');
 		if (record.requestDigest !== requestDigest)
 			throw authorityError(
 				'CONFLICT',
 				'Client request identity was reused with different analysis input',
 			);
-		await this.start(record);
+		if (record.status === 'queued') await this.start(record);
 		return { analysis: publicAnalysis(record), created: false };
 	}
 

@@ -127,6 +127,15 @@ const analysisCommand = (): StartDrivingAnalysisCommand => ({
 });
 
 class FakeDrivingAnalysisGateway {
+	readonly frameValue = signal<unknown>(null);
+	readonly frameLoading = signal(false);
+	readonly frameError = signal<unknown>(null);
+	readonly readSubjectFrame = vi.fn(() => ({
+		hasValue: () => this.frameValue() !== null,
+		value: () => this.frameValue(),
+		isLoading: () => this.frameLoading(),
+		error: () => this.frameError(),
+	}));
 	readonly analysisValue = signal<DrivingAnalysis>(analysis());
 	readonly analysisHasValue = signal(false);
 	readonly analysisLoading = signal(false);
@@ -297,6 +306,7 @@ describe('DrivingAnalysisStore', () => {
 					provide: DrivingAnalysisRequestIdentityCapability,
 					useValue: {
 						requestId: vi.fn(() => '55555555-5555-4555-8555-555555555555'),
+						retryId: vi.fn(() => '55555555-5555-4555-8555-555555555555'),
 						clear: vi.fn(),
 					},
 				},
@@ -313,6 +323,23 @@ describe('DrivingAnalysisStore', () => {
 	afterEach(() => TestBed.resetTestingModule());
 
 	it('selects route context and projects resource state', () => {
+		expect(store.selectedSubjectFrame()).toBeNull();
+		expect(store.subjectFrameLoading()).toBe(false);
+		expect(store.subjectFrameError()).toBeNull();
+		store.selectSubjectFrame({ recordingId: 'recording-1', timestampMs: 125 });
+		expect(store.subjectFrameRequest()).toEqual({
+			recordingId: 'recording-1',
+			timestampMs: 125,
+		});
+		analyses.frameValue.set({ frameIndex: 2, timestampMs: 200 });
+		analyses.frameLoading.set(true);
+		analyses.frameError.set(new Error('unavailable'));
+		expect(store.selectedSubjectFrame()).toEqual({
+			frameIndex: 2,
+			timestampMs: 200,
+		});
+		expect(store.subjectFrameLoading()).toBe(true);
+		expect(store.subjectFrameError()).toContain('could not be verified');
 		expect(store.recordings()).toEqual([]);
 		expect(store.loading()).toBe(false);
 		expect(store.readFailure()).toBeNull();
@@ -493,7 +520,11 @@ describe('DrivingAnalysisStore', () => {
 		expect(store.analysisCreation().status).toBe('retrying');
 		store.retryAnalysis();
 		expect(analyses.retry).toHaveBeenCalledOnce();
-		expect(analyses.retry).toHaveBeenCalledWith(analysis().id, 3);
+		expect(analyses.retry).toHaveBeenCalledWith(
+			analysis().id,
+			3,
+			'55555555-5555-4555-8555-555555555555',
+		);
 		retried.next(analysis({ stateVersion: 4 }));
 		retried.complete();
 		await vi.waitFor(() =>

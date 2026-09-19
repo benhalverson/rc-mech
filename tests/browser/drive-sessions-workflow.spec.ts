@@ -77,6 +77,43 @@ test('reviews private Corner comparisons with keyboard-accessible provenance and
 			},
 		}),
 	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/clips', (route) =>
+		route.fulfill({
+			json: {
+				clips: [1, 2].map((ordinal) => ({
+					id: `clip-${ordinal}`,
+					cornerId: 'corner-1',
+					ordinal,
+					segmentId: 'segment-1',
+					status: 'ready',
+					inputDigest: 'e'.repeat(64),
+					checksum: 'f'.repeat(64),
+					durationMs: 1500,
+					pipelineVersion: 'corner-render.v1',
+				})),
+			},
+		}),
+	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/lifecycle', (route) =>
+		route.fulfill({
+			json: {
+				lifecycle: {
+					analysisId: 'analysis-1',
+					status: 'running',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: true,
+					canRetry: false,
+					failure: null,
+				},
+			},
+		}),
+	);
+	await page.route(
+		'**/api/v1/driving-analyses/analysis-1/clips/*/content',
+		(route) =>
+			route.fulfill({ body: playableRaceVideo, contentType: 'video/mp4' }),
+	);
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(
 		`/garage/${created.car.id}/drive-sessions/analysis/analysis-1`,
@@ -90,7 +127,21 @@ test('reviews private Corner comparisons with keyboard-accessible provenance and
 	await expect(
 		page.getByText('Tracking lost the Subject car during this pass.'),
 	).toBeVisible();
-	const details = page.locator('summary').first();
+	const videos = page.locator('video');
+	await expect(videos).toHaveCount(2);
+	await expect(videos.first()).toHaveAttribute('controls', '');
+	await videos.first().evaluate(async (video: HTMLVideoElement) => {
+		await video.play();
+		video.pause();
+	});
+	await expect
+		.poll(() =>
+			videos.first().evaluate((video: HTMLVideoElement) => video.readyState),
+		)
+		.toBeGreaterThan(0);
+	const details = page
+		.getByText('Timing and provenance', { exact: true })
+		.first();
 	await details.focus();
 	await page.keyboard.press('Enter');
 	await expect(
@@ -102,6 +153,18 @@ test('reviews private Corner comparisons with keyboard-accessible provenance and
 		page.getByRole('link', { name: 'Back to Drive sessions' }),
 	).toHaveAttribute('href', `/garage/${created.car.id}/drive-sessions`);
 	expect(await scan(page)).toEqual([]);
+	const deleteButton = page.getByRole('button', {
+		name: 'Delete analysis',
+		exact: true,
+	});
+	await deleteButton.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		page.getByRole('button', { name: 'Confirm deletion' }),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Keep analysis' }).click();
+	await expect(deleteButton).toBeFocused();
 });
 const playableRaceVideo = readFileSync(
 	new URL('./support/race-video.mp4', import.meta.url),
@@ -372,6 +435,7 @@ test('keeps dark Drive session editing, history, and archive states accessible',
 test('creates a queued Driving analysis from a ready private Race recording', async ({
 	page,
 }) => {
+	test.setTimeout(45_000);
 	await authenticateOwner(page);
 	const created = await createCar(page, 'Driving analysis browser fixture');
 	const driveResponse = await page.request.post(
@@ -460,8 +524,16 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		.click();
 	await creator.getByLabel('Race start').fill('100');
 	await creator.getByLabel('Race end').fill('900');
-	await creator.getByLabel('Subject timestamp (ms)').fill('500');
-	await creator.getByLabel('Source frame index').fill('5');
+	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-mark-seed]').click();
+	await expect(creator.locator('[data-subject-frame]')).toBeVisible();
+	await expect(creator.locator('[data-frame-editor]')).toBeEnabled();
+	await expect(
+		creator.getByLabel('Verified Subject timestamp (ms)'),
+	).toHaveValue('200');
+	await expect(creator.getByLabel('Verified source frame index')).toHaveValue(
+		'2',
+	);
 	await creator.getByLabel('Subject identity').fill('car-44');
 	const subjectBox = creator.locator('[data-subject-box]');
 	const surface = creator.locator('[data-box-surface]');
@@ -541,8 +613,8 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		approvedTrackMapVersionId: trackMap.id,
 		raceWindow: { startTimestampMs: 100, endTimestampMs: 900 },
 		subjectSeed: {
-			timestampMs: 500,
-			frameIndex: 5,
+			timestampMs: 200,
+			frameIndex: 2,
 			identity: 'car-44',
 			box: expectedSubjectBox,
 		},
@@ -584,6 +656,97 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	};
 	await creator.getByRole('button', { name: 'Check status' }).click();
 	await expect(creator.getByText('Analysis running')).toBeVisible();
+	const correctionRequests: unknown[] = [];
+	const gapContext = {
+		frames: [{ frameIndex: 7, timestampMs: 700 }],
+		runId: '11111111-1111-4111-8111-111111111111',
+		segmentId: '22222222-2222-4222-8222-222222222222',
+		acceptedDigest: 'a'.repeat(64),
+		gap: { startTimestampMs: 600, reason: 'missing' },
+	};
+	let failGapContext = false;
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/reidentification*`,
+		async (route) => {
+			if (route.request().method() === 'GET') {
+				if (failGapContext) {
+					failGapContext = false;
+					await route.fulfill({ status: 503, json: { error: 'Unavailable' } });
+					return;
+				}
+				await route.fulfill({ json: { context: gapContext } });
+				return;
+			}
+			const correction = route.request().postDataJSON() as {
+				correctionId: string;
+			};
+			correctionRequests.push(correction);
+			await route.fulfill(
+				correctionRequests.length === 1
+					? { status: 503, json: { error: 'Retry saved correction' } }
+					: {
+							status: 202,
+							json: {
+								correctionId: correction.correctionId,
+								runId: gapContext.runId,
+								segmentId: correction.correctionId,
+							},
+						},
+			);
+		},
+	);
+	trackingState = {
+		...trackingState,
+		stateVersion: trackingState.stateVersion + 1,
+		lifecycle: 'awaiting-reidentification',
+		status: 'awaiting-reidentification',
+		waitReason: null,
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	const correctionEditor = creator.locator('app-subject-reidentification');
+	await expect(
+		correctionEditor.getByText('Tracking became uncertain', { exact: false }),
+	).toBeVisible();
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '0');
+	await expect(
+		correctionEditor.getByText('Selected source frame 7 at 700 ms'),
+	).toBeVisible();
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	await expect
+		.poll(() =>
+			correctionEditor
+				.locator('img')
+				.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		)
+		.toBeGreaterThan(0);
+	await correctionEditor.getByLabel('Width', { exact: true }).fill('0.12');
+	expect(await scan(page)).toEqual([]);
+	await correctionEditor
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.click();
+	await expect(correctionEditor.getByRole('alert')).toContainText(
+		'Retry the same frame',
+	);
+	await correctionEditor
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.click();
+	await expect(correctionEditor.getByRole('status')).toContainText(
+		'Subject correction accepted',
+	);
+	expect(correctionRequests).toHaveLength(2);
+	expect(correctionRequests[1]).toEqual(correctionRequests[0]);
+	expect(correctionRequests[0]).toMatchObject({
+		runId: gapContext.runId,
+		segmentId: gapContext.segmentId,
+		acceptedDigest: gapContext.acceptedDigest,
+		subjectSeed: { timestampMs: 700, frameIndex: 7 },
+	});
+	expect(await scan(page)).toEqual([]);
 	trackingState = {
 		...trackingState,
 		lifecycle: 'failed',
@@ -600,6 +763,98 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(
 		creator.getByRole('button', { name: 'Retry workflow' }),
 	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	trackingState = {
+		...trackingState,
+		lifecycle: 'awaiting-reidentification',
+		status: 'awaiting-reidentification',
+		stateVersion: trackingState.stateVersion + 1,
+		safeFailureCode: null,
+	};
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/lifecycle`,
+		(route) =>
+			route.fulfill({
+				json: {
+					lifecycle: {
+						analysisId: drivingAnalysis.id,
+						status: trackingState.status,
+						stateVersion: trackingState.stateVersion,
+						permanent: false,
+						canCancel: true,
+						canRetry: false,
+						failure: null,
+					},
+				},
+			}),
+	);
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/evidence`,
+		(route) =>
+			route.fulfill({
+				json: {
+					evidence: {
+						analysisId: drivingAnalysis.id,
+						carId: created.car.id,
+						driveSessionId: drive.driveSession.id,
+						stateVersion: trackingState.stateVersion,
+						status: trackingState.status,
+						runId: gapContext.runId,
+						trackMapVersionId: trackMap.id,
+						tieToleranceMs: null,
+						corners: [],
+					},
+				},
+			}),
+	);
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/clips`,
+		(route) => route.fulfill({ json: { clips: [] } }),
+	);
+	failGapContext = true;
+	await page.goto(
+		`/garage/${created.car.id}/drive-sessions/analysis/${drivingAnalysis.id}`,
+	);
+	const reopenedCorrection = page.locator(
+		'app-corner-review app-subject-reidentification',
+	);
+	await expect(reopenedCorrection.getByRole('alert')).toContainText(
+		'Gap context could not be loaded',
+	);
+	expect(await scan(page)).toEqual([]);
+	await reopenedCorrection
+		.getByRole('button', { name: 'Retry gap context' })
+		.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		reopenedCorrection.getByText('Selected source frame 7 at 700 ms'),
+	).toBeVisible();
+	await expect(reopenedCorrection.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	await expect
+		.poll(() =>
+			reopenedCorrection
+				.locator('img')
+				.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		)
+		.toBeGreaterThan(0);
+	await expect(
+		reopenedCorrection.getByRole('heading', {
+			name: 'Subject car correction',
+			level: 4,
+		}),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	await reopenedCorrection
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.focus();
+	await page.keyboard.press('Enter');
+	await expect(reopenedCorrection.getByRole('status')).toContainText(
+		'Subject correction accepted',
+	);
+	expect(correctionRequests).toHaveLength(3);
 	expect(await scan(page)).toEqual([]);
 });
 

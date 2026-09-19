@@ -3,19 +3,40 @@ import {
 	HttpErrorResponse,
 	httpResource,
 } from '@angular/common/http';
-import { computed, inject, Service, signal } from '@angular/core';
+import { computed, inject, Service, type Signal, signal } from '@angular/core';
 import { catchError, map, type Observable, throwError } from 'rxjs';
 import type * as z from 'zod/mini';
-import { minLength, safeParse, strictObject, string, trim } from 'zod/mini';
+import {
+	boolean,
+	minLength,
+	optional,
+	safeParse,
+	strictObject,
+	string,
+	trim,
+} from 'zod/mini';
 import {
 	type CreateDrivingAnalysisCommand,
 	type DrivingAnalysis,
 	type DrivingAnalysisGatewayFailure,
 	drivingAnalysisResponseSchema,
 } from './driving-analysis.models';
+import {
+	type SubjectFrameRequest,
+	subjectFrameResponseSchema,
+} from './subject-frame.models';
+
+export const subjectFrameContentUrl = (
+	recordingId: string,
+	frameIndex: number,
+	checksum: string,
+): string =>
+	`/api/v1/race-videos/${encodeURIComponent(recordingId)}/subject-frames/${frameIndex}/content?checksum=${encodeURIComponent(checksum)}`;
 
 const apiErrorSchema = strictObject({
 	error: string().check(trim(), minLength(1)),
+	code: optional(string()),
+	retryable: optional(boolean()),
 });
 
 class InvalidDrivingAnalysisResponse extends Error {}
@@ -56,6 +77,32 @@ const createUrl = (carId: string, driveSessionId: string): string =>
 
 @Service()
 export class DrivingAnalysisGateway {
+	readSubjectFrame(selection: Signal<SubjectFrameRequest | null>) {
+		return httpResource(
+			() => {
+				const selected = selection();
+				return selected
+					? {
+							url: `/api/v1/race-videos/${encodeURIComponent(selected.recordingId)}/subject-frame?timestampMs=${selected.timestampMs}`,
+							withCredentials: true,
+						}
+					: undefined;
+			},
+			{
+				parse: (value: unknown) => {
+					const frame = subjectFrameResponseSchema.parse(value).frame;
+					return {
+						...frame,
+						contentUrl: subjectFrameContentUrl(
+							frame.recordingId,
+							frame.frameIndex,
+							frame.sourceChecksumSha256,
+						),
+					};
+				},
+			},
+		);
+	}
 	private readonly http = inject(HttpClient);
 	private readonly analysisId = signal('');
 	readonly analysis = httpResource<DrivingAnalysis>(
@@ -94,11 +141,12 @@ export class DrivingAnalysisGateway {
 	retry(
 		analysisId: string,
 		expectedStateVersion: number,
+		commandId?: string,
 	): Observable<DrivingAnalysis> {
 		return this.parseRequest(
 			this.http.post<unknown>(
 				`/api/v1/driving-analyses/${encodeURIComponent(analysisId)}/retry`,
-				{ expectedStateVersion },
+				{ expectedStateVersion, ...(commandId ? { commandId } : {}) },
 				{ withCredentials: true },
 			),
 		);

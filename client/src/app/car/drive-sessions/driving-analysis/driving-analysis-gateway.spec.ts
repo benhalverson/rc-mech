@@ -3,6 +3,7 @@ import {
 	HttpTestingController,
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,7 @@ import {
 	drivingAnalysisGatewayFailure,
 	parseDrivingAnalysis,
 } from './driving-analysis-gateway';
+import type { SubjectFrameRequest } from './subject-frame.models';
 
 const response = {
 	drivingAnalysis: {
@@ -55,6 +57,18 @@ const command = {
 };
 
 describe('DrivingAnalysisGateway', () => {
+	it('sends a stable retry command identity with the optimistic version', async () => {
+		const gateway = TestBed.inject(DrivingAnalysisGateway);
+		const requestId = '55555555-5555-4555-8555-555555555555';
+		const result = firstValueFrom(gateway.retry('analysis-1', 3, requestId));
+		const request = http.expectOne('/api/v1/driving-analyses/analysis-1/retry');
+		expect(request.request.body).toEqual({
+			expectedStateVersion: 3,
+			commandId: requestId,
+		});
+		request.flush(response);
+		await expect(result).resolves.toEqual(response.drivingAnalysis);
+	});
 	let gateway: DrivingAnalysisGateway;
 	let http: HttpTestingController;
 
@@ -75,6 +89,38 @@ describe('DrivingAnalysisGateway', () => {
 		TestBed.resetTestingModule();
 	});
 
+	it('loads verified frame facts only for an explicit selection', async () => {
+		const selection = signal<SubjectFrameRequest | null>(null);
+		const resource = TestBed.runInInjectionContext(() =>
+			gateway.readSubjectFrame(selection),
+		);
+		TestBed.tick();
+		http.expectNone((request) => request.url.includes('/subject-frame'));
+		selection.set({ recordingId: 'recording/one', timestampMs: 125 });
+		TestBed.tick();
+		const request = http.expectOne(
+			'/api/v1/race-videos/recording%2Fone/subject-frame?timestampMs=125',
+		);
+		expect(request.request.withCredentials).toBe(true);
+		const frame = {
+			recordingId: 'recording/one',
+			requestedTimestampMs: 125,
+			frameIndex: 2,
+			timestampMs: 200,
+			sourceChecksumSha256: 'a'.repeat(64),
+			contentUrl: `/api/v1/race-videos/recording%2Fone/subject-frames/2/content?checksum=${'a'.repeat(64)}`,
+		};
+		request.flush({ frame });
+		await vi.waitFor(() => expect(resource.value()).toEqual(frame));
+		selection.set({ recordingId: 'recording/one', timestampMs: 250 });
+		TestBed.tick();
+		http
+			.expectOne(
+				'/api/v1/race-videos/recording%2Fone/subject-frame?timestampMs=250',
+			)
+			.flush({ frame: { ...frame, unsafe: true } });
+		await vi.waitFor(() => expect(resource.error()).toBeTruthy());
+	});
 	it('strictly parses immutable analysis and lifecycle facts', () => {
 		const waiting = {
 			...response.drivingAnalysis,
@@ -186,6 +232,16 @@ describe('DrivingAnalysisGateway', () => {
 		expect(request.request.body).toEqual({ expectedStateVersion: 3 });
 		request.flush(response, { status: 202, statusText: 'Accepted' });
 		await expect(retried).resolves.toEqual(response.drivingAnalysis);
+		const commandedRetry = firstValueFrom(
+			gateway.retry('analysis/one', 3, 'retry-1'),
+		);
+		request = http.expectOne('/api/v1/driving-analyses/analysis%2Fone/retry');
+		expect(request.request.body).toEqual({
+			expectedStateVersion: 3,
+			commandId: 'retry-1',
+		});
+		request.flush(response, { status: 202, statusText: 'Accepted' });
+		await expect(commandedRetry).resolves.toEqual(response.drivingAnalysis);
 
 		gateway.selectAnalysis('analysis/one');
 		gateway.analysis.value();

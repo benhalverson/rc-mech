@@ -6,6 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AnalysisLifecycleGateway } from './analysis-lifecycle-gateway';
 import { CornerReview } from './corner-review';
 import {
 	cornerReviewResponseSchema,
@@ -13,6 +14,7 @@ import {
 } from './corner-review.models';
 import { CornerReviewGateway } from './corner-review-gateway';
 import { CornerReviewStore } from './corner-review-store';
+import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
 
 const evidence: Review = {
 	analysisId: 'analysis-1',
@@ -75,6 +77,8 @@ describe('Corner review', () => {
 				provideRouter([]),
 				CornerReviewGateway,
 				CornerReviewStore,
+				AnalysisLifecycleGateway,
+				DrivingAnalysisRequestIdentityCapability,
 			],
 		});
 		http = TestBed.inject(HttpTestingController);
@@ -86,11 +90,29 @@ describe('Corner review', () => {
 			TestBed.resetTestingModule();
 		}
 	});
-	const open = (analysisId: string) => {
+	const open = (analysisId: string, clips: object = { clips: [] }) => {
 		const fixture = TestBed.createComponent(CornerReview);
 		fixture.componentRef.setInput('analysisId', analysisId);
 		fixture.detectChanges();
 		TestBed.tick();
+		for (const request of http.match((request) =>
+			request.url.endsWith('/lifecycle'),
+		))
+			request.flush({
+				lifecycle: {
+					analysisId,
+					status: 'cancelled',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: false,
+					canRetry: false,
+					failure: null,
+				},
+			});
+		if (analysisId)
+			http
+				.expectOne(`/api/v1/driving-analyses/${analysisId}/clips`)
+				.flush(clips);
 		return {
 			fixture,
 			routeNativeElement: fixture.nativeElement as HTMLElement,
@@ -99,7 +121,21 @@ describe('Corner review', () => {
 	};
 
 	it('reviews accepted timing, exclusions, empty corners, and refreshed evidence', async () => {
-		const harness = open('analysis-1');
+		const harness = open('analysis-1', {
+			clips: [
+				{
+					id: 'clip-1',
+					cornerId: 'corner-1',
+					ordinal: 1,
+					segmentId: 'segment-1',
+					status: 'ready',
+					inputDigest: 'a'.repeat(64),
+					checksum: 'b'.repeat(64),
+					durationMs: 1500,
+					pipelineVersion: 'corner-render.v1',
+				},
+			],
+		});
 		expect(harness.routeNativeElement?.textContent).toContain(
 			'Loading accepted',
 		);
@@ -113,6 +149,9 @@ describe('Corner review', () => {
 		const root = harness.routeNativeElement;
 		expect(root?.textContent).toContain('500.75 ms');
 		expect(root?.textContent).toContain('Best corner pass');
+		expect(root.querySelector('video')?.getAttribute('src')).toBe(
+			'/api/v1/driving-analyses/analysis-1/clips/clip-1/content',
+		);
 		expect(root?.textContent).toContain('between frames 2 and 3');
 		expect(root?.textContent).toContain('40 ms');
 		expect(root?.querySelector('a')?.getAttribute('href')).toBe(
@@ -121,6 +160,35 @@ describe('Corner review', () => {
 		root?.querySelector('button')?.click();
 		harness.detectChanges();
 		TestBed.tick();
+		for (const request of http.match((request) =>
+			request.url.endsWith('/lifecycle'),
+		))
+			request.flush({
+				lifecycle: {
+					analysisId: 'analysis-1',
+					status: 'cancelled',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: false,
+					canRetry: false,
+					failure: null,
+				},
+			});
+		http.expectOne('/api/v1/driving-analyses/analysis-1/clips').flush({
+			clips: [
+				{
+					id: 'clip-1',
+					cornerId: 'corner-1',
+					ordinal: 1,
+					segmentId: 'segment-1',
+					status: 'not-ready',
+					inputDigest: 'a'.repeat(64),
+					checksum: null,
+					durationMs: null,
+					pipelineVersion: 'corner-render.v1',
+				},
+			],
+		});
 		const original = evidence.corners[0]?.passes[0];
 		if (!original) throw new Error('missing pass fixture');
 		http.expectOne('/api/v1/driving-analyses/analysis-1/evidence').flush({
@@ -185,6 +253,23 @@ describe('Corner review', () => {
 			harness.routeNativeElement?.querySelector('button')?.click();
 			harness.detectChanges();
 			TestBed.tick();
+			for (const request of http.match((request) =>
+				request.url.endsWith('/lifecycle'),
+			))
+				request.flush({
+					lifecycle: {
+						analysisId: 'analysis-1',
+						status: 'cancelled',
+						stateVersion: 1,
+						permanent: false,
+						canCancel: false,
+						canRetry: false,
+						failure: null,
+					},
+				});
+			http
+				.expectOne('/api/v1/driving-analyses/analysis-1/clips')
+				.flush({}, { status: 503, statusText: 'Unavailable' });
 			http.expectOne('/api/v1/driving-analyses/analysis-1/evidence').flush({
 				evidence: {
 					...evidence,

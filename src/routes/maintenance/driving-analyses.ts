@@ -17,6 +17,8 @@ const errorStatus = (
 		case 'NOT_FOUND':
 			return 404;
 		case 'CONFLICT':
+		case 'SOURCE_UNAVAILABLE':
+		case 'TERMINAL_FAILURE':
 		case 'QUOTA_EXCEEDED':
 			return 409;
 		case 'RATE_LIMITED':
@@ -35,7 +37,13 @@ const handle = async <T>(
 	} catch (error) {
 		if (error instanceof DrivingAnalysisAuthorityError)
 			return Response.json(
-				{ error: error.message },
+				{
+					error: error.message,
+					code: error.code,
+					retryable:
+						error.code === 'WORKFLOW_UNAVAILABLE' ||
+						error.code === 'RATE_LIMITED',
+				},
 				{ status: errorStatus(error.code) },
 			);
 		throw error;
@@ -44,6 +52,30 @@ const handle = async <T>(
 
 export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 	const routes = new Hono<AppEnv>();
+	routes.get('/driving-analyses/:analysisId/lifecycle', (c) =>
+		handle(
+			() =>
+				dependencies
+					.analysisLifecycle(c.env)
+					.get(c.get('userId'), c.req.param('analysisId')),
+			(lifecycle) => Response.json({ lifecycle }),
+		),
+	);
+	routes.delete('/driving-analyses/:analysisId', async (c) => {
+		const parsed = cancelDrivingAnalysisInputSchema.safeParse(
+			await c.req.json().catch(() => undefined),
+		);
+		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+		return handle(
+			() =>
+				dependencies.analysisLifecycle(c.env).remove({
+					ownerId: c.get('userId'),
+					analysisId: c.req.param('analysisId'),
+					expectedStateVersion: parsed.data.expectedStateVersion,
+				}),
+			(lifecycle) => Response.json({ lifecycle }, { status: 202 }),
+		);
+	});
 
 	routes.post('/cars/:carId/drives/:driveId/driving-analyses', async (c) => {
 		const parsed = createDrivingAnalysisInputSchema.safeParse(
@@ -87,6 +119,7 @@ export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 						c.get('userId'),
 						c.req.param('analysisId'),
 						parsed.data.expectedStateVersion,
+						parsed.data.commandId,
 					),
 			({ analysis }) =>
 				Response.json({ drivingAnalysis: analysis }, { status: 202 }),

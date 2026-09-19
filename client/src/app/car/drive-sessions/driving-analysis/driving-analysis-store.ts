@@ -46,8 +46,10 @@ import {
 } from './race-recording.models';
 import { RaceRecordingFileCapability } from './race-recording-file';
 import { RaceRecordingGateway } from './race-recording-gateway';
+import type { SubjectFrameRequest } from './subject-frame.models';
 
 type RaceRecordingState = {
+	subjectFrameRequest: SubjectFrameRequest | null;
 	carId: string;
 	transfer: RaceRecordingTransferState;
 	removal: RaceRecordingRemovalState;
@@ -135,14 +137,18 @@ const transferState = (
 
 export const DrivingAnalysisStore = signalStore(
 	withState<RaceRecordingState>({
+		subjectFrameRequest: null,
 		carId: '',
 		transfer: idleRaceRecordingTransfer(),
 		removal: idleRaceRecordingRemoval(),
 		analysisCreation: idleDrivingAnalysisCreation(),
 	}),
-	withProps(() => {
+	withProps((store) => {
 		const visibility = inject(PageVisibilityCapability);
 		return {
+			subjectFrames: inject(DrivingAnalysisGateway).readSubjectFrame(
+				store.subjectFrameRequest,
+			),
 			gateway: inject(RaceRecordingGateway),
 			analyses: inject(DrivingAnalysisGateway),
 			analysisRequests: inject(DrivingAnalysisRequestIdentityCapability),
@@ -154,6 +160,15 @@ export const DrivingAnalysisStore = signalStore(
 		};
 	}),
 	withComputed((store) => ({
+		selectedSubjectFrame: computed(() =>
+			store.subjectFrames.hasValue() ? store.subjectFrames.value() : null,
+		),
+		subjectFrameLoading: computed(() => store.subjectFrames.isLoading()),
+		subjectFrameError: computed(() =>
+			store.subjectFrames.error()
+				? 'The source frame could not be verified. Choose the frame again.'
+				: null,
+		),
 		recordings: computed(() =>
 			store.gateway.collection.hasValue()
 				? store.gateway.collection.value()
@@ -337,30 +352,39 @@ export const DrivingAnalysisStore = signalStore(
 							error: null,
 						},
 					});
-					return store.analyses.retry(analysis.id, analysis.stateVersion).pipe(
-						tap((retried) => {
-							patchState(store, {
-								analysisCreation: {
-									status: 'accepted',
-									driveSessionId: retried.driveSessionId,
-									analysis: retried,
-									error: null,
-								},
-							});
-							store.analyses.selectAnalysis(retried.id);
-							monitorAnalysis(retried.id);
-						}),
-						catchError((error: DrivingAnalysisGatewayFailure) => {
-							patchState(store, {
-								analysisCreation: {
-									...current,
-									status: 'failed',
-									error,
-								},
-							});
-							return EMPTY;
-						}),
-					);
+					return store.analyses
+						.retry(
+							analysis.id,
+							analysis.stateVersion,
+							store.analysisRequests.retryId(
+								analysis.id,
+								analysis.stateVersion,
+							),
+						)
+						.pipe(
+							tap((retried) => {
+								patchState(store, {
+									analysisCreation: {
+										status: 'accepted',
+										driveSessionId: retried.driveSessionId,
+										analysis: retried,
+										error: null,
+									},
+								});
+								store.analyses.selectAnalysis(retried.id);
+								monitorAnalysis(retried.id);
+							}),
+							catchError((error: DrivingAnalysisGatewayFailure) => {
+								patchState(store, {
+									analysisCreation: {
+										...current,
+										status: 'failed',
+										error,
+									},
+								});
+								return EMPTY;
+							}),
+						);
 				}),
 			),
 		);
@@ -599,6 +623,9 @@ export const DrivingAnalysisStore = signalStore(
 		);
 
 		return {
+			selectSubjectFrame(command: SubjectFrameRequest): void {
+				patchState(store, { subjectFrameRequest: command });
+			},
 			selectCar(carId: string): void {
 				if (store.carId() === carId) return;
 				store.stopTransfer.next();

@@ -1,6 +1,10 @@
 <section class="grid gap-3" [attr.aria-labelledby]="editorId() + '-subject-box-title'">
 	<div>
-		<h5 class="m-0 text-sm font-semibold" [id]="editorId() + '-subject-box-title'">Subject car</h5>
+		@switch (headingLevel()) {
+			@case (4) { <h4 class="m-0 text-sm font-semibold" [id]="editorId() + '-subject-box-title'">{{ heading() }}</h4> }
+			@case (6) { <h6 class="m-0 text-sm font-semibold" [id]="editorId() + '-subject-box-title'">{{ heading() }}</h6> }
+			@default { <h5 class="m-0 text-sm font-semibold" [id]="editorId() + '-subject-box-title'">{{ heading() }}</h5> }
+		}
 		<p class="m-0 mt-1 text-xs text-alloy-text-secondary">Draw only in the outlined bottom-two-thirds Track view. The coordinates below provide the same precise keyboard path.</p>
 	</div>
 	<div class="relative min-h-32 overflow-hidden rounded bg-black">

@@ -1,8 +1,10 @@
 import { createAuth } from './auth';
+import { createAnalysisLifecycle } from './driving-analysis/analysis/analysis-lifecycle';
 import { DrivingAnalysisAuthority } from './driving-analysis/analysis/driving-analysis-authority';
 import type { DrivingAnalysisWorkflowPayload } from './driving-analysis/analysis/driving-analysis-contracts';
 import { RaceRecordingAuthority } from './driving-analysis/race-recording/race-recording-authority';
 import type { RaceVideoValidationWorkflowPayload } from './driving-analysis/race-recording/race-video-validation-contracts';
+import { subjectFrames } from './driving-analysis/race-recording/subject-frames';
 import {
 	createWorkersAiVoiceProcessor,
 	type VoiceProcessor,
@@ -16,6 +18,7 @@ export type AppDependencies = {
 	voiceProcessor(env: Env): VoiceProcessor;
 	raceRecordingAuthority(env: Env): RaceRecordingAuthority;
 	drivingAnalysisAuthority(env: Env): DrivingAnalysisAuthority;
+	analysisLifecycle(env: Env): ReturnType<typeof createAnalysisLifecycle>;
 };
 
 export const startDrivingAnalysisWorkflow = async (
@@ -68,6 +71,12 @@ export const startRaceVideoValidation = async (
 };
 
 export const defaultAppDependencies: AppDependencies = {
+	analysisLifecycle: (env) =>
+		createAnalysisLifecycle({
+			binding: env.DB,
+			bucket: env.ANALYSIS_MEDIA,
+			startCancellation: (payload) => dispatchDrivingAnalysis(env, payload),
+		}),
 	getSession: async (env, headers) =>
 		createAuth(env).api.getSession({ headers }),
 	handleAuth: (env, request) => createAuth(env).handler(request),
@@ -79,23 +88,31 @@ export const defaultAppDependencies: AppDependencies = {
 		}),
 	drivingAnalysisAuthority: (env) =>
 		new DrivingAnalysisAuthority(env.DB, {
-			startProcessing: async (payload) => {
-				await startDrivingAnalysisWorkflow(
-					env.DRIVING_ANALYSIS_WORKFLOW,
-					payload,
-				);
-				if (payload.cancellation) {
-					const original = await env.DRIVING_ANALYSIS_WORKFLOW.get(
-						payload.workflowId,
-					);
-					try {
-						await original.terminate();
-					} catch (error) {
-						const { status } = await original.status();
-						if (!['errored', 'terminated', 'complete'].includes(status))
-							throw error;
-					}
-				}
-			},
+			verifySubjectFrame: (command) => subjectFrames(env).verify(command),
+			startProcessing: (payload) => dispatchDrivingAnalysis(env, payload),
 		}),
 };
+
+async function dispatchDrivingAnalysis(
+	env: Env,
+	payload: DrivingAnalysisWorkflowPayload,
+): Promise<void> {
+	await startDrivingAnalysisWorkflow(env.DRIVING_ANALYSIS_WORKFLOW, payload);
+	if (payload.cancellation) {
+		const original = await env.DRIVING_ANALYSIS_WORKFLOW.get(
+			payload.workflowId,
+		).catch((error: unknown) => {
+			// A failed initial dispatch may never have created the original instance.
+			if (error instanceof Error && error.message === 'instance.not_found')
+				return null;
+			throw error;
+		});
+		if (!original) return;
+		try {
+			await original.terminate();
+		} catch (error) {
+			const { status } = await original.status();
+			if (!['errored', 'terminated', 'complete'].includes(status)) throw error;
+		}
+	}
+}
