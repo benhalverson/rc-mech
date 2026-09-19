@@ -63,6 +63,7 @@ export type DrivingAnalysisAuthorityOptions = Readonly<{
 	id?: () => string;
 	workflowId?: () => string;
 	startProcessing?: (payload: DrivingAnalysisWorkflowPayload) => Promise<void>;
+	verifySubjectFrame?: (command: CreateDrivingAnalysisCommand) => Promise<void>;
 }>;
 
 export type DrivingAnalysisTransition =
@@ -189,6 +190,9 @@ export class DrivingAnalysisAuthority {
 	private readonly clock: () => Date;
 	private readonly id: () => string;
 	private readonly workflowId: () => string;
+	private readonly verifySubjectFrame: (
+		command: CreateDrivingAnalysisCommand,
+	) => Promise<void>;
 	private readonly startProcessing: (
 		payload: DrivingAnalysisWorkflowPayload,
 	) => Promise<void>;
@@ -203,6 +207,14 @@ export class DrivingAnalysisAuthority {
 		/* c8 ignore next -- production UUID generation is exercised by live Workflow retry acceptance. */
 		this.workflowId = options.workflowId ?? (() => crypto.randomUUID());
 		this.startProcessing = options.startProcessing ?? (async () => undefined);
+		this.verifySubjectFrame =
+			options.verifySubjectFrame ??
+			(async () => {
+				throw authorityError(
+					'SOURCE_UNAVAILABLE',
+					'Verified Subject-frame selection is unavailable',
+				);
+			});
 	}
 
 	async create(commandValue: CreateDrivingAnalysisCommand): Promise<{
@@ -239,6 +251,7 @@ export class DrivingAnalysisAuthority {
 				'Race window must stay inside the ready Race recording',
 			);
 		await this.requireApprovedTrackMap(parsed.data.approvedTrackMapVersionId);
+		await this.verifySubjectFrame(command);
 		await this.requireOwnerWithinAnalysisQuota(command.ownerId);
 		await this.consumeCreationPermit(command.ownerId);
 

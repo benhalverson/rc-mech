@@ -166,3 +166,33 @@ Record the deployed URL, migration result, dry-run result, and any blocked
 email, WebAuthn, or R2 steps with the release. Never put private photo bytes,
 magic-link URLs, owner addresses, or production secrets in logs, screenshots,
 issues, or pull requests.
+
+## Driving-analysis release evidence
+
+Issue #243 additionally requires the complete owner journey: upload and privately
+play a Race recording, choose an approved Track map, mark the Race window, seed
+the Subject, process Tracking, repair a Tracking gap, compare eligible and
+excluded passes, and play private Corner clips. Exercise cancellation, retry,
+deletion and recovery in the same release candidate. Run the browser flow with
+keyboard interaction and AXE, and verify cross-owner denial for both evidence
+and ranged media reads.
+
+Retain a provider-generated representative benchmark report bound to the exact
+Inference profile used by that release. Require zero unflagged identity switches
+and at least 80 percent automatically eligible Corner-pass coverage across
+User-seeded segments, while reporting initial-seed coverage separately. The
+checked-in `representative-v1/reference-observations.json` is a manual reference:
+its passing report validates benchmark mechanics and does not qualify a model.
+A report for a different profile cannot qualify the currently installed model.
+
+Local GPU health, an unauthenticated Access denial, and configured Worker secret
+names do not establish an authenticated Worker-to-Access-to-Tunnel-to-GPU path.
+Retain correlated evidence from the deployed Worker and current GPU profile,
+along with the restart, lease-expiry, cancellation-while-unreachable, stale-result
+and retention drills required by ADR 0028 and issue #298. Record which checks
+used local fixtures and which exercised the deployed path. A closed operational
+issue or an earlier profile's successful run is not current release evidence.
+
+Keep private source media, credentials, transfer grants and provider response
+bodies out of these records. Deployment and disruptive host drills are operator
+actions; local fixture checks and Worker dry-runs do not perform them.

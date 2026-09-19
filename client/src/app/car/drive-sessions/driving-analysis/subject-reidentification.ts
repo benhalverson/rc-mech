@@ -1,5 +1,4 @@
 import {
-	afterRenderEffect,
 	Component,
 	computed,
 	ElementRef,
@@ -7,16 +6,15 @@ import {
 	input,
 	linkedSignal,
 	type OnChanges,
-	type OnDestroy,
 	signal,
 	viewChild,
 } from '@angular/core';
-import { CorrectionPlayer } from './correction-player';
 import {
 	type DrivingAnalysis,
 	type SubjectBox,
 	subjectSeed,
 } from './driving-analysis.models';
+import { subjectFrameContentUrl } from './driving-analysis-gateway';
 import type { RaceRecording } from './race-recording.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
@@ -27,7 +25,8 @@ import { SubjectBoxEditor } from './subject-box-editor';
 	templateUrl: './subject-reidentification.html',
 	host: { class: 'block' },
 })
-export class SubjectReidentification implements OnChanges, OnDestroy {
+export class SubjectReidentification implements OnChanges {
+	readonly headingLevel = input<3 | 5>(5);
 	readonly analysis = input.required<DrivingAnalysis>();
 	readonly recording = input.required<RaceRecording>();
 	protected readonly store = inject(ReidentificationStore);
@@ -42,8 +41,26 @@ export class SubjectReidentification implements OnChanges, OnDestroy {
 				frameIndex: 0,
 			},
 	);
-	private readonly player = inject(CorrectionPlayer);
-	private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+	protected readonly previewUrl = computed(() => {
+		const recording = this.recording();
+		return recording.media
+			? subjectFrameContentUrl(
+					recording.id,
+					this.draft().frameIndex,
+					recording.media.checksumSha256,
+				)
+			: null;
+	});
+	protected readonly loadedFrameUrl = signal('');
+	protected readonly failedFrameUrl = signal('');
+	protected readonly frameReady = computed(() => {
+		const url = this.previewUrl();
+		return (
+			url !== null &&
+			this.loadedFrameUrl() === url &&
+			this.failedFrameUrl() !== url
+		);
+	});
 	protected readonly box = signal<SubjectBox>({
 		x: 0.4,
 		y: 0.4,
@@ -56,20 +73,6 @@ export class SubjectReidentification implements OnChanges, OnDestroy {
 		viewChild.required<ElementRef<HTMLInputElement>>('timestampField');
 	private selectedId = '';
 
-	private readonly playbackSync = afterRenderEffect(() => {
-		const frame = this.draft();
-		const video = this.host.nativeElement.querySelector('video');
-		if (video) this.player.showFrame(video, frame.timestampMs);
-	});
-
-	ngOnDestroy(): void {
-		this.playbackSync.destroy();
-	}
-
-	protected showSelectedFrame(video: HTMLVideoElement): void {
-		this.player.showFrame(video, this.draft().timestampMs);
-	}
-
 	ngOnChanges(): void {
 		const analysis = this.analysis();
 		this.store.select(analysis.id, analysis.stateVersion);
@@ -79,7 +82,7 @@ export class SubjectReidentification implements OnChanges, OnDestroy {
 		this.error.set('');
 	}
 
-	protected seek(event: Event): void {
+	protected selectFrame(event: Event): void {
 		const frameIndex = (event.target as HTMLInputElement).valueAsNumber;
 		const frame = this.store.context()?.frames[frameIndex];
 		if (!frame) return;
@@ -98,6 +101,14 @@ export class SubjectReidentification implements OnChanges, OnDestroy {
 
 	protected submit(event: Event): void {
 		event.preventDefault();
+		const media = this.recording().media;
+		if (!media || !this.frameReady()) {
+			this.error.set(
+				'Wait for the exact source frame image to load before confirming the Subject.',
+			);
+			this.timestampField().nativeElement.focus();
+			return;
+		}
 		const context = this.store.context();
 		const analysis = this.analysis();
 		const candidate = {
@@ -117,7 +128,7 @@ export class SubjectReidentification implements OnChanges, OnDestroy {
 			) ||
 			candidate.timestampMs <= context.gap.startTimestampMs ||
 			candidate.timestampMs >= analysis.raceWindow.endTimestampMs ||
-			candidate.frameIndex >= (this.recording().media?.decodedFrameCount ?? 0)
+			candidate.frameIndex >= media.decodedFrameCount
 		) {
 			this.error.set(
 				'Choose a later clear frame inside the Race window and enter a complete normalized Subject box.',

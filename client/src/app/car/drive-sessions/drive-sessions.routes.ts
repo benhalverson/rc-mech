@@ -7,7 +7,6 @@ import { DriveSessionStore } from './drive-session-store';
 import { AnalysisLifecycleGateway } from './driving-analysis/analysis-lifecycle-gateway';
 import { CornerReviewGateway } from './driving-analysis/corner-review-gateway';
 import { CornerReviewStore } from './driving-analysis/corner-review-store';
-import { CorrectionPlayer } from './driving-analysis/correction-player';
 import { DrivingAnalysisGateway } from './driving-analysis/driving-analysis-gateway';
 import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis/driving-analysis-request-identity';
 import { DrivingAnalysisStore } from './driving-analysis/driving-analysis-store';
@@ -24,6 +23,9 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 		providers: [
 			CornerReviewGateway,
 			CornerReviewStore,
+			ReidentificationGateway,
+			ReidentificationIdentity,
+			ReidentificationStore,
 			AnalysisLifecycleGateway,
 			DrivingAnalysisRequestIdentityCapability,
 		],
@@ -48,7 +50,6 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 			ReidentificationGateway,
 			ReidentificationIdentity,
 			ReidentificationStore,
-			CorrectionPlayer,
 			CarStore,
 		],
 		loadComponent: () =>

@@ -85,6 +85,14 @@ async def _send_too_large(scope: Scope, receive: Receive, send: Send) -> None:
 
 def _too_large_content(scope: Scope) -> dict[str, object]:
     path = scope.get("path", "")
+    if path == "/v1/frames/select":
+        return {
+            "contractVersion": "source-frame.v1",
+            "error": {
+                "code": "INVALID_REQUEST",
+                "message": "source frame selection rejected",
+            },
+        }
     if path == "/v1/stages/render":
         response = RenderStageRejected(
             contractVersion=RENDER_CONTRACT_VERSION,

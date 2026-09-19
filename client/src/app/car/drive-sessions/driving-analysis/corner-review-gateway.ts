@@ -2,9 +2,41 @@ import { httpResource } from '@angular/common/http';
 import { Service, type Signal } from '@angular/core';
 import { cornerClipsSchema } from './corner-clip.models';
 import { cornerReviewResponseSchema } from './corner-review.models';
+import { parseDrivingAnalysis } from './driving-analysis-gateway';
+import { parseRaceRecordingMutation } from './race-recording-gateway';
 
 @Service()
 export class CornerReviewGateway {
+	readAnalysis(analysisId: Signal<string | null>) {
+		return httpResource(
+			() => {
+				const id = analysisId();
+				return id
+					? {
+							url: `/api/v1/driving-analyses/${encodeURIComponent(id)}`,
+							withCredentials: true,
+						}
+					: undefined;
+			},
+			{ parse: parseDrivingAnalysis },
+		);
+	}
+
+	readRecording(recordingId: Signal<string | null>) {
+		return httpResource(
+			() => {
+				const id = recordingId();
+				return id
+					? {
+							url: `/api/v1/race-videos/${encodeURIComponent(id)}`,
+							withCredentials: true,
+						}
+					: undefined;
+			},
+			{ parse: parseRaceRecordingMutation },
+		);
+	}
+
 	readClips(analysisId: Signal<string>) {
 		return httpResource(
 			() => {

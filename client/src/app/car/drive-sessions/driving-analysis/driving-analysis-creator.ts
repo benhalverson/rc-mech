@@ -4,6 +4,7 @@ import {
 	effect,
 	inject,
 	input,
+	linkedSignal,
 	signal,
 } from '@angular/core';
 import { FormField, form } from '@angular/forms/signals';
@@ -22,8 +23,6 @@ type CreationForm = {
 	approvedTrackMapVersionId: string;
 	startTimestampMs: number;
 	endTimestampMs: number;
-	seedTimestampMs: number;
-	seedFrameIndex: number;
 	subjectIdentity: string;
 };
 
@@ -65,12 +64,53 @@ export class DrivingAnalysisCreator {
 		approvedTrackMapVersionId: '',
 		startTimestampMs: 0,
 		endTimestampMs: 1,
-		seedTimestampMs: 0,
-		seedFrameIndex: 0,
 		subjectIdentity: 'subject-1',
 	});
 	protected readonly fields = form(this.form);
 	protected readonly formError = signal('');
+	private readonly selectionWindow = signal<{
+		recordingId: string;
+		start: number;
+		end: number;
+		timestampMs: number;
+	} | null>(null);
+	protected readonly selectedFrame = computed(() => {
+		if (this.store.subjectFrameLoading() || this.store.subjectFrameError())
+			return null;
+		const selection = this.selectionWindow();
+		const frame = this.store.selectedSubjectFrame();
+		const form = this.form();
+		if (
+			!selection ||
+			!frame ||
+			selection.recordingId !== this.recording().id ||
+			selection.start !== form.startTimestampMs ||
+			selection.end !== form.endTimestampMs ||
+			frame.recordingId !== selection.recordingId ||
+			frame.requestedTimestampMs !== selection.timestampMs ||
+			frame.sourceChecksumSha256 !== this.recording().media?.checksumSha256 ||
+			frame.timestampMs < form.startTimestampMs ||
+			frame.timestampMs >= form.endTimestampMs
+		)
+			return null;
+		return frame;
+	});
+	protected readonly loadedFrameUrl = linkedSignal({
+		source: this.selectedFrame,
+		computation: () => '',
+	});
+	protected readonly failedFrameUrl = linkedSignal({
+		source: this.selectedFrame,
+		computation: () => '',
+	});
+	protected readonly frameReady = computed(() => {
+		const frame = this.selectedFrame();
+		return (
+			frame !== null &&
+			this.loadedFrameUrl() === frame.contentUrl &&
+			this.failedFrameUrl() !== frame.contentUrl
+		);
+	});
 	protected readonly durationMs = computed(
 		() => this.recording().media?.durationMs ?? 0,
 	);
@@ -110,28 +150,26 @@ export class DrivingAnalysisCreator {
 		if (form.endTimestampMs > this.durationMs())
 			errors.push('Race window must stay inside the recording.');
 		if (
-			!finiteInteger(form.seedTimestampMs) ||
-			form.seedTimestampMs < form.startTimestampMs ||
-			form.seedTimestampMs >= form.endTimestampMs
-		)
-			errors.push('Subject timestamp must be inside the Race window.');
-		if (
-			!finiteInteger(form.seedFrameIndex) ||
-			form.seedFrameIndex < 0 ||
-			form.seedFrameIndex >= (this.recording().media?.decodedFrameCount ?? 0)
-		)
-			errors.push('Subject frame must identify a decoded recording frame.');
-		if (
 			!form.subjectIdentity.trim() ||
 			form.subjectIdentity.trim().length > 128
 		)
 			errors.push('Subject identity must be between 1 and 128 characters.');
 		if (!this.boxValid())
 			errors.push('Enter a complete normalized Subject box.');
+		if (!this.frameReady())
+			errors.push(
+				'Choose and load a verified Subject frame before confirming the box.',
+			);
 		return errors;
 	});
 
 	constructor() {
+		effect(() => {
+			if (this.selectedFrame()) {
+				this.box.set(DEFAULT_BOX);
+				this.boxValid.set(true);
+			}
+		});
 		effect(() => {
 			const recording = this.recording();
 			const firstMap = this.store.approvedTrackMaps()[0];
@@ -152,8 +190,6 @@ export class DrivingAnalysisCreator {
 				approvedTrackMapVersionId: firstMap?.id ?? '',
 				startTimestampMs: 0,
 				endTimestampMs: Math.min(duration, MAX_RACE_WINDOW_DURATION_MS),
-				seedTimestampMs: 0,
-				seedFrameIndex: 0,
 				subjectIdentity: 'subject-1',
 			});
 			this.box.set(DEFAULT_BOX);
@@ -187,17 +223,29 @@ export class DrivingAnalysisCreator {
 		else player.pause();
 	}
 
-	protected mark(
-		field: 'startTimestampMs' | 'endTimestampMs' | 'seedTimestampMs',
-	): void {
+	protected mark(field: 'startTimestampMs' | 'endTimestampMs'): void {
 		const timestampMs = this.currentTimestampMs();
 		this.form.update((current) => ({
 			...current,
 			[field]: timestampMs,
-			...(field === 'seedTimestampMs'
-				? { seedFrameIndex: this.frameIndexAt(timestampMs) }
-				: {}),
 		}));
+		this.formError.set('');
+	}
+
+	protected selectFrame(player: HTMLVideoElement): void {
+		player.pause();
+		const form = this.form();
+		const timestampMs = this.currentTimestampMs();
+		this.selectionWindow.set({
+			recordingId: this.recording().id,
+			start: form.startTimestampMs,
+			end: form.endTimestampMs,
+			timestampMs,
+		});
+		this.store.selectSubjectFrame({
+			recordingId: this.recording().id,
+			timestampMs,
+		});
 		this.formError.set('');
 	}
 
@@ -209,7 +257,8 @@ export class DrivingAnalysisCreator {
 		event.preventDefault();
 		this.fields().markAsTouched();
 		const errors = this.errors();
-		if (errors.length) {
+		const frame = this.selectedFrame();
+		if (!frame || errors.length) {
 			this.formError.set(errors[0] as string);
 			return;
 		}
@@ -224,23 +273,13 @@ export class DrivingAnalysisCreator {
 				endTimestampMs: form.endTimestampMs,
 			},
 			subjectSeed: {
-				timestampMs: form.seedTimestampMs,
-				frameIndex: form.seedFrameIndex,
+				timestampMs: frame.timestampMs,
+				frameIndex: frame.frameIndex,
 				identity: form.subjectIdentity.trim(),
 				box: this.box(),
 			},
 		};
 		this.formError.set('');
 		this.store.createAnalysis(immutableInput);
-	}
-
-	private frameIndexAt(timestampMs: number): number {
-		const media = this.recording().media;
-		if (!media) return 0;
-		const frameIndex = Math.floor(
-			(timestampMs * media.averageFrameRate.numerator) /
-				(media.averageFrameRate.denominator * 1_000),
-		);
-		return Math.min(media.decodedFrameCount - 1, Math.max(0, frameIndex));
 	}
 }

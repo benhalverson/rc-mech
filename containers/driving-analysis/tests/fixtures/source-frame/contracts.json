@@ -1,0 +1,376 @@
+{
+	"acceptedRequests": [
+		{
+			"name": "timestamp-facts",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "exact-index-image",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "frame",
+					"frameIndex": 2
+				},
+				"includeImage": true
+			}
+		}
+	],
+	"acceptedResponses": [
+		{
+			"name": "timestamp-facts",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"frameIndex": 2,
+				"timestampMs": 200,
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"imageBase64": null
+			}
+		},
+		{
+			"name": "exact-index-image",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"frameIndex": 2,
+				"timestampMs": 200,
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"imageBase64": "/9j/2Q=="
+			}
+		}
+	],
+	"rejectedResponses": [
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "INVALID_REQUEST",
+				"message": "source frame selection rejected"
+			}
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "SERVICE_BUSY",
+				"message": "source frame selection rejected"
+			}
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "PROCESS_TIMEOUT",
+				"message": "source frame selection rejected"
+			}
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "RESOURCE_LIMIT",
+				"message": "source frame selection rejected"
+			}
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "FRAME_UNAVAILABLE",
+				"message": "source frame selection rejected"
+			}
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "SOURCE_MISMATCH",
+				"message": "source frame selection rejected"
+			}
+		}
+	],
+	"invalidRequests": [
+		{
+			"name": "unknown-version",
+			"value": {
+				"contractVersion": "source-frame.v2",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "unsafe-index",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "frame",
+					"frameIndex": 9007199254740992
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "negative-timestamp",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": -1
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "fractional-index",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "frame",
+					"frameIndex": 1.5
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "boolean-timestamp",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": true
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "mixed-selection",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125,
+					"frameIndex": 2
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "unknown-selection",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "nearest",
+					"timestampMs": 125
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "string-image-flag",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": "true"
+			}
+		},
+		{
+			"name": "uppercase-checksum",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "zero-bytes",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 0
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "excess-bytes",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 53687091201
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "unscoped-media",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "../media",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": false
+			}
+		},
+		{
+			"name": "unknown-field",
+			"value": {
+				"contractVersion": "source-frame.v1",
+				"input": {
+					"stagedMediaId": "11111111-1111-4111-8111-111111111111",
+					"expectedByteCount": 1024
+				},
+				"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"selection": {
+					"kind": "timestamp",
+					"timestampMs": 125
+				},
+				"includeImage": false,
+				"unexpected": true
+			}
+		}
+	],
+	"invalidResponses": [
+		{
+			"contractVersion": "source-frame.v1",
+			"frameIndex": -1,
+			"timestampMs": 200,
+			"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"imageBase64": null
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"frameIndex": 2,
+			"timestampMs": true,
+			"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"imageBase64": null
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"frameIndex": 2,
+			"timestampMs": 200,
+			"sourceChecksumSha256": "wrong",
+			"imageBase64": null
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"frameIndex": 2,
+			"timestampMs": 200,
+			"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"imageBase64": 7
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"frameIndex": 2,
+			"timestampMs": 200,
+			"sourceChecksumSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"imageBase64": null,
+			"unexpected": true
+		}
+	],
+	"invalidRejectedResponses": [
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "UNKNOWN",
+				"message": "source frame selection rejected"
+			}
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "INVALID_REQUEST",
+				"message": "source frame selection rejected"
+			},
+			"unexpected": true
+		},
+		{
+			"contractVersion": "source-frame.v1",
+			"error": {
+				"code": "INVALID_REQUEST",
+				"message": "private source detail"
+			}
+		}
+	]
+}

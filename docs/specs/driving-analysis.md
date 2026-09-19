@@ -75,7 +75,7 @@ The version-one supported source guarantees that the main static camera does not
 - Benchmark fixtures and expected outcomes are versioned so a provider, model, or threshold change can be compared with the same evidence.
 - A release candidate must produce zero unflagged identity switches across the complete benchmark. Any possible switch must open a Tracking gap at or before the first frame whose identity is not trustworthy.
 - Identity integrity is release-blocking and is evaluated independently from coverage; greater coverage cannot compensate for a silent switch.
-- Before any User Re-identification, at least 80% of ground-truth Corner passes across the benchmark must be emitted as eligible Corner passes.
+- At least 80% of ground-truth Corner passes across the benchmark must be automatically emitted as eligible within User-seeded Tracking segments. Report coverage before the first User Re-identification separately as `initialSeedCoverage`, as adopted by the representative benchmark in PR #285. A reselection is not itself a gate-crossing observation and cannot make a pass eligible.
 - Coverage is measured at the Corner-pass level, not merely by the percentage of frames containing a box, because reviewable corner evidence is the product outcome.
 
 ## Track-map governance

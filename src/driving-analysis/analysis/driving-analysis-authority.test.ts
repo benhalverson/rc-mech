@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { defaultAppDependencies } from '../../app-dependencies';
 import {
@@ -29,8 +30,12 @@ import {
 	trackingRunInputFixture,
 } from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
+import type { AppEnv } from '../../types';
 import { RaceRecordingAuthority } from '../race-recording/race-recording-authority';
 import { RaceVideoValidationAuthority } from '../race-recording/race-video-validation-authority';
+import type { SourceFrameResult } from '../race-recording/subject-frame-contracts';
+import { createSubjectFrameRoutes } from '../race-recording/subject-frame-routes';
+import { SubjectFrames } from '../race-recording/subject-frames';
 import {
 	inferenceProfileAuthority,
 	trackingRun,
@@ -106,7 +111,7 @@ const seedReadyInput = async (database: D1Database) => {
 		carId: CAR_ID,
 		driveSessionId: DRIVE_ID,
 		requestId: '77777777-7777-4777-8777-777777777777',
-		objectKey: `race-recordings/private/${RACE_VIDEO_ID}`,
+		objectKey: `race-recordings/${CAR_ID}/${DRIVE_ID}/${RACE_VIDEO_ID}`,
 		multipartUploadId: 'upload-1',
 		fileName: 'Main race.mov',
 		contentType: 'video/quicktime',
@@ -234,15 +239,18 @@ const fixture = async () => {
 	sqlite.exec(migrations);
 	await seedReadyInput(sqlite.database);
 	const startProcessing = vi.fn(async () => undefined);
+	const verifySubjectFrame = vi.fn(async () => undefined);
 	const authority = new DrivingAnalysisAuthority(sqlite.database, {
 		clock: () => NOW,
 		id: () => ANALYSIS_ID,
 		workflowId: () => RETRY_WORKFLOW_ID,
 		startProcessing,
+		verifySubjectFrame,
 	});
 	return {
 		authority,
 		startProcessing,
+		verifySubjectFrame,
 		database: drizzle(sqlite.database),
 		binding: sqlite.database,
 	};
@@ -253,7 +261,7 @@ const seedPreparedAnalysis = async (binding: D1Database) => {
 	const pinned = trackingRunInputFixture({
 		runId: RETRY_WORKFLOW_ID,
 		raceVideoId: RACE_VIDEO_ID,
-		sourceObjectKey: `race-recordings/private/${RACE_VIDEO_ID}`,
+		sourceObjectKey: `race-recordings/${CAR_ID}/${DRIVE_ID}/${RACE_VIDEO_ID}`,
 		sourceByteCount: 1024,
 		sourceChecksumSha256: 'a'.repeat(64),
 		sourceLayout: { ...template.sourceLayout, width: 1920, height: 1080 },
@@ -413,6 +421,21 @@ describe('DrivingAnalysisAuthority', () => {
 		expect(await database.select().from(trackingRun)).toMatchObject([
 			{ status: 'active', version: 1 },
 		]);
+	});
+	test('rejects an unverified source frame before creating immutable analysis or starting work', async () => {
+		const value = await fixture();
+		value.verifySubjectFrame.mockRejectedValue(
+			new DrivingAnalysisAuthorityError(
+				'INVALID_INPUT',
+				'Subject frame does not match the source',
+			),
+		);
+		await expect(value.authority.create(command())).rejects.toMatchObject({
+			code: 'INVALID_INPUT',
+		});
+		expect(value.verifySubjectFrame).toHaveBeenCalledWith(command());
+		expect(value.startProcessing).not.toHaveBeenCalled();
+		expect(await value.database.select().from(drivingAnalysis)).toEqual([]);
 	});
 	test('retries failed media deletion and revisits deleted tombstones for late uploads', async () => {
 		const { authority, binding } = await fixture();
@@ -688,7 +711,7 @@ describe('DrivingAnalysisAuthority', () => {
 		await expect(
 			value.authority.preparationSource(OWNER_ID, ANALYSIS_ID),
 		).resolves.toEqual({
-			objectKey: `race-recordings/private/${RACE_VIDEO_ID}`,
+			objectKey: `race-recordings/${CAR_ID}/${DRIVE_ID}/${RACE_VIDEO_ID}`,
 			byteCount: 1024,
 			checksumSha256: 'a'.repeat(64),
 		});
@@ -787,6 +810,7 @@ describe('DrivingAnalysisAuthority', () => {
 			},
 		);
 		const peer = new DrivingAnalysisAuthority(sqlite.database, {
+			verifySubjectFrame: async () => undefined,
 			clock: () => NOW,
 			id: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 			startProcessing: async () => undefined,
@@ -1756,6 +1780,19 @@ describe('DrivingAnalysisAuthority', () => {
 		await expectCode(authority.get('another-owner', ANALYSIS_ID), 'NOT_FOUND');
 	});
 
+	test('rejects creating an analysis with a retired map version', async () => {
+		const { authority, database } = await fixture();
+		await database
+			.update(trackMapVersion)
+			.set({
+				status: 'retired',
+				stateVersion: 3,
+				retiredAt: NOW.toISOString(),
+			})
+			.where(eq(trackMapVersion.id, MAP_VERSION_ID));
+		await expectCode(authority.create(command()), 'CONFLICT');
+	});
+
 	test('uses defaults, surfaces Workflow outage, and rejects generated identity collision', async () => {
 		const { authority } = await fixture();
 		await authority.create(command());
@@ -1771,6 +1808,7 @@ describe('DrivingAnalysisAuthority', () => {
 		);
 		if (!sqlite) throw new Error('SQLite fixture unavailable');
 		const unavailable = new DrivingAnalysisAuthority(sqlite.database, {
+			verifySubjectFrame: async () => undefined,
 			id: () => 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
 			startProcessing: async () => {
 				throw new Error('workflow down');
@@ -1786,7 +1824,19 @@ describe('DrivingAnalysisAuthority', () => {
 			}),
 			'WORKFLOW_UNAVAILABLE',
 		);
-		const defaults = new DrivingAnalysisAuthority(sqlite.database);
+		await expectCode(
+			new DrivingAnalysisAuthority(sqlite.database).create({
+				...command(),
+				input: {
+					...input(),
+					requestId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+				},
+			}),
+			'SOURCE_UNAVAILABLE',
+		);
+		const defaults = new DrivingAnalysisAuthority(sqlite.database, {
+			verifySubjectFrame: async () => undefined,
+		});
 		const created = await defaults.create({
 			...command(),
 			input: {
@@ -1798,6 +1848,133 @@ describe('DrivingAnalysisAuthority', () => {
 			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
 		);
 		expect(created.analysis.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+	});
+});
+
+describe('verified source-frame selection', () => {
+	test.each(['deleting', 'deleted'] as const)(
+		'does not create after the verified source is %s',
+		async (state) => {
+			const value = await fixture();
+			value.verifySubjectFrame.mockImplementation(async () => {
+				if (state === 'deleted')
+					await value.database
+						.delete(raceVideo)
+						.where(eq(raceVideo.id, RACE_VIDEO_ID));
+				else
+					await value.database
+						.update(raceVideo)
+						.set({ status: 'deleting' })
+						.where(eq(raceVideo.id, RACE_VIDEO_ID));
+			});
+			await expect(value.authority.create(command())).rejects.toMatchObject({
+				code: 'CONFLICT',
+			});
+			expect(await value.database.select().from(drivingAnalysis)).toEqual([]);
+			expect(value.startProcessing).not.toHaveBeenCalled();
+		},
+	);
+	const frame: SourceFrameResult = {
+		contractVersion: 'source-frame.v1',
+		frameIndex: 2,
+		timestampMs: 200,
+		sourceChecksumSha256: 'a'.repeat(64),
+		imageBase64: null,
+	};
+	const setup = async () => {
+		const value = await fixture();
+		const select = vi.fn(async () => ({ ...frame }));
+		return {
+			...value,
+			select,
+			frames: new SubjectFrames(value.binding, select),
+		};
+	};
+	test('selects actual source facts and serves a checksum-bound private still', async () => {
+		const value = await setup();
+		const getByName = vi.fn(() => ({ selectSubjectFrame: value.select }));
+		const app = new Hono<AppEnv>();
+		app.use('*', async (c, next) => {
+			c.set('userId', OWNER_ID);
+			await next();
+		});
+		app.route('/', createSubjectFrameRoutes());
+		const env = {
+			DB: value.binding,
+			RACE_VIDEO_MEDIA_CONTAINER: { getByName },
+		} as unknown as Env;
+		const response = await app.request(
+			`/race-videos/${RACE_VIDEO_ID}/subject-frame?timestampMs=125`,
+			{},
+			env,
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			frame: { contentUrl: string; frameIndex: number; timestampMs: number };
+		};
+		expect(body.frame).toMatchObject({ frameIndex: 2, timestampMs: 200 });
+		expect(JSON.stringify(body)).not.toContain('race-recordings/');
+		value.select.mockResolvedValue({ ...frame, imageBase64: '/9j/2Q==' });
+		const image = await app.request(
+			body.frame.contentUrl.replace('/api/v1', ''),
+			{},
+			env,
+		);
+		expect(image.status).toBe(200);
+		expect(image.headers.get('cache-control')).toBe('private, no-store');
+		expect(new Uint8Array(await image.arrayBuffer())).toEqual(
+			new Uint8Array([255, 216, 255, 217]),
+		);
+		await expect(
+			value.frames.select(
+				'other',
+				RACE_VIDEO_ID,
+				{ kind: 'frame', frameIndex: 2 },
+				true,
+			),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+	});
+	test('verifies the pair before immutable creation and rejects a plausible CFR mismatch', async () => {
+		const value = await setup();
+		const authority = defaultAppDependencies.drivingAnalysisAuthority({
+			DB: value.binding,
+			RACE_VIDEO_MEDIA_CONTAINER: {
+				getByName: () => ({ selectSubjectFrame: value.select }),
+			},
+			DRIVING_ANALYSIS_WORKFLOW: {
+				createBatch: async () => [],
+				get: async () => ({ status: async () => ({ status: 'queued' }) }),
+			},
+		} as unknown as Env);
+		await expect(
+			authority.create({
+				...command(),
+				input: {
+					...input(),
+					raceWindow: { startTimestampMs: 0, endTimestampMs: 1000 },
+					subjectSeed: {
+						...input().subjectSeed,
+						frameIndex: 2,
+						timestampMs: 125,
+					},
+				},
+			}),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+		expect(await value.database.select().from(drivingAnalysis)).toEqual([]);
+		await expect(
+			authority.create({
+				...command(),
+				input: {
+					...input(),
+					raceWindow: { startTimestampMs: 0, endTimestampMs: 1000 },
+					subjectSeed: {
+						...input().subjectSeed,
+						frameIndex: 2,
+						timestampMs: 200,
+					},
+				},
+			}),
+		).resolves.toMatchObject({ created: true });
 	});
 });
 
