@@ -29,6 +29,7 @@ from chassis_notes_gpu_worker.executor import (
     ExecutionInput,
     Sam31TrackingExecutor,
     TrackingExecutionError,
+    UnsupportedPrecisionError,
     _CancellableProvider,
 )
 from chassis_notes_gpu_worker.profile import InferenceProfile
@@ -194,7 +195,7 @@ def _executor(
     artifact: OutputArtifact,
 ) -> Sam31TrackingExecutor:
     return Sam31TrackingExecutor(
-        profile,
+        profile.model_copy(update={"precision": "bfloat16"}),
         Path("unused-checkpoint.pt"),
         provider=_Provider(artifact.segment.provenance),
     )
@@ -282,6 +283,27 @@ def test_default_executor_reports_an_uninstalled_checkpoint_unready(
     tmp_path: Path,
     profile: InferenceProfile,
 ) -> None:
-    executor = Sam31TrackingExecutor(profile, tmp_path / "missing.pt")
+    executor = Sam31TrackingExecutor(
+        profile.model_copy(update={"precision": "bfloat16"}), tmp_path / "missing.pt"
+    )
 
     assert executor.ready() is False
+
+
+@pytest.mark.parametrize("precision", ["float32", "float16"])
+def test_executor_rejects_unsupported_precision_before_loading_provider(
+    profile: InferenceProfile,
+    precision: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not load a model or advertise readiness for a false precision profile."""
+
+    def unexpected_factory(_settings: object) -> None:
+        pytest.fail("Unsupported precision must fail before provider creation")
+
+    monkeypatch.setattr(
+        executor_module.Sam31InferenceProvider, "create", unexpected_factory
+    )
+    unsupported = profile.model_copy(update={"precision": precision})
+    with pytest.raises(UnsupportedPrecisionError, match="only bfloat16"):
+        Sam31TrackingExecutor(unsupported, Path("unused.pt"))
