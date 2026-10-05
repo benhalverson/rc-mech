@@ -31,6 +31,7 @@ import {
 	LucideX,
 } from '@lucide/angular';
 import { AppearanceSelector } from './appearance-selector';
+import { FeatureFlags } from './feature-flags/feature-flags';
 import { InviteStore } from './invite-store';
 import { PasskeyStore } from './passkey-store';
 import { isValidTimezone, type Passkey } from './settings.models';
@@ -40,6 +41,7 @@ import { TimezoneStore } from './timezone-store';
 	selector: 'app-settings',
 	host: { class: 'block min-w-0' },
 	imports: [
+		FeatureFlags,
 		AppearanceSelector,
 		DatePipe,
 		FormField,

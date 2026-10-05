@@ -44,6 +44,20 @@ Version one gives each ready Tracking segment a configurable 24-hour provider-av
 
 Cancellation is fenced immediately in D1 before any external action, and Cloudflare stops issuing Transfer grants or renewing execution authority. It then sends an idempotent cancel command bound to the segment, lease, and fencing identities. A GPU lease is released when the local worker confirms cancellation or when a bounded cancellation grace expires because the worker is unreachable. Lease release does not assert that physical computation has stopped; stale results remain fenced, and the local service's capacity-one rule safely rejects new work until the old execution actually exits.
 
+The authenticated `POST /driving-analyses/:analysisId/cancel` command accepts the
+expected public state version. Its D1 batch conditionally fences the current run
+and analysis before dispatching cleanup. Repeating cancellation after a dispatch
+failure preserves the original fence and timestamp. A deterministic sibling
+Workflow instance (`<workflowId>-cancel`) reloads fenced segment identities,
+issues exact attempt-bound cancellation, and releases capacity after confirmation
+or a 60-second grace measured from the persisted cancellation timestamp. The
+original Workflow is terminated after cleanup dispatch, including a wait for
+Re-identification.
+Previously accepted evidence remains immutable. Grant signing and lease renewal
+both recheck current authority; a capability signed across cancellation is
+discarded before delivery. Worker cancellation and its watchdog remain physical
+cleanup mechanisms and never confer publication authority.
+
 If Cloudflare assigns a new lease while stale computation still occupies the physical GPU, the local worker rejects the new submission with `GPU_CAPACITY_BUSY`; it neither queues the submission nor creates pending local job state. Cloudflare releases that unstarted lease and restores the same segment waiter at the head of the coordinator queue with its original ordering and unchanged provider-availability deadline. A capacity-busy response cannot renew execution authority.
 
 Every active local execution has a configurable liveness watchdog. Only an Access-authenticated control request that Cloudflare has first verified against the active segment, lease, and fencing token refreshes it. If verified control traffic stops beyond the watchdog grace, the worker cooperatively aborts computation and records the attempt as interrupted. This watchdog limits wasted GPU work and helps physical capacity recover; it neither renews nor replaces the Durable Object lease, and D1 fencing remains authoritative.
@@ -51,6 +65,77 @@ Every active local execution has a configurable liveness watchdog. Only an Acces
 The local services restart persistently after host reboot, but local state alone never authorizes computation to resume. Cloudflare must reauthorize recovery through a fresh pull-protocol interaction bound to the current segment, lease, and fencing token. Computation interrupted before artifact finalization resumes as a new execution attempt under the same immutable segment and specification; it may retain the current lease only if Cloudflare confirms that authority is still active, otherwise Cloudflare must acquire a new lease and fencing token. An already finalized `output-ready` attempt remains idempotently reportable with its original descriptor and attempt identity so Cloudflare can decide whether it is still acceptable. The worker never persists Transfer-grant URLs or credentials, and it reuses cached prepared media only after verifying the immutable source checksum.
 
 ADR 0019 remains in force for asynchronous run-level Workflow orchestration, but this decision moves GPU work out of the Cloudflare container. ADR 0020 remains in force for TypeScript orchestration and Python-owned media and computer-vision work, but this decision splits those Python responsibilities between the Cloudflare media container and the local GPU service. ADR 0021 remains in force for a versioned inference-provider boundary, but this decision locates `TrackingProvider` at the trusted TypeScript boundary rather than inside the Python container. ADR 0027 remains in force for actual Python-container egress, including its mediated R2 path. It does not require GPU control to traverse the Python container, does not extend the container's allowed logical hosts, and does not grant general container Internet access.
+
+## Tracking availability persistence and execution budget
+
+The first executable segment persists its availability deadline in D1. Replaying
+segment creation reuses that deadline. Nullable segment `wait_reason` and run
+`safe_failure_code` fields preserve safe public waiting and deadline failures,
+including expiry before acquiring any attempt. The existing analysis table keeps
+its lifecycle constraints; public reads project a Tracking wait from the current
+Workflow's D1 run as `queued` before accepted evidence and `running` thereafter.
+
+Provider contact steps persist plain result unions and use explicit durable
+backoff sleeps. Temporary contact failures retain a valid attempt, while confirmed
+interruption or expired execution authority retires it before replacement. A
+transient contact retry divides longer backoff into at most 30-second durable
+sleeps with authority witnesses between sleeps; silence never renews a lease.
+If output-ready authority expires, the run fails retryably with
+`TRACKING_PROVIDER_UNAVAILABLE`, retaining its original attempt and artifact
+metadata without resubmission. Failure releases only the matching restored FIFO
+waiter, so a new run can retry without blocking unrelated work.
+Gateway failures and interrupted response streams remain retryable; malformed
+successful provider responses still fail closed. A
+restored FIFO waiter retains the restoring lease identity so an exact restoration
+replay after coordinator eviction does not move it. Output-ready computation is
+never resubmitted to repair a contact outage.
+
+The Workflow uses a 25,000-step limit and the Worker permits 1,000,000 subrequests.
+A full 24 hours of 15-second status polling requires fewer than 25,000 durable
+steps; sleeps do not consume the step budget. These settings accommodate repeated
+D1 authority checks within the fixed deadline, rather than increasing that
+deadline. See [Workflow limits](https://developers.cloudflare.com/workflows/reference/limits/).
+
+## Accepted Tracking gaps and correction waits
+
+A gap uses the same validated artifact promotion and conditional acceptance as a
+completed segment. Publication releases GPU capacity only after acceptance. On
+accepted replay, the Workflow verifies the completed-release receipt before
+publishing state or entering the external wait. Accepted corner evidence is
+committed before the public awaiting-reidentification state is published.
+
+The Workflow waits for `tracking-reidentified` events without polling the local
+provider or acquiring a lease. An event is only a wakeup: D1 must contain the next
+immutable segment under the same owner, run, Workflow, and accepted predecessor.
+Duplicate or premature wakeups cannot create a segment. Correction identity is
+the new segment ID; replay requires the identical seed, and competing corrections
+conflict on the next segment order. A correction requires the accepted artifact
+digest and a seed strictly later than the gap. Its insertion is fenced by the
+active run version, and its distinct segment enters the FIFO tail with fresh
+execution authority. Historical gaps remain immutable; segments are measured
+independently so crossings through a gap cannot become eligible by interpolation.
+
+Each resumed segment has its own durable step-name prefix. Public lifecycle uses
+the final segment's outcome, so an earlier accepted gap does not keep a corrected
+run in awaiting-reidentification. Cancellation fences D1 and terminates the
+original Workflow, including any external wait.
+
+The owner-scoped `/driving-analyses/:analysisId/reidentification` read exposes the
+accepted gap and digest. Its correction command binds the current run, predecessor
+segment, accepted digest, immutable correction ID, and finite normalized Subject
+seed. Concurrent identical commands reuse the winning record's timing; conflicting
+seeds or IDs cannot replace it. A saved correction is committed before the Workflow
+wakeup is sent. If that delivery fails, the read exposes its safe receipt and seed
+so a refreshed client can retry the exact correction. Repeated wakeups are harmless.
+The correction editor uses private playback and the same keyboard-accessible box
+editor as initial identification, with a distinct landmark name.
+
+Correction frame choices come from the immutable prepared frame manifest after
+bounded reads, checksum verification, and contract validation. The slider selects
+one manifest entry, preserving its exact source frame index and timestamp even
+for variable frame rates and noncontiguous source indexes. Private playback seeks
+to that entry's source timestamp. The command authority independently verifies
+the pair against the manifest before inserting any immutable continuation.
 
 ## Publication recovery retention
 

@@ -54,6 +54,9 @@ const idleTransfer = (): RaceRecordingTransferState => ({
 });
 
 class FakeDrivingAnalysisStore {
+	readonly selectedSubjectFrame = signal(null);
+	readonly subjectFrameLoading = signal(false);
+	readonly subjectFrameError = signal(null);
 	readonly recordings = signal<readonly RaceRecording[]>([]);
 	readonly transfer = signal<RaceRecordingTransferState>(idleTransfer());
 	readonly pending = signal(false);

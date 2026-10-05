@@ -1,4 +1,5 @@
 import { expect } from 'vitest';
+import { defaultAppDependencies } from '../app-dependencies';
 import { DrivingAnalysisAuthority } from '../driving-analysis/analysis/driving-analysis-authority';
 import { RaceRecordingAuthority } from '../driving-analysis/race-recording/race-recording-authority';
 import { type AppDependencies, createApp } from '../index';
@@ -473,6 +474,7 @@ type HonoFixtureOptions = {
 	database?: D1Database;
 	raceRecordingAuthority?: AppDependencies['raceRecordingAuthority'];
 	drivingAnalysisAuthority?: AppDependencies['drivingAnalysisAuthority'];
+	analysisLifecycle?: AppDependencies['analysisLifecycle'];
 };
 
 export const createHonoFixture = (
@@ -541,6 +543,9 @@ export const createHonoFixture = (
 		RACE_VIDEO_VALIDATION_WORKFLOW: {} as Env['RACE_VIDEO_VALIDATION_WORKFLOW'],
 	} satisfies Env;
 	const auth: AppDependencies = {
+		analysisLifecycle:
+			fixtureOptions.analysisLifecycle ??
+			defaultAppDependencies.analysisLifecycle,
 		getSession: async () =>
 			fixtureOptions.authenticated !== false
 				? { user: { id: fixtureOptions.userId ?? 'owner-1' } }

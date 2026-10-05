@@ -4,7 +4,7 @@ import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking
 import {
 	DrivingAnalysisWorkflow,
 	type DrivingAnalysisWorkflowEnvironment,
-	FirstTrackingSegmentWorkflow,
+	TrackingRunWorkflow,
 } from '../tracking/driving-analysis-workflow';
 import { DrivingAnalysisAuthority } from './driving-analysis-authority';
 import {
@@ -88,6 +88,45 @@ afterEach(() => {
 });
 
 describe('Driving-analysis creation Workflow', () => {
+	test.each(['active', 'cancelled'] as const)(
+		'fences a %s run created across cancellation before preparing media',
+		async (status) => {
+			const prepared = { pinRunInput: vi.fn() };
+			const tracking = {
+				createRun: vi.fn(async () => ({ status, version: 1 })),
+				fenceRun: vi.fn(async () => undefined),
+			};
+			const authority = {
+				preparationSource: vi.fn(async () => ({
+					objectKey: 'source/private',
+					byteCount: 123,
+					checksumSha256: 'a'.repeat(64),
+				})),
+				get: vi.fn(async () => ({ ...analysis(3, 0), status: 'cancelled' })),
+			};
+			const port = new RealDrivingAnalysisContainerPort({
+				authority,
+				tracking,
+				prepared,
+				profile: inferenceProfileFixture(),
+			} as unknown as ConstructorParameters<
+				typeof RealDrivingAnalysisContainerPort
+			>[0]);
+			await expect(
+				port.startPreparation({
+					...analysis(2, 0),
+					ownerId: payload.ownerId,
+					analysisId: ANALYSIS_ID,
+					workflowId: ANALYSIS_ID,
+					workflowSequence: 1,
+				}),
+			).rejects.toThrow('authority is cancelled');
+			expect(tracking.fenceRun).toHaveBeenCalledTimes(
+				status === 'active' ? 1 : 0,
+			);
+			expect(prepared.pinRunInput).not.toHaveBeenCalled();
+		},
+	);
 	test('advances only through authoritative D1 publications around preparation', async () => {
 		const beginPreparation = vi.fn(async () => ({
 			kind: 'published' as const,
@@ -330,7 +369,7 @@ describe('Driving-analysis creation Workflow', () => {
 			.spyOn(RealDrivingAnalysisContainerPort.prototype, 'startPreparation')
 			.mockResolvedValue({ progress: 20, runId, preparedMediaId });
 		const runFirst = vi
-			.spyOn(FirstTrackingSegmentWorkflow.prototype, 'run')
+			.spyOn(TrackingRunWorkflow.prototype, 'run')
 			.mockResolvedValue({
 				state: {
 					runId,

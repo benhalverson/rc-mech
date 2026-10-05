@@ -42,6 +42,8 @@ const migrationDirectory = resolve(
 const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
+	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -261,6 +263,30 @@ describe('R2TransferGrantAuthority', () => {
 		const promise = grants.issue(issueCommand(segment.specificationDigest));
 		await expect(promise).rejects.toMatchObject({ code: 'SIGNING_FAILED' });
 		await expect(promise).rejects.not.toThrow(/secret|signature/i);
+	});
+
+	test('discards a signed capability when cancellation wins during signing', async () => {
+		const { authority, segment } = await authorityFixture();
+		const grants = new R2TransferGrantAuthority(
+			authority,
+			successfulWitness(),
+			{
+				sign: async () => {
+					await authority.fenceRun({
+						ownerId: OWNER_ID,
+						runId: RUN_ID,
+						expectedVersion: 1,
+						status: 'cancelled',
+						completedAt: NOW,
+					});
+					return 'https://secret.example/object?signature=do-not-leak';
+				},
+			},
+			() => NOW_SECONDS,
+		);
+		await expect(
+			grants.issue(issueCommand(segment.specificationDigest)),
+		).rejects.toMatchObject({ code: 'SIGNING_FAILED' });
 	});
 
 	test('redacts malformed signer output instead of exposing it through validation', async () => {
