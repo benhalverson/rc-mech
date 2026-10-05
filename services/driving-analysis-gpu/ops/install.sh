@@ -9,4 +9,4 @@ install -m 0750 "$root/scripts/verify.sh" /etc/chassis-notes-gpu/verify.sh
 install -m 0644 "$root/systemd/chassis-notes-gpu.service" /etc/systemd/system/chassis-notes-gpu.service
 install -m 0644 "$root/systemd/cloudflared.service" /etc/systemd/system/cloudflared.service
 install -o root -g root -m 0600 /dev/null /etc/chassis-notes-gpu/worker.env
-printf 'Install skeleton created. Provision profile, model, encrypted state, and Tunnel credentials out of band.\n'
+printf 'Install skeleton created. Provision profile, model, private state directory, and Tunnel credentials out of band.\n'
