@@ -4,6 +4,7 @@ import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { routes, workspaceBoundaryRoute } from './app.routes';
+import { drivingAnalysisCanMatch } from './driving-analysis-visibility/visibility.guard';
 import {
 	protectedWorkspaceRoute,
 	workspaceRoutes,
@@ -84,7 +85,11 @@ describe('application routes', () => {
 		expect(await protectedWorkspaceRoute.loadComponent?.()).toBeTypeOf(
 			'function',
 		);
-		for (const route of workspaceRoutes) expect(route.canMatch).toBeUndefined();
+		for (const route of workspaceRoutes) {
+			if (route.path === 'track-maps')
+				expect(route.canMatch).toEqual([drivingAnalysisCanMatch]);
+			else expect(route.canMatch).toBeUndefined();
+		}
 	});
 
 	it('keeps Garage collection and overview independently route scoped', () => {
@@ -157,9 +162,11 @@ describe('application routes', () => {
 			const lazyRoutes = await route.loadChildren?.();
 			expect(Array.isArray(lazyRoutes)).toBe(true);
 			if (!Array.isArray(lazyRoutes)) continue;
-			expect(lazyRoutes[0]?.providers).toBeDefined();
-			expect(lazyRoutes[0]?.loadComponent).toBeTypeOf('function');
-			expect(await lazyRoutes[0]?.loadComponent?.()).toBeTypeOf('function');
+			for (const leaf of lazyRoutes) {
+				expect(leaf.providers).toBeDefined();
+				expect(leaf.loadComponent).toBeTypeOf('function');
+				expect(await leaf.loadComponent?.()).toBeTypeOf('function');
+			}
 		}
 	});
 

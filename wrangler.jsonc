@@ -4,6 +4,7 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-07-01",
 	"compatibility_flags": ["nodejs_compat"],
+	"limits": { "subrequests": 1000000 },
 	"triggers": { "crons": ["0 */6 * * *"] },
 	"assets": { "directory": "./public", "binding": "ASSETS" },
 	"routes": [
@@ -62,7 +63,8 @@
 		{
 			"binding": "DRIVING_ANALYSIS_WORKFLOW",
 			"name": "rc-mech-driving-analysis",
-			"class_name": "DrivingAnalysisWorkflow"
+			"class_name": "DrivingAnalysisWorkflow",
+			"limits": { "steps": 25000 }
 		},
 		{
 			"binding": "RACE_VIDEO_VALIDATION_WORKFLOW",
@@ -145,7 +147,8 @@
 				{
 					"binding": "DRIVING_ANALYSIS_WORKFLOW",
 					"name": "rc-mech-driving-analysis-local",
-					"class_name": "DrivingAnalysisWorkflow"
+					"class_name": "DrivingAnalysisWorkflow",
+					"limits": { "steps": 25000 }
 				},
 				{
 					"binding": "RACE_VIDEO_VALIDATION_WORKFLOW",

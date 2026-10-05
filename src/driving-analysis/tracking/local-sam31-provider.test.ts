@@ -78,6 +78,18 @@ const rejection = (
 };
 
 describe('LocalSam31Provider', () => {
+	test('never contacts an expired provider deadline', async () => {
+		const { provider, fetcher } = providerFixture(() =>
+			jsonResponse(jobStatusFixture()),
+		);
+		expect(await provider.submit(submissionFixture(), Date.now() - 1)).toEqual({
+			ok: false,
+			code: 'TRACKING_PROVIDER_UNAVAILABLE',
+			retryable: true,
+		});
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+
 	test('uses only fixed-origin authenticated submit, status, grant, and cancel requests', async () => {
 		const { provider, requests } = providerFixture(() =>
 			jsonResponse(jobStatusFixture()),
@@ -310,6 +322,24 @@ describe('LocalSam31Provider', () => {
 		});
 	});
 
+	test('retries a connection lost while reading the provider response body', async () => {
+		const { provider } = providerFixture(
+			() =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.error(new TypeError('private connection reset'));
+						},
+					}),
+				),
+		);
+		expect(await provider.status(executionIdentityFixture())).toEqual({
+			ok: false,
+			code: 'TRACKING_PROVIDER_UNAVAILABLE',
+			retryable: true,
+		});
+	});
+
 	test('assembles a bounded multi-chunk response before strict parsing', async () => {
 		const value = JSON.stringify(jobStatusFixture());
 		const midpoint = Math.floor(value.length / 2);
@@ -355,6 +385,30 @@ describe('LocalSam31Provider', () => {
 				code,
 				retryable,
 			});
+		},
+	);
+
+	test.each([408, 429, 500, 502, 503, 504, 530])(
+		'retries transient HTTP %s responses without exposing gateway details',
+		async (status) => {
+			for (const body of [
+				'<html>private Tunnel failure</html>',
+				JSON.stringify({ error: 'private origin unavailable' }),
+			]) {
+				const { provider } = providerFixture(
+					() => new Response(body, { status }),
+				);
+				for (const result of [
+					await provider.submit(submissionFixture()),
+					await provider.status(executionIdentityFixture()),
+					await provider.deliverTransferGrant(transferGrantFixture()),
+				])
+					expect(result).toEqual({
+						ok: false,
+						code: 'TRACKING_PROVIDER_UNAVAILABLE',
+						retryable: true,
+					});
+			}
 		},
 	);
 

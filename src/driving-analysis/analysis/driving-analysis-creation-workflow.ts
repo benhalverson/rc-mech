@@ -138,7 +138,7 @@ export class RealDrivingAnalysisContainerPort
 		};
 		const inputDigest = await digestTrackingRunInput(input);
 		const createdAt = command.createdAt;
-		await this.dependencies.tracking.createRun({
+		const run = await this.dependencies.tracking.createRun({
 			runId,
 			analysisId: command.analysisId,
 			ownerId: command.ownerId,
@@ -148,6 +148,21 @@ export class RealDrivingAnalysisContainerPort
 			inputDigest,
 			createdAt,
 		});
+		const current = await this.dependencies.authority.get(
+			command.ownerId,
+			command.analysisId,
+		);
+		if (current.status === 'cancelled') {
+			if (run.status === 'active')
+				await this.dependencies.tracking.fenceRun({
+					ownerId: command.ownerId,
+					runId,
+					expectedVersion: run.version,
+					status: 'cancelled',
+					completedAt: current.updatedAt,
+				});
+			throw new Error('Driving-analysis authority is cancelled');
+		}
 		await this.dependencies.prepared.pinRunInput({
 			ownerId: command.ownerId,
 			input,

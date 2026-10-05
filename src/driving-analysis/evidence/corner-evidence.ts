@@ -217,6 +217,14 @@ const measureCorner = (
 			best: false,
 		}));
 	}
+	return rankCornerPasses(passes, tieToleranceMs);
+};
+
+/** Rank one corner across accepted segments without changing immutable batches. */
+export const rankCornerPasses = <T extends CornerPassEvidence>(
+	passes: readonly T[],
+	tieToleranceMs: number,
+): T[] => {
 	const ranked = passes
 		.filter(isEligiblePass)
 		.sort(
@@ -224,7 +232,7 @@ const measureCorner = (
 				left.durationMs - right.durationMs ||
 				left.entry.timestampMs - right.entry.timestampMs,
 		);
-	const rankByOrdinal = new Map<number, number>();
+	const ranks = new Map<CornerPassEvidence, number>();
 	let rank = 0;
 	let groupFastestDurationMs: number | null = null;
 	for (const pass of ranked) {
@@ -236,10 +244,10 @@ const measureCorner = (
 			rank += 1;
 			groupFastestDurationMs = durationMs;
 		}
-		rankByOrdinal.set(pass.ordinal, rank);
+		ranks.set(pass, rank);
 	}
 	return passes.map((pass) => {
-		const rank = rankByOrdinal.get(pass.ordinal) ?? null;
+		const rank = ranks.get(pass) ?? null;
 		return {
 			...pass,
 			rank,

@@ -33,13 +33,16 @@ export type TrackingProviderResult<T> =
 export interface TrackingProvider {
 	submit(
 		submission: TrackingJobSubmission,
+		deadlineAt?: number,
 	): Promise<TrackingProviderResult<JobStatus>>;
 	status(
 		identity: ExecutionIdentity,
+		deadlineAt?: number,
 	): Promise<TrackingProviderResult<JobStatus>>;
 	cancel(command: CancelCommand): Promise<TrackingProviderResult<JobStatus>>;
 	deliverTransferGrant(
 		command: TransferGrantCommand,
+		deadlineAt?: number,
 	): Promise<TrackingProviderResult<JobStatus>>;
 }
 
@@ -77,14 +80,22 @@ export class LocalSam31Provider implements TrackingProvider {
 
 	async submit(
 		submission: TrackingJobSubmission,
+		deadlineAt?: number,
 	): Promise<TrackingProviderResult<JobStatus>> {
 		const parsed = trackingJobSubmissionSchema.safeParse(submission);
 		if (!parsed.success) return invalidRequest();
-		return this.request('/v1/jobs', 'POST', parsed.data, parsed.data);
+		return this.request(
+			'/v1/jobs',
+			'POST',
+			parsed.data,
+			parsed.data,
+			deadlineAt,
+		);
 	}
 
 	async status(
 		identity: ExecutionIdentity,
+		deadlineAt?: number,
 	): Promise<TrackingProviderResult<JobStatus>> {
 		const parsed = executionIdentitySchema.safeParse(identity);
 		if (!parsed.success) return invalidRequest();
@@ -101,6 +112,7 @@ export class LocalSam31Provider implements TrackingProvider {
 			'GET',
 			undefined,
 			parsed.data,
+			deadlineAt,
 		);
 	}
 
@@ -119,6 +131,7 @@ export class LocalSam31Provider implements TrackingProvider {
 
 	async deliverTransferGrant(
 		command: TransferGrantCommand,
+		deadlineAt?: number,
 	): Promise<TrackingProviderResult<JobStatus>> {
 		const parsed = transferGrantCommandSchema.safeParse(command);
 		if (!parsed.success) return invalidRequest();
@@ -127,6 +140,7 @@ export class LocalSam31Provider implements TrackingProvider {
 			'POST',
 			parsed.data,
 			parsed.data,
+			deadlineAt,
 		);
 	}
 
@@ -135,10 +149,17 @@ export class LocalSam31Provider implements TrackingProvider {
 		method: 'GET' | 'POST',
 		body: object | undefined,
 		expectedIdentity: ExecutionIdentity,
+		deadlineAt?: number,
 	): Promise<TrackingProviderResult<JobStatus>> {
+		const remaining =
+			deadlineAt === undefined ? this.timeoutMs : deadlineAt - Date.now();
+		if (remaining <= 0) return unavailable();
 		const url = resolveProviderUrl(this.origin, path);
 		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+		const timeout = setTimeout(
+			() => controller.abort(),
+			Math.min(this.timeoutMs, remaining),
+		);
 		try {
 			let response: Response;
 			try {
@@ -183,13 +204,11 @@ const parseProviderResponse = async (
 	}
 	let value: unknown;
 	try {
-		value = JSON.parse(
-			new TextDecoder().decode(
-				await readBoundedBody(response, maxResponseBytes),
-			),
-		);
+		const body = await readBoundedBody(response, maxResponseBytes);
+		if (body.ok === false) return unavailable();
+		value = JSON.parse(new TextDecoder().decode(body.bytes));
 	} catch {
-		return invalidResponse();
+		return invalidHttpResponse(response.status);
 	}
 	if (!response.ok) {
 		const rejected = rejectedJobResponseSchema.safeParse(value);
@@ -199,7 +218,7 @@ const parseProviderResponse = async (
 					code: rejected.data.error.code,
 					retryable: isRetryableProviderCode(rejected.data.error.code),
 				}
-			: invalidResponse();
+			: invalidHttpResponse(response.status);
 	}
 	const parsed = jobStatusSchema.safeParse(value);
 	if (!parsed.success || !isCurrentStatus(parsed.data, expectedIdentity)) {
@@ -207,6 +226,11 @@ const parseProviderResponse = async (
 	}
 	return { ok: true, value: parsed.data };
 };
+
+const invalidHttpResponse = (status: number): TrackingProviderResult<never> =>
+	status >= 500 || status === 408 || status === 429
+		? unavailable()
+		: invalidResponse();
 
 const normalizeOrigin = (value: string): URL => {
 	let origin: URL;
@@ -254,7 +278,7 @@ const positiveBound = (value: number, label: string): number => {
 const readBoundedBody = async (
 	response: Response,
 	maxBytes: number,
-): Promise<Uint8Array> => {
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false }> => {
 	const declared = response.headers.get('content-length');
 	if (declared !== null) {
 		const byteCount = Number(declared);
@@ -266,13 +290,19 @@ const readBoundedBody = async (
 			throw new Error('GPU provider response exceeded its bound');
 		}
 	}
-	if (response.body === null) return new Uint8Array();
+	if (response.body === null) return { ok: true, bytes: new Uint8Array() };
 	const reader = response.body.getReader();
 	const chunks: Uint8Array[] = [];
 	let byteCount = 0;
 	try {
 		while (true) {
-			const { done, value } = await reader.read();
+			let chunk: ReadableStreamReadResult<Uint8Array>;
+			try {
+				chunk = await reader.read();
+			} catch {
+				return { ok: false };
+			}
+			const { done, value } = chunk;
 			if (done) break;
 			byteCount += value.byteLength;
 			if (byteCount > maxBytes) {
@@ -289,7 +319,7 @@ const readBoundedBody = async (
 		combined.set(chunk, offset);
 		offset += chunk.byteLength;
 	}
-	return combined;
+	return { ok: true, bytes: combined };
 };
 
 const isCurrentStatus = (

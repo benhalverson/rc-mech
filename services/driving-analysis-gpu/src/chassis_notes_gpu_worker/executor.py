@@ -39,6 +39,10 @@ class TrackingExecutionError(RuntimeError):
     """A local Tracking execution failed without exposing provider detail."""
 
 
+class UnsupportedPrecisionError(ValueError):
+    """The installed profile cannot describe this SAM adapter's computation."""
+
+
 @dataclass(frozen=True)
 class ExecutionInput:
     prepared_media: Path
@@ -110,6 +114,10 @@ class Sam31TrackingExecutor:
         *,
         provider: InferenceProvider | None = None,
     ) -> None:
+        """Require the pinned SAM runtime's bfloat16 contract before loading it."""
+        if profile.precision != "bfloat16":
+            message = "The pinned SAM 3.1 adapter supports only bfloat16 precision"
+            raise UnsupportedPrecisionError(message)
         settings = InferenceSettings(
             provider="sam31",
             model=profile.model.name,
