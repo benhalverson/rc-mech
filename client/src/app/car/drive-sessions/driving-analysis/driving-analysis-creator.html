@@ -53,10 +53,12 @@
 			<fieldset data-frame-editor class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
 				<legend class="sr-only">Verified Subject frame</legend>
 				<app-subject-box-editor [editorId]="'analysis-' + driveSessionId()" [(box)]="box" [(valid)]="boxValid">
-					<img data-subject-frame class="block h-auto w-full" [src]="frame.contentUrl" alt="Verified source frame for selecting the Subject car" (load)="loadedFrameUrl.set(frame.contentUrl)" (error)="failedFrameUrl.set(frame.contentUrl)" />
+					@for (image of frameImage.images(); track image) {
+						<img data-subject-frame class="block h-auto w-full" [src]="image.source.contentUrl" alt="Verified source frame for selecting the Subject car" (load)="frameImage.loaded(image)" (error)="frameImage.error(image)" />
+					}
 				</app-subject-box-editor>
 			</fieldset>
-			@if(failedFrameUrl()===frame.contentUrl){<p role="alert">The verified image could not be loaded. Choose the frame again.</p>}
+			@if(frameImage.failed()){<p role="alert">The verified image could not be loaded. Choose the frame again.</p>}
 		}
 
 		<div class="grid gap-2">

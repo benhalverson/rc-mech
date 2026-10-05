@@ -4,7 +4,6 @@ import {
 	effect,
 	inject,
 	input,
-	linkedSignal,
 	signal,
 } from '@angular/core';
 import { FormField, form } from '@angular/forms/signals';
@@ -22,6 +21,7 @@ import {
 import type { RaceRecording } from './race-recording.models';
 import { SubjectBoxEditor } from './subject-box-editor';
 import { SubjectReidentification } from './subject-reidentification';
+import { verifiedFrameImage } from './verified-frame-image';
 
 type CreationForm = {
 	approvedTrackMapVersionId: string;
@@ -103,22 +103,15 @@ export class DrivingAnalysisCreator {
 			return null;
 		return frame;
 	});
-	protected readonly loadedFrameUrl = linkedSignal({
-		source: this.selectedFrame,
-		computation: () => '',
-	});
-	protected readonly failedFrameUrl = linkedSignal({
-		source: this.selectedFrame,
-		computation: () => '',
-	});
-	protected readonly frameReady = computed(() => {
-		const frame = this.selectedFrame();
-		return (
-			frame !== null &&
-			this.loadedFrameUrl() === frame.contentUrl &&
-			this.failedFrameUrl() !== frame.contentUrl
-		);
-	});
+	protected readonly frameImage = verifiedFrameImage(
+		computed(() => {
+			const frame = this.selectedFrame();
+			return frame
+				? { contentUrl: frame.contentUrl, identity: JSON.stringify(frame) }
+				: null;
+		}),
+	);
+	protected readonly frameReady = this.frameImage.ready;
 	protected readonly playbackSource = computed(() => {
 		const recording = this.recording();
 		return JSON.stringify([recording.id, recording.playbackUrl]);

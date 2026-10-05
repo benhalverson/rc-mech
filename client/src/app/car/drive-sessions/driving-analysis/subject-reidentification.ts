@@ -17,6 +17,7 @@ import {
 import type { RaceRecording } from './race-recording.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
+import { verifiedFrameImage } from './verified-frame-image';
 
 @Component({
 	selector: 'app-subject-reidentification',
@@ -57,16 +58,28 @@ export class SubjectReidentification implements OnChanges {
 	protected readonly previewUrl = computed(
 		() => this.frames()[this.selectedFrame()]?.contentUrl ?? null,
 	);
-	protected readonly loadedFrameUrl = signal('');
-	protected readonly failedFrameUrl = signal('');
-	protected readonly frameReady = computed(() => {
-		const url = this.previewUrl();
-		return (
-			url !== null &&
-			this.loadedFrameUrl() === url &&
-			this.failedFrameUrl() !== url
-		);
-	});
+	protected readonly frameImage = verifiedFrameImage(
+		computed(() => {
+			const frame = this.frames()[this.selectedFrame()];
+			const recording = this.recording();
+			const analysis = this.analysis();
+			return frame?.contentUrl
+				? {
+						contentUrl: frame.contentUrl,
+						identity: JSON.stringify([
+							analysis.id,
+							analysis.stateVersion,
+							this.store.context(),
+							recording.id,
+							recording.media?.checksumSha256,
+							frame.frameIndex,
+							frame.timestampMs,
+						]),
+					}
+				: null;
+		}),
+	);
+	protected readonly frameReady = this.frameImage.ready;
 	protected readonly box = signal<SubjectBox>({
 		x: 0.4,
 		y: 0.4,
@@ -79,6 +92,7 @@ export class SubjectReidentification implements OnChanges {
 		viewChild.required<ElementRef<HTMLInputElement>>('timestampField');
 	private selectedId = '';
 
+	/** Synchronize correction context and reset local edits for a different analysis. */
 	ngOnChanges(): void {
 		const analysis = this.analysis();
 		this.store.select(analysis.id, analysis.stateVersion);
@@ -88,19 +102,7 @@ export class SubjectReidentification implements OnChanges {
 		this.error.set('');
 	}
 
-	/** Accepts readiness only for the currently displayed exact source image. */
-	protected imageLoaded(url: string): void {
-		if (url !== this.previewUrl()) return;
-		this.loadedFrameUrl.set(url);
-		this.failedFrameUrl.set('');
-	}
-
-	/** Keeps a late image failure from changing the current frame's retry state. */
-	protected imageFailed(url: string): void {
-		if (url !== this.previewUrl()) return;
-		this.failedFrameUrl.set(url);
-	}
-
+	/** Select a prepared source frame and require that image attempt to load. */
 	protected selectFrame(event: Event): void {
 		const frameIndex = (event.target as HTMLInputElement).valueAsNumber;
 		const frame = this.store.context()?.frames[frameIndex];
@@ -108,6 +110,7 @@ export class SubjectReidentification implements OnChanges {
 		this.selectedFrame.set(frameIndex);
 	}
 
+	/** Retry the accepted immutable correction through its workflow command. */
 	protected retrySaved(): void {
 		const context = this.store.context();
 		if (context?.pendingCorrection)

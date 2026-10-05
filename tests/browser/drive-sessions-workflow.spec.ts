@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
@@ -458,7 +459,7 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 			fileName: 'Analysis.mp4',
 			contentType: 'video/mp4',
 			sizeBytes: playableRaceVideo.length,
-			requestId: '00000000-0000-4000-8000-000000000236',
+			requestId: randomUUID(),
 		},
 	});
 	expect(createResponse.status()).toBe(201);
@@ -486,7 +487,7 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	});
 	const trackMap = await createApprovedTrackMap(
 		page,
-		'Analysis browser circuit',
+		`Analysis browser circuit ${randomUUID()}`,
 		recording.raceVideo.id,
 	);
 
@@ -519,6 +520,42 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		);
 		await previousVideo.dispose();
 	}
+	// Leaving while a source image is pending cancels its presentation lifetime.
+	const abandonedImageResponse = Promise.withResolvers<void>();
+	let abandonImage = true;
+	await page.route('**/subject-frames/*/content?checksum=*', async (route) => {
+		if (!abandonImage) return route.continue();
+		abandonImage = false;
+		await abandonedImageResponse.promise;
+		await route.fulfill({ status: 503, body: 'Abandoned image' });
+	});
+	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-mark-seed]').click();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		true,
+	);
+	const abandonedImage = await creator
+		.locator('[data-subject-frame]')
+		.elementHandle();
+	if (!abandonedImage) throw new Error('Missing pending creator image');
+	await page.getByRole('link', { name: 'Overview', exact: true }).click();
+	await expect(creator).toHaveCount(0);
+	abandonedImageResponse.resolve();
+	await abandonedImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await page.getByRole('link', { name: 'Drive sessions', exact: true }).click();
+	await expect(creator).toBeVisible();
+	await expect(creator.locator('[data-subject-frame]')).toHaveCount(0);
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Choose and load a verified Subject frame' }),
+	).toBeVisible();
+	await abandonedImage.dispose();
 	// Native failures are injected locally; the browser still renders and retries the capability.
 	await creator.locator('video').evaluate((video) => {
 		Object.defineProperty(video, 'play', {
@@ -527,9 +564,11 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		});
 	});
 	await creator.locator('[data-toggle-playback]').click();
-	await expect(creator.getByRole('alert')).toContainText(
-		'Private playback is unavailable',
-	);
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Private playback is unavailable' }),
+	).toContainText('Private playback is unavailable');
 	await creator.locator('video').evaluate((video) => {
 		Reflect.deleteProperty(video, 'play');
 	});
@@ -547,9 +586,11 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		});
 	});
 	await creator.locator('[data-race-seek]').fill('500');
-	await expect(creator.getByRole('alert')).toContainText(
-		'Private playback is unavailable',
-	);
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Private playback is unavailable' }),
+	).toContainText('Private playback is unavailable');
 	await expect(creator.locator('output')).toHaveText('250 ms');
 	await creator.locator('video').evaluate((video) => {
 		Reflect.deleteProperty(video, 'currentTime');
@@ -591,12 +632,81 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await creator.locator('[data-toggle-playback]').click();
 	await expect(creator.locator('video')).toHaveJSProperty('paused', false);
 	await creator.locator('[data-race-seek]').fill('125');
+	// Hold and fail the real creator image, then retry the exact same frame.
+	const creatorImageFailure = Promise.withResolvers<void>();
+	let failCreatorImage = true;
+	await page.route('**/subject-frames/2/content?checksum=*', async (route) => {
+		if (!failCreatorImage) return route.continue();
+		failCreatorImage = false;
+		await creatorImageFailure.promise;
+		await route.fulfill({ status: 503, body: 'Frame unavailable' });
+	});
 	await creator.locator('[data-mark-seed]').focus();
 	await page.keyboard.press('Enter');
 	await expect(creator.locator('[data-mark-seed]')).toBeFocused();
 	await expect(creator.locator('video')).toHaveJSProperty('paused', true);
-	await expect(creator.locator('[data-subject-frame]')).toBeVisible();
-	await expect(creator.locator('[data-frame-editor]')).toBeEnabled();
+	await expect(creator.locator('[data-subject-frame]')).toBeAttached();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		true,
+	);
+	const failedCreatorImage = await creator
+		.locator('[data-subject-frame]')
+		.elementHandle();
+	if (!failedCreatorImage) throw new Error('Missing creator frame image');
+	creatorImageFailure.resolve();
+	await expect(
+		creator.getByText(
+			'The verified image could not be loaded. Choose the frame again.',
+		),
+	).toBeVisible();
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Choose and load a verified Subject frame' }),
+	).toBeVisible();
+	await creator.locator('[data-mark-seed]').click();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		false,
+	);
+	await failedCreatorImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		false,
+	);
+	await failedCreatorImage.dispose();
+	// Each repeated selection remounts an exact image and waits for its own load.
+	for (let selection = 0; selection < 3; selection++) {
+		const priorImage = await creator
+			.locator('[data-subject-frame]')
+			.elementHandle();
+		if (!priorImage) throw new Error('Missing previous creator image');
+		await creator.locator('[data-mark-seed]').click();
+		await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+			'disabled',
+			false,
+		);
+		expect(
+			await priorImage.evaluate(
+				(image) => image !== document.querySelector('[data-subject-frame]'),
+			),
+		).toBe(true);
+		await priorImage.evaluate((image) => {
+			image.dispatchEvent(new Event('load'));
+			image.dispatchEvent(new Event('error'));
+		});
+		await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+			'disabled',
+			false,
+		);
+		await priorImage.dispose();
+	}
+
 	await expect(
 		creator.getByLabel('Verified Subject timestamp (ms)'),
 	).toHaveValue('200');

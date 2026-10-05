@@ -26,16 +26,14 @@
 					<fieldset class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
 						<legend class="sr-only">Verified correction frame</legend>
 						<app-subject-box-editor heading="Subject car correction" [headingLevel]="headingLevel() === 3 ? 4 : 6" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
-							@if (failedFrameUrl() !== url) {
-								@for (imageUrl of [url]; track imageUrl) {
-									<img class="block h-auto w-full" [src]="imageUrl" alt="Exact source frame for correcting the Subject car" (load)="imageLoaded(imageUrl)" (error)="imageFailed(imageUrl)" />
-								}
+							@for (image of frameImage.images(); track image) {
+								<img class="block h-auto w-full" [src]="image.source.contentUrl" alt="Exact source frame for correcting the Subject car" (load)="frameImage.loaded(image)" (error)="frameImage.error(image)" />
 							}
 						</app-subject-box-editor>
 					</fieldset>
-					@if (failedFrameUrl() === url) {
+					@if (frameImage.failed()) {
 						<p role="alert">The exact frame image could not be loaded. Retry the image before confirming the Subject.</p>
-						<button class="alloy-control alloy-control-secondary w-fit" type="button" (click)="loadedFrameUrl.set(''); failedFrameUrl.set('')">Retry frame image</button>
+						<button class="alloy-control alloy-control-secondary w-fit" type="button" (click)="frameImage.retry()">Retry frame image</button>
 					}
 				} @else { <p role="alert">The source recording is unavailable for correction.</p> }
 				<label class="grid gap-1 text-sm">Inspect a later clear frame
