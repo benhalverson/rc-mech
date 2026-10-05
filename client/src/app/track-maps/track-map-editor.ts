@@ -31,6 +31,7 @@ const pointLocation = {
 
 const isPointTarget = (target: GeometryTarget): target is PointTarget =>
 	target in pointLocation;
+const minimumCornerViewSize = 0.001;
 
 @Component({
 	selector: 'app-track-map-editor',
@@ -251,11 +252,33 @@ export class TrackMapEditor {
 			};
 		});
 	}
+	/** Bound canvas and keyboard rectangle edits while leaving numeric drafts visible. */
 	private updateView(
 		selected: number,
 		cornerView: TrackCorner['cornerView'],
 	): void {
-		this.updateActive(selected, (corner) => ({ ...corner, cornerView }));
+		const boundedView =
+			this.selectedTarget() === 'viewPosition'
+				? {
+						...cornerView,
+						x: Math.min(1 - cornerView.width, Math.max(0, cornerView.x)),
+						y: Math.min(1 - cornerView.height, Math.max(0, cornerView.y)),
+					}
+				: {
+						...cornerView,
+						width: Math.min(
+							1 - cornerView.x,
+							Math.max(minimumCornerViewSize, cornerView.width),
+						),
+						height: Math.min(
+							1 - cornerView.y,
+							Math.max(minimumCornerViewSize, cornerView.height),
+						),
+					};
+		this.updateActive(selected, (corner) => ({
+			...corner,
+			cornerView: boundedView,
+		}));
 	}
 	private updateActive(
 		selected: number,
