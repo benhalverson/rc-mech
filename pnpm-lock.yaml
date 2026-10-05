@@ -44,7 +44,7 @@ importers:
         version: 0.3.7
       '@scalar/hono-api-reference':
         specifier: ^0.11.13
-        version: 0.11.13(hono@4.13.1)
+        version: 0.11.13(hono@4.13.5)
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20
@@ -55,8 +55,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260808.1)(kysely@0.29.4)
       hono:
-        specifier: 4.13.1
-        version: 4.13.1
+        specifier: 4.13.5
+        version: 4.13.5
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -3029,8 +3029,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.13.1:
-    resolution: {integrity: sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw==}
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@10.1.1:
@@ -4864,9 +4864,9 @@ snapshots:
 
   '@hexagon/base64@1.1.28': {}
 
-  '@hono/node-server@1.19.17(hono@4.13.1)':
+  '@hono/node-server@1.19.17(hono@4.13.5)':
     dependencies:
-      hono: 4.13.1
+      hono: 4.13.5
 
   '@img/colour@1.1.0': {}
 
@@ -5158,7 +5158,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.1)
+      '@hono/node-server': 1.19.17(hono@4.13.5)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -5168,7 +5168,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.6.2(express@5.2.1)
-      hono: 4.13.1
+      hono: 4.13.5
       jose: 6.2.8
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -5646,10 +5646,10 @@ snapshots:
 
   '@scalar/helpers@0.10.0': {}
 
-  '@scalar/hono-api-reference@0.11.13(hono@4.13.1)':
+  '@scalar/hono-api-reference@0.11.13(hono@4.13.5)':
     dependencies:
       '@scalar/client-side-rendering': 0.3.6
-      hono: 4.13.1
+      hono: 4.13.5
 
   '@scalar/schemas@0.8.1':
     dependencies:
@@ -6453,7 +6453,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.13.1: {}
+  hono@4.13.5: {}
 
   hosted-git-info@10.1.1:
     dependencies:
