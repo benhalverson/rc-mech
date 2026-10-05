@@ -27,7 +27,9 @@
 						<legend class="sr-only">Verified correction frame</legend>
 						<app-subject-box-editor heading="Subject car correction" [headingLevel]="headingLevel() === 3 ? 4 : 6" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
 							@if (failedFrameUrl() !== url) {
-								<img class="block h-auto w-full" [src]="url" alt="Exact source frame for correcting the Subject car" (load)="loadedFrameUrl.set(url); failedFrameUrl.set('')" (error)="failedFrameUrl.set(url)" />
+								@for (imageUrl of [url]; track imageUrl) {
+									<img class="block h-auto w-full" [src]="imageUrl" alt="Exact source frame for correcting the Subject car" (load)="imageLoaded(imageUrl)" (error)="imageFailed(imageUrl)" />
+								}
 							}
 						</app-subject-box-editor>
 					</fieldset>

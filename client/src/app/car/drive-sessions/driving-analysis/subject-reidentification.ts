@@ -14,7 +14,6 @@ import {
 	type SubjectBox,
 	subjectSeed,
 } from './driving-analysis.models';
-import { subjectFrameContentUrl } from './driving-analysis-gateway';
 import type { RaceRecording } from './race-recording.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
@@ -34,23 +33,30 @@ export class SubjectReidentification implements OnChanges {
 		source: () => this.store.context(),
 		computation: () => 0,
 	});
+	/** Binds gateway presentation metadata to the current immutable recording identity. */
+	protected readonly frames = computed(() => {
+		const recording = this.recording();
+		return this.store.framesFor(
+			recording.media
+				? {
+						recordingId: recording.id,
+						checksumSha256: recording.media.checksumSha256,
+					}
+				: null,
+		);
+	});
+	/** Keeps the selected frame metadata local to the correction editor. */
 	protected readonly draft = computed(
 		() =>
-			this.store.context()?.frames[this.selectedFrame()] ?? {
+			this.frames()[this.selectedFrame()] ?? {
 				timestampMs: 0,
 				frameIndex: 0,
 			},
 	);
-	protected readonly previewUrl = computed(() => {
-		const recording = this.recording();
-		return recording.media
-			? subjectFrameContentUrl(
-					recording.id,
-					this.draft().frameIndex,
-					recording.media.checksumSha256,
-				)
-			: null;
-	});
+	/** Renders the selected gateway URL while readiness remains local. */
+	protected readonly previewUrl = computed(
+		() => this.frames()[this.selectedFrame()]?.contentUrl ?? null,
+	);
 	protected readonly loadedFrameUrl = signal('');
 	protected readonly failedFrameUrl = signal('');
 	protected readonly frameReady = computed(() => {
@@ -82,6 +88,19 @@ export class SubjectReidentification implements OnChanges {
 		this.error.set('');
 	}
 
+	/** Accepts readiness only for the currently displayed exact source image. */
+	protected imageLoaded(url: string): void {
+		if (url !== this.previewUrl()) return;
+		this.loadedFrameUrl.set(url);
+		this.failedFrameUrl.set('');
+	}
+
+	/** Keeps a late image failure from changing the current frame's retry state. */
+	protected imageFailed(url: string): void {
+		if (url !== this.previewUrl()) return;
+		this.failedFrameUrl.set(url);
+	}
+
 	protected selectFrame(event: Event): void {
 		const frameIndex = (event.target as HTMLInputElement).valueAsNumber;
 		const frame = this.store.context()?.frames[frameIndex];
@@ -99,6 +118,7 @@ export class SubjectReidentification implements OnChanges {
 			});
 	}
 
+	/** Validates local readiness and submits only canonical seed fields. */
 	protected submit(event: Event): void {
 		event.preventDefault();
 		const media = this.recording().media;
@@ -112,7 +132,8 @@ export class SubjectReidentification implements OnChanges {
 		const context = this.store.context();
 		const analysis = this.analysis();
 		const candidate = {
-			...this.draft(),
+			timestampMs: this.draft().timestampMs,
+			frameIndex: this.draft().frameIndex,
 			identity: analysis.subjectSeed.identity,
 			box: this.box(),
 		};

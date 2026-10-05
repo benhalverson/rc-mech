@@ -4,7 +4,10 @@ import { By } from '@angular/platform-browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrivingAnalysis } from './driving-analysis.models';
 import type { RaceRecording } from './race-recording.models';
-import type { ReidentificationContext } from './reidentification.models';
+import type {
+	CorrectionRecordingIdentity,
+	ReidentificationContext,
+} from './reidentification.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
 import { SubjectReidentification } from './subject-reidentification';
@@ -90,6 +93,13 @@ const setup = async () => {
 		outcome: signal<{ status: 'idle' | 'pending' | 'failed' | 'succeeded' }>({
 			status: 'idle',
 		}),
+		/** Supplies gateway presentation metadata without constructing HTTP endpoints. */
+		framesFor(identity: CorrectionRecordingIdentity | null) {
+			return (this.context()?.frames ?? []).map((frame) => ({
+				...frame,
+				contentUrl: identity ? `/correction-preview-${frame.frameIndex}` : null,
+			}));
+		},
 		select: vi.fn(),
 		correct: vi.fn(),
 	};
@@ -129,15 +139,108 @@ afterEach(() => {
 });
 
 describe('SubjectReidentification', () => {
+	it('requires the replacement recording/checksum preview to load before confirming', async () => {
+		const f = await setup();
+		if (!recording.media) throw new Error('Missing validated fixture media');
+		const oldImage = f.element.querySelector('img');
+		oldImage?.dispatchEvent(new Event('load'));
+		f.fixture.detectChanges();
+		expect(
+			f.element.querySelector<HTMLButtonElement>('button[type=submit]')
+				?.disabled,
+		).toBe(false);
+		const frames = vi
+			.spyOn(f.store, 'framesFor')
+			.mockReturnValue([
+				{ ...gap.frames[0], contentUrl: '/replacement-preview' },
+			]);
+		f.fixture.componentRef.setInput('recording', {
+			...recording,
+			id: 'replacement',
+			media: { ...recording.media, checksumSha256: 'b'.repeat(64) },
+		});
+		f.fixture.detectChanges();
+		expect(frames).toHaveBeenCalledWith({
+			recordingId: 'replacement',
+			checksumSha256: 'b'.repeat(64),
+		});
+		expect(f.element.querySelector('img')?.getAttribute('src')).toBe(
+			'/replacement-preview',
+		);
+		oldImage?.dispatchEvent(new Event('load'));
+		oldImage?.dispatchEvent(new Event('error'));
+		f.fixture.detectChanges();
+		expect(
+			f.element.querySelector<HTMLButtonElement>('button[type=submit]')
+				?.disabled,
+		).toBe(true);
+		f.element.querySelector('img')?.dispatchEvent(new Event('load'));
+		f.fixture.detectChanges();
+		expect(
+			f.element.querySelector<HTMLButtonElement>('button[type=submit]')
+				?.disabled,
+		).toBe(false);
+	});
+	it('has no preview or readiness when accepted frame metadata is unavailable', async () => {
+		const f = await setup();
+		f.store.context.set(null);
+		const presentation = f.fixture.componentInstance as unknown as {
+			draft(): { frameIndex: number; timestampMs: number };
+			previewUrl(): string | null;
+			frameReady(): boolean;
+		};
+		expect(presentation.draft()).toEqual({ frameIndex: 0, timestampMs: 0 });
+		expect(presentation.previewUrl()).toBeNull();
+		expect(presentation.frameReady()).toBe(false);
+	});
+	it('keeps current failure and readiness unchanged by stale image callbacks', async () => {
+		const f = await setup();
+		const callbacks = f.fixture.componentInstance as unknown as {
+			imageLoaded(url: string): void;
+			imageFailed(url: string): void;
+		};
+		f.store.context.set({
+			...gap,
+			frames: [...gap.frames, { frameIndex: 19, timestampMs: 650 }],
+		});
+		f.fixture.detectChanges();
+		const oldImage = f.element.querySelector('img');
+		f.input('input[type=range]', '1');
+		const currentImage = f.element.querySelector('img');
+		expect(currentImage).not.toBe(oldImage);
+		callbacks.imageLoaded('/correction-preview-15');
+		f.fixture.detectChanges();
+		expect(
+			f.element.querySelector<HTMLButtonElement>('button[type=submit]')
+				?.disabled,
+		).toBe(true);
+		currentImage?.dispatchEvent(new Event('error'));
+		f.fixture.detectChanges();
+		callbacks.imageLoaded('/correction-preview-15');
+		callbacks.imageFailed('/correction-preview-15');
+		f.fixture.detectChanges();
+		expect(f.element.textContent).toContain(
+			'exact frame image could not be loaded',
+		);
+		Array.from(f.element.querySelectorAll('button'))
+			.find((button) => button.textContent?.includes('Retry frame image'))
+			?.click();
+		f.fixture.detectChanges();
+		f.element.querySelector('img')?.dispatchEvent(new Event('load'));
+		callbacks.imageFailed('/correction-preview-15');
+		f.fixture.detectChanges();
+		expect(
+			f.element.querySelector<HTMLButtonElement>('button[type=submit]')
+				?.disabled,
+		).toBe(false);
+	});
 	it('uses the exact source frame image and waits for it before accepting a correction', async () => {
 		const f = await setup();
 		const context = { ...gap, frames: [{ frameIndex: 10, timestampMs: 333 }] };
 		f.store.context.set(context);
 		f.fixture.detectChanges();
 		const image = f.element.querySelector('img');
-		expect(image?.getAttribute('src')).toBe(
-			`/api/v1/race-videos/video/subject-frames/10/content?checksum=${'a'.repeat(64)}`,
-		);
+		expect(image?.getAttribute('src')).toBe('/correction-preview-10');
 		f.submit(false);
 		expect(f.store.correct).not.toHaveBeenCalled();
 		image?.dispatchEvent(new Event('error'));
@@ -218,7 +321,7 @@ describe('SubjectReidentification', () => {
 		expect(
 			f.element.querySelector<HTMLInputElement>('input[type=range]')?.max,
 		).toBe('0');
-		expect(image.getAttribute('src')).toContain('/subject-frames/15/content');
+		expect(image.getAttribute('src')).toContain('/correction-preview-15');
 		f.submit();
 		expect(f.store.correct).toHaveBeenCalledWith({
 			analysisId: analysis.id,
@@ -237,7 +340,7 @@ describe('SubjectReidentification', () => {
 		if (!range) throw new Error('Missing range');
 		Object.defineProperty(range, 'valueAsNumber', { value: Number.NaN });
 		range.dispatchEvent(new Event('change'));
-		expect(image.getAttribute('src')).toContain('/subject-frames/15/content');
+		expect(image.getAttribute('src')).toContain('/correction-preview-15');
 	});
 	it('loads exact selected frames and resets to the first frame of a subsequent gap', async () => {
 		const f = await setup();
@@ -248,7 +351,7 @@ describe('SubjectReidentification', () => {
 		f.fixture.detectChanges();
 		f.input('input[type=range]', '1');
 		expect(f.element.querySelector('img')?.getAttribute('src')).toContain(
-			'/subject-frames/19/content',
+			'/correction-preview-19',
 		);
 		f.store.context.set({
 			...gap,
@@ -260,7 +363,7 @@ describe('SubjectReidentification', () => {
 			f.element.querySelector<HTMLInputElement>('input[type=range]')?.value,
 		).toBe('0');
 		expect(f.element.querySelector('img')?.getAttribute('src')).toContain(
-			'/subject-frames/21/content',
+			'/correction-preview-21',
 		);
 		f.submit();
 		expect(f.store.correct).toHaveBeenCalledWith(

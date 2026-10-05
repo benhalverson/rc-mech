@@ -695,6 +695,15 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 			);
 		},
 	);
+	// Hold the real correction image request to exercise local loading and retry.
+	const firstFrameFailure = Promise.withResolvers<void>();
+	let failFirstFrame = true;
+	await page.route('**/subject-frames/7/content?checksum=*', async (route) => {
+		if (!failFirstFrame) return route.continue();
+		failFirstFrame = false;
+		await firstFrameFailure.promise;
+		await route.fulfill({ status: 503, body: 'Frame unavailable' });
+	});
 	trackingState = {
 		...trackingState,
 		stateVersion: trackingState.stateVersion + 1,
@@ -717,6 +726,19 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		'src',
 		/\/subject-frames\/7\/content\?checksum=/,
 	);
+	const confirmCorrection = correctionEditor.getByRole('button', {
+		name: 'Confirm Subject and resume',
+	});
+	await expect(confirmCorrection).toBeDisabled();
+	firstFrameFailure.resolve();
+	await expect(correctionEditor.getByRole('alert')).toContainText(
+		'exact frame image could not be loaded',
+	);
+	await expect(confirmCorrection).toBeDisabled();
+	expect(await scan(page)).toEqual([]);
+	await correctionEditor
+		.getByRole('button', { name: 'Retry frame image' })
+		.click();
 	await expect
 		.poll(() =>
 			correctionEditor
@@ -724,6 +746,49 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 				.evaluate((image: HTMLImageElement) => image.naturalWidth),
 		)
 		.toBeGreaterThan(0);
+	// Change the accepted gap to two exact frames, delaying the second image.
+	const oldImage = await correctionEditor.locator('img').elementHandle();
+	if (!oldImage) throw new Error('Missing correction image');
+	const nextFrame = Promise.withResolvers<void>();
+	await page.route('**/subject-frames/8/content?checksum=*', async (route) => {
+		await nextFrame.promise;
+		await route.continue();
+	});
+	gapContext.frames.push({ frameIndex: 8, timestampMs: 800 });
+	trackingState = {
+		...trackingState,
+		stateVersion: trackingState.stateVersion + 1,
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '1');
+	await correctionEditor.getByLabel('Inspect a later clear frame').fill('1');
+	await correctionEditor
+		.getByLabel('Inspect a later clear frame')
+		.dispatchEvent('change');
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/8\/content\?checksum=/,
+	);
+	await oldImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await expect(confirmCorrection).toBeDisabled();
+	expect(await scan(page)).toEqual([]);
+	nextFrame.resolve();
+	await expect(confirmCorrection).toBeEnabled();
+	await correctionEditor.getByLabel('Inspect a later clear frame').fill('0');
+	await correctionEditor
+		.getByLabel('Inspect a later clear frame')
+		.dispatchEvent('change');
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	await expect(confirmCorrection).toBeEnabled();
+	await oldImage.dispose();
 	await correctionEditor.getByLabel('Width', { exact: true }).fill('0.12');
 	expect(await scan(page)).toEqual([]);
 	await correctionEditor

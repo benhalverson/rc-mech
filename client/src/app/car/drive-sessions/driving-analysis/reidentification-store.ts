@@ -10,7 +10,9 @@ import {
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, exhaustMap, tap } from 'rxjs';
 import type {
+	CorrectionFrame,
 	CorrectionReceipt,
+	CorrectionRecordingIdentity,
 	ReidentifySubjectCommand,
 } from './reidentification.models';
 import { ReidentificationGateway } from './reidentification-gateway';
@@ -89,6 +91,12 @@ export const ReidentificationStore = signalStore(
 			),
 		);
 		return {
+			/** Projects exact correction previews through the gateway for the current context. */
+			framesFor(
+				identity: CorrectionRecordingIdentity | null,
+			): readonly CorrectionFrame[] {
+				return store.gateway.frames(store.context(), identity);
+			},
 			retryContext(): void {
 				store.remote.reload();
 			},
