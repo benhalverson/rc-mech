@@ -95,7 +95,96 @@ const input = () => ({
 	],
 });
 
+/** Build authoritative observations and matching prepared frames for traversal regressions. */
+const traversalInput = (positions: readonly number[]) => {
+	const value = input();
+	value.segment.observations = positions.map((x, index) =>
+		observation((index + 1) * 100, index + 1, x),
+	);
+	value.manifest.frames = positions.map((_, index) => ({
+		preparedFrameIndex: index,
+		frameIndex: index + 1,
+		timestampMs: (index + 1) * 100,
+	}));
+	value.window.endTimestampMs = (positions.length + 1) * 100;
+	value.manifest.window.endTimestampMs = value.window.endTimestampMs;
+	return value;
+};
+
 describe('deterministic corner evidence', () => {
+	test('preserves serialized golden output and input across every traversal kind', () => {
+		const mixed = traversalInput([
+			0.6, 0.9, 0.2, 0.6, 0.2, 0.6, 0.9, 0.2, 0.6, 0.9, 0.2, 0.6, 0.6, 0.6, 0.9,
+			0.2, 0.6,
+		]);
+		const corner = mixed.corners[0];
+		if (!corner) throw new Error('missing corner fixture');
+		mixed.corners = [
+			{ ...corner, id: 'corner-second', key: 'second', order: 2 },
+			corner,
+		];
+		const gap = traversalInput([0.2, 0.6]);
+		gap.manifest.frames.push({
+			preparedFrameIndex: 2,
+			frameIndex: 3,
+			timestampMs: 300,
+		});
+		gap.segment.openGap = {
+			startTimestampMs: 300,
+			reason: 'ambiguous-identity',
+		};
+		const coincident = traversalInput([0.2, 0.8]);
+		const coincidentCorner = coincident.corners[0];
+		if (!coincidentCorner) throw new Error('missing corner fixture');
+		Object.assign(coincidentCorner.exitGate, coincidentCorner.entryGate);
+		for (const value of [mixed, gap, coincident]) {
+			const original = JSON.stringify(value);
+			const serialized = JSON.stringify(measureAcceptedSegment(value));
+			expect(serialized).toMatchSnapshot();
+			for (let repeat = 0; repeat < 5; repeat += 1)
+				expect(JSON.stringify(measureAcceptedSegment(value))).toBe(serialized);
+			expect(JSON.stringify(value)).toBe(original);
+		}
+	});
+
+	test.each(['eligible', 'repeated-entry', 'stray-exit', 'open'] as const)(
+		'enforces the shared append budget at the exact boundary for %s passes',
+		(kind) => {
+			const value = traversalInput(
+				kind === 'stray-exit' ? [0.6, 0.9] : [0.2, 0.6, 0.2, 0.6],
+			);
+			const corner = value.corners[0];
+			if (!corner) throw new Error('missing corner fixture');
+			if (kind === 'eligible') Object.assign(corner.exitGate, corner.entryGate);
+			if (kind === 'open')
+				value.segment.observations = value.segment.observations.slice(0, 2);
+			if (kind === 'open')
+				value.manifest.frames = value.manifest.frames.slice(0, 2);
+			const perCorner =
+				kind === 'eligible' || kind === 'repeated-entry' ? 2 : 1;
+			value.corners = Array.from(
+				{ length: MAX_CORNER_EVIDENCE_PASSES / perCorner },
+				(_, index) => ({
+					...corner,
+					id: `corner-${index}`,
+					key: `turn-${index}`,
+					order: index,
+				}),
+			);
+			const passes = measureAcceptedSegment(value).passes;
+			expect(passes).toHaveLength(MAX_CORNER_EVIDENCE_PASSES);
+			expect(passes[0]).toMatchObject({ cornerId: 'corner-0', ordinal: 1 });
+			expect(passes.at(-1)).toMatchObject({
+				cornerId: `corner-${value.corners.length - 1}`,
+				ordinal: perCorner,
+			});
+			value.corners.push({ ...corner, id: 'overflow' });
+			expect(() => measureAcceptedSegment(value)).toThrow(
+				new CornerEvidenceError('INVALID_OBSERVATIONS'),
+			);
+		},
+	);
+
 	test('compares segments with repeated pass ordinals without merging their identities', () => {
 		const base = measureAcceptedSegment(input()).passes[0];
 		if (!base) throw new Error('missing measured pass');
