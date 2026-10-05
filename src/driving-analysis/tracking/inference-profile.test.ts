@@ -28,6 +28,23 @@ const EXPECTED_CANONICAL_PROFILE =
 	'"minimumAreaRatio":"f64:3fa999999999999a"}}';
 
 describe('Inference profile canonicalization', () => {
+	test('matches Python identity for the supported bfloat16 adapter profile', async () => {
+		const profile = inferenceProfileSchema.parse({
+			...inferenceProfileFixture(),
+			precision: 'bfloat16',
+		});
+		expect(new TextDecoder().decode(canonicalInferenceProfile(profile))).toBe(
+			EXPECTED_CANONICAL_PROFILE.replace(
+				'"precision":"float32"',
+				'"precision":"bfloat16"',
+			),
+		);
+		expect(await digestInferenceProfile(profile)).toBe(
+			'daa1e60480700e6b5e2ddfe84dd7e9f87190c0b183b1f7344144df42f58d73b4',
+		);
+		expect(await digestInferenceProfile(profile)).not.toBe(PROFILE_DIGEST);
+	});
+
 	test('matches the Python canonical bytes and digest exactly', async () => {
 		const profile = inferenceProfileFixture();
 
