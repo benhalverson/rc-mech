@@ -1722,7 +1722,7 @@ drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/retry'] = {
 	post: {
 		summary: 'Owner-only retry with a fresh Workflow identity',
 		description:
-			'Preserves the recording, request identity, Race window, Subject seed, and approved Track map while fencing prior Tracking work.',
+			'Preserves the recording, request identity, Race window, Subject seed, and approved Track map while fencing prior Tracking work. Exact command replay returns the current analysis while the receipt matches its current Workflow and the analysis is not deleting/deleted; reuse for a different analysis or revision conflicts.',
 		requestBody: {
 			required: true,
 			content: {
@@ -1733,6 +1733,12 @@ drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/retry'] = {
 						required: ['expectedStateVersion'],
 						properties: {
 							expectedStateVersion: { type: 'integer', minimum: 1 },
+							commandId: {
+								type: 'string',
+								format: 'uuid',
+								description:
+									'Optional lowercase UUID v4 replay identity. Omission uses analysisId:expectedStateVersion.',
+							},
 						},
 					},
 				},
@@ -1740,12 +1746,15 @@ drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/retry'] = {
 		},
 		responses: {
 			202: {
-				description: 'Fresh retry Workflow accepted',
+				description: 'Retry accepted or replayed, wrapped in drivingAnalysis',
 				content: {
 					'application/json': { schema: drivingAnalysisResponse },
 				},
 			},
-			400: { description: 'Invalid observed state revision' },
+			400: {
+				description: 'Invalid observed state revision or optional command ID',
+			},
+			401: { description: 'Authentication required' },
 			404: { description: 'Driving analysis not found' },
 			409: { description: 'Analysis is ineligible or changed concurrently' },
 			503: { description: 'Durable processing Workflow unavailable' },
@@ -3077,4 +3086,271 @@ trackMapPaths['/api/v1/track-map-versions/{versionId}/retire'] = {
 			},
 		},
 	},
+};
+
+const analysisIdParameter = {
+	name: 'analysisId',
+	in: 'path',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+} as const;
+const analysisRevisionBody = {
+	required: true,
+	content: {
+		'application/json': {
+			schema: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['expectedStateVersion'],
+				properties: { expectedStateVersion: { type: 'integer', minimum: 1 } },
+			},
+		},
+	},
+} as const;
+const analysisMutationErrors = {
+	400: {
+		description:
+			'Malformed JSON or invalid strict revision payload; error contains flattened validation details',
+	},
+	401: { description: 'Authentication required' },
+	404: { description: 'Owned analysis not found' },
+	409: { description: 'State conflict; error, code and retryable false' },
+	503: {
+		description:
+			'Workflow unavailable; error, code and retryable true. Saved state may require replay.',
+	},
+} as const;
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/lifecycle'] = {
+	parameters: [analysisIdParameter],
+	get: {
+		summary: 'Read owned lifecycle and deletion tombstone',
+		description:
+			'Returns lifecycle with analysisId, status, stateVersion, permanent, canCancel, canRetry and nullable failure {code, retryable}. Deleted records remain readable here. Retry eligibility checks retained ready source and excludes TRACKING_ARTIFACT_INVALID; it is not a guarantee that a later retry will succeed.',
+		responses: {
+			200: { description: 'Owner-scoped lifecycle, wrapped in lifecycle' },
+			401: { description: 'Authentication required' },
+			404: { description: 'Owned analysis not found' },
+		},
+	},
+};
+Object.assign(
+	drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}'] as object,
+	{
+		delete: {
+			summary: 'Request asynchronous deletion of owned analysis media',
+			description:
+				'Requires observed revision when first entering deleting. Replays of deleting or deleted ignore stale revisions. Returns lifecycle; deleted is permanent. Cancellation scheduling failure can return 503 after deleting is saved. Cleanup retains a lifecycle tombstone.',
+			requestBody: analysisRevisionBody,
+			responses: {
+				...analysisMutationErrors,
+				202: {
+					description: 'Deletion accepted or replayed, wrapped in lifecycle',
+				},
+			},
+		},
+	},
+);
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/cancel'] = {
+	parameters: [analysisIdParameter],
+	post: {
+		summary: 'Cancel queued, running or awaiting-reidentification analysis',
+		description:
+			'Requires observed revision unless already cancelled. Replays signal cancellation again. Completed, failed, deleting and deleted states conflict. Workflow failure may return 503 after cancellation is saved.',
+		requestBody: analysisRevisionBody,
+		responses: {
+			...analysisMutationErrors,
+			202: { description: 'Cancellation accepted, wrapped in drivingAnalysis' },
+		},
+	},
+};
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/reidentification'] =
+	{
+		parameters: [analysisIdParameter],
+		get: {
+			summary:
+				'Read correction context for the owned current active Tracking run',
+			description:
+				'Returns context null without an accepted latest gap, otherwise runId, segmentId, acceptedDigest, gap and later prepared frame metadata. A saved pending correction adds pendingCorrection {correctionId, subjectSeed}. No object keys or transfer URLs are returned.',
+			responses: {
+				200: { description: 'Nullable context wrapped in context' },
+				401: { description: 'Authentication required' },
+				404: { description: 'Owned current active Tracking run not found' },
+				409: { description: 'Tracking authority conflict; error string' },
+			},
+		},
+		post: {
+			summary: 'Save an append-only Subject correction and resume Tracking',
+			description:
+				'Strict payload binds current run, predecessor segment and accepted digest. Seed must use an authoritative later prepared frame inside the gap. Exact correction replay is supported; changed correction content or stale run conflicts. A 503 means the correction is saved: replay the same correction to signal the Workflow again.',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							additionalProperties: false,
+							required: [
+								'runId',
+								'segmentId',
+								'correctionId',
+								'acceptedDigest',
+								'subjectSeed',
+							],
+							properties: {
+								runId: {
+									type: 'string',
+									format: 'uuid',
+									description: 'Lowercase UUID v4',
+								},
+								segmentId: {
+									type: 'string',
+									format: 'uuid',
+									description: 'Lowercase UUID v4',
+								},
+								correctionId: {
+									type: 'string',
+									format: 'uuid',
+									description: 'Lowercase UUID v4 replay identity',
+								},
+								acceptedDigest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+								subjectSeed: {
+									type: 'object',
+									additionalProperties: false,
+									required: ['timestampMs', 'frameIndex', 'identity', 'box'],
+									properties: {
+										timestampMs: {
+											type: 'integer',
+											minimum: 0,
+											maximum: 86400000,
+										},
+										frameIndex: {
+											type: 'integer',
+											minimum: 0,
+											maximum: 9999999,
+										},
+										identity: {
+											type: 'string',
+											minLength: 1,
+											maxLength: 128,
+											description:
+												'No control characters, slashes, backslashes or URL-like text',
+										},
+										box: {
+											type: 'object',
+											additionalProperties: false,
+											required: ['x', 'y', 'width', 'height'],
+											description:
+												'Normalized Track-view box entirely inside the view, area at least 1e-12',
+											properties: {
+												x: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+												y: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+												width: {
+													type: 'number',
+													exclusiveMinimum: 0,
+													maximum: 1,
+												},
+												height: {
+													type: 'number',
+													exclusiveMinimum: 0,
+													maximum: 1,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			responses: {
+				202: {
+					description:
+						'Correction signalled; correctionId, runId and segmentId',
+				},
+				400: { description: 'Invalid strict correction payload; error string' },
+				401: { description: 'Authentication required' },
+				404: {
+					description:
+						'Owned active run or correction authority not found; error string',
+				},
+				409: {
+					description:
+						'Stale run, digest, frame or correction conflict; error string',
+				},
+				503: {
+					description:
+						'Correction saved but Workflow signal unavailable; error string',
+				},
+			},
+		},
+	};
+const clipErrors = {
+	401: { description: 'Authentication required' },
+	404: {
+		description:
+			'Owned analysis or current Workflow clip not found; error NOT_FOUND',
+	},
+	409: {
+		description:
+			'Publication or object integrity unavailable; error NOT_READY or STALE_AUTHORITY',
+	},
+	410: { description: 'Owned analysis deleting or deleted; error DELETED' },
+	503: {
+		description:
+			'Unexpected clip infrastructure failure; error CLIP_UNAVAILABLE',
+	},
+} as const;
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/clips'] = {
+	parameters: [analysisIdParameter],
+	get: {
+		summary: 'List owned current Workflow Corner clips',
+		description:
+			'Private, no-store. Returns clips with id, cornerId, ordinal, segmentId, ready or not-ready status, inputDigest, nullable checksum and durationMs, and pipelineVersion corner-render.v1. No object keys or source URLs. Empty list is valid before clips are planned.',
+		responses: {
+			...clipErrors,
+			200: { description: 'Safe metadata wrapped in clips' },
+		},
+	},
+};
+const clipContentOperation = {
+	summary: 'Read owned retained Corner clip content',
+	description:
+		'Private, no-store video/mp4 with nosniff, ETag, Last-Modified and Accept-Ranges bytes. Checks current Workflow ownership and R2 size/checksum before playback. Supports one bounded, open-ended or suffix range and If-Range; stale If-Range returns full content. GET rechecks ownership before object read. HEAD has identical status and headers without a body.',
+	parameters: [
+		'Range',
+		'If-Range',
+		'If-Match',
+		'If-None-Match',
+		'If-Modified-Since',
+		'If-Unmodified-Since',
+	].map((name) => ({ name, in: 'header', schema: { type: 'string' } })),
+	responses: {
+		...clipErrors,
+		200: { description: 'Full clip or HEAD metadata' },
+		206: {
+			description: 'Single byte range with Content-Range and Content-Length',
+		},
+		304: { description: 'Conditional request unchanged, no body' },
+		412: { description: 'Playback precondition failed, no body' },
+		416: {
+			description:
+				'Malformed, multiple or unsatisfiable range; Content-Range bytes */size, no body',
+		},
+	},
+};
+drivingAnalysisPaths[
+	'/api/v1/driving-analyses/{analysisId}/clips/{clipId}/content'
+] = {
+	parameters: [
+		analysisIdParameter,
+		{
+			name: 'clipId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	get: clipContentOperation,
+	head: clipContentOperation,
 };
