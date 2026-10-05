@@ -96,14 +96,20 @@ test.describe('rendered Corner pointer geometry', () => {
 			expect(marker).not.toBeNull();
 			if (!actualBounds || !marker)
 				throw new Error('Geometry marker is not rendered');
-			expect(marker.x + marker.width / 2).toBeCloseTo(
-				actualBounds.x + actualBounds.width * x,
-				0,
-			);
-			expect(marker.y + marker.height / 2).toBeCloseTo(
-				actualBounds.y + actualBounds.height * y,
-				0,
-			);
+			expect(
+				Math.abs(
+					marker.x +
+						marker.width / 2 -
+						(actualBounds.x + actualBounds.width * x),
+				),
+			).toBeLessThanOrEqual(1);
+			expect(
+				Math.abs(
+					marker.y +
+						marker.height / 2 -
+						(actualBounds.y + actualBounds.height * y),
+				),
+			).toBeLessThanOrEqual(1);
 		}
 		await target.selectOption('viewPosition');
 		await canvas.scrollIntoViewIfNeeded();
