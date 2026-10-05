@@ -377,7 +377,7 @@ Approved Track-map versions, Inference profiles, Tracking-segment specifications
 
 - Run `cloudflared` and the FastAPI inference worker as persistent system services that start after reboot and restart after failure. FastAPI listens only on `127.0.0.1:8080`; the host exposes no LAN or public inference port.
 - `cloudflared` initiates the connection outbound to Cloudflare, so the GPU host requires no port forwarding, static address, inbound firewall opening, or publicly exposed home IP.
-- Use a dedicated least-privilege service account and encrypted local storage. The worker holds no R2 signing, Access, application, D1, Workflow, or Durable Object credential.
+- Use a dedicated least-privilege service account and private local storage. The worker holds no R2 signing, Access, application, D1, Workflow, or Durable Object credential.
 - Enforce one physical GPU execution in the local worker even when Cloudflare has reassigned an expired lease. The worker has no local durable queue; a second submission receives `GPU_CAPACITY_BUSY`.
 - A minimal local execution journal may retain identities, specification/profile digests, mutable state, and an `output-ready` descriptor for recovery. It never stores a Transfer grant. Host restart marks unfinished computation interrupted and requires fresh Cloudflare authorization before another attempt can run.
 - Prepared media may use a checksum-keyed cache with a seven-day default TTL and a configured disk budget. Finalized local outputs are deleted after Cloudflare acknowledges acceptance or after 24 hours. Model weights and compiled model caches may persist across segments. Every cache is an optimization and is revalidated before use.
@@ -541,13 +541,13 @@ The local execution boundary described by ADR 0028 is operated with the
 repository-owned assets in `services/driving-analysis-gpu/ops/`. A root-owned
 systemd service runs the capacity-one Docker worker with a loopback-only
 FastAPI listener, read-only model/profile mounts, dropped capabilities, bounded
-tmpfs, and an encrypted UID/GID 10001 state volume. A separate least-privilege
+tmpfs, and a private UID/GID 10001 state directory. A separate least-privilege
 `cloudflared` service exposes only the private hostname ingress and a default
 deny route. Access service authentication remains exclusively in the trusted
 Worker; neither service receives application, D1, Workflow, Durable Object, or
 R2-signing credentials.
 
-Startup preflight checks the Docker/NVIDIA runtime, storage encryption and
+Startup preflight checks the Docker/NVIDIA runtime, storage ownership and
 permissions, profile/checkpoint digest agreement, required mounts, and safe
 container flags. The worker persists terminal timestamps, prunes only expired
 terminal workspaces, protects active and valid `output-ready` work, and emits
