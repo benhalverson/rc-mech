@@ -37,6 +37,6 @@
 		"fake-indexeddb": "^6.2.5",
 		"jsdom": "^28.0.0",
 		"typescript": "~6.0.2",
-		"vitest": "^4.0.8"
+		"vitest": "^4.1.11"
 	}
 }
