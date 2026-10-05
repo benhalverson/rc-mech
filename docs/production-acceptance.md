@@ -44,6 +44,21 @@ The production Worker needs these bindings and values:
   GPU host. Rotate it only with the GPU worker image/profile pair; its canonical
   digest must match every Tracking run and segment.
 
+The pinned SAM 3.1 GPU adapter supports `bfloat16` mixed precision only. It
+rejects `float32` and `float16` profiles before provider initialization, so an
+incompatible installation cannot advertise ready health. Historical profiles
+remain parseable for retained runs; do not rewrite their precision or digest.
+This declaration does not mean that every model operation uses bfloat16.
+
+Before installing this adapter update on a host with an incompatible profile,
+review the operational rotation separately: build and verify a new GPU image,
+generate a new immutable profile declaring `bfloat16` and that image digest,
+then coordinate the host image/profile pair with Worker `INFERENCE_PROFILE_JSON`.
+Preserve prior profiles and artifacts. Verify health and exact digest agreement
+before submitting a fresh run; old run digests must be rejected by the new
+installation. Changing the declaration leaves the runtime computation unchanged
+and does not establish tracking quality qualification.
+
 Set secrets with Wrangler rather than committing them:
 
 ```sh
