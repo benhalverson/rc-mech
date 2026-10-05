@@ -691,11 +691,13 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 			'disabled',
 			false,
 		);
-		expect(
-			await priorImage.evaluate(
-				(image) => image !== document.querySelector('[data-subject-frame]'),
-			),
-		).toBe(true);
+		await expect
+			.poll(() =>
+				priorImage.evaluate(
+					(image) => image !== document.querySelector('[data-subject-frame]'),
+				),
+			)
+			.toBe(true);
 		await priorImage.evaluate((image) => {
 			image.dispatchEvent(new Event('load'));
 			image.dispatchEvent(new Event('error'));
