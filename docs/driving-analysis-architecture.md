@@ -138,11 +138,14 @@ All public Race-window and Subject timestamps are absolute millisecond positions
 | `POST` | `/cars/{carId}/drives/{driveId}/driving-analyses` | Validate the active owned Car, undeleted Drive session, ready Race video, approved Track-map version, window, and seed. Create D1 state and start a Workflow. Return `202`. |
 | `GET` | `/cars/{carId}/drives/{driveId}/driving-analyses` | List analyses for the Drive session, newest first. |
 | `GET` | `/driving-analyses/{analysisId}` | Return authoritative state, stage, progress, gaps, per-corner summaries, and current run provenance. |
-| `POST` | `/driving-analyses/{analysisId}/reidentifications` | Append a User correction for one open Tracking gap and signal the waiting Workflow. |
+| `POST` | `/driving-analyses/{analysisId}/reidentification` | Append a User correction for one open Tracking gap and signal the waiting Workflow. |
 | `POST` | `/driving-analyses/{analysisId}/retry` | Create a new run from a retryable failed or completed analysis while preserving prior provenance. |
 | `POST` | `/driving-analyses/{analysisId}/cancel` | Idempotently request cancellation. Completed and deleted analyses cannot be cancelled. |
 | `DELETE` | `/driving-analyses/{analysisId}` | Mark deleting, cancel active work, delete private artifacts asynchronously, and retain a minimal deletion tombstone. |
-| `GET` | `/driving-analyses/{analysisId}/artifacts/{artifactId}` | Ownership-check and stream a retained clip with byte-range support. Never reveal the R2 key. |
+| `GET` | `/driving-analyses/{analysisId}/reidentification` | Read nullable current active-run gap context, later prepared frames and any pending correction. |
+| `GET` | `/driving-analyses/{analysisId}/lifecycle` | Read owner-scoped recovery capabilities and permanent deletion tombstone. |
+| `GET` | `/driving-analyses/{analysisId}/clips` | List safe current-Workflow clip metadata, including ready/not-ready status. |
+| `GET`, `HEAD` | `/driving-analyses/{analysisId}/clips/{clipId}/content` | Ownership-check and stream a retained clip with conditional and single-byte-range support. Never reveal the R2 key. |
 
 Creation request:
 
@@ -180,6 +183,16 @@ Creation response:
 `requestId` is a client-generated UUID used to make creation idempotent. Re-identification and retry commands also carry client-generated command IDs.
 
 Owned analysis responses expose stable run and Tracking-segment provenance: run ID, Inference-profile digest, segment ID/order/outcome, gap descriptors, and accepted-artifact digest. They never expose attempt or transfer-request IDs, lease IDs, fencing tokens, staging or private object keys, Access details, the GPU hostname, or machine identifiers.
+
+All routes above require an authenticated session and scope data to the recording or analysis owner. The maintained `/api/openapi.json` describes the runtime contract; there are no plural correction or generic artifact-download aliases.
+
+Re-identification uses a strict payload with lowercase UUID v4 `runId`, `segmentId`, `correctionId`, the accepted SHA-256 digest, and `subjectSeed`. The seed binds a later authoritative prepared frame inside the accepted gap and a nondegenerate normalized Track-view box. GET returns `{context: null}` when no accepted latest gap exists, or context with run, segment, digest, gap and later frame metadata; a saved correction adds `pendingCorrection`. POST returns `202` with correction, run and next segment IDs. Exact correction replay is supported. A stale run or conflicting correction returns `409`; no owned current active run returns `404`. Validation returns `400` with an error string. If Workflow signalling fails, `503` means the correction is already saved: replay the same correction to resume.
+
+Retry accepts strict `{expectedStateVersion, commandId?}`. The optional command ID is a lowercase UUID v4; omission uses `analysisId:expectedStateVersion`. Exact command replay returns the current analysis while its receipt still matches the current Workflow and the analysis is not deleting/deleted. Reuse for another analysis or revision conflicts. Cancellation and deletion accept strict `{expectedStateVersion}`. Cancellation is allowed from queued, running or awaiting-reidentification; an already-cancelled replay ignores an old revision and signals cancellation again. Failed, completed, deleting and deleted states conflict. Deletion checks the revision on first entering deleting, but deleting/deleted replays ignore an old revision. Both mutations return `202`: cancellation wraps `drivingAnalysis`, deletion wraps `lifecycle`. A `503` can occur after state is saved, requiring replay. Authority errors include `error`, `code` and `retryable`; validation errors contain flattened details. The lifecycle GET remains readable after deletion and returns `analysisId`, `status`, `stateVersion`, `permanent`, `canCancel`, `canRetry` and nullable `failure`. Recovery capabilities are a snapshot, not a promise that a later command will succeed.
+
+Clip listing returns `{clips}` with safe ID, Corner, ordinal, segment, status, digest, nullable checksum/duration and `corner-render.v1` pipeline metadata. Empty lists are valid before planning. Clip routes use `Cache-Control: private, no-store`. They return `404` for unavailable owned analysis/current-Workflow clip, `410` for deleting/deleted analysis, `409` for unavailable publication or integrity, and `503` for unexpected infrastructure failure, with a safe error code. Playback verifies R2 size and checksum metadata before responding, and GET rechecks ownership before reading the object. GET and HEAD support full `200`, single-range `206`, conditional `304`, failed precondition `412`, and invalid/multiple/unsatisfiable-range `416` responses. HEAD never sends a body. Stale `If-Range` returns full content. Responses include MP4 content type, `nosniff`, byte-range support, ETag and Last-Modified; neither endpoint exposes private keys or transfer capabilities.
+
+These public-contract regressions do not establish the remaining #243 acceptance: the current-profile benchmark, authenticated deployed Worker-to-GPU execution, and UI playback/recovery verification still require retained acceptance evidence. Keep #243 open until those checks pass.
 
 ### Track-map administration
 
@@ -377,7 +390,7 @@ Approved Track-map versions, Inference profiles, Tracking-segment specifications
 
 - Run `cloudflared` and the FastAPI inference worker as persistent system services that start after reboot and restart after failure. FastAPI listens only on `127.0.0.1:8080`; the host exposes no LAN or public inference port.
 - `cloudflared` initiates the connection outbound to Cloudflare, so the GPU host requires no port forwarding, static address, inbound firewall opening, or publicly exposed home IP.
-- Use a dedicated least-privilege service account and encrypted local storage. The worker holds no R2 signing, Access, application, D1, Workflow, or Durable Object credential.
+- Use a dedicated least-privilege service account and private local storage. The worker holds no R2 signing, Access, application, D1, Workflow, or Durable Object credential.
 - Enforce one physical GPU execution in the local worker even when Cloudflare has reassigned an expired lease. The worker has no local durable queue; a second submission receives `GPU_CAPACITY_BUSY`.
 - A minimal local execution journal may retain identities, specification/profile digests, mutable state, and an `output-ready` descriptor for recovery. It never stores a Transfer grant. Host restart marks unfinished computation interrupted and requires fresh Cloudflare authorization before another attempt can run.
 - Prepared media may use a checksum-keyed cache with a seven-day default TTL and a configured disk budget. Finalized local outputs are deleted after Cloudflare acknowledges acceptance or after 24 hours. Model weights and compiled model caches may persist across segments. Every cache is an optimization and is revalidated before use.
@@ -411,6 +424,15 @@ Lease renewal requires a matching current status response and a still-current D1
 ## Client feature boundary
 
 Colocate the feature under `client/src/app/car/drive-sessions/driving-analysis/` and lazy-load it below the selected Car's Drive-session route.
+
+Corner comparison is available at `/garage/:carId/drive-sessions/analysis/:analysisId`.
+Its route-provided review store reads `/api/v1/driving-analyses/:analysisId/evidence`.
+The endpoint joins the current analysis Workflow/run and accepted evidence in one D1 snapshot,
+preserves every excluded traversal, and ranks eligible passes across accepted segments without
+rewriting immutable measurement batches. The shared deterministic ranking rule uses one source
+frame as the tie tolerance. Public provenance contains segment identity and evidence digests,
+crossing timestamps and bracketing frame indexes; the pinned manifest retains the source frame
+timestamps. Provider attempts, lease authority, storage keys and transfer capabilities remain private.
 
 - `DrivingAnalysisStore` owns upload creation/resume, upload and validation progress, analysis creation, progress polling, cancellation, retry, gaps, corrections, and review state for one analysis route.
 - `DrivingAnalysisGateway` owns all API URLs and Zod response parsing.
@@ -532,13 +554,13 @@ The local execution boundary described by ADR 0028 is operated with the
 repository-owned assets in `services/driving-analysis-gpu/ops/`. A root-owned
 systemd service runs the capacity-one Docker worker with a loopback-only
 FastAPI listener, read-only model/profile mounts, dropped capabilities, bounded
-tmpfs, and an encrypted UID/GID 10001 state volume. A separate least-privilege
+tmpfs, and a private UID/GID 10001 state directory. A separate least-privilege
 `cloudflared` service exposes only the private hostname ingress and a default
 deny route. Access service authentication remains exclusively in the trusted
 Worker; neither service receives application, D1, Workflow, Durable Object, or
 R2-signing credentials.
 
-Startup preflight checks the Docker/NVIDIA runtime, storage encryption and
+Startup preflight checks the Docker/NVIDIA runtime, storage ownership and
 permissions, profile/checkpoint digest agreement, required mounts, and safe
 container flags. The worker persists terminal timestamps, prunes only expired
 terminal workspaces, protects active and valid `output-ready` work, and emits

@@ -33,6 +33,25 @@ from tests.conftest import (
 )
 
 
+def test_profile_rotation_rejects_historical_precision_digest(
+    worker_settings: WorkerSettings,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+) -> None:
+    """An old run cannot execute under a differently declared precision profile."""
+    rotated = replace(
+        worker_settings,
+        installed_profile=worker_settings.installed_profile.model_copy(
+            update={"precision": "bfloat16"}
+        ),
+    )
+    manager = JobManager(rotated, _Executor(artifact_factory), transfers=_Transfers())
+    with pytest.raises(JobRejectedError) as rejected:
+        manager.submit(submission_factory())
+    assert rejected.value.error.code == "PROFILE_UNAVAILABLE"
+    assert manager.capacity == "available"
+
+
 class _Transfers:
     def __init__(self) -> None:
         self.downloaded_urls: list[str] = []

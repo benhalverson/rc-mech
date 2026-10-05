@@ -10,6 +10,12 @@ import {
 } from 'drizzle-orm/sqlite-core';
 
 export {
+	analysisDeletion,
+	analysisMediaScan,
+	analysisRetryCommand,
+	preparationIntent,
+} from './driving-analysis/analysis/lifecycle-schema';
+export {
 	inferenceProfileAuthority,
 	preparedTrackingMedia,
 	preparedTrackingObject,
@@ -21,6 +27,7 @@ export {
 	trackingSegment,
 	trackingTransferRequest,
 } from './driving-analysis/tracking/authority-schema';
+export { drivingAnalysisFlag } from './feature-flags/schema';
 
 const id = (name: string) => text(name).primaryKey();
 export const car = sqliteTable('car', {

@@ -66,6 +66,8 @@ const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
 	'0022_tracking_artifact_publication.sql',
+	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -1147,6 +1149,61 @@ describe('TrackingArtifactPublication', () => {
 			).cleanupDue(cleanupAt),
 		).rejects.toEqual(new TrackingArtifactPublicationError('CLEANUP_FAILED'));
 	});
+	test('continues staging cleanup when an earlier object cannot be deleted', async () => {
+		const value = await publicationFixture();
+		const deleted: string[] = [];
+		const store: TrackingArtifactStore = {
+			read: (...args) => value.store.read(...args),
+			putIfAbsent: (...args) => value.store.putIfAbsent(...args),
+			list: async () => ({
+				objects: [
+					artifactListing('first', START),
+					artifactListing('second', START),
+				],
+				cursor: null,
+			}),
+			delete: async (keys) => {
+				if (keys.includes('tracking-staging/first'))
+					throw new Error('R2 unavailable');
+				deleted.push(...keys);
+			},
+		};
+		const cleaner = new TrackingArtifactPublication(
+			value.authority,
+			store,
+			value.lease,
+		);
+		expect(
+			await cleaner.cleanupDue(
+				new Date(START.getTime() + TRACKING_ARTIFACT_GARBAGE_RETENTION_MS + 1),
+			),
+		).toBe(1);
+		expect(deleted).toEqual(['tracking-staging/second']);
+	});
+	test('bounds scans of recent staging objects and resumes after the last page', async () => {
+		const value = await publicationFixture();
+		let pages = 0;
+		const cursors: (string | undefined)[] = [];
+		const store: TrackingArtifactStore = {
+			read: (...args) => value.store.read(...args),
+			putIfAbsent: (...args) => value.store.putIfAbsent(...args),
+			delete: (...args) => value.store.delete(...args),
+			list: async (_prefix, cursor) => {
+				cursors.push(cursor);
+				pages += 1;
+				return { objects: [], cursor: pages < 20 ? String(pages) : null };
+			},
+		};
+		const cleaner = new TrackingArtifactPublication(
+			value.authority,
+			store,
+			value.lease,
+		);
+		await cleaner.cleanupDue(START, 10);
+		expect(pages).toBe(10);
+		await cleaner.cleanupDue(START, 10);
+		expect(cursors[10]).toBe('10');
+	});
 
 	test('a cleanup claim wins safely over the final conditional commit', async () => {
 		const value = await publicationFixture();
@@ -1161,6 +1218,32 @@ describe('TrackingArtifactPublication', () => {
 			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
 		);
 		expect(value.lease.holdReleaseCalls).toHaveLength(1);
+		expect(
+			await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
+		).toBeNull();
+	});
+
+	test('cancellation during the commit hold rejects promoted evidence and late completion replay', async () => {
+		const value = await publicationFixture();
+		const { artifact, bytes } = await artifactFixture(value);
+		seedStaging(value, bytes);
+		value.lease.onBegin = async () => {
+			await value.authority.fenceRun({
+				ownerId: OWNER_ID,
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status: 'cancelled',
+				completedAt: START.toISOString(),
+			});
+		};
+		await expect(publish(value, artifact)).rejects.toEqual(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		await expect(publish(value, artifact)).rejects.toEqual(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		expect(value.lease.holdReleaseCalls).toHaveLength(1);
+		expect(value.lease.releaseCalls).toHaveLength(0);
 		expect(
 			await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
 		).toBeNull();

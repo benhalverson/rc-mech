@@ -10,7 +10,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 export const uuidV4Schema = z.string().regex(UUID_V4);
 export const sha256Schema = z.string().regex(SHA256);
 
-const safeIdentifierSchema = z
+export const safeIdentifierSchema = z
 	.string()
 	.min(1)
 	.max(128)
@@ -33,7 +33,7 @@ const frameIndexSchema = z
 	.min(0)
 	.max(MAX_FRAME_COUNT - 1);
 
-const normalizedBoxSchema = z
+export const normalizedBoxSchema = z
 	.strictObject({
 		x: z.number().min(0).lt(1),
 		y: z.number().min(0).lt(1),

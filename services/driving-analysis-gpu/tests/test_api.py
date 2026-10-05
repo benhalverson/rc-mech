@@ -4,10 +4,19 @@ from fastapi.testclient import TestClient
 import chassis_notes_gpu_worker.api as api_module
 from chassis_notes_gpu_worker.api import create_app
 from chassis_notes_gpu_worker.contracts import JobStatus
+from chassis_notes_gpu_worker.executor import UnsupportedPrecisionError
 from chassis_notes_gpu_worker.jobs import JobManager
 from chassis_notes_gpu_worker.settings import WorkerSettings
 from tests.conftest import SEGMENT_ID, ArtifactFactory, SubmissionFactory
 from tests.test_jobs import _cancel, _Executor, _grant, _Transfers
+
+
+def test_unsupported_installed_precision_cannot_advertise_ready_health(
+    worker_settings: WorkerSettings,
+) -> None:
+    """Production composition fails closed before any health route can be served."""
+    with pytest.raises(UnsupportedPrecisionError, match="only bfloat16"):
+        create_app(worker_settings)
 
 
 def test_api_exposes_safe_pull_protocol(

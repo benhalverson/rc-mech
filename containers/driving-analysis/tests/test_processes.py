@@ -291,6 +291,29 @@ def test_bounded_process_enforces_timeout_after_output_pipes_close() -> None:
     assert time.monotonic() - started_at < 0.4
 
 
+def test_bounded_process_terminates_when_wait_expires_after_pipes_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_wait = subprocess.Popen.wait
+    expired = False
+
+    def expire_once(
+        process: subprocess.Popen[bytes], timeout: float | None = None
+    ) -> int:
+        nonlocal expired
+        if not expired:
+            expired = True
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        return original_wait(process, timeout=timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "wait", expire_once)
+    with pytest.raises(ProcessTimeoutError):
+        run_bounded_process(
+            PYTHON, ("-c", "pass"), timeout_seconds=5, max_output_bytes=1024
+        )
+    assert expired
+
+
 def test_bounded_process_timeout_terminates_process_group_descendants(
     tmp_path: Path,
 ) -> None:
