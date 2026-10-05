@@ -138,11 +138,14 @@ All public Race-window and Subject timestamps are absolute millisecond positions
 | `POST` | `/cars/{carId}/drives/{driveId}/driving-analyses` | Validate the active owned Car, undeleted Drive session, ready Race video, approved Track-map version, window, and seed. Create D1 state and start a Workflow. Return `202`. |
 | `GET` | `/cars/{carId}/drives/{driveId}/driving-analyses` | List analyses for the Drive session, newest first. |
 | `GET` | `/driving-analyses/{analysisId}` | Return authoritative state, stage, progress, gaps, per-corner summaries, and current run provenance. |
-| `POST` | `/driving-analyses/{analysisId}/reidentifications` | Append a User correction for one open Tracking gap and signal the waiting Workflow. |
+| `POST` | `/driving-analyses/{analysisId}/reidentification` | Append a User correction for one open Tracking gap and signal the waiting Workflow. |
 | `POST` | `/driving-analyses/{analysisId}/retry` | Create a new run from a retryable failed or completed analysis while preserving prior provenance. |
 | `POST` | `/driving-analyses/{analysisId}/cancel` | Idempotently request cancellation. Completed and deleted analyses cannot be cancelled. |
 | `DELETE` | `/driving-analyses/{analysisId}` | Mark deleting, cancel active work, delete private artifacts asynchronously, and retain a minimal deletion tombstone. |
-| `GET` | `/driving-analyses/{analysisId}/artifacts/{artifactId}` | Ownership-check and stream a retained clip with byte-range support. Never reveal the R2 key. |
+| `GET` | `/driving-analyses/{analysisId}/reidentification` | Read nullable current active-run gap context, later prepared frames and any pending correction. |
+| `GET` | `/driving-analyses/{analysisId}/lifecycle` | Read owner-scoped recovery capabilities and permanent deletion tombstone. |
+| `GET` | `/driving-analyses/{analysisId}/clips` | List safe current-Workflow clip metadata, including ready/not-ready status. |
+| `GET`, `HEAD` | `/driving-analyses/{analysisId}/clips/{clipId}/content` | Ownership-check and stream a retained clip with conditional and single-byte-range support. Never reveal the R2 key. |
 
 Creation request:
 
@@ -180,6 +183,16 @@ Creation response:
 `requestId` is a client-generated UUID used to make creation idempotent. Re-identification and retry commands also carry client-generated command IDs.
 
 Owned analysis responses expose stable run and Tracking-segment provenance: run ID, Inference-profile digest, segment ID/order/outcome, gap descriptors, and accepted-artifact digest. They never expose attempt or transfer-request IDs, lease IDs, fencing tokens, staging or private object keys, Access details, the GPU hostname, or machine identifiers.
+
+All routes above require an authenticated session and scope data to the recording or analysis owner. The maintained `/api/openapi.json` describes the runtime contract; there are no plural correction or generic artifact-download aliases.
+
+Re-identification uses a strict payload with lowercase UUID v4 `runId`, `segmentId`, `correctionId`, the accepted SHA-256 digest, and `subjectSeed`. The seed binds a later authoritative prepared frame inside the accepted gap and a nondegenerate normalized Track-view box. GET returns `{context: null}` when no accepted latest gap exists, or context with run, segment, digest, gap and later frame metadata; a saved correction adds `pendingCorrection`. POST returns `202` with correction, run and next segment IDs. Exact correction replay is supported. A stale run or conflicting correction returns `409`; no owned current active run returns `404`. Validation returns `400` with an error string. If Workflow signalling fails, `503` means the correction is already saved: replay the same correction to resume.
+
+Retry accepts strict `{expectedStateVersion, commandId?}`. The optional command ID is a lowercase UUID v4; omission uses `analysisId:expectedStateVersion`. Exact command replay returns the current analysis while its receipt still matches the current Workflow and the analysis is not deleting/deleted. Reuse for another analysis or revision conflicts. Cancellation and deletion accept strict `{expectedStateVersion}`. Cancellation is allowed from queued, running or awaiting-reidentification; an already-cancelled replay ignores an old revision and signals cancellation again. Failed, completed, deleting and deleted states conflict. Deletion checks the revision on first entering deleting, but deleting/deleted replays ignore an old revision. Both mutations return `202`: cancellation wraps `drivingAnalysis`, deletion wraps `lifecycle`. A `503` can occur after state is saved, requiring replay. Authority errors include `error`, `code` and `retryable`; validation errors contain flattened details. The lifecycle GET remains readable after deletion and returns `analysisId`, `status`, `stateVersion`, `permanent`, `canCancel`, `canRetry` and nullable `failure`. Recovery capabilities are a snapshot, not a promise that a later command will succeed.
+
+Clip listing returns `{clips}` with safe ID, Corner, ordinal, segment, status, digest, nullable checksum/duration and `corner-render.v1` pipeline metadata. Empty lists are valid before planning. Clip routes use `Cache-Control: private, no-store`. They return `404` for unavailable owned analysis/current-Workflow clip, `410` for deleting/deleted analysis, `409` for unavailable publication or integrity, and `503` for unexpected infrastructure failure, with a safe error code. Playback verifies R2 size and checksum metadata before responding, and GET rechecks ownership before reading the object. GET and HEAD support full `200`, single-range `206`, conditional `304`, failed precondition `412`, and invalid/multiple/unsatisfiable-range `416` responses. HEAD never sends a body. Stale `If-Range` returns full content. Responses include MP4 content type, `nosniff`, byte-range support, ETag and Last-Modified; neither endpoint exposes private keys or transfer capabilities.
+
+These public-contract regressions do not establish the remaining #243 acceptance: the current-profile benchmark, authenticated deployed Worker-to-GPU execution, and UI playback/recovery verification still require retained acceptance evidence. Keep #243 open until those checks pass.
 
 ### Track-map administration
 
