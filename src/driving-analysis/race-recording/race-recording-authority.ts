@@ -3,6 +3,7 @@ import {
 	asc,
 	eq,
 	exists,
+	inArray,
 	isNull,
 	lte,
 	notExists,
@@ -14,6 +15,7 @@ import {
 	authRateLimit,
 	car,
 	driveSession,
+	drivingAnalysis,
 	raceVideo,
 	raceVideoUploadPart,
 	raceVideoValidation,
@@ -1225,6 +1227,21 @@ export class RaceRecordingAuthority {
 						eq(raceVideo.id, recording.id),
 						eq(raceVideo.ownerId, recording.ownerId),
 						eq(raceVideo.status, recording.status),
+						notExists(
+							this.database
+								.select({ id: drivingAnalysis.id })
+								.from(drivingAnalysis)
+								.where(
+									and(
+										eq(drivingAnalysis.raceVideoId, recording.id),
+										inArray(drivingAnalysis.status, [
+											'queued',
+											'running',
+											'awaiting-reidentification',
+										]),
+									),
+								),
+						),
 						notExists(
 							this.database
 								.select({ id: trackingRun.id })

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
@@ -10,6 +11,177 @@ const browserClientPort = Number(
 	process.env['RC_MECH_BROWSER_CLIENT_PORT'] ?? 4201,
 );
 const baseURL = `http://127.0.0.1:${browserClientPort}`;
+test.use({ video: 'on' });
+
+test.afterEach(async ({ page }) => {
+	await page.request.put('/api/v1/feature-flags/driving-analysis', {
+		data: { enabled: false },
+	});
+});
+
+test.describe('rendered Corner pointer geometry', () => {
+	test.use({ deviceScaleFactor: 2 });
+
+	test('keeps pointer placements aligned after scroll and resize and bounds Corner views', async ({
+		page,
+	}, testInfo) => {
+		test.setTimeout(40_000);
+		const consoleErrors: string[] = [];
+		page.on('pageerror', (error) => consoleErrors.push(error.message));
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await authenticateOwner(page);
+		await page.request.put('/api/v1/feature-flags/driving-analysis', {
+			data: { enabled: true },
+		});
+		const recordingId = await createReadyRaceRecording(page);
+		await page.goto('/track-maps');
+		await page.getByLabel('New layout').fill('Pointer geometry circuit');
+		await page.getByRole('button', { name: 'Create', exact: true }).click();
+		await page
+			.getByRole('button', { name: /Pointer geometry circuit/ })
+			.click();
+		await page.getByRole('button', { name: 'Blank draft' }).click();
+		await page.getByLabel('Validated Race recording').selectOption(recordingId);
+		await page.getByLabel('Timestamp in milliseconds').fill('250');
+		await page.getByRole('button', { name: 'Use this frame' }).click();
+		await expect(
+			page.getByText('Select frame saved.', { exact: true }),
+		).toBeVisible();
+		await page.getByRole('button', { name: 'Add corner' }).click();
+		const canvas = page.getByRole('button', {
+			name: /Track-view geometry editor/,
+		});
+		const target = page.getByLabel('Geometry target', { exact: true });
+		for (const viewport of [
+			{ width: 1280, height: 900 },
+			{ width: 390, height: 844 },
+		]) {
+			await page.setViewportSize(viewport);
+			await canvas.scrollIntoViewIfNeeded();
+			const bounds = await canvas.boundingBox();
+			expect(bounds).not.toBeNull();
+			if (!bounds) throw new Error('Geometry canvas is not rendered');
+			await target.selectOption('entryStart');
+			await canvas.click({
+				position: { x: bounds.width * 0.72, y: bounds.height * 0.58 },
+			});
+			await expect
+				.poll(
+					async () =>
+						Math.abs(
+							Number(await page.getByLabel('X', { exact: true }).inputValue()) -
+								0.72,
+						) * bounds.width,
+				)
+				.toBeLessThanOrEqual(1);
+			await expect
+				.poll(
+					async () =>
+						Math.abs(
+							Number(await page.getByLabel('Y', { exact: true }).inputValue()) -
+								0.58,
+						) * bounds.height,
+				)
+				.toBeLessThanOrEqual(1);
+			const x = Number(
+				await page.getByLabel('X', { exact: true }).inputValue(),
+			);
+			const y = Number(
+				await page.getByLabel('Y', { exact: true }).inputValue(),
+			);
+			await canvas.scrollIntoViewIfNeeded();
+			const actualBounds = await canvas.boundingBox();
+			const marker = await canvas.locator('circle').first().boundingBox();
+			expect(actualBounds).not.toBeNull();
+			expect(marker).not.toBeNull();
+			if (!actualBounds || !marker)
+				throw new Error('Geometry marker is not rendered');
+			expect(
+				Math.abs(
+					marker.x +
+						marker.width / 2 -
+						(actualBounds.x + actualBounds.width * x),
+				),
+			).toBeLessThanOrEqual(1);
+			expect(
+				Math.abs(
+					marker.y +
+						marker.height / 2 -
+						(actualBounds.y + actualBounds.height * y),
+				),
+			).toBeLessThanOrEqual(1);
+		}
+		await target.selectOption('viewPosition');
+		await canvas.scrollIntoViewIfNeeded();
+		const bounds = await canvas.boundingBox();
+		if (!bounds) throw new Error('Geometry canvas is not rendered');
+		await canvas.click({
+			position: { x: bounds.width * 0.95, y: bounds.height * 0.9 },
+		});
+		await page.screenshot({
+			path: testInfo.outputPath('corner-view-edge.png'),
+			fullPage: true,
+		});
+		await expect(page.getByRole('alert')).toHaveCount(0);
+		await expect(page.getByLabel('View X')).toHaveValue('0.65');
+		await expect(page.getByLabel('View Y')).toHaveValue('0.7');
+		await expect(
+			page.getByRole('button', { name: 'Save draft', exact: true }),
+		).toBeEnabled();
+		await canvas.screenshot({
+			path: testInfo.outputPath('bounded-corner-canvas.png'),
+		});
+		await target.selectOption('viewSize');
+		await canvas.scrollIntoViewIfNeeded();
+		await canvas.click({
+			position: { x: bounds.width * 0.1, y: bounds.height * 0.1 },
+		});
+		await expect(page.getByLabel('Width')).toHaveValue('0.001');
+		await expect(page.getByLabel('Height')).toHaveValue('0.001');
+		await expect(page.getByRole('alert')).toHaveCount(0);
+		for (let step = 0; step < 40; step += 1) {
+			await canvas.press('Shift+ArrowRight');
+			await canvas.press('Shift+ArrowDown');
+		}
+		await expect(page.getByLabel('Width')).toHaveValue('0.35');
+		await expect
+			.poll(async () => Number(await page.getByLabel('Height').inputValue()))
+			.toBeCloseTo(0.3);
+		await target.selectOption('entryStart');
+		await canvas.press('Escape');
+		const savedPoint = {
+			x: await page.getByLabel('X', { exact: true }).inputValue(),
+			y: await page.getByLabel('Y', { exact: true }).inputValue(),
+		};
+		await page.getByRole('button', { name: 'Add corner' }).click();
+		await expect(page.getByLabel('Name', { exact: true })).toHaveValue(
+			'Turn 2',
+		);
+		await page.getByRole('button', { name: 'Remove corner' }).click();
+		await expect(page.getByLabel('Name', { exact: true })).toHaveValue(
+			'Turn 1',
+		);
+		await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+		await expect(
+			page.getByText('Save draft saved.', { exact: true }),
+		).toBeVisible();
+		await page.reload();
+		await page
+			.getByRole('button', { name: /Pointer geometry circuit/ })
+			.click();
+		await expect(page.getByLabel('X', { exact: true })).toHaveValue(
+			savedPoint.x,
+		);
+		await expect(page.getByLabel('Y', { exact: true })).toHaveValue(
+			savedPoint.y,
+		);
+		await expect(page.getByLabel('View X')).toHaveValue('0.65');
+		await expect(page.getByLabel('View Y')).toHaveValue('0.7');
+		await expect(page.getByRole('alert')).toHaveCount(0);
+		expect(await scan(page)).toEqual([]);
+		expect(consoleErrors).toEqual([]);
+	});
+});
 
 const authenticateOwner = async (page: Page): Promise<void> => {
 	authentication += 1;
@@ -32,6 +204,7 @@ const scan = async (page: Page) => {
 	return getViolations(page);
 };
 
+/** Give each local browser workflow its own upload and idempotency identity. */
 const createReadyRaceRecording = async (page: Page): Promise<string> => {
 	const carResponse = await page.request.post('/api/v1/cars', {
 		data: {
@@ -63,7 +236,7 @@ const createReadyRaceRecording = async (page: Page): Promise<string> => {
 				fileName: 'Track-map-reference.mp4',
 				contentType: 'video/mp4',
 				sizeBytes: playableRaceVideo.length,
-				requestId: '00000000-0000-4000-8000-000000000237',
+				requestId: randomUUID(),
 			},
 		},
 	);
@@ -123,6 +296,13 @@ test('approves, reuses, and retires immutable Track maps with private draft cont
 }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await authenticateOwner(page);
+	const flag = await page.request.put(
+		'/api/v1/feature-flags/driving-analysis',
+		{
+			data: { enabled: true },
+		},
+	);
+	expect(flag.ok()).toBe(true);
 	const recordingId = await createReadyRaceRecording(page);
 	await page.goto('/track-maps');
 	await expect(page.getByRole('heading', { name: 'Track maps' })).toBeVisible();

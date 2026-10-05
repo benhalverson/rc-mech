@@ -345,6 +345,53 @@ describe('TrackMapEditor', () => {
 		expect(view?.height).toBeCloseTo(0.6);
 	});
 
+	it('bounds rectangle gestures while retaining invalid numeric drafts for correction', () => {
+		const saved = savedCommands();
+		const target = fixture.nativeElement.querySelector(
+			'select[aria-label="Geometry target"]',
+		) as HTMLSelectElement;
+		choose(target, 'viewPosition');
+		setCanvasBounds(100, 100, 100, 100);
+		clickCanvas(200, 200);
+		press('ArrowRight', true);
+		press('ArrowDown', true);
+		button('Save draft').click();
+		expect(saved[0]?.corners[0]?.cornerView).toEqual({
+			x: 0.6,
+			y: 0.6,
+			width: 0.4,
+			height: 0.4,
+		});
+		choose(target, 'viewSize');
+		clickCanvas(100, 100);
+		button('Save draft').click();
+		expect(saved[1]?.corners[0]?.cornerView).toEqual({
+			x: 0.6,
+			y: 0.6,
+			width: 0.001,
+			height: 0.001,
+		});
+		clickCanvas(200, 200);
+		press('ArrowRight', true);
+		press('ArrowDown', true);
+		button('Save draft').click();
+		expect(saved[2]?.corners[0]?.cornerView).toEqual({
+			x: 0.6,
+			y: 0.6,
+			width: 0.4,
+			height: 0.4,
+		});
+		const width = labelled<HTMLInputElement>('Width', 'input');
+		width.value = '0';
+		width.dispatchEvent(new Event('input'));
+		fixture.detectChanges();
+		expect(width.value).toBe('0');
+		expect(fixture.nativeElement.textContent).toContain(
+			'Geometry needs attention',
+		);
+		expect(button('Save draft').disabled).toBe(true);
+	});
+
 	it('keeps invalid, busy, irrelevant-key, and empty states safe', () => {
 		const saved = savedCommands();
 		press('PageDown');

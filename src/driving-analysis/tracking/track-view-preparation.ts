@@ -1,3 +1,4 @@
+import { preparedObjectKeys } from './prepared-object-keys';
 import {
 	type AcceptedPreparedTrackView,
 	PreparedTrackViewAuthority,
@@ -122,10 +123,8 @@ export class TrackViewPreparation {
 
 		const preparedMediaId = this.id();
 		const correlationId = this.id();
-		const prefix = `prepared/${preparedMediaId}`;
-		const mediaObjectKey = `${prefix}/track-view.mp4`;
-		const frameManifestObjectKey = `${prefix}/frame-manifest.json.gz`;
-		const candidateKeys = [mediaObjectKey, frameManifestObjectKey] as const;
+		const candidateKeys = preparedObjectKeys(preparedMediaId);
+		const [mediaObjectKey, frameManifestObjectKey] = candidateKeys;
 		const request = prepareStageRequestSchema.parse({
 			contractVersion: 'subject-tracking.v1',
 			correlationId,
@@ -143,6 +142,12 @@ export class TrackViewPreparation {
 		});
 
 		let rawResponse: unknown;
+		await this.authority.recordPreparationIntent(
+			ownerId,
+			runId,
+			preparedMediaId,
+			new Date(this.now().getTime() + RETENTION_MS).toISOString(),
+		);
 		try {
 			rawResponse = await this.media.prepare({
 				request,
@@ -265,23 +270,7 @@ export class TrackViewPreparation {
 	}
 
 	async cleanupDue(now = this.now()): Promise<number> {
-		const candidates = await this.authority.cleanupCandidates(
-			now.toISOString(),
-			new Date(now.getTime() - RETENTION_MS).toISOString(),
-		);
-		for (const candidate of candidates) {
-			await this.store.delete(
-				candidate.objects.map((object) => object.objectKey),
-			);
-			await this.authority.markDeleted({
-				ownerId: candidate.ownerId,
-				runId: candidate.runId,
-				preparedMediaId: candidate.preparedMediaId,
-				expectedVersion: candidate.version,
-				deletedAt: now.toISOString(),
-			});
-		}
-		return candidates.length;
+		return cleanupPreparedTrackViews(this.authority, this.store, now);
 	}
 
 	private async verifyAccepted(
@@ -326,4 +315,50 @@ export class TrackViewPreparation {
 			);
 		}
 	}
+}
+
+export async function cleanupPreparedTrackViews(
+	authority: PreparedTrackViewAuthority,
+	store: PreparedTrackViewStore,
+	now: Date,
+): Promise<number> {
+	const results = await Promise.allSettled([
+		(async () => {
+			const candidates = await authority.cleanupCandidates(
+				now.toISOString(),
+				new Date(now.getTime() - RETENTION_MS).toISOString(),
+			);
+			const cleaned = await Promise.allSettled(
+				candidates.map(async (candidate) => {
+					await store.delete(
+						candidate.objects.map((object) => object.objectKey),
+					);
+					await authority.markDeleted({
+						ownerId: candidate.ownerId,
+						runId: candidate.runId,
+						preparedMediaId: candidate.preparedMediaId,
+						expectedVersion: candidate.version,
+						deletedAt: now.toISOString(),
+					});
+				}),
+			);
+			return cleaned.filter((result) => result.status === 'fulfilled').length;
+		})(),
+		(async () => {
+			const abandoned = await authority.claimAbandonedPreparation(
+				now.toISOString(),
+			);
+			const cleaned = await Promise.allSettled(
+				abandoned.map((candidate) =>
+					store.delete(preparedObjectKeys(candidate.preparedMediaId)),
+				),
+			);
+			return cleaned.filter((result) => result.status === 'fulfilled').length;
+		})(),
+	]);
+	return results.reduce(
+		(count, result) =>
+			count + (result.status === 'fulfilled' ? result.value : 0),
+		0,
+	);
 }

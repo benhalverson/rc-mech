@@ -3,7 +3,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { defaultAppDependencies } from '../../app-dependencies';
 import {
 	authRateLimit,
 	car,
@@ -18,14 +20,31 @@ import {
 	trackMapVersion,
 } from '../../schema';
 import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking-fixtures';
-import { MockR2Controller } from '../../testing/hono-fixture';
+import {
+	createHonoFixture,
+	MockR2Controller,
+} from '../../testing/hono-fixture';
+import {
+	preparedDescriptorFixture,
+	preparedObjectsFixture,
+	trackingRunInputFixture,
+} from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
+import type { AppEnv } from '../../types';
 import { RaceRecordingAuthority } from '../race-recording/race-recording-authority';
 import { RaceVideoValidationAuthority } from '../race-recording/race-video-validation-authority';
+import type { SourceFrameResult } from '../race-recording/subject-frame-contracts';
+import { createSubjectFrameRoutes } from '../race-recording/subject-frame-routes';
+import { SubjectFrames } from '../race-recording/subject-frames';
 import {
 	inferenceProfileAuthority,
 	trackingRun,
+	trackingRunInput,
 } from '../tracking/authority-schema';
+import { PreparedTrackViewAuthority } from '../tracking/prepared-track-view-authority';
+import { TrackingAuthority } from '../tracking/tracking-authority';
+import { digestTrackingRunInput } from '../tracking/tracking-run-input';
+import { createAnalysisLifecycle } from './analysis-lifecycle';
 import {
 	DrivingAnalysisAuthority,
 	DrivingAnalysisAuthorityError,
@@ -92,7 +111,7 @@ const seedReadyInput = async (database: D1Database) => {
 		carId: CAR_ID,
 		driveSessionId: DRIVE_ID,
 		requestId: '77777777-7777-4777-8777-777777777777',
-		objectKey: `race-recordings/private/${RACE_VIDEO_ID}`,
+		objectKey: `race-recordings/${CAR_ID}/${DRIVE_ID}/${RACE_VIDEO_ID}`,
 		multipartUploadId: 'upload-1',
 		fileName: 'Main race.mov',
 		contentType: 'video/quicktime',
@@ -220,13 +239,67 @@ const fixture = async () => {
 	sqlite.exec(migrations);
 	await seedReadyInput(sqlite.database);
 	const startProcessing = vi.fn(async () => undefined);
+	const verifySubjectFrame = vi.fn(async () => undefined);
 	const authority = new DrivingAnalysisAuthority(sqlite.database, {
 		clock: () => NOW,
 		id: () => ANALYSIS_ID,
 		workflowId: () => RETRY_WORKFLOW_ID,
 		startProcessing,
+		verifySubjectFrame,
 	});
-	return { authority, startProcessing, database: drizzle(sqlite.database) };
+	return {
+		authority,
+		startProcessing,
+		verifySubjectFrame,
+		database: drizzle(sqlite.database),
+		binding: sqlite.database,
+	};
+};
+
+const seedPreparedAnalysis = async (binding: D1Database) => {
+	const template = trackingRunInputFixture();
+	const pinned = trackingRunInputFixture({
+		runId: RETRY_WORKFLOW_ID,
+		raceVideoId: RACE_VIDEO_ID,
+		sourceObjectKey: `race-recordings/${CAR_ID}/${DRIVE_ID}/${RACE_VIDEO_ID}`,
+		sourceByteCount: 1024,
+		sourceChecksumSha256: 'a'.repeat(64),
+		sourceLayout: { ...template.sourceLayout, width: 1920, height: 1080 },
+	});
+	const inputDigest = await digestTrackingRunInput(pinned);
+	await new TrackingAuthority(binding).createRun({
+		runId: RETRY_WORKFLOW_ID,
+		ownerId: OWNER_ID,
+		analysisId: ANALYSIS_ID,
+		workflowId: ANALYSIS_ID,
+		sequence: 1,
+		profile: inferenceProfileFixture(),
+		inputDigest,
+		createdAt: NOW.toISOString(),
+	});
+	const prepared = new PreparedTrackViewAuthority(binding);
+	await prepared.pinRunInput({
+		ownerId: OWNER_ID,
+		input: pinned,
+		createdAt: NOW.toISOString(),
+	});
+	const objects = preparedObjectsFixture();
+	await prepared.acceptPreparedTrackView({
+		ownerId: OWNER_ID,
+		runId: RETRY_WORKFLOW_ID,
+		expectedRunVersion: 1,
+		expectedInputDigest: inputDigest,
+		descriptor: {
+			...preparedDescriptorFixture(inputDigest),
+			caseId: RETRY_WORKFLOW_ID,
+			sourceByteCount: 1024,
+			sourceChecksumSha256: 'a'.repeat(64),
+		},
+		objects,
+		deleteAfter: '2026-08-18T18:00:00.000Z',
+		createdAt: NOW.toISOString(),
+	});
+	return objects;
 };
 
 const expectCode = async (
@@ -240,13 +313,405 @@ const expectCode = async (
 };
 
 describe('DrivingAnalysisAuthority', () => {
+	test('creation replay does not restart a terminal workflow', async () => {
+		const { authority, startProcessing } = await fixture();
+		await authority.create(command());
+		await authority.cancel(OWNER_ID, ANALYSIS_ID, 1);
+		startProcessing.mockClear();
+		await expect(authority.create(command())).resolves.toMatchObject({
+			created: false,
+			analysis: { status: 'cancelled' },
+		});
+		expect(startProcessing).not.toHaveBeenCalled();
+	});
+	test('a source deletion that wins after retry preflight prevents a fresh workflow', async () => {
+		const { authority, database, binding, startProcessing } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'failed', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		const recording = new RaceRecordingAuthority(
+			binding,
+			new MockR2Controller().bucket,
+		);
+		const batch = binding.batch.bind(binding);
+		vi.spyOn(binding, 'batch').mockImplementationOnce(async (statements) => {
+			await recording.remove({ ownerId: OWNER_ID, recordingId: RACE_VIDEO_ID });
+			return batch(statements);
+		});
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(startProcessing).toHaveBeenCalledTimes(1);
+		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'failed',
+			stateVersion: 2,
+		});
+	});
+	test.each([
+		null,
+		'TRACKING_PROVIDER_UNAVAILABLE',
+		'TRACKING_ARTIFACT_INVALID',
+	])('exposes safe retry eligibility for failure %s', async (code) => {
+		const { authority, database, binding } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'failed', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		if (code) {
+			await seedPreparedAnalysis(binding);
+			await database
+				.update(trackingRun)
+				.set({
+					status: 'failed',
+					version: 2,
+					safeFailureCode: code,
+					completedAt: NOW.toISOString(),
+				})
+				.where(eq(trackingRun.id, RETRY_WORKFLOW_ID));
+		}
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: new MockR2Controller().bucket,
+			startCancellation: async () => undefined,
+		});
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			canRetry: code !== 'TRACKING_ARTIFACT_INVALID',
+			failure: {
+				code:
+					code === 'TRACKING_ARTIFACT_INVALID'
+						? 'PROCESSING_REJECTED'
+						: 'PROCESSING_UNAVAILABLE',
+				retryable: code !== 'TRACKING_ARTIFACT_INVALID',
+			},
+		});
+		if (code === 'TRACKING_ARTIFACT_INVALID')
+			await expect(
+				authority.retry(OWNER_ID, ANALYSIS_ID, 2),
+			).rejects.toMatchObject({ code: 'TERMINAL_FAILURE' });
+	});
+	test('a deletion CAS loser cannot fence a run or dispatch cancellation', async () => {
+		const { authority, database, binding } = await fixture();
+		await authority.create(command());
+		await seedPreparedAnalysis(binding);
+		const batch = binding.batch.bind(binding);
+		vi.spyOn(binding, 'batch').mockImplementationOnce(async (statements) => {
+			await database
+				.update(drivingAnalysis)
+				.set({ status: 'running', stateVersion: 2 })
+				.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+			return batch(statements);
+		});
+		const dispatch = vi.fn(async () => undefined);
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: new MockR2Controller().bucket,
+			startCancellation: dispatch,
+		});
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(await database.select().from(trackingRun)).toMatchObject([
+			{ status: 'active', version: 1 },
+		]);
+	});
+	test('rejects an unverified source frame before creating immutable analysis or starting work', async () => {
+		const value = await fixture();
+		value.verifySubjectFrame.mockRejectedValue(
+			new DrivingAnalysisAuthorityError(
+				'INVALID_INPUT',
+				'Subject frame does not match the source',
+			),
+		);
+		await expect(value.authority.create(command())).rejects.toMatchObject({
+			code: 'INVALID_INPUT',
+		});
+		expect(value.verifySubjectFrame).toHaveBeenCalledWith(command());
+		expect(value.startProcessing).not.toHaveBeenCalled();
+		expect(await value.database.select().from(drivingAnalysis)).toEqual([]);
+	});
+	test('retries failed media deletion and revisits deleted tombstones for late uploads', async () => {
+		const { authority, binding } = await fixture();
+		await authority.create(command());
+		const objects = await seedPreparedAnalysis(binding);
+		const r2 = new MockR2Controller();
+		for (const object of objects)
+			r2.seed(object.objectKey, new Uint8Array([1]));
+		const removeObject = vi
+			.spyOn(r2.bucket, 'delete')
+			.mockRejectedValueOnce(new Error('private storage location'));
+		let now = NOW;
+		const dispatch = vi.fn(async () => undefined);
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: r2.bucket,
+			clock: () => now,
+			startCancellation: dispatch,
+		});
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 7,
+			}),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		dispatch.mockRejectedValueOnce(new Error('private workflow detail'));
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).rejects.toMatchObject({ code: 'WORKFLOW_UNAVAILABLE' });
+		await lifecycle.remove({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			expectedStateVersion: 1,
+		});
+		await lifecycle.cleanup(10);
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'deleting',
+			permanent: false,
+		});
+		await lifecycle.cleanup(10);
+		expect(
+			await lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).toMatchObject({ status: 'deleted', permanent: true });
+		expect(r2.objects.size).toBe(0);
+		removeObject.mockRestore();
+		r2.seed(objects[0].objectKey, new Uint8Array([2]));
+		await lifecycle.cleanup(10);
+		expect(r2.objects.size).toBe(1);
+		now = new Date(NOW.getTime() + 86_400_000);
+		await lifecycle.cleanup(10);
+		expect(r2.objects.size).toBe(0);
+	});
+	test('terminal tracking publication fences the run and fixes its retention timestamp', async () => {
+		const { authority, database, binding } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({
+				status: 'running',
+				stage: 'tracking',
+				progress: 21,
+				stateVersion: 2,
+			})
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await new TrackingAuthority(binding).createRun({
+			runId: RETRY_WORKFLOW_ID,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			sequence: 1,
+			profile: inferenceProfileFixture(),
+			inputDigest: 'a'.repeat(64),
+			createdAt: NOW.toISOString(),
+		});
+		const state = {
+			runId: RETRY_WORKFLOW_ID,
+			lifecycle: 'failed' as const,
+			stage: 'tracking' as const,
+			progress: 30,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_FAILED' as const,
+		};
+		await authority.publishTrackingState(
+			OWNER_ID,
+			ANALYSIS_ID,
+			state,
+			NOW.toISOString(),
+		);
+		await authority.publishTrackingState(
+			OWNER_ID,
+			ANALYSIS_ID,
+			state,
+			'2026-08-17T19:00:00.000Z',
+		);
+		expect(await database.select().from(trackingRun)).toMatchObject([
+			{ status: 'failed', completedAt: NOW.toISOString(), version: 2 },
+		]);
+	});
+	test('replays a retry command after a lost response without creating another generation', async () => {
+		const { authority, database, startProcessing } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'failed', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		startProcessing.mockRejectedValueOnce(new Error('dispatch unavailable'));
+		const commandId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 9, commandId),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2, commandId),
+		).rejects.toMatchObject({ code: 'WORKFLOW_UNAVAILABLE' });
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2, commandId),
+		).resolves.toMatchObject({
+			retried: false,
+			analysis: { stateVersion: 3, status: 'queued' },
+		});
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 3, commandId),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'running', stateVersion: 4 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 2, commandId),
+		).resolves.toMatchObject({ retried: false, analysis: { stateVersion: 4 } });
+	});
+	test('deletion fences active work, hides evidence, and retains a minimal owner-scoped tombstone after cleanup', async () => {
+		const { authority, binding } = await fixture();
+		await authority.create(command());
+		const r2 = new MockR2Controller();
+		const workflow = {
+			createBatch: async () => [{ id: ANALYSIS_ID + '-cancel' }],
+			get: async () => ({ terminate: async () => undefined }),
+		} as unknown as Env['DRIVING_ANALYSIS_WORKFLOW'];
+		const lifecycle = defaultAppDependencies.analysisLifecycle({
+			...createHonoFixture().env,
+			DB: binding,
+			ANALYSIS_MEDIA: r2.bucket,
+			DRIVING_ANALYSIS_WORKFLOW: workflow,
+		});
+		await expect(
+			lifecycle.remove({
+				ownerId: 'other-owner',
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await expect(
+			lifecycle.remove({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				expectedStateVersion: 1,
+			}),
+		).resolves.toMatchObject({
+			analysisId: ANALYSIS_ID,
+			status: 'deleting',
+			stateVersion: 2,
+			permanent: false,
+		});
+		await expect(authority.get(OWNER_ID, ANALYSIS_ID)).rejects.toMatchObject({
+			code: 'NOT_FOUND',
+		});
+		await lifecycle.cleanup(10);
+		await expect(lifecycle.get(OWNER_ID, ANALYSIS_ID)).resolves.toEqual({
+			analysisId: ANALYSIS_ID,
+			status: 'deleted',
+			stateVersion: 3,
+			permanent: true,
+			canCancel: false,
+			canRetry: false,
+			failure: null,
+		});
+		await expect(
+			lifecycle.get('other-owner', ANALYSIS_ID),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await expect(authority.create(command())).rejects.toMatchObject({
+			code: 'NOT_FOUND',
+		});
+	});
+	test('fences the current run and analysis before cancellation dispatch, then replays after dispatch failure', async () => {
+		const { authority, database, startProcessing, binding } = await fixture();
+		await authority.create(command());
+		const tracking = new TrackingAuthority(binding);
+		const run = await tracking.createRun({
+			runId: RETRY_WORKFLOW_ID,
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: ANALYSIS_ID,
+			sequence: 1,
+			profile: inferenceProfileFixture(),
+			inputDigest: 'a'.repeat(64),
+			createdAt: NOW.toISOString(),
+		});
+		await expectCode(
+			authority.cancel('another-owner', ANALYSIS_ID, 1),
+			'NOT_FOUND',
+		);
+		await expectCode(authority.cancel(OWNER_ID, ANALYSIS_ID, 2), 'CONFLICT');
+		startProcessing.mockImplementationOnce(async () => {
+			expect(await database.select().from(trackingRun)).toMatchObject([
+				{ status: 'cancelled', version: 2 },
+			]);
+			expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+				status: 'cancelled',
+				stateVersion: 2,
+			});
+			throw new Error('secret dispatch detail');
+		});
+		await expectCode(
+			authority.cancel(OWNER_ID, ANALYSIS_ID, 1),
+			'WORKFLOW_UNAVAILABLE',
+		);
+		await expect(
+			authority.cancel(OWNER_ID, ANALYSIS_ID, 1),
+		).resolves.toMatchObject({ status: 'cancelled', stateVersion: 2 });
+		expect(startProcessing).toHaveBeenLastCalledWith(
+			expect.objectContaining({ cancellation: true, workflowId: ANALYSIS_ID }),
+		);
+		expect(await database.select().from(trackingRun)).toMatchObject([
+			{ id: run.id, version: 2, completedAt: NOW.toISOString() },
+		]);
+	});
+
+	test('rejects cancellation after a completed workflow', async () => {
+		const { authority, database } = await fixture();
+		await authority.create(command());
+		await database
+			.update(drivingAnalysis)
+			.set({ status: 'running', stateVersion: 2 })
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await database
+			.update(drivingAnalysis)
+			.set({
+				status: 'completed',
+				stage: 'finalization',
+				progress: 100,
+				stateVersion: 3,
+			})
+			.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+		await expectCode(authority.cancel(OWNER_ID, ANALYSIS_ID, 3), 'CONFLICT');
+	});
+
+	test('a cancellation CAS loser performs no dispatch or run fencing', async () => {
+		const { authority, database, startProcessing, binding } = await fixture();
+		await authority.create(command());
+		const original = binding.batch.bind(binding);
+		vi.spyOn(binding, 'batch').mockImplementationOnce(async (statements) => {
+			await database
+				.update(drivingAnalysis)
+				.set({ status: 'running', stateVersion: 2 })
+				.where(eq(drivingAnalysis.id, ANALYSIS_ID));
+			return original(statements);
+		});
+		await expectCode(authority.cancel(OWNER_ID, ANALYSIS_ID, 1), 'CONFLICT');
+		expect(startProcessing).toHaveBeenCalledTimes(1);
+	});
 	test('returns only the owner-scoped validated recording source facts', async () => {
 		const value = await fixture();
 		await value.authority.create(command());
 		await expect(
 			value.authority.preparationSource(OWNER_ID, ANALYSIS_ID),
 		).resolves.toEqual({
-			objectKey: `race-recordings/private/${RACE_VIDEO_ID}`,
+			objectKey: `race-recordings/${CAR_ID}/${DRIVE_ID}/${RACE_VIDEO_ID}`,
 			byteCount: 1024,
 			checksumSha256: 'a'.repeat(64),
 		});
@@ -325,7 +790,27 @@ describe('DrivingAnalysisAuthority', () => {
 	test('returns the winning immutable analysis when identical requests race', async () => {
 		const { authority } = await fixture();
 		if (!sqlite) throw new Error('SQLite fixture unavailable');
+		// Release both request digests together so neither request observes an
+		// already-created row before entering the insert race.
+		const digest = crypto.subtle.digest.bind(crypto.subtle);
+		const waitingDigests: (() => void)[] = [];
+		let digestCount = 0;
+		vi.spyOn(crypto.subtle, 'digest').mockImplementation(
+			async (algorithm, data) => {
+				const result = await digest(algorithm, data);
+				digestCount += 1;
+				if (digestCount <= 2) {
+					await new Promise<void>((resolve) => {
+						waitingDigests.push(resolve);
+						if (waitingDigests.length === 2)
+							for (const release of waitingDigests) release();
+					});
+				}
+				return result;
+			},
+		);
 		const peer = new DrivingAnalysisAuthority(sqlite.database, {
+			verifySubjectFrame: async () => undefined,
 			clock: () => NOW,
 			id: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 			startProcessing: async () => undefined,
@@ -568,6 +1053,27 @@ describe('DrivingAnalysisAuthority', () => {
 			waitReason: null,
 			safeFailureCode: null,
 		};
+		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'queued',
+			waitReason: 'waiting-for-provider',
+			safeFailureCode: null,
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					...trackingState,
+					lifecycle: 'queued',
+					progress: 50,
+					waitReason: 'waiting-for-provider',
+				},
+				NOW.toISOString(),
+			),
+		).resolves.toMatchObject({
+			kind: 'published',
+			analysis: { status: 'queued', stage: 'tracking', progress: 50 },
+		});
 		await expect(
 			authority.publishTrackingState(
 				OWNER_ID,
@@ -582,6 +1088,21 @@ describe('DrivingAnalysisAuthority', () => {
 				status: 'running',
 				stage: 'tracking',
 				progress: 99,
+			},
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{ ...trackingState, waitReason: 'waiting-for-capacity' },
+				NOW.toISOString(),
+			),
+		).resolves.toMatchObject({
+			analysis: {
+				status: 'running',
+				lifecycle: 'tracking',
+				progress: 99,
+				waitReason: 'waiting-for-capacity',
 			},
 		});
 		await expect(
@@ -799,6 +1320,13 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'published',
 			analysis: { lifecycle: 'tracking', progress: 50 },
 		});
+		await database
+			.update(trackingRun)
+			.set({
+				status: 'failed',
+				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+			})
+			.where(eq(trackingRun.id, '99999999-9999-4999-8999-999999999999'));
 		await expect(
 			authority.publishTrackingState(
 				OWNER_ID,
@@ -817,6 +1345,26 @@ describe('DrivingAnalysisAuthority', () => {
 			kind: 'published',
 			analysis: { lifecycle: 'failed', status: 'failed', progress: 75 },
 		});
+		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			status: 'failed',
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+			waitReason: null,
+		});
+		await expect(
+			authority.publishTrackingState(
+				OWNER_ID,
+				ANALYSIS_ID,
+				{
+					runId: '99999999-9999-4999-8999-999999999999',
+					lifecycle: 'failed',
+					stage: 'tracking',
+					progress: 90,
+					waitReason: null,
+					safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+				},
+				NOW.toISOString(),
+			),
+		).resolves.toEqual({ kind: 'stale' });
 		await expect(
 			authority.publishTrackingState(
 				OWNER_ID,
@@ -950,7 +1498,7 @@ describe('DrivingAnalysisAuthority', () => {
 				.from(trackingRun)
 				.where(eq(trackingRun.id, '99999999-9999-4999-8999-999999999999'))
 				.get(),
-		).toMatchObject({ status: 'replaced', version: 2 });
+		).toMatchObject({ status: 'failed', version: 2 });
 		expect(startProcessing).toHaveBeenLastCalledWith({
 			kind: 'analysis-creation.v1',
 			ownerId: OWNER_ID,
@@ -974,7 +1522,9 @@ describe('DrivingAnalysisAuthority', () => {
 			'INVALID_INPUT',
 		);
 		await expectCode(authority.retry('user-1', ANALYSIS_ID, 6), 'NOT_FOUND');
-		await expectCode(authority.retry(OWNER_ID, ANALYSIS_ID, 5), 'CONFLICT');
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 5),
+		).resolves.toMatchObject({ retried: false, analysis: { stateVersion: 6 } });
 	});
 
 	test('retries completed analysis', async () => {
@@ -1103,8 +1653,9 @@ describe('DrivingAnalysisAuthority', () => {
 	});
 
 	test('blocks source deletion while active and permits it after completion', async () => {
-		const { authority, database } = await fixture();
+		const { authority, database, binding } = await fixture();
 		await authority.create(command());
+		await seedPreparedAnalysis(binding);
 		if (!sqlite) throw new Error('SQLite fixture unavailable');
 		const validation = new RaceVideoValidationAuthority(sqlite.database);
 		const r2 = new MockR2Controller();
@@ -1116,6 +1667,10 @@ describe('DrivingAnalysisAuthority', () => {
 		r2.seed(recording.objectKey, new Uint8Array([1, 2, 3]));
 		const recordings = new RaceRecordingAuthority(sqlite.database, r2.bucket);
 		expect(await validation.hasActiveAnalysis(RACE_VIDEO_ID)).toBe(true);
+		vi.spyOn(
+			RaceVideoValidationAuthority.prototype,
+			'hasActiveAnalysis',
+		).mockResolvedValueOnce(false);
 		await expect(
 			recordings.remove({ ownerId: OWNER_ID, recordingId: RACE_VIDEO_ID }),
 		).rejects.toMatchObject({ code: 'CONFLICT' });
@@ -1142,10 +1697,31 @@ describe('DrivingAnalysisAuthority', () => {
 				updatedAt: '2026-08-17T18:00:02.000Z',
 			})
 			.run();
+		await database
+			.update(trackingRun)
+			.set({ status: 'completed', version: 2, completedAt: NOW.toISOString() })
+			.where(eq(trackingRun.id, RETRY_WORKFLOW_ID));
 		expect(await validation.hasActiveAnalysis(RACE_VIDEO_ID)).toBe(false);
+		const lifecycle = createAnalysisLifecycle({
+			binding,
+			bucket: r2.bucket,
+			startCancellation: async () => undefined,
+		});
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			canRetry: true,
+			failure: null,
+		});
 		await recordings.remove({ ownerId: OWNER_ID, recordingId: RACE_VIDEO_ID });
 		expect(r2.objects.size).toBe(0);
 		expect(await database.select().from(raceVideo)).toEqual([]);
+		expect(await database.select().from(trackingRunInput)).toHaveLength(1);
+		expect(await lifecycle.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
+			canRetry: false,
+			failure: { code: 'SOURCE_UNAVAILABLE', retryable: false },
+		});
+		await expect(
+			authority.retry(OWNER_ID, ANALYSIS_ID, 3),
+		).rejects.toMatchObject({ code: 'SOURCE_UNAVAILABLE' });
 	});
 
 	test('rejects invalid, unavailable, and cross-owner immutable inputs', async () => {
@@ -1204,6 +1780,19 @@ describe('DrivingAnalysisAuthority', () => {
 		await expectCode(authority.get('another-owner', ANALYSIS_ID), 'NOT_FOUND');
 	});
 
+	test('rejects creating an analysis with a retired map version', async () => {
+		const { authority, database } = await fixture();
+		await database
+			.update(trackMapVersion)
+			.set({
+				status: 'retired',
+				stateVersion: 3,
+				retiredAt: NOW.toISOString(),
+			})
+			.where(eq(trackMapVersion.id, MAP_VERSION_ID));
+		await expectCode(authority.create(command()), 'CONFLICT');
+	});
+
 	test('uses defaults, surfaces Workflow outage, and rejects generated identity collision', async () => {
 		const { authority } = await fixture();
 		await authority.create(command());
@@ -1219,6 +1808,7 @@ describe('DrivingAnalysisAuthority', () => {
 		);
 		if (!sqlite) throw new Error('SQLite fixture unavailable');
 		const unavailable = new DrivingAnalysisAuthority(sqlite.database, {
+			verifySubjectFrame: async () => undefined,
 			id: () => 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
 			startProcessing: async () => {
 				throw new Error('workflow down');
@@ -1234,7 +1824,19 @@ describe('DrivingAnalysisAuthority', () => {
 			}),
 			'WORKFLOW_UNAVAILABLE',
 		);
-		const defaults = new DrivingAnalysisAuthority(sqlite.database);
+		await expectCode(
+			new DrivingAnalysisAuthority(sqlite.database).create({
+				...command(),
+				input: {
+					...input(),
+					requestId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+				},
+			}),
+			'SOURCE_UNAVAILABLE',
+		);
+		const defaults = new DrivingAnalysisAuthority(sqlite.database, {
+			verifySubjectFrame: async () => undefined,
+		});
 		const created = await defaults.create({
 			...command(),
 			input: {
@@ -1246,6 +1848,133 @@ describe('DrivingAnalysisAuthority', () => {
 			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
 		);
 		expect(created.analysis.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+	});
+});
+
+describe('verified source-frame selection', () => {
+	test.each(['deleting', 'deleted'] as const)(
+		'does not create after the verified source is %s',
+		async (state) => {
+			const value = await fixture();
+			value.verifySubjectFrame.mockImplementation(async () => {
+				if (state === 'deleted')
+					await value.database
+						.delete(raceVideo)
+						.where(eq(raceVideo.id, RACE_VIDEO_ID));
+				else
+					await value.database
+						.update(raceVideo)
+						.set({ status: 'deleting' })
+						.where(eq(raceVideo.id, RACE_VIDEO_ID));
+			});
+			await expect(value.authority.create(command())).rejects.toMatchObject({
+				code: 'CONFLICT',
+			});
+			expect(await value.database.select().from(drivingAnalysis)).toEqual([]);
+			expect(value.startProcessing).not.toHaveBeenCalled();
+		},
+	);
+	const frame: SourceFrameResult = {
+		contractVersion: 'source-frame.v1',
+		frameIndex: 2,
+		timestampMs: 200,
+		sourceChecksumSha256: 'a'.repeat(64),
+		imageBase64: null,
+	};
+	const setup = async () => {
+		const value = await fixture();
+		const select = vi.fn(async () => ({ ...frame }));
+		return {
+			...value,
+			select,
+			frames: new SubjectFrames(value.binding, select),
+		};
+	};
+	test('selects actual source facts and serves a checksum-bound private still', async () => {
+		const value = await setup();
+		const getByName = vi.fn(() => ({ selectSubjectFrame: value.select }));
+		const app = new Hono<AppEnv>();
+		app.use('*', async (c, next) => {
+			c.set('userId', OWNER_ID);
+			await next();
+		});
+		app.route('/', createSubjectFrameRoutes());
+		const env = {
+			DB: value.binding,
+			RACE_VIDEO_MEDIA_CONTAINER: { getByName },
+		} as unknown as Env;
+		const response = await app.request(
+			`/race-videos/${RACE_VIDEO_ID}/subject-frame?timestampMs=125`,
+			{},
+			env,
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			frame: { contentUrl: string; frameIndex: number; timestampMs: number };
+		};
+		expect(body.frame).toMatchObject({ frameIndex: 2, timestampMs: 200 });
+		expect(JSON.stringify(body)).not.toContain('race-recordings/');
+		value.select.mockResolvedValue({ ...frame, imageBase64: '/9j/2Q==' });
+		const image = await app.request(
+			body.frame.contentUrl.replace('/api/v1', ''),
+			{},
+			env,
+		);
+		expect(image.status).toBe(200);
+		expect(image.headers.get('cache-control')).toBe('private, no-store');
+		expect(new Uint8Array(await image.arrayBuffer())).toEqual(
+			new Uint8Array([255, 216, 255, 217]),
+		);
+		await expect(
+			value.frames.select(
+				'other',
+				RACE_VIDEO_ID,
+				{ kind: 'frame', frameIndex: 2 },
+				true,
+			),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+	});
+	test('verifies the pair before immutable creation and rejects a plausible CFR mismatch', async () => {
+		const value = await setup();
+		const authority = defaultAppDependencies.drivingAnalysisAuthority({
+			DB: value.binding,
+			RACE_VIDEO_MEDIA_CONTAINER: {
+				getByName: () => ({ selectSubjectFrame: value.select }),
+			},
+			DRIVING_ANALYSIS_WORKFLOW: {
+				createBatch: async () => [],
+				get: async () => ({ status: async () => ({ status: 'queued' }) }),
+			},
+		} as unknown as Env);
+		await expect(
+			authority.create({
+				...command(),
+				input: {
+					...input(),
+					raceWindow: { startTimestampMs: 0, endTimestampMs: 1000 },
+					subjectSeed: {
+						...input().subjectSeed,
+						frameIndex: 2,
+						timestampMs: 125,
+					},
+				},
+			}),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+		expect(await value.database.select().from(drivingAnalysis)).toEqual([]);
+		await expect(
+			authority.create({
+				...command(),
+				input: {
+					...input(),
+					raceWindow: { startTimestampMs: 0, endTimestampMs: 1000 },
+					subjectSeed: {
+						...input().subjectSeed,
+						frameIndex: 2,
+						timestampMs: 200,
+					},
+				},
+			}),
+		).resolves.toMatchObject({ created: true });
 	});
 });
 

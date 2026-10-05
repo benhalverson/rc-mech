@@ -68,6 +68,7 @@ export const createDrivingAnalysisInputSchema = z
 
 export const drivingAnalysisWorkflowPayloadSchema = z.strictObject({
 	kind: z.literal('analysis-creation.v1'),
+	cancellation: z.literal(true).optional(),
 	ownerId: z.string().min(1).max(128),
 	analysisId: uuidV4Schema,
 	workflowId: uuidV4Schema,
@@ -76,6 +77,11 @@ export const drivingAnalysisWorkflowPayloadSchema = z.strictObject({
 });
 
 export const retryDrivingAnalysisInputSchema = z.strictObject({
+	expectedStateVersion: z.number().int().positive(),
+	commandId: uuidV4Schema.optional(),
+});
+
+export const cancelDrivingAnalysisInputSchema = z.strictObject({
 	expectedStateVersion: z.number().int().positive(),
 });
 
@@ -135,6 +141,12 @@ export type PublicDrivingAnalysis = Readonly<{
 		| 'finalization';
 	progress: number;
 	stateVersion: number;
+	waitReason?: 'waiting-for-provider' | 'waiting-for-capacity' | null;
+	safeFailureCode?:
+		| 'TRACKING_PROVIDER_UNAVAILABLE'
+		| 'TRACKING_PROVIDER_FAILED'
+		| 'TRACKING_ARTIFACT_INVALID'
+		| null;
 	createdAt: string;
 	updatedAt: string;
 }>;

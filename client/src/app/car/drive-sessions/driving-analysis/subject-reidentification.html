@@ -1,0 +1,50 @@
+<section class="grid gap-4 rounded border border-alloy-separator p-4" aria-label="Re-identify the Subject car">
+	@if (headingLevel() === 3) {
+		<h3 class="m-0 text-base font-semibold">Re-identify the Subject car</h3>
+	} @else {
+		<h5 class="m-0 text-base font-semibold">Re-identify the Subject car</h5>
+	}
+	@if (store.loading()) {
+		<p role="status">Loading accepted gap context…</p>
+	} @else if (store.readFailed()) {
+		<p role="alert">Gap context could not be loaded. Retry to load the accepted evidence.</p>
+		<button class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.retryContext()">Retry gap context</button>
+	} @else if (store.context(); as context) {
+		<p class="m-0 text-sm">Tracking became uncertain at {{ context.gap.startTimestampMs }} ms ({{ context.gap.reason }}). Choose a later clear frame. The gap stays excluded from corner comparisons.</p>
+		<details><summary class="alloy-focus-ring cursor-pointer">Accepted evidence</summary><p class="alloy-technical break-all text-xs">{{ context.acceptedDigest }}</p></details>
+		@if (store.outcome().status === 'failed') { <p role="alert">The correction could not be confirmed. Retry the same frame and box to safely resume.</p> }
+		@if (store.outcome().status === 'succeeded') {
+			<p role="status">Subject correction accepted. Tracking will continue when capacity is available.</p>
+		} @else if (context.pendingCorrection; as pending) {
+			<p>Saved correction at {{ pending.subjectSeed.timestampMs }} ms. Retry to ensure tracking resumes with this exact Subject box.</p>
+			<button class="alloy-control alloy-control-primary w-fit" type="button" (click)="retrySaved()" [disabled]="store.outcome().status === 'pending'">Retry saved correction</button>
+		} @else if (context.frames.length === 0) {
+			<p role="status">No later prepared frames are available for this gap.</p>
+		} @else {
+			<form class="grid gap-3" (submit)="submit($event)">
+				@if (previewUrl(); as url) {
+					<fieldset class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
+						<legend class="sr-only">Verified correction frame</legend>
+						<app-subject-box-editor heading="Subject car correction" [headingLevel]="headingLevel() === 3 ? 4 : 6" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
+							@if (failedFrameUrl() !== url) {
+								<img class="block h-auto w-full" [src]="url" alt="Exact source frame for correcting the Subject car" (load)="loadedFrameUrl.set(url); failedFrameUrl.set('')" (error)="failedFrameUrl.set(url)" />
+							}
+						</app-subject-box-editor>
+					</fieldset>
+					@if (failedFrameUrl() === url) {
+						<p role="alert">The exact frame image could not be loaded. Retry the image before confirming the Subject.</p>
+						<button class="alloy-control alloy-control-secondary w-fit" type="button" (click)="loadedFrameUrl.set(''); failedFrameUrl.set('')">Retry frame image</button>
+					}
+				} @else { <p role="alert">The source recording is unavailable for correction.</p> }
+				<label class="grid gap-1 text-sm">Inspect a later clear frame
+					<input #timestampField type="range" class="w-full accent-alloy-accent" min="0" [max]="context.frames.length - 1" step="1" [value]="selectedFrame()" (change)="selectFrame($event)" />
+				</label>
+				<p>Selected source frame {{ draft().frameIndex }} at {{ draft().timestampMs }} ms</p>
+				@if (error()) { <p role="alert">{{ error() }}</p> }
+				<button class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.outcome().status === 'pending' || !frameReady()" [attr.aria-busy]="store.outcome().status === 'pending'">{{ store.outcome().status === 'pending' ? 'Saving correction…' : 'Confirm Subject and resume' }}</button>
+			</form>
+		}
+	} @else {
+		<p role="status">This analysis has no unresolved tracking gap.</p>
+	}
+</section>

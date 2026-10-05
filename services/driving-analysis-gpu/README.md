@@ -34,7 +34,7 @@ Run with host networking so FastAPI can bind only to loopback for same-host
 ```console
 docker run --rm --gpus all --network host \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=50g \
-  --mount type=bind,src=/encrypted/chassis-notes-gpu,dst=/var/lib/chassis-notes-gpu \
+  --mount type=bind,src=/var/lib/chassis-notes-gpu,dst=/var/lib/chassis-notes-gpu \
   --mount type=bind,src=/models/sam3.1.pt,dst=/models/sam3.1.pt,readonly \
   --env GPU_INFERENCE_PROFILE_PATH=/var/lib/chassis-notes-gpu/profile.json \
   --env SAM31_CHECKPOINT_PATH=/models/sam3.1.pt \
@@ -56,8 +56,8 @@ uv run --frozen python -m chassis_notes_gpu_worker.quality
 ## Ubuntu host operations
 
 The repository-owned operational assets are in `ops/`. The target is Ubuntu
-24.04 with system Docker, NVIDIA Container Toolkit, an encrypted filesystem
-mounted at `/var/lib/chassis-notes-gpu`, and `cloudflared` installed from
+24.04 with system Docker, NVIDIA Container Toolkit, a private state directory
+at `/var/lib/chassis-notes-gpu`, and `cloudflared` installed from
 Cloudflare's package. The install script creates the service skeleton; operators
 provision the model, profile, image tag, state mount, and Tunnel credential
 outside Git.
@@ -72,8 +72,8 @@ dedicated `cloudflared` group (mode 0640); the worker cannot read them.
 
 The worker has no application, D1, Workflow, Durable Object, R2-signing, or
 Access credentials. Its root filesystem and model/profile mounts are read-only;
-only the encrypted state volume and bounded tmpfs are writable. Startup checks
-validate Docker, NVIDIA, storage ownership/encryption, model/profile checksum
+only the private state directory and bounded tmpfs are writable. Startup checks
+validate Docker, NVIDIA, storage ownership/permissions, model/profile checksum
 agreement, and the security flags before starting the container.
 
 The local journal records terminal timestamps and prunes terminal workspaces

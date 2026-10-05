@@ -1,5 +1,6 @@
-import { and, asc, eq, lte, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, lte, ne, notExists, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { preparationIntent } from '../analysis/lifecycle-schema';
 import {
 	preparedTrackingMedia,
 	preparedTrackingObject,
@@ -208,6 +209,75 @@ export class PreparedTrackViewAuthority {
 		};
 	}
 
+	async recordPreparationIntent(
+		ownerId: string,
+		runId: string,
+		preparedMediaId: string,
+		deleteAfter: string,
+	): Promise<void> {
+		await this.requireActiveRun(ownerId, runId);
+		await this.database
+			.insert(preparationIntent)
+			.select(
+				this.database
+					.select({
+						preparedMediaId: sql<string>`${preparedMediaId}`,
+						ownerId: trackingRun.ownerId,
+						runId: trackingRun.id,
+						state: sql<'preparing'>`'preparing'`,
+						deleteAfter: sql<string>`${deleteAfter}`,
+					})
+					.from(trackingRun)
+					.where(
+						and(
+							eq(trackingRun.id, runId),
+							eq(trackingRun.ownerId, ownerId),
+							eq(trackingRun.status, 'active'),
+						),
+					),
+			)
+			.onConflictDoNothing();
+		const stored = await this.database
+			.select()
+			.from(preparationIntent)
+			.where(eq(preparationIntent.preparedMediaId, preparedMediaId))
+			.get();
+		if (
+			!stored ||
+			stored.ownerId !== ownerId ||
+			stored.runId !== runId ||
+			stored.state !== 'preparing'
+		)
+			throw conflict('Preparation identity is no longer available');
+	}
+
+	async claimAbandonedPreparation(now: string, limit = 50) {
+		const unaccepted = notExists(
+			this.database
+				.select({ id: preparedTrackingMedia.id })
+				.from(preparedTrackingMedia)
+				.where(eq(preparedTrackingMedia.id, preparationIntent.preparedMediaId)),
+		);
+		const due = this.database
+			.select({ id: preparationIntent.preparedMediaId })
+			.from(preparationIntent)
+			.where(and(lte(preparationIntent.deleteAfter, now), unaccepted))
+			.orderBy(asc(preparationIntent.deleteAfter))
+			.limit(limit);
+		return this.database
+			.update(preparationIntent)
+			.set({
+				state: 'deleting',
+				deleteAfter: new Date(
+					new Date(now).getTime() + 86_400_000,
+				).toISOString(),
+			})
+			.where(
+				and(sql`${preparationIntent.preparedMediaId} IN (${due})`, unaccepted),
+			)
+			.returning();
+	}
+
 	async acceptPreparedTrackView(
 		commandValue: AcceptPreparedTrackViewCommand,
 	): Promise<AcceptedPreparedTrackView> {
@@ -272,6 +342,20 @@ export class PreparedTrackViewAuthority {
 									eq(trackingRun.version, command.expectedRunVersion),
 									eq(trackingRun.inputDigest, command.expectedInputDigest),
 									eq(trackingRunInput.inputDigest, command.expectedInputDigest),
+									notExists(
+										this.database
+											.select({ id: preparationIntent.preparedMediaId })
+											.from(preparationIntent)
+											.where(
+												and(
+													eq(
+														preparationIntent.preparedMediaId,
+														command.descriptor.preparedMediaId,
+													),
+													eq(preparationIntent.state, 'deleting'),
+												),
+											),
+									),
 								),
 							),
 					)

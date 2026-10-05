@@ -5,6 +5,7 @@ import {
 } from 'cloudflare:workers';
 import { z } from 'zod';
 import { DrivingAnalysisAuthority } from '../analysis/driving-analysis-authority';
+import { completeDrivingAnalysis } from '../analysis/driving-analysis-completion';
 import {
 	type DrivingAnalysisWorkflowPayload,
 	drivingAnalysisWorkflowPayloadSchema,
@@ -14,6 +15,9 @@ import {
 	DrivingAnalysisCreationWorkflowRunner,
 	RealDrivingAnalysisContainerPort,
 } from '../analysis/driving-analysis-creation-workflow';
+import type { ClipArtifact } from '../clips/corner-clip-contracts';
+import type { ClipRenderCommand } from '../clips/corner-clip-renderer';
+import { cornerClipRenderer } from '../clips/corner-clips';
 import {
 	AcceptedCornerEvidence,
 	AcceptedCornerEvidenceError,
@@ -25,6 +29,8 @@ import {
 	type GpuLeaseAcquireInput,
 	type GpuLeaseAcquireResult,
 	type GpuLeaseBusyInput,
+	type GpuLeaseCancelInput,
+	type GpuLeaseCancelMutationResult,
 	type GpuLeaseEnqueueInput,
 	type GpuLeaseEnqueueResult,
 	type GpuLeaseHoldInput,
@@ -69,11 +75,11 @@ import {
 	TrackingAuthority,
 	type TrackingWorkflowContext,
 } from './tracking-authority';
+import { TrackingCancellation } from './tracking-cancellation';
 
-const STATUS_POLL_INTERVAL = '15 seconds';
 const SINGLE_ATTEMPT_STEP = {
 	retries: {
-		limit: 1,
+		limit: 0,
 		delay: 0,
 		backoff: 'constant',
 	},
@@ -82,7 +88,6 @@ const SINGLE_ATTEMPT_STEP = {
 // Provider retries are represented as durable Workflow steps. A failed step is
 // retried by the surrounding attempt loop, so each contact has one engine
 // attempt and cannot accidentally duplicate a non-idempotent transition.
-const PROVIDER_RETRY_LIMIT = 1;
 const PROVIDER_RETRY_BASE_MS = 5_000;
 const PROVIDER_RETRY_CAP_MS = 5 * 60_000;
 
@@ -130,6 +135,11 @@ export class TrackingWorkflowError extends Error {
 }
 
 class AcceptedEvidenceWorkflowError extends TrackingWorkflowError {}
+class OutputReadyAuthorityLostError extends TrackingWorkflowError {
+	constructor() {
+		super('TRACKING_PROVIDER_UNAVAILABLE');
+	}
+}
 
 class RetryableProviderError extends TrackingWorkflowError {
 	constructor(readonly providerCode: string) {
@@ -138,11 +148,8 @@ class RetryableProviderError extends TrackingWorkflowError {
 	}
 }
 
-class PermanentProviderStepResult {
-	constructor(readonly code: string) {}
-}
-
 type CoordinatorPort = {
+	cancel(input: GpuLeaseCancelInput): Promise<GpuLeaseCancelMutationResult>;
 	enqueue(input: GpuLeaseEnqueueInput): Promise<GpuLeaseEnqueueResult>;
 	acquire(input: GpuLeaseAcquireInput): Promise<GpuLeaseAcquireResult>;
 	witness(input: GpuLeaseWitnessInput): Promise<GpuLeaseMutationResult>;
@@ -173,6 +180,7 @@ export type DrivingAnalysisWorkflowEnvironment = {
 	RACE_VIDEO_MEDIA_CONTAINER?: {
 		getByName(name: string): {
 			prepareTrackView(command: unknown): Promise<unknown>;
+			renderCornerClip?(command: ClipRenderCommand): Promise<ClipArtifact>;
 		};
 	};
 };
@@ -211,7 +219,7 @@ const MUTABLE_ATTEMPT_STATES = [
 	'output-ready',
 ] as const;
 
-export class FirstTrackingSegmentWorkflow {
+export class TrackingRunWorkflow {
 	constructor(
 		private readonly authority: TrackingAuthority,
 		private readonly coordinator: CoordinatorPort,
@@ -224,11 +232,174 @@ export class FirstTrackingSegmentWorkflow {
 			analysisId: string,
 			state: PublicTrackingState,
 		) => Promise<void>,
+		private readonly renderClips: (
+			identity: TrackingWorkflowIdentity,
+		) => Promise<void>,
+		private readonly completeAnalysis: (
+			identity: TrackingWorkflowIdentity,
+		) => Promise<void>,
 	) {}
 
 	async run(
 		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
 		step: WorkflowStep,
+	): Promise<FirstTrackingWorkflowResult> {
+		let currentSegmentId = event.payload.segmentId;
+		let result = await this.runOnce(event, step);
+		for (
+			let index = 0;
+			result.state.lifecycle === 'awaiting-reidentification' ||
+			result.provenance.segments.some(
+				(segment) =>
+					segment.segmentId === currentSegmentId &&
+					segment.outcome === 'tracking-gap',
+			);
+			index += 1
+		) {
+			await step.waitForEvent(`wait-for-subject-reidentification-${index}`, {
+				type: 'tracking-reidentified',
+				timeout: '365 days',
+			});
+			const identity = {
+				ownerId: event.payload.ownerId,
+				analysisId: event.payload.analysisId,
+				runId: event.payload.runId,
+				workflowId: event.instanceId,
+				segmentId: currentSegmentId,
+			};
+			const next = await step.do(`load-reidentified-subject-${index}`, () =>
+				this.authority.nextSegment(identity),
+			);
+			if (!next) continue;
+			currentSegmentId = next.segmentId;
+			result = await this.runOnce(
+				{
+					...event,
+					payload: {
+						...event.payload,
+						segmentId: next.segmentId,
+						subjectSeed: next.seed,
+					},
+				},
+				prefixedTrackingStep(step, next.segmentId),
+				next,
+			);
+		}
+		return result;
+	}
+
+	private async runOnce(
+		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
+		step: WorkflowStep,
+		resumed?: TrackingWorkflowContext,
+	): Promise<FirstTrackingWorkflowResult> {
+		try {
+			return await this.runSegment(event, step, resumed);
+		} catch (error) {
+			if (
+				!(error instanceof TrackingWorkflowError) ||
+				error.code !== 'TRACKING_PROVIDER_UNAVAILABLE'
+			)
+				throw error;
+			const identity = {
+				ownerId: event.payload.ownerId,
+				analysisId: event.payload.analysisId,
+				runId: event.payload.runId,
+				segmentId: event.payload.segmentId,
+				workflowId: event.instanceId,
+			};
+			const { context, expiredAt } = await step.do(
+				'load-expiring-tracking-authority',
+				async () => ({
+					context: await this.authority.workflowContext(identity),
+					expiredAt: Date.now(),
+				}),
+			);
+			await step.do('expire-tracking-availability', async () => {
+				if (error instanceof OutputReadyAuthorityLostError && context.attempt) {
+					await this.authority.failUnavailableOutput({
+						...identity,
+						expectedCurrentAttemptId: context.attempt.attemptId,
+						failedAt: expiredAt,
+					});
+				} else
+					await this.authority.expireAvailability({
+						...identity,
+						expectedCurrentAttemptId: context.attempt?.attemptId ?? null,
+						expiredAt,
+					});
+				return { expired: true };
+			});
+			if (context.attempt)
+				await step.do('release-expired-tracking-authority', () =>
+					this.coordinator.release(
+						leaseIdentity(attemptIdentity(context, context.attempt)),
+					),
+				);
+			await this.publishState(identity, step, 'expired');
+			throw error;
+		}
+	}
+
+	private async publishState(
+		identity: TrackingWorkflowIdentity,
+		step: WorkflowStep,
+		key: string,
+	): Promise<void> {
+		await step.do(`publish-tracking-state-${key}`, async () => {
+			const state = await this.authority.publicState(
+				identity.ownerId,
+				identity.analysisId,
+				identity.runId,
+			);
+			await this.publishAnalysisState(
+				identity.ownerId,
+				identity.analysisId,
+				state,
+			);
+			return { published: true };
+		});
+	}
+
+	private async waitState(
+		identity: TrackingWorkflowIdentity,
+		expectedCurrentAttemptId: string | null,
+		waitReason: PublicTrackingState['waitReason'],
+		step: WorkflowStep,
+		key: string,
+	): Promise<void> {
+		await step.do(`record-tracking-wait-${key}`, () =>
+			this.persistWait(identity, expectedCurrentAttemptId, waitReason),
+		);
+	}
+
+	private async persistWait(
+		identity: TrackingWorkflowIdentity,
+		expectedCurrentAttemptId: string | null,
+		waitReason: PublicTrackingState['waitReason'],
+	): Promise<{ recorded: true }> {
+		await this.authority.setWaitReason({
+			...identity,
+			expectedCurrentAttemptId,
+			waitReason,
+		});
+		const state = await this.authority.publicState(
+			identity.ownerId,
+			identity.analysisId,
+			identity.runId,
+		);
+		await this.publishAnalysisState(
+			identity.ownerId,
+			identity.analysisId,
+			state,
+		);
+		return { recorded: true };
+	}
+
+	private async runSegment(
+		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
+		step: WorkflowStep,
+		resumed?: TrackingWorkflowContext,
 	): Promise<FirstTrackingWorkflowResult> {
 		const payload = firstTrackingWorkflowPayloadSchema.parse(event.payload);
 		const timestamp = event.timestamp.getTime();
@@ -242,22 +413,36 @@ export class FirstTrackingSegmentWorkflow {
 			workflowId: event.instanceId,
 			segmentId: payload.segmentId,
 		};
-		let context = await step.do('create-or-resume-first-segment', async () =>
-			this.authority.createFirstSegment({
-				...workflowIdentity,
-				preparedMediaId: payload.preparedMediaId,
-				order: 0,
-				seed: {
-					kind: 'initial',
-					sourceId: null,
-					value: payload.subjectSeed,
-				},
-				specificationVersion: 'tracking-segment-spec.v1',
-				availabilityDeadlineAt: timestamp + GPU_MAX_DEADLINE_MS,
-				createdAt,
-			}),
-		);
+		let context =
+			resumed ??
+			(await step.do('create-or-resume-first-segment', async () =>
+				this.authority.createFirstSegment({
+					...workflowIdentity,
+					preparedMediaId: payload.preparedMediaId,
+					order: 0,
+					seed: {
+						kind: 'initial',
+						sourceId: null,
+						value: payload.subjectSeed,
+					},
+					specificationVersion: 'tracking-segment-spec.v1',
+					availabilityDeadlineAt: Date.now() + GPU_MAX_DEADLINE_MS,
+					createdAt,
+				}),
+			));
 		if (context.acceptedArtifactId !== null) {
+			if (context.attempt) {
+				const acceptedAttempt = attemptIdentity(context, context.attempt);
+				await step.do('release-accepted-tracking-lease', async () => {
+					const released = await this.coordinator.release({
+						...leaseIdentity(acceptedAttempt),
+						completed: true,
+					});
+					if (released.status !== 'ok')
+						throw new AcceptedEvidenceWorkflowError('TRACKING_AUTHORITY_STALE');
+					return { released: true };
+				});
+			}
 			await this.commitAcceptedEvidence(
 				workflowIdentity,
 				step,
@@ -268,6 +453,28 @@ export class FirstTrackingSegmentWorkflow {
 
 		let identity = await this.resumeIdentity(context, step);
 		if (!identity) {
+			if (context.attempt) {
+				const expiredAttempt = context.attempt;
+				await step.do(
+					`retire-expired-attempt-${expiredAttempt.attemptId}`,
+					async () => {
+						await this.authority.retireAttempt({
+							ownerId: workflowIdentity.ownerId,
+							runId: workflowIdentity.runId,
+							segmentId: workflowIdentity.segmentId,
+							attemptId: expiredAttempt.attemptId,
+							leaseId: expiredAttempt.leaseId,
+							fence: expiredAttempt.fence,
+							nextState: 'expired',
+							updatedAt: new Date().toISOString(),
+						});
+						return this.authority.workflowContext(workflowIdentity);
+					},
+				);
+				context = await step.do('reload-expired-attempt-authority', () =>
+					this.authority.workflowContext(workflowIdentity),
+				);
+			}
 			identity = await this.acquireAndActivate(
 				workflowIdentity,
 				context,
@@ -283,6 +490,8 @@ export class FirstTrackingSegmentWorkflow {
 		attemptLoop: for (;;) {
 			try {
 				status = await this.providerStep(
+					workflowIdentity,
+					identity,
 					`${context.attempt?.state === 'output-ready' ? 'read-output-ready-status' : 'submit-tracking-segment'}-${identity.attemptId}`,
 					context.availabilityDeadlineAt,
 					`${identity.attemptId}:submit`,
@@ -290,24 +499,27 @@ export class FirstTrackingSegmentWorkflow {
 					() =>
 						this.withProviderAuthority(workflowIdentity, identity, () =>
 							context.attempt?.state === 'output-ready'
-								? this.provider.status(providerIdentity(identity))
-								: this.provider.submit(this.submission(context, identity)),
+								? this.provider.status(
+										providerIdentity(identity),
+										context.availabilityDeadlineAt,
+									)
+								: this.provider.submit(
+										this.submission(context, identity),
+										context.availabilityDeadlineAt,
+									),
 						),
 				);
 			} catch (error) {
 				if (error instanceof RetryableProviderError) {
-					const recovery = await this.handleProviderLoss(
+					providerLossCount += 1;
+					const replacement = await this.replaceProviderAttempt(
 						workflowIdentity,
 						context,
 						identity,
 						createdAt,
 						step,
-						providerLossCount + 1,
+						providerLossCount,
 					);
-					if (!recovery)
-						return this.fail(error, workflowIdentity, identity, step);
-					providerLossCount = recovery.providerLossCount;
-					const replacement = recovery.replacement;
 					context = replacement.context;
 					identity = replacement.identity;
 					// biome-ignore lint/complexity/noUselessLabel: this restarts submission with a new lease.
@@ -336,7 +548,13 @@ export class FirstTrackingSegmentWorkflow {
 						);
 					}
 
-					await this.renew(identity, step, statusIndex);
+					const pollDelay = await this.renew(
+						workflowIdentity,
+						identity,
+						step,
+						statusIndex,
+						context.availabilityDeadlineAt,
+					);
 					if (
 						status.state === 'transfer-grant-required' ||
 						status.state === 'output-ready'
@@ -358,7 +576,7 @@ export class FirstTrackingSegmentWorkflow {
 
 					await step.sleep(
 						`wait-for-tracking-status-${identity.attemptId}-${statusIndex}`,
-						STATUS_POLL_INTERVAL,
+						pollDelay,
 					);
 					status = await this.readProviderStatus(
 						workflowIdentity,
@@ -369,18 +587,15 @@ export class FirstTrackingSegmentWorkflow {
 					);
 				} catch (error) {
 					if (error instanceof RetryableProviderError) {
-						const recovery = await this.handleProviderLoss(
+						providerLossCount += 1;
+						const replacement = await this.replaceProviderAttempt(
 							workflowIdentity,
 							context,
 							identity,
 							createdAt,
 							step,
-							providerLossCount + 1,
+							providerLossCount,
 						);
-						if (!recovery)
-							return this.fail(error, workflowIdentity, identity, step);
-						providerLossCount = recovery.providerLossCount;
-						const replacement = recovery.replacement;
 						context = replacement.context;
 						identity = replacement.identity;
 						continue attemptLoop;
@@ -400,23 +615,50 @@ export class FirstTrackingSegmentWorkflow {
 	): Promise<FirstTrackingWorkflowResult> {
 		if (!status.artifact || !context.outputTransferRequestId)
 			throw new TrackingWorkflowError('TRACKING_ARTIFACT_INVALID');
-		await step.do('accept-first-tracking-evidence', async () => {
-			try {
-				await this.publication.publish({
-					ownerId: payload.ownerId,
-					transferRequestId: context.outputTransferRequestId,
-					artifact: status.artifact,
-				});
-			} catch (error) {
-				if (
-					error instanceof TrackingArtifactPublicationError &&
-					error.code === 'STALE_AUTHORITY'
-				)
-					throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
-				throw new TrackingWorkflowError('TRACKING_ARTIFACT_INVALID');
-			}
-			return { accepted: true };
-		});
+		const acceptance = await step.do(
+			'accept-first-tracking-evidence',
+			async () => {
+				const current = await this.authority.workflowContext(workflowIdentity);
+				if (current.acceptedArtifactId === null && context.attempt) {
+					try {
+						await this.assertProviderAuthority(
+							workflowIdentity,
+							attemptIdentity(context, context.attempt),
+						);
+					} catch (error) {
+						if (error instanceof TrackingWorkflowError)
+							return {
+								accepted: false as const,
+								code:
+									error instanceof OutputReadyAuthorityLostError
+										? ('OUTPUT_AUTHORITY_LOST' as const)
+										: error.code,
+							};
+						throw error;
+					}
+				}
+				try {
+					await this.publication.publish({
+						ownerId: payload.ownerId,
+						transferRequestId: context.outputTransferRequestId,
+						artifact: status.artifact,
+					});
+				} catch (error) {
+					if (
+						error instanceof TrackingArtifactPublicationError &&
+						error.code === 'STALE_AUTHORITY'
+					)
+						throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+					throw new TrackingWorkflowError('TRACKING_ARTIFACT_INVALID');
+				}
+				return { accepted: true as const };
+			},
+		);
+		if (acceptance.accepted === false) {
+			if (acceptance.code === 'OUTPUT_AUTHORITY_LOST')
+				throw new OutputReadyAuthorityLostError();
+			throw new TrackingWorkflowError(acceptance.code);
+		}
 		await this.commitAcceptedEvidence(workflowIdentity, step, 'accepted');
 		return this.publicResult(workflowIdentity, step, 'accepted');
 	}
@@ -430,6 +672,8 @@ export class FirstTrackingSegmentWorkflow {
 		step: WorkflowStep,
 	): Promise<JobStatus> {
 		return this.providerStep(
+			workflowIdentity,
+			identity,
 			`deliver-${request.role}-grant-${identity.attemptId}-${statusIndex}`,
 			deadlineAt,
 			`${identity.attemptId}:grant:${request.transferRequestId}`,
@@ -444,17 +688,32 @@ export class FirstTrackingSegmentWorkflow {
 						method: request.method,
 					});
 					await this.assertProviderAuthority(workflowIdentity, identity);
-					return await this.provider.deliverTransferGrant(grant);
+					return await this.provider.deliverTransferGrant(grant, deadlineAt);
 				} catch (error) {
+					if (error instanceof TrackingWorkflowError)
+						return {
+							ok: false,
+							code:
+								error instanceof OutputReadyAuthorityLostError
+									? 'OUTPUT_AUTHORITY_LOST'
+									: error.code,
+							retryable: false,
+						};
 					if (
 						error instanceof TrackingTransferGrantError &&
 						error.code === 'LEASE_MISMATCH'
-					)
+					) {
+						const current = await this.retryAuthority(
+							workflowIdentity,
+							identity,
+						);
+						if (current.ok === false) return current;
 						return {
 							ok: false,
 							code: 'TRACKING_AUTHORITY_STALE',
 							retryable: false,
 						};
+					}
 					throw error;
 				}
 			},
@@ -469,13 +728,15 @@ export class FirstTrackingSegmentWorkflow {
 		step: WorkflowStep,
 	): Promise<JobStatus> {
 		return this.providerStep(
+			workflowIdentity,
+			identity,
 			`read-tracking-status-${identity.attemptId}-${statusIndex}`,
 			deadlineAt,
 			`${identity.attemptId}:status:${statusIndex}`,
 			step,
 			() =>
 				this.withProviderAuthority(workflowIdentity, identity, () =>
-					this.provider.status(providerIdentity(identity)),
+					this.provider.status(providerIdentity(identity), deadlineAt),
 				),
 		);
 	}
@@ -496,6 +757,8 @@ export class FirstTrackingSegmentWorkflow {
 		const witness = await step.do('witness-resumed-lease', async () =>
 			this.coordinator.witness(leaseIdentity(identity)),
 		);
+		if (witness.status !== 'ok' && attempt.state === 'output-ready')
+			throw new OutputReadyAuthorityLostError();
 		return witness.status === 'ok' ? identity : null;
 	}
 
@@ -506,30 +769,66 @@ export class FirstTrackingSegmentWorkflow {
 		step: WorkflowStep,
 		stepKey = 'initial',
 	): Promise<AttemptIdentity> {
-		await step.do(
+		const enqueued = await step.do(
 			`enqueue-first-tracking-segment-${context.segmentId}-${stepKey}`,
-			async () =>
-				this.coordinator.enqueue({
-					segmentId: context.segmentId,
-					deadlineAt: context.availabilityDeadlineAt,
-					kind: 'initial',
-				}),
-		);
-		const lease = await step.do(
-			`acquire-first-tracking-lease-${context.attempt?.attemptId ?? stepKey}`,
-			SINGLE_ATTEMPT_STEP,
 			async () => {
-				const result = await this.coordinator.acquire({
-					segmentId: context.segmentId,
-				});
-				if (
-					result.status !== 'acquired' ||
-					result.segmentId !== context.segmentId
-				)
-					throw new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE');
-				return result;
+				const current = await this.authority.workflowContext(workflowIdentity);
+				if (Date.now() >= current.availabilityDeadlineAt)
+					return { status: 'deadline' as const };
+				try {
+					return await this.coordinator.enqueue({
+						segmentId: current.segmentId,
+						deadlineAt: current.availabilityDeadlineAt,
+						kind: current.seedKind,
+					});
+				} catch (error) {
+					if (Date.now() >= current.availabilityDeadlineAt)
+						return { status: 'deadline' as const };
+					throw error;
+				}
 			},
 		);
+		if (enqueued.status === 'deadline')
+			throw new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE');
+		let lease: Extract<GpuLeaseAcquireResult, { status: 'acquired' }>;
+		for (let poll = 0; ; poll += 1) {
+			const result = await step.do(
+				`acquire-first-tracking-lease-${stepKey}-${poll}`,
+				SINGLE_ATTEMPT_STEP,
+				async () => {
+					const current =
+						await this.authority.workflowContext(workflowIdentity);
+					if (Date.now() >= current.availabilityDeadlineAt)
+						return { status: 'deadline' as const };
+					return this.coordinator.acquire({ segmentId: current.segmentId });
+				},
+			);
+			if (result.status === 'acquired') {
+				if (result.segmentId !== context.segmentId)
+					throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+				lease = result;
+				break;
+			}
+			if (result.status === 'deadline')
+				throw new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE');
+			await this.waitState(
+				workflowIdentity,
+				context.attempt?.attemptId ?? null,
+				'waiting-for-capacity',
+				step,
+				`capacity-${stepKey}-${poll}`,
+			);
+			const delay = await step.do(
+				`capacity-delay-${stepKey}-${poll}`,
+				async () =>
+					Math.max(
+						0,
+						Math.min(15_000, context.availabilityDeadlineAt - Date.now()),
+					),
+			);
+			await step.sleep(`capacity-wait-${stepKey}-${poll}`, delay);
+		}
+
 		const attemptId = await deterministicUuidV4(
 			`tracking-attempt:${context.segmentId}:${lease.leaseId}:${lease.fence}`,
 		);
@@ -576,12 +875,20 @@ export class FirstTrackingSegmentWorkflow {
 		identity: AttemptIdentity,
 		createdAt: string,
 		step: WorkflowStep,
+		providerLossCount: number,
 	): Promise<{ context: TrackingWorkflowContext; identity: AttemptIdentity }> {
-		if (Date.now() >= context.availabilityDeadlineAt)
-			throw new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE');
-		await step.do(
+		if (context.attempt?.state === 'output-ready')
+			return this.fail(
+				new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'),
+				workflowIdentity,
+				identity,
+				step,
+			);
+		const retirement = await step.do(
 			`retire-lost-tracking-attempt-${identity.attemptId}`,
 			async () => {
+				if (Date.now() >= context.availabilityDeadlineAt)
+					return { retired: false };
 				await this.authority.retireAttempt({
 					ownerId: identity.ownerId,
 					runId: identity.runId,
@@ -595,6 +902,8 @@ export class FirstTrackingSegmentWorkflow {
 				return { retired: true };
 			},
 		);
+		if (!retirement.retired)
+			throw new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE');
 		const result = await step.do(
 			`requeue-lost-tracking-capacity-${identity.attemptId}`,
 			async () =>
@@ -606,6 +915,26 @@ export class FirstTrackingSegmentWorkflow {
 		);
 		if (result.status !== 'ok')
 			throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+		await this.waitState(
+			workflowIdentity,
+			null,
+			'waiting-for-capacity',
+			step,
+			`requeue-${identity.attemptId}`,
+		);
+		const delay = await step.do(
+			`provider-loss-delay-${identity.attemptId}-${providerLossCount}`,
+			async () =>
+				providerBackoff(
+					identity.segmentId,
+					providerLossCount,
+					context.availabilityDeadlineAt,
+				),
+		);
+		await step.sleep(
+			`provider-loss-backoff-${identity.attemptId}-${providerLossCount}`,
+			delay,
+		);
 		const nextContext = await step.do(
 			`reload-requeued-tracking-authority-${identity.attemptId}`,
 			() => this.authority.workflowContext(workflowIdentity),
@@ -624,61 +953,6 @@ export class FirstTrackingSegmentWorkflow {
 			),
 			identity: nextIdentity,
 		};
-	}
-
-	private async recoverProviderLoss(
-		workflowIdentity: TrackingWorkflowIdentity,
-		context: TrackingWorkflowContext,
-		identity: AttemptIdentity,
-		createdAt: string,
-		step: WorkflowStep,
-		providerLossCount: number,
-	): Promise<{
-		providerLossCount: number;
-		replacement: {
-			context: TrackingWorkflowContext;
-			identity: AttemptIdentity;
-		};
-	}> {
-		await step.sleep(
-			`provider-loss-backoff-${identity.attemptId}-${providerLossCount}`,
-			providerBackoff(
-				identity.segmentId,
-				providerLossCount,
-				context.availabilityDeadlineAt,
-			),
-		);
-		return {
-			providerLossCount,
-			replacement: await this.replaceProviderAttempt(
-				workflowIdentity,
-				context,
-				identity,
-				createdAt,
-				step,
-			),
-		};
-	}
-
-	private async handleProviderLoss(
-		workflowIdentity: TrackingWorkflowIdentity,
-		context: TrackingWorkflowContext,
-		identity: AttemptIdentity,
-		createdAt: string,
-		step: WorkflowStep,
-		providerLossCount: number,
-	): Promise<Awaited<
-		ReturnType<FirstTrackingSegmentWorkflow['recoverProviderLoss']>
-	> | null> {
-		if (!this.coordinator.requeueProviderLoss) return null;
-		return this.recoverProviderLoss(
-			workflowIdentity,
-			context,
-			identity,
-			createdAt,
-			step,
-			providerLossCount,
-		);
 	}
 
 	private submission(
@@ -705,9 +979,14 @@ export class FirstTrackingSegmentWorkflow {
 	): Promise<void> {
 		const context = await this.authority.workflowContext(workflowIdentity);
 		assertCurrentAttempt(context, identity);
+		if (Date.now() >= context.availabilityDeadlineAt)
+			throw new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE');
 		const witness = await this.coordinator.witness(leaseIdentity(identity));
-		if (witness.status !== 'ok')
+		if (witness.status !== 'ok') {
+			if (context.attempt?.state === 'output-ready')
+				throw new OutputReadyAuthorityLostError();
 			throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+		}
 	}
 
 	private async withProviderAuthority<T>(
@@ -717,8 +996,12 @@ export class FirstTrackingSegmentWorkflow {
 	): Promise<T | { ok: false; code: string; retryable: false }> {
 		try {
 			await this.assertProviderAuthority(workflowIdentity, identity);
-			return await operation();
+			const result = await operation();
+			await this.assertProviderAuthority(workflowIdentity, identity);
+			return result;
 		} catch (error) {
+			if (error instanceof OutputReadyAuthorityLostError)
+				return { ok: false, code: 'OUTPUT_AUTHORITY_LOST', retryable: false };
 			if (error instanceof TrackingWorkflowError)
 				return { ok: false, code: error.code, retryable: false };
 			throw error;
@@ -726,6 +1009,8 @@ export class FirstTrackingSegmentWorkflow {
 	}
 
 	private async providerStep<T extends Rpc.Serializable<T>>(
+		workflowIdentity: TrackingWorkflowIdentity,
+		identity: AttemptIdentity,
 		name: string,
 		deadlineAt: number,
 		seed: string,
@@ -734,38 +1019,141 @@ export class FirstTrackingSegmentWorkflow {
 			{ ok: true; value: T } | { ok: false; code: string; retryable: boolean }
 		>,
 	): Promise<T> {
-		try {
-			const output = (await step.do(
-				name,
+		for (let retry = 0; ; retry += 1) {
+			const output = await step.do(
+				`${name}-contact-${retry}`,
 				{
-					retries: {
-						limit: PROVIDER_RETRY_LIMIT,
-						delay: ({ ctx }) => {
-							const remaining = Math.max(0, deadlineAt - Date.now());
-							return providerBackoff(seed, ctx.attempt, deadlineAt, remaining);
-						},
-					},
-					timeout: '30 seconds',
+					...SINGLE_ATTEMPT_STEP,
+					timeout: Math.max(1, Math.min(30_000, deadlineAt - Date.now())),
 				},
 				async () => {
+					if (Date.now() >= deadlineAt)
+						return {
+							ok: false as const,
+							code: 'TRACKING_PROVIDER_UNAVAILABLE',
+							retryable: false,
+							retryDelay: 0,
+						};
+					const authority = await this.retryAuthority(
+						workflowIdentity,
+						identity,
+					);
+					if (authority.ok === false) return { ...authority, retryDelay: 0 };
 					const result = await operation();
-					if (result.ok === true) return result.value;
-					if (result.retryable === false)
-						return new PermanentProviderStepResult(result.code) as unknown as T;
-					throw new RetryableProviderError(result.code);
+					if (Date.now() >= deadlineAt)
+						return {
+							ok: false as const,
+							code: 'TRACKING_PROVIDER_UNAVAILABLE',
+							retryable: false,
+							retryDelay: 0,
+						};
+					if (result.ok === true)
+						await this.persistWait(workflowIdentity, identity.attemptId, null);
+					else if (
+						result.retryable &&
+						![
+							'GPU_CAPACITY_BUSY',
+							'JOB_NOT_FOUND',
+							'JOB_INTERRUPTED',
+							'LEASE_EXPIRED',
+							'TRACKING_AUTHORITY_STALE',
+						].includes(result.code)
+					) {
+						await this.persistWait(
+							workflowIdentity,
+							identity.attemptId,
+							'waiting-for-provider',
+						);
+						return {
+							...result,
+							retryDelay: providerBackoff(seed, retry + 1, deadlineAt),
+						};
+					}
+					return { ...result, retryDelay: 0 };
 				},
-			)) as T | PermanentProviderStepResult;
-			if (output instanceof PermanentProviderStepResult)
+			);
+			if (output.ok === true) {
+				return output.value;
+			}
+			if (output.code === 'OUTPUT_AUTHORITY_LOST')
+				throw new OutputReadyAuthorityLostError();
+			if (
+				[
+					'GPU_CAPACITY_BUSY',
+					'JOB_NOT_FOUND',
+					'JOB_INTERRUPTED',
+					'LEASE_EXPIRED',
+				].includes(output.code)
+			)
+				throw new RetryableProviderError(output.code);
+			if (!output.retryable || output.code === 'TRACKING_AUTHORITY_STALE')
 				throw new TrackingWorkflowError(
-					output.code === 'TRACKING_AUTHORITY_STALE'
-						? 'TRACKING_AUTHORITY_STALE'
+					output.code === 'TRACKING_AUTHORITY_STALE' ||
+						output.code === 'TRACKING_PROVIDER_UNAVAILABLE'
+						? output.code
 						: 'TRACKING_PROVIDER_FAILED',
 				);
-			return output;
-		} catch (error) {
-			if (error instanceof TrackingWorkflowError) throw error;
-			throw error;
+			let remaining = output.retryDelay;
+			for (let heartbeat = 0; remaining > 0; heartbeat += 1) {
+				const duration = Math.min(30_000, remaining);
+				await step.sleep(`${name}-wait-${retry}-${heartbeat}`, duration);
+				remaining -= duration;
+				if (remaining > 0) {
+					const witness = await step.do(
+						`${name}-heartbeat-${retry}-${heartbeat}`,
+						async () => ({
+							authority: await this.retryAuthority(workflowIdentity, identity),
+							remaining: Math.max(
+								0,
+								Math.min(remaining, deadlineAt - Date.now()),
+							),
+						}),
+					);
+					if (witness.authority.ok === false) {
+						if (witness.authority.code === 'OUTPUT_AUTHORITY_LOST')
+							throw new OutputReadyAuthorityLostError();
+						if (witness.authority.code === 'LEASE_EXPIRED')
+							throw new RetryableProviderError('LEASE_EXPIRED');
+						throw new TrackingWorkflowError(witness.authority.code);
+					}
+					remaining = witness.remaining;
+				}
+			}
 		}
+	}
+
+	private async retryAuthority(
+		workflowIdentity: TrackingWorkflowIdentity,
+		identity: AttemptIdentity,
+	): Promise<
+		| { ok: true }
+		| {
+				ok: false;
+				code:
+					| 'LEASE_EXPIRED'
+					| 'OUTPUT_AUTHORITY_LOST'
+					| 'TRACKING_PROVIDER_UNAVAILABLE';
+				retryable: boolean;
+		  }
+	> {
+		const current = await this.authority.workflowContext(workflowIdentity);
+		assertCurrentAttempt(current, identity);
+		if (Date.now() >= current.availabilityDeadlineAt)
+			return {
+				ok: false,
+				code: 'TRACKING_PROVIDER_UNAVAILABLE',
+				retryable: false,
+			};
+		const lease = await this.coordinator.witness(leaseIdentity(identity));
+		if (lease.status === 'ok') return { ok: true };
+		return {
+			ok: false,
+			code:
+				current.attempt?.state === 'output-ready'
+					? 'OUTPUT_AUTHORITY_LOST'
+					: 'LEASE_EXPIRED',
+			retryable: true,
+		};
 	}
 
 	private async synchronizeAuthority(
@@ -775,17 +1163,16 @@ export class FirstTrackingSegmentWorkflow {
 		statusIndex: number,
 		step: WorkflowStep,
 	): Promise<TrackingWorkflowContext> {
-		let context = await step.do(
-			`reload-current-authority-for-status-${identity.attemptId}-${statusIndex}`,
-			async () => this.authority.workflowContext(workflowIdentity),
-		);
-		assertCurrentAttempt(context, identity);
-		const target = targetAttemptState(status);
-		const transitions = transitionPath(context.attempt?.state, target);
-		for (const [transitionIndex, nextState] of transitions.entries()) {
-			context = await step.do(
-				`persist-tracking-status-${identity.attemptId}-${statusIndex}-${transitionIndex}`,
-				async () => {
+		return step.do(
+			`persist-tracking-status-${identity.attemptId}-${statusIndex}`,
+			async () => {
+				let context = await this.authority.workflowContext(workflowIdentity);
+				assertCurrentAttempt(context, identity);
+				const transitions = transitionPath(
+					context.attempt?.state,
+					targetAttemptState(status),
+				);
+				for (const nextState of transitions) {
 					const attempt = assertCurrentAttempt(context, identity);
 					await this.authority.transitionAttempt({
 						ownerId: identity.ownerId,
@@ -800,24 +1187,48 @@ export class FirstTrackingSegmentWorkflow {
 						safeFailureCode: null,
 						updatedAt: new Date().toISOString(),
 					});
-					return this.authority.workflowContext(workflowIdentity);
-				},
-			);
-		}
-		return context;
+					context = await this.authority.workflowContext(workflowIdentity);
+				}
+				return context;
+			},
+		);
 	}
 
 	private async renew(
+		workflowIdentity: TrackingWorkflowIdentity,
 		identity: AttemptIdentity,
 		step: WorkflowStep,
 		statusIndex: number,
-	): Promise<void> {
-		const renewed = await step.do(
+		deadlineAt: number,
+	): Promise<number> {
+		const result = await step.do(
 			`renew-tracking-lease-${identity.attemptId}-${statusIndex}`,
-			async () => this.coordinator.renew(leaseIdentity(identity)),
+			async () => {
+				const authority = await this.retryAuthority(workflowIdentity, identity);
+				if (authority.ok === false) return authority;
+				const renewed = await this.coordinator.renew(leaseIdentity(identity));
+				if (renewed.status !== 'ok') {
+					const current = await this.retryAuthority(workflowIdentity, identity);
+					if (current.ok === false) return current;
+					return {
+						ok: false as const,
+						code: 'TRACKING_AUTHORITY_STALE' as const,
+					};
+				}
+				return {
+					ok: true as const,
+					pollDelay: Math.max(0, Math.min(15_000, deadlineAt - Date.now())),
+				};
+			},
 		);
-		if (renewed.status !== 'ok')
-			throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+		if (result.ok === false) {
+			if (result.code === 'OUTPUT_AUTHORITY_LOST')
+				throw new OutputReadyAuthorityLostError();
+			if (result.code === 'LEASE_EXPIRED')
+				throw new RetryableProviderError('LEASE_EXPIRED');
+			throw new TrackingWorkflowError(result.code);
+		}
+		return result.pollDelay;
 	}
 
 	private async fail(
@@ -832,6 +1243,11 @@ export class FirstTrackingSegmentWorkflow {
 					error instanceof AcceptedEvidenceWorkflowError)) ||
 			(error instanceof AcceptedCornerEvidenceError &&
 				error.code === 'RETRYABLE_INFRASTRUCTURE')
+		)
+			throw error;
+		if (
+			error instanceof TrackingWorkflowError &&
+			error.code === 'TRACKING_PROVIDER_UNAVAILABLE'
 		)
 			throw error;
 		const code = publicFailure(error);
@@ -942,13 +1358,39 @@ export class FirstTrackingSegmentWorkflow {
 			}
 			return { committed: true };
 		});
+		await step.do(
+			`render-accepted-corner-clips-${name}`,
+			{ timeout: '30 minutes' },
+			async () => {
+				await this.renderClips(workflowIdentity);
+				return { rendered: true };
+			},
+		);
+		await step.do(`complete-accepted-analysis-${name}`, async () => {
+			await this.completeAnalysis(workflowIdentity);
+			return { checked: true };
+		});
 	}
 }
 
-export const firstTrackingSegmentWorkflow = (
+const prefixedTrackingStep = (
+	step: WorkflowStep,
+	segmentId: string,
+): WorkflowStep =>
+	new Proxy(step, {
+		get(target, property) {
+			return (name: string, ...arguments_: unknown[]) =>
+				Reflect.apply(Reflect.get(target, property), target, [
+					`${segmentId}-${name}`,
+					...arguments_,
+				]);
+		},
+	});
+
+export const trackingRunWorkflow = (
 	environment: DrivingAnalysisWorkflowEnvironment,
-): FirstTrackingSegmentWorkflow =>
-	new FirstTrackingSegmentWorkflow(
+): TrackingRunWorkflow =>
+	new TrackingRunWorkflow(
 		new TrackingAuthority(environment.DB),
 		environment.GPU_LEASE_COORDINATOR.getByName(
 			GPU_LEASE_COORDINATOR_OBJECT_NAME,
@@ -972,6 +1414,25 @@ export const firstTrackingSegmentWorkflow = (
 				new Date().toISOString(),
 			);
 		},
+		cornerClipRenderer(environment),
+		async (identity) => {
+			const result = await completeDrivingAnalysis(
+				environment.DB,
+				identity,
+				new Date().toISOString(),
+			);
+			if (result === 'stale')
+				throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+			if (result === 'not-ready') {
+				const context = await new TrackingAuthority(
+					environment.DB,
+				).workflowContext(identity);
+				if (context.outcome !== 'tracking-gap')
+					throw new Error(
+						'Accepted analysis evidence is not ready for completion',
+					);
+			}
+		},
 	);
 
 export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
@@ -981,8 +1442,25 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 	async run(
 		event: Readonly<WorkflowEvent<DrivingAnalysisWorkflowPayload>>,
 		step: WorkflowStep,
-	): Promise<DrivingAnalysisCreationWorkflowResult> {
+	): Promise<DrivingAnalysisCreationWorkflowResult | { kind: 'cancelled' }> {
 		const payload = drivingAnalysisWorkflowPayloadSchema.parse(event.payload);
+		if (payload.cancellation) {
+			const result = await new TrackingCancellation(
+				new TrackingAuthority(this.env.DB),
+				{
+					cancel: (command) =>
+						new LocalSam31Provider({
+							origin: this.env.GPU_PROVIDER_ORIGIN ?? '',
+							accessClientId: this.env.GPU_ACCESS_CLIENT_ID ?? '',
+							accessClientSecret: this.env.GPU_ACCESS_CLIENT_SECRET ?? '',
+						}).cancel(command),
+				},
+				this.env.GPU_LEASE_COORDINATOR.getByName(
+					GPU_LEASE_COORDINATOR_OBJECT_NAME,
+				),
+			).run(payload, step);
+			return result;
+		}
 		/* c8 ignore next -- real profile/container wiring is exercised by deployment acceptance. */
 		const authority = new DrivingAnalysisAuthority(this.env.DB);
 		return new DrivingAnalysisCreationWorkflowRunner(
@@ -1003,7 +1481,7 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 			},
 			undefined,
 			async (command) => {
-				await firstTrackingSegmentWorkflow(this.env).run(
+				await trackingRunWorkflow(this.env).run(
 					{
 						...event,
 						payload: {
@@ -1058,7 +1536,10 @@ const providerBackoff = (
 		PROVIDER_RETRY_CAP_MS,
 		PROVIDER_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1),
 	);
-	return Math.min(remaining, deterministicJitter(seed, attempt, ceiling));
+	return Math.min(
+		remaining,
+		Math.max(1_000, deterministicJitter(seed, attempt, ceiling)),
+	);
 };
 
 const attemptIdentity = (
@@ -1158,6 +1639,8 @@ const transitionPath = (
 };
 
 const validateWorkflowStatus = (status: JobStatus): void => {
+	if (status.state === 'interrupted')
+		throw new RetryableProviderError('JOB_INTERRUPTED');
 	if (
 		(status.state === 'transfer-grant-required' &&
 			(status.transferRequest === null || status.artifact !== null)) ||
@@ -1182,7 +1665,6 @@ const publicFailure = (
 	error: unknown,
 ): NonNullable<PublicTrackingState['safeFailureCode']> => {
 	if (error instanceof TrackingWorkflowError) {
-		if (error.code === 'TRACKING_PROVIDER_UNAVAILABLE') return error.code;
 		if (error.code === 'TRACKING_ARTIFACT_INVALID') return error.code;
 	}
 	return 'TRACKING_PROVIDER_FAILED';

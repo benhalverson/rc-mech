@@ -41,6 +41,23 @@ def test_inference_profile_normalizes_negative_zero(
     assert canonical_profile_bytes(negative) == canonical_profile_bytes(positive)
 
 
+def test_precision_changes_identity_without_rewriting_historical_profiles(
+    profile: InferenceProfile,
+) -> None:
+    """Historic precision values remain parseable but cannot share a run digest."""
+    digests = set()
+    for precision in ("float32", "float16", "bfloat16"):
+        body = profile.model_dump(mode="json", by_alias=True)
+        body["precision"] = precision
+        parsed = InferenceProfile.model_validate(body)
+        assert f'"precision":"{precision}"'.encode() in canonical_profile_bytes(parsed)
+        digests.add(parsed.digest)
+    assert len(digests) == 3
+    assert profile.model_copy(update={"precision": "bfloat16"}).digest == (
+        "daa1e60480700e6b5e2ddfe84dd7e9f87190c0b183b1f7344144df42f58d73b4"
+    )
+
+
 def test_submission_requires_the_wrapped_segment_identity(
     submission_factory: SubmissionFactory,
 ) -> None:

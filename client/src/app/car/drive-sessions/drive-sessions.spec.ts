@@ -2,6 +2,7 @@ import { computed, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { VisibilityStore } from '../../driving-analysis-visibility/visibility-store';
 import { CarStore } from '../car-store';
 import type {
 	ArchiveDriveSessionCommand,
@@ -109,14 +110,17 @@ describe('DriveSessions', () => {
 	let carStore: FakeCarStore;
 	let store: FakeDriveSessionStore;
 	let raceRecordingStore: FakeDrivingAnalysisStore;
+	const visible = signal(true);
 
 	beforeEach(async () => {
+		visible.set(true);
 		carStore = new FakeCarStore();
 		store = new FakeDriveSessionStore();
 		raceRecordingStore = new FakeDrivingAnalysisStore();
 		await TestBed.configureTestingModule({
 			imports: [DriveSessions],
 			providers: [
+				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([]),
 				{ provide: CarStore, useValue: carStore },
 				{ provide: DriveSessionStore, useValue: store },
@@ -133,6 +137,18 @@ describe('DriveSessions', () => {
 		fixture.detectChanges();
 		return fixture.nativeElement as HTMLElement;
 	};
+
+	it('hides the entire recording and analysis subtree while keeping ordinary sessions usable', () => {
+		store.sessions.set([driveSession()]);
+		visible.set(false);
+		const root = detect();
+		expect(root.querySelector('app-race-recording-upload')).toBeNull();
+		expect(root.textContent).toContain('Edit drive session');
+		expect(root.textContent).toContain('Archive drive session');
+		visible.set(true);
+		detect();
+		expect(root.querySelector('app-race-recording-upload')).not.toBeNull();
+	});
 
 	const button = (label: string): HTMLButtonElement => {
 		const match = [

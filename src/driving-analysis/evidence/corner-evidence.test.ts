@@ -7,6 +7,7 @@ import {
 	MAX_CORNER_EVIDENCE_OPERATIONS,
 	MAX_CORNER_EVIDENCE_PASSES,
 	measureAcceptedSegment,
+	rankCornerPasses,
 } from './corner-evidence';
 
 const provenance: SubjectProvenance = {
@@ -95,6 +96,28 @@ const input = () => ({
 });
 
 describe('deterministic corner evidence', () => {
+	test('compares segments with repeated pass ordinals without merging their identities', () => {
+		const base = measureAcceptedSegment(input()).passes[0];
+		if (!base) throw new Error('missing measured pass');
+		const passes = [
+			{ ...base, segmentId: 'first', durationMs: 100 },
+			{ ...base, segmentId: 'second', durationMs: 140 },
+			{ ...base, segmentId: 'third', durationMs: 141 },
+		];
+		expect(
+			rankCornerPasses(passes, 40).map((pass) => ({
+				segmentId: pass.segmentId,
+				rank: pass.rank,
+				tieGroup: pass.tieGroup,
+				best: pass.best,
+			})),
+		).toEqual([
+			{ segmentId: 'first', rank: 1, tieGroup: 1, best: true },
+			{ segmentId: 'second', rank: 1, tieGroup: 1, best: true },
+			{ segmentId: 'third', rank: 2, tieGroup: 2, best: false },
+		]);
+		expect(passes.map((pass) => pass.rank)).toEqual([1, 1, 1]);
+	});
 	test('bounds frames and corner-frame work before measurement', () => {
 		expect(() => assertCornerEvidenceBudget(3, 1)).not.toThrow();
 		expect(() => assertCornerEvidenceBudget(0, 1)).not.toThrow();

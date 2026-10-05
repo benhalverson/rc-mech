@@ -463,15 +463,31 @@ def _pixel_crop(
     specification: RenderSpecification, metadata: ProbeMetadata
 ) -> _PixelCrop:
     view = specification.corner_view
-    crop_width = int(metadata.width * view.width) // 2 * 2
-    crop_height = int(metadata.height * view.height * TRACK_VIEW_HEIGHT) // 2 * 2
-    if crop_width < MIN_OUTPUT_DIMENSION or crop_height < MIN_OUTPUT_DIMENSION:
-        raise RenderInvalidMediaError
+    # Enclose the immutable normalized view on the codec's even-pixel grid.
+    # At a source boundary, keep the minimum two-pixel cell inside the frame.
+    right = min(
+        metadata.width // 2 * 2,
+        math.ceil(metadata.width * (view.x + view.width) / 2) * 2,
+    )
+    bottom = min(
+        metadata.height // 2 * 2,
+        math.ceil(
+            metadata.height
+            * (TRACK_VIEW_Y + (view.y + view.height) * TRACK_VIEW_HEIGHT)
+            / 2
+        )
+        * 2,
+    )
+    left = min(int(metadata.width * view.x) // 2 * 2, right - MIN_OUTPUT_DIMENSION)
+    top = min(
+        int(metadata.height * (TRACK_VIEW_Y + view.y * TRACK_VIEW_HEIGHT)) // 2 * 2,
+        bottom - MIN_OUTPUT_DIMENSION,
+    )
     return _PixelCrop(
-        width=crop_width,
-        height=crop_height,
-        x=int(metadata.width * view.x) // 2 * 2,
-        y=int(metadata.height * (TRACK_VIEW_Y + view.y * TRACK_VIEW_HEIGHT)) // 2 * 2,
+        width=right - left,
+        height=bottom - top,
+        x=left,
+        y=top,
     )
 
 
@@ -568,7 +584,8 @@ def _write_overlay_script(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
         "Effect, Text\n"
         + "\n".join(
-            f"Dialogue: {layer},0:00:00.00,9:59:59.00,Default,,0,0,0,,{line}"
+            f"Dialogue: {layer},0:00:00.00,9:59:59.00,Default,,0,0,0,,"
+            f"{{\\clip(0,0,{crop.width},{crop.height})}}{line}"
             for layer, line in enumerate(lines)
         )
         + "\n",
@@ -581,21 +598,18 @@ def _pixel_point(
 ) -> tuple[int, int]:
     frame_y = TRACK_VIEW_Y + point.y * TRACK_VIEW_HEIGHT
     return (
-        min(max(round(point.x * metadata.width) - crop.x, 0), crop.width - 1),
-        min(max(round(frame_y * metadata.height) - crop.y, 0), crop.height - 1),
+        round(point.x * metadata.width) - crop.x,
+        round(frame_y * metadata.height) - crop.y,
     )
 
 
 def _pixel_gate(
     gate: DirectedGate, metadata: ProbeMetadata, crop: _PixelCrop
 ) -> tuple[tuple[int, int], tuple[int, int]]:
-    result = (
+    return (
         _pixel_point(gate.entry, metadata, crop),
         _pixel_point(gate.exit, metadata, crop),
     )
-    if result[0] == result[1]:
-        raise RenderInvalidMediaError
-    return result
 
 
 def _escape_filter_value(value: str) -> str:

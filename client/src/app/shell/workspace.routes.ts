@@ -1,5 +1,6 @@
 import { inject } from '@angular/core';
 import { type Route, Router, type Routes } from '@angular/router';
+import { drivingAnalysisCanMatch } from '../driving-analysis-visibility/visibility.guard';
 import { ownerSessionCanMatch } from '../owner-session.guard';
 
 const loadGarageRoutes = () =>
@@ -90,6 +91,7 @@ export const workspaceRoutes: Routes = [
 	},
 	{
 		path: 'track-maps',
+		canMatch: [drivingAnalysisCanMatch],
 		loadChildren: loadTrackMapRoutes,
 	},
 ];
