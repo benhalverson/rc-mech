@@ -121,6 +121,14 @@ test('Owner saves persist across User reload; hidden links and ordinary sessions
 		await expect(toggle).not.toBeChecked();
 		await page.getByRole('link', { name: 'Track maps', exact: true }).click();
 		await expect(page).toHaveURL(/\/track-maps$/);
+		for (let navigation = 0; navigation < 10; navigation++) {
+			await page.getByRole('link', { name: 'Garage', exact: true }).click();
+			await expect(page).toHaveURL(/\/garage$/);
+			await page.getByRole('link', { name: 'Track maps', exact: true }).click();
+			await expect(page).toHaveURL(/\/track-maps$/);
+		}
+		await injectAxe(page);
+		expect(await getViolations(page)).toEqual([]);
 	} finally {
 		await page.request.put('/api/v1/feature-flags/driving-analysis', {
 			data: { enabled: false },
