@@ -11,6 +11,7 @@ import type {
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
 import { SubjectReidentification } from './subject-reidentification';
+import type { verifiedFrameImage } from './verified-frame-image';
 
 const analysis: DrivingAnalysis = {
 	id: 'analysis',
@@ -195,20 +196,22 @@ describe('SubjectReidentification', () => {
 	});
 	it('keeps current failure and readiness unchanged by stale image callbacks', async () => {
 		const f = await setup();
-		const callbacks = f.fixture.componentInstance as unknown as {
-			imageLoaded(url: string): void;
-			imageFailed(url: string): void;
+		const presentation = f.fixture.componentInstance as unknown as {
+			frameImage: ReturnType<typeof verifiedFrameImage>;
 		};
+
 		f.store.context.set({
 			...gap,
 			frames: [...gap.frames, { frameIndex: 19, timestampMs: 650 }],
 		});
 		f.fixture.detectChanges();
 		const oldImage = f.element.querySelector('img');
+		const oldAttempt = presentation.frameImage.images()[0];
+		if (!oldAttempt) throw new Error('Missing image attempt');
 		f.input('input[type=range]', '1');
 		const currentImage = f.element.querySelector('img');
 		expect(currentImage).not.toBe(oldImage);
-		callbacks.imageLoaded('/correction-preview-15');
+		presentation.frameImage.loaded(oldAttempt);
 		f.fixture.detectChanges();
 		expect(
 			f.element.querySelector<HTMLButtonElement>('button[type=submit]')
@@ -216,8 +219,8 @@ describe('SubjectReidentification', () => {
 		).toBe(true);
 		currentImage?.dispatchEvent(new Event('error'));
 		f.fixture.detectChanges();
-		callbacks.imageLoaded('/correction-preview-15');
-		callbacks.imageFailed('/correction-preview-15');
+		presentation.frameImage.loaded(oldAttempt);
+		presentation.frameImage.error(oldAttempt);
 		f.fixture.detectChanges();
 		expect(f.element.textContent).toContain(
 			'exact frame image could not be loaded',
@@ -227,7 +230,7 @@ describe('SubjectReidentification', () => {
 			?.click();
 		f.fixture.detectChanges();
 		f.element.querySelector('img')?.dispatchEvent(new Event('load'));
-		callbacks.imageFailed('/correction-preview-15');
+		presentation.frameImage.error(oldAttempt);
 		f.fixture.detectChanges();
 		expect(
 			f.element.querySelector<HTMLButtonElement>('button[type=submit]')
