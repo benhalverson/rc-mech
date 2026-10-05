@@ -11,6 +11,7 @@ import { DrivingAnalysisGateway } from './driving-analysis/driving-analysis-gate
 import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis/driving-analysis-request-identity';
 import { DrivingAnalysisStore } from './driving-analysis/driving-analysis-store';
 import { PageVisibilityCapability } from './driving-analysis/page-visibility';
+import { PrivateVideoPlayerCapability } from './driving-analysis/private-video-player';
 import { RaceRecordingFileCapability } from './driving-analysis/race-recording-file';
 import { RaceRecordingGateway } from './driving-analysis/race-recording-gateway';
 import { ReidentificationGateway } from './driving-analysis/reidentification-gateway';
@@ -42,6 +43,7 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 			DriveSessionStore,
 			PageVisibilityCapability,
 			RaceRecordingFileCapability,
+			PrivateVideoPlayerCapability,
 			RaceRecordingGateway,
 			DrivingAnalysisGateway,
 			DrivingAnalysisRequestIdentityCapability,

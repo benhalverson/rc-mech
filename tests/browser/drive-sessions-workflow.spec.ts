@@ -496,6 +496,69 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	);
 	await expect(section.getByText('Ready for analysis')).toBeVisible();
 	const creator = section.locator('app-driving-analysis-creator');
+	// Exercise real native playback across repeated SPA teardown and replacement.
+	for (let navigation = 0; navigation < 3; navigation++) {
+		await creator.locator('[data-toggle-playback]').click();
+		await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+		const previousVideo = await creator.locator('video').elementHandle();
+		if (!previousVideo) throw new Error('Missing previous native player');
+		await page.getByRole('link', { name: 'Overview', exact: true }).click();
+		await expect(creator).toHaveCount(0);
+		expect(await previousVideo.evaluate((video) => video.paused)).toBe(true);
+		await page
+			.getByRole('link', { name: 'Drive sessions', exact: true })
+			.click();
+		await expect(creator).toBeVisible();
+		await previousVideo.evaluate((video) => {
+			video.dispatchEvent(new Event('play'));
+			video.dispatchEvent(new Event('timeupdate'));
+		});
+		await expect(creator.locator('output')).toHaveText('0 ms');
+		await expect(creator.locator('[data-toggle-playback]')).toHaveText(
+			'Play recording',
+		);
+		await previousVideo.dispose();
+	}
+	// Native failures are injected locally; the browser still renders and retries the capability.
+	await creator.locator('video').evaluate((video) => {
+		Object.defineProperty(video, 'play', {
+			configurable: true,
+			value: () => Promise.reject(new Error('Denied')),
+		});
+	});
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(creator.getByRole('alert')).toContainText(
+		'Private playback is unavailable',
+	);
+	await creator.locator('video').evaluate((video) => {
+		Reflect.deleteProperty(video, 'play');
+	});
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+	await creator.locator('[data-toggle-playback]').click();
+	await creator.locator('[data-race-seek]').fill('250');
+	await expect(creator.locator('output')).toHaveText('250 ms');
+	await creator.locator('video').evaluate((video) => {
+		Object.defineProperty(video, 'currentTime', {
+			configurable: true,
+			set: () => {
+				throw new Error('Seek denied');
+			},
+		});
+	});
+	await creator.locator('[data-race-seek]').fill('500');
+	await expect(creator.getByRole('alert')).toContainText(
+		'Private playback is unavailable',
+	);
+	await expect(creator.locator('output')).toHaveText('250 ms');
+	await creator.locator('video').evaluate((video) => {
+		Reflect.deleteProperty(video, 'currentTime');
+	});
+	await creator.locator('[data-race-seek]').fill('125');
+	await expect(creator.locator('output')).toHaveText('125 ms');
+	await expect(
+		creator.getByText('Private playback is unavailable', { exact: false }),
+	).toHaveCount(0);
 	const mapSelector = creator.getByLabel('Approved Track map');
 	await mapSelector.selectOption(trackMap.id);
 	await expect(mapSelector).toHaveValue(trackMap.id);
@@ -525,7 +588,13 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await creator.getByLabel('Race start').fill('100');
 	await creator.getByLabel('Race end').fill('900');
 	await creator.locator('[data-race-seek]').fill('125');
-	await creator.locator('[data-mark-seed]').click();
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-mark-seed]').focus();
+	await page.keyboard.press('Enter');
+	await expect(creator.locator('[data-mark-seed]')).toBeFocused();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', true);
 	await expect(creator.locator('[data-subject-frame]')).toBeVisible();
 	await expect(creator.locator('[data-frame-editor]')).toBeEnabled();
 	await expect(

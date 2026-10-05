@@ -3,6 +3,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DriveSession } from '../drive-session.models';
 import { DrivingAnalysisStore } from './driving-analysis-store';
+import { PrivateVideoPlayerCapability } from './private-video-player';
 import type {
 	RaceRecording,
 	RaceRecordingGatewayFailure,
@@ -110,7 +111,10 @@ describe('RaceRecordingUpload', () => {
 		store = new FakeDrivingAnalysisStore();
 		await TestBed.configureTestingModule({
 			imports: [RaceRecordingUpload],
-			providers: [{ provide: DrivingAnalysisStore, useValue: store }],
+			providers: [
+				PrivateVideoPlayerCapability,
+				{ provide: DrivingAnalysisStore, useValue: store },
+			],
 		}).compileComponents();
 		fixture = TestBed.createComponent(RaceRecordingUpload);
 		fixture.componentRef.setInput('carId', 'car-1');
