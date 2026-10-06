@@ -435,7 +435,7 @@ test('keeps dark Drive session editing, history, and archive states accessible',
 
 test('creates a queued Driving analysis from a ready private Race recording', async ({
 	page,
-}) => {
+}, testInfo) => {
 	test.setTimeout(45_000);
 	await authenticateOwner(page);
 	const created = await createCar(page, 'Driving analysis browser fixture');
@@ -497,6 +497,16 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	);
 	await expect(section.getByText('Ready for analysis')).toBeVisible();
 	const creator = section.locator('app-driving-analysis-creator');
+	await expect(
+		creator.getByRole('heading', { name: 'Select the car to follow' }),
+	).toBeVisible();
+	await expect(
+		creator.getByRole('button', { name: 'Select car in this frame' }),
+	).toBeVisible();
+	await expect(creator.locator('[data-box-surface]')).toHaveCount(0);
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-before-frame.png'),
+	});
 	// Exercise real native playback across repeated SPA teardown and replacement.
 	for (let navigation = 0; navigation < 3; navigation++) {
 		await creator.locator('[data-toggle-playback]').click();
@@ -719,8 +729,46 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	const subjectBox = creator.locator('[data-subject-box]');
 	const surface = creator.locator('[data-box-surface]');
 	await surface.scrollIntoViewIfNeeded();
-	const surfaceBounds = await surface.boundingBox();
+	let surfaceBounds = await surface.boundingBox();
 	if (!surfaceBounds) throw new Error('Subject-box surface bounds missing');
+	// A redraw must also start inside the default box already covering the car.
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.46,
+		surfaceBounds.y + surfaceBounds.height * 0.46,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.65,
+		surfaceBounds.y + surfaceBounds.height * 0.6,
+	);
+	await page.mouse.up();
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-redraw-from-existing-box.png'),
+	});
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue('0.46');
+	await expect(subjectBox).toBeFocused();
+	// Capturing the whole selection panel scrolls it; remeasure before the next drag.
+	await surface.scrollIntoViewIfNeeded();
+	surfaceBounds = await surface.boundingBox();
+	if (!surfaceBounds) throw new Error('Subject-box redraw bounds missing');
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.63,
+		surfaceBounds.y + surfaceBounds.height * 0.58,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.47,
+		surfaceBounds.y + surfaceBounds.height * 0.47,
+	);
+	await page.mouse.up();
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue('0.47');
+	await expect(creator.getByLabel('Top', { exact: true })).toHaveValue('0.47');
+	await expect(creator.getByLabel('Width', { exact: true })).toHaveValue(
+		'0.16',
+	);
+	await expect(creator.getByLabel('Height', { exact: true })).toHaveValue(
+		'0.11',
+	);
 	const pointerFractions = {
 		start: { x: 0.237, y: 0.183 },
 		end: { x: 0.688, y: 0.516 },
@@ -750,6 +798,21 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await page.mouse.down();
 	await page.mouse.move(pointerEnd.x, pointerEnd.y);
 	await page.mouse.up();
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.x),
+	);
+	await expect(creator.getByLabel('Top', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.y),
+	);
+	await expect(creator.getByLabel('Width', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.width),
+	);
+	await expect(creator.getByLabel('Height', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.height),
+	);
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-drawn-box.png'),
+	});
 	await creator.getByLabel('Width').fill('');
 	await expect(
 		creator.getByText('Enter all four normalized Subject-box coordinates.'),

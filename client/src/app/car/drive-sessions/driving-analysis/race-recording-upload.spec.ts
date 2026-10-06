@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DriveSession } from '../drive-session.models';
 import { DrivingAnalysisStore } from './driving-analysis-store';
@@ -112,6 +113,7 @@ describe('RaceRecordingUpload', () => {
 		await TestBed.configureTestingModule({
 			imports: [RaceRecordingUpload],
 			providers: [
+				provideRouter([]),
 				PrivateVideoPlayerCapability,
 				{ provide: DrivingAnalysisStore, useValue: store },
 			],
