@@ -235,6 +235,26 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.cars()).toEqual([]);
 	});
 
+	it('retries failed preparation for a new session without restoring stale identity', async () => {
+		const owner = {
+			key: 'user-1',
+			email: 'racer@example.test',
+			sessionKey: 'session-1',
+			offlineUntil: snapshot.offlineUntil,
+		};
+		access.prepare.mockRejectedValueOnce(new Error('Shell stalled'));
+		store.prepare({ owner });
+		await vi.waitFor(() => expect(store.status()).toBe('online-only'));
+		expect(store.networkUnavailable()).toBe(false);
+		expect(store.hasSnapshot()).toBe(false);
+
+		const renewed = { ...owner, sessionKey: 'session-2' };
+		store.prepare({ owner: renewed });
+		await vi.waitFor(() => expect(store.status()).toBe('ready'));
+		expect(store.hasSnapshotFor(renewed)).toBe(true);
+		expect(store.hasSnapshotFor(owner)).toBe(false);
+	});
+
 	it('preserves a confirmed outage while preparation fails', async () => {
 		let rejectPreparation!: (error: Error) => void;
 		access.prepare.mockImplementationOnce(

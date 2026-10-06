@@ -138,4 +138,12 @@ describe('OfflineWorkspaceAccess', () => {
 		expect(capabilities.prepareShell).not.toHaveBeenCalled();
 		expect(gateway.load).not.toHaveBeenCalled();
 	});
+
+	it('leaves the durable snapshot untouched when shell preparation fails', async () => {
+		capabilities.prepareShell.mockRejectedValueOnce(new Error('Shell stalled'));
+		await expect(access.prepare(owner)).rejects.toThrow('Shell stalled');
+		expect(storage.activate).toHaveBeenCalledWith(owner.key, owner.sessionKey);
+		expect(storage.save).not.toHaveBeenCalled();
+		expect(gateway.load).not.toHaveBeenCalled();
+	});
 });
