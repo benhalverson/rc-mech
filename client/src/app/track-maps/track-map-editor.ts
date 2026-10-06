@@ -104,9 +104,15 @@ export class TrackMapEditor {
 	});
 	protected readonly targetLabel = computed(() => {
 		const target = this.selectedTarget();
-		if (target.startsWith('entry')) return 'Entry gate';
-		if (target.startsWith('exit')) return 'Exit gate';
-		return 'Corner view';
+		const labels: Record<GeometryTarget, string> = {
+			entryStart: 'the start of the entry line',
+			entryEnd: 'the end of the entry line',
+			exitStart: 'the start of the exit line',
+			exitEnd: 'the end of the exit line',
+			viewPosition: 'the top-left of the Corner view',
+			viewSize: 'the bottom-right of the Corner view',
+		};
+		return labels[target];
 	});
 	protected readonly errors = computed(() =>
 		validateTrackCorners(this.corners()),
@@ -155,6 +161,7 @@ export class TrackMapEditor {
 	protected selectCorner(index: number): void {
 		this.selectedCorner.set(index);
 	}
+	/** Choose the exact endpoint or rectangle handle for the next canvas placement. */
 	protected selectTarget(target: GeometryTarget): void {
 		this.selectedTarget.set(target);
 	}
