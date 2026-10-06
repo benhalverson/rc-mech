@@ -1,5 +1,12 @@
 import { spawn } from 'node:child_process';
-import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+	chmod,
+	copyFile,
+	mkdtemp,
+	readFile,
+	rm,
+	writeFile,
+} from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { constants, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -60,6 +67,7 @@ export async function startLocalWorker(
 	runner: typeof run = run,
 ) {
 	const env = { ...callerEnvironment };
+	let toolingDirectory: string | undefined;
 	if (!env['MINIFLARE_CONTAINER_EGRESS_IMAGE']) {
 		const directory = await prepareProxyContext();
 		try {
@@ -73,12 +81,37 @@ export async function startLocalWorker(
 			await rm(directory, { recursive: true, force: true });
 		}
 		env['MINIFLARE_CONTAINER_EGRESS_IMAGE'] = image;
+		toolingDirectory = await mkdtemp(
+			resolve(tmpdir(), 'rc-mech-local-docker-'),
+		);
+		const executable = resolve(toolingDirectory, 'docker.mjs');
+		try {
+			const source = await readFile(
+				resolve(root, 'scripts/local-docker.mts'),
+				'utf8',
+			);
+			await writeFile(
+				executable,
+				`#!${process.execPath}\n${stripTypeScriptTypes(source)}`,
+			);
+			await chmod(executable, 0o700);
+			env['RC_MECH_REAL_DOCKER'] = env['WRANGLER_DOCKER_BIN'] ?? 'docker';
+			env['WRANGLER_DOCKER_BIN'] = executable;
+		} catch (error) {
+			await rm(toolingDirectory, { recursive: true, force: true });
+			throw error;
+		}
 	}
-	return runner(
-		'pnpm',
-		['exec', 'wrangler', 'dev', '--env', 'local', ...args],
-		env,
-	);
+	try {
+		return await runner(
+			'pnpm',
+			['exec', 'wrangler', 'dev', '--env', 'local', ...args],
+			env,
+		);
+	} finally {
+		if (toolingDirectory)
+			await rm(toolingDirectory, { recursive: true, force: true });
+	}
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)

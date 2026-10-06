@@ -88,6 +88,10 @@ describe('local Worker launcher', () => {
 			{
 				...env,
 				MINIFLARE_CONTAINER_EGRESS_IMAGE: 'rc-mech-local-container-proxy:local',
+				RC_MECH_REAL_DOCKER: 'docker',
+				WRANGLER_DOCKER_BIN: expect.stringMatching(
+					/rc-mech-local-docker-.*\/docker\.mjs$/,
+				),
 			},
 		]);
 		expect(env).toEqual({ APP_URL: 'http://localhost:4200' });
