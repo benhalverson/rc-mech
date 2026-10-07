@@ -120,6 +120,12 @@ export class TrackMapEditor {
 	protected readonly activeCorner = computed(
 		() => this.corners().at(this.selectedCorner() ?? -1) ?? null,
 	);
+	/** Identify the endpoint that the current click or keyboard gesture will move. */
+	protected readonly activePoint = computed(() => {
+		const corner = this.activeCorner();
+		const target = this.selectedPointTarget();
+		return corner && target ? this.point(corner, target) : null;
+	});
 	protected readonly pointLocation = pointLocation;
 
 	protected addCorner(): void {

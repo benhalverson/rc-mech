@@ -144,6 +144,24 @@ describe('TrackMapEditor', () => {
 		fixture.detectChanges();
 	});
 	afterEach(() => TestBed.resetTestingModule());
+	it('highlights the selected endpoint without changing the corner draft', () => {
+		const before = (component as unknown as { corners(): unknown }).corners();
+		const marker = (): SVGCircleElement =>
+			fixture.nativeElement.querySelector('[data-active-geometry-point]');
+		expect(marker().getAttribute('cx')).toBe('64');
+		const target = fixture.nativeElement.querySelector(
+			'select[aria-label="Geometry target"]',
+		) as HTMLSelectElement;
+		choose(target, 'exitEnd');
+		expect(marker().getAttribute('cx')).toBe('256');
+		expect(marker().getAttribute('cy')).toBe('144');
+		expect((component as unknown as { corners(): unknown }).corners()).toEqual(
+			before,
+		);
+		choose(target, 'viewPosition');
+		expect(marker()).toBeNull();
+	});
+
 	it('marks both ends of entry and exit lines through the numbered actions', () => {
 		const saved = savedCommands();
 		setCanvasBounds(0, 0, 400, 200);

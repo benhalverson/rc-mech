@@ -83,7 +83,7 @@
 				<div class="relative aspect-video overflow-hidden bg-black">
 					<img class="absolute inset-0 h-full w-full object-cover" [src]="frameUrl()" width="1920" height="1080" alt="Selected private Race recording reference frame" />
 					<button class="track-canvas-button alloy-focus-ring absolute inset-x-0 bottom-0 h-2/3 w-full border-0 bg-transparent p-0 text-left" type="button" aria-label="Track-view geometry editor. Click to place the selected geometry target, or use arrow keys." (click)="moveFromCanvas($event, selectedCorner()!)" (keydown)="moveSelected($event, selectedCorner()!)" [disabled]="busy() || !activeCorner()">
-						<app-track-map-geometry class="absolute inset-0" [corners]="corners()" [activeCorner]="activeCorner()" [overlay]="true" label="Editable Track map geometry over the selected frame" [decorative]="true" />
+						<app-track-map-geometry class="absolute inset-0" [corners]="corners()" [activeCorner]="activeCorner()" [activePoint]="activePoint()" [overlay]="true" label="Editable Track map geometry over the selected frame" [decorative]="true" />
 					</button>
 				</div>
 			} @else {
