@@ -32,6 +32,9 @@
 		"scripts/browser-client.ts",
 		"scripts/browser-http.ts",
 		"scripts/browser-worker.ts",
+		"scripts/local-worker.ts",
+		"scripts/local-docker.mts",
+		"containers/local-proxy/*.mts",
 		"worker-configuration.d.ts"
 	],
 	"angularCompilerOptions": {
