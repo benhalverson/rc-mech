@@ -551,6 +551,17 @@ describe('car route stores', () => {
 		]);
 		workspace.succeed(car({ name: 'Retained' }), true);
 		expect(store.carMessage()).toContain('saved locally');
+		// Acknowledging this operation must not depend on another Car's queue.
+		workspace.operations.update((operations) =>
+			operations.map((operation) => ({
+				...operation,
+				operationId: 'unrelated-operation',
+				carId: 'another-car',
+			})),
+		);
+		expect(store.carMessage()).toBe('Car details saved.');
+		workspace.operations.set([]);
+		expect(store.carMessage()).toBe('Car details saved.');
 
 		store.changeArchiveState('archive');
 		workspace.fail({ kind: 'local', message: 'Archive was not retained.' });

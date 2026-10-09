@@ -54,6 +54,11 @@ const legacyFailure = (
 		? failure
 		: { kind: 'invalid-response' };
 
+/**
+ * Garage-list workflow that projects the shared Car working copy and creation
+ * outcomes. Owns archive filtering and operation-specific creation feedback;
+ * CarWorkspaceStore owns durable commands, replay, and cross-route state.
+ */
 export const GarageStore = signalStore(
 	withState<GarageState>({ showArchived: false }),
 	withProps(() => ({
@@ -118,7 +123,10 @@ export const GarageStore = signalStore(
 				const outcome = store.workspace.mutationOutcome();
 				if (outcome.status !== 'succeeded' || outcome.command.type !== 'create')
 					return '';
-				return outcome.retainedLocally && store.workspace.operations().length
+				return outcome.retainedLocally &&
+					store.workspace
+						.operations()
+						.some((operation) => operation.operationId === outcome.operationId)
 					? 'Car saved locally. Pending sync.'
 					: 'Car added to the garage.';
 			}),

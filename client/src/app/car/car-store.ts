@@ -73,6 +73,11 @@ const lifecycleMutationError = (
 	return `The car could not be ${action === 'archive' ? 'archived' : 'restored'}.`;
 };
 
+/**
+ * Selected-Car workflow facade over CarWorkspaceStore and its online read path.
+ * Projects editor/lifecycle outcomes for this route and ties success feedback to
+ * the acknowledged operation, so a later action cannot reuse an earlier success.
+ */
 export const CarStore = signalStore(
 	withState<CarState>({ carId: null }),
 	withProps(() => ({
@@ -172,7 +177,10 @@ export const CarStore = signalStore(
 					outcome.command.carId !== store.carId()
 				)
 					return '';
-				return outcome.retainedLocally && store.workspace.operations().length
+				return outcome.retainedLocally &&
+					store.workspace
+						.operations()
+						.some((operation) => operation.operationId === outcome.operationId)
 					? 'Car details saved locally. Pending sync.'
 					: 'Car details saved.';
 			}),
