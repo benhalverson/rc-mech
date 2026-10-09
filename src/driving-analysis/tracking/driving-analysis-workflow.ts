@@ -219,6 +219,13 @@ const MUTABLE_ATTEMPT_STATES = [
 	'output-ready',
 ] as const;
 
+/**
+ * Durable run orchestration behind DrivingAnalysisWorkflow. Coordinates authority,
+ * GPU capacity, provider contact, accepted evidence, and re-identification waits
+ * through injected ports. Submission and polling losses share attempt replacement
+ * without changing segment identity, FIFO position, or the original deadline;
+ * provider output becomes public evidence only after fenced acceptance.
+ */
 export class TrackingRunWorkflow {
 	constructor(
 		private readonly authority: TrackingAuthority,
@@ -1645,6 +1652,11 @@ const publicFailure = (
 	return 'TRACKING_PROVIDER_FAILED';
 };
 
+/**
+ * Maps authority loss to plain callback outcomes at durable grant/contact and
+ * acceptance boundaries. Preserves the distinct output-ready loss code without
+ * serializing Error instances into replayed Workflow step results.
+ */
 const authorityFailureCode = (error: TrackingWorkflowError) =>
 	error instanceof OutputReadyAuthorityLostError
 		? ('OUTPUT_AUTHORITY_LOST' as const)
