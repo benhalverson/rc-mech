@@ -39,6 +39,7 @@ describe('ownerSessionCanMatch', () => {
 	const sessionStore = { resolved: vi.fn(), resolutionFailed: vi.fn() };
 	const offlineAccess = { restore: vi.fn() };
 	const offlineWorkspace = {
+		networkUnavailable: vi.fn(() => false),
 		hasSnapshotFor: vi.fn(() => false),
 		prepare: vi.fn(),
 		openOffline: vi.fn(),
@@ -50,12 +51,14 @@ describe('ownerSessionCanMatch', () => {
 		sessionStore.resolutionFailed.mockReset().mockReturnValue(false);
 		offlineAccess.restore.mockReset();
 		offlineWorkspace.prepare.mockReset();
+		offlineWorkspace.networkUnavailable.mockReset().mockReturnValue(false);
 		offlineWorkspace.openOffline.mockReset();
 		offlineWorkspace.hasSnapshotFor.mockReset().mockReturnValue(false);
 		TestBed.configureTestingModule({
 			providers: [
 				provideRouter([
 					{ path: 'sign-in', component: PublicSignIn },
+					{ path: 'offline-unavailable', component: PublicSignIn },
 					{
 						path: 'garage/:carId/photos',
 						canMatch: [ownerSessionCanMatch],
@@ -135,7 +138,7 @@ describe('ownerSessionCanMatch', () => {
 		});
 	});
 
-	it('opens a still-valid local Garage only after the live session request fails', async () => {
+	it('restores a still-valid local Garage but blocks an undelivered deep link', async () => {
 		const snapshot = {
 			ownerKey: 'user-1',
 			ownerEmail: 'owner@example.test',
@@ -149,9 +152,32 @@ describe('ownerSessionCanMatch', () => {
 
 		await router.navigateByUrl('/garage/car-1/photos');
 
-		expect(loadPrivateFeature).toHaveBeenCalledOnce();
+		expect(loadPrivateFeature).not.toHaveBeenCalled();
 		expect(offlineWorkspace.openOffline).toHaveBeenCalledWith({ snapshot });
-		expect(router.url).toBe('/garage/car-1/photos');
+		expect(router.url).toBe('/offline-unavailable');
+	});
+
+	it('keeps delivered routes available after restoring a snapshot', async () => {
+		sessionStore.resolved.mockResolvedValue(null);
+		sessionStore.resolutionFailed.mockReturnValue(true);
+		offlineAccess.restore.mockResolvedValue({ ownerKey: 'user-1', cars: [] });
+		const result = await TestBed.runInInjectionContext(() =>
+			ownerSessionCanMatch(
+				{ path: '' },
+				[new UrlSegment('garage', {})],
+				router.routerState.snapshot.root,
+			),
+		);
+		expect(result).toBe(true);
+	});
+
+	it('checks outage-time admission even while a live session remains cached', async () => {
+		sessionStore.resolved.mockResolvedValue({ session: { id: 'session-1' } });
+		offlineWorkspace.networkUnavailable.mockReturnValue(true);
+		await router.navigateByUrl('/garage/car-1/photos');
+		expect(router.url).toBe('/offline-unavailable');
+		expect(loadPrivateFeature).not.toHaveBeenCalled();
+		expect(offlineWorkspace.prepare).not.toHaveBeenCalled();
 	});
 
 	it('keeps a live session authorized without claiming readiness from incomplete identity data', async () => {

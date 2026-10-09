@@ -316,3 +316,28 @@ test('does not restore the prior Garage after explicit sign-out', async ({
 	await expect(reopened.getByText('Signed-out private buggy')).toHaveCount(0);
 	await expectAxeClean(reopened);
 });
+
+test('explains unavailable deep links after an offline restart and keeps Garage reachable', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	await page.goto('/garage');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	const reopened = await reopenOffline(context, page, '/settings');
+	await expect(reopened).toHaveURL(/\/offline-unavailable$/);
+	await expect(
+		reopened.getByRole('heading', { name: 'Connection needed' }),
+	).toBeVisible();
+	await expect(
+		reopened.getByText('Reconnect to open it.', { exact: false }),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await reopened
+		.getByRole('link', { name: 'Return to Garage', exact: true })
+		.click();
+	await expect(reopened).toHaveURL(/\/garage$/);
+	await expect(
+		reopened.getByRole('heading', { name: 'The garage', exact: true }),
+	).toBeVisible();
+});

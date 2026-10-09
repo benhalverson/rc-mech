@@ -1,6 +1,7 @@
 import { inject } from '@angular/core';
 import { CanMatchFn, Router } from '@angular/router';
 import { offlineOwnerFromSession } from './offline/offline-owner';
+import { canOpenOfflineRoute } from './offline/offline-route-access';
 import { OfflineWorkspaceAccess } from './offline/offline-workspace-access';
 import { OfflineWorkspaceStore } from './offline/offline-workspace-store';
 import { OwnerSessionStore } from './owner-session-store';
@@ -10,8 +11,12 @@ export const ownerSessionCanMatch: CanMatchFn = async (_route, segments) => {
 	const router = inject(Router);
 	const offlineAccess = inject(OfflineWorkspaceAccess);
 	const offlineWorkspace = inject(OfflineWorkspaceStore);
+	const offlineAdmission = () =>
+		canOpenOfflineRoute(segments.map((segment) => segment.path)) ||
+		router.createUrlTree(['/offline-unavailable']);
 	const session = await sessionStore.resolved();
 	if (session?.session) {
+		if (offlineWorkspace.networkUnavailable()) return offlineAdmission();
 		const owner = offlineOwnerFromSession(session);
 		if (owner && !offlineWorkspace.hasSnapshotFor(owner))
 			offlineWorkspace.prepare({ owner });
@@ -22,7 +27,7 @@ export const ownerSessionCanMatch: CanMatchFn = async (_route, segments) => {
 			const snapshot = await offlineAccess.restore();
 			if (snapshot) {
 				offlineWorkspace.openOffline({ snapshot });
-				return true;
+				return offlineAdmission();
 			}
 		} catch {
 			// A failed local read must fall back to the normal signed-out boundary.
