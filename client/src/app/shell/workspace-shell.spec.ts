@@ -13,6 +13,7 @@ import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
 import { SettingsWorkspaceStore } from '../settings/settings-workspace-store';
+import { VoiceWorkspaceStore } from '../voice/voice-workspace-store';
 import { ResponsiveViewport } from './responsive-viewport';
 import type { ShellCar } from './shell-car-gateway';
 import { ShellCarStore } from './shell-car-store';
@@ -107,6 +108,7 @@ describe('WorkspaceShell', () => {
 				{ provide: SettingsWorkspaceStore, useValue: {} },
 				{ provide: PhotoWorkspaceStore, useValue: {} },
 				{ provide: MaintenanceWorkspaceStore, useValue: {} },
+				{ provide: VoiceWorkspaceStore, useValue: {} },
 				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([], withDisabledInitialNavigation()),
 				{ provide: OwnerSessionStore, useValue: session },

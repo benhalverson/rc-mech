@@ -1,3 +1,4 @@
+@if (!voiceStore.remoteAvailable()) { <p class="alloy-state" role="status">Voice transcription, draft extraction, corrections, and confirmation are waiting for connectivity.</p> }
 <section class="rounded-alloy-panel border border-alloy-separator bg-alloy-control" aria-labelledby="voice-title">
 	<header class="flex flex-wrap items-start justify-between gap-4 border-b border-alloy-separator p-4">
 		<div class="max-w-2xl">
@@ -111,10 +112,11 @@
 				@for (capture of voiceStore.localCaptures(); track capture.id) {
 					<article class="border border-dashed border-alloy-separator bg-alloy-control p-4">
 						<header class="flex flex-wrap items-start justify-between gap-3 border-b border-alloy-separator pb-3">
-							<div><span class="font-technical text-[11px] uppercase tracking-[0.1em] text-alloy-text-secondary">{{ capture.status }}</span><h4 class="m-0 mt-1 text-base font-[650]">Pending on this device</h4></div>
+							<div><span class="font-technical text-[11px] uppercase tracking-[0.1em] text-alloy-text-secondary">{{ capture.status === 'failed' ? 'Needs attention' : 'Pending sync' }}</span><h4 class="m-0 mt-1 text-base font-[650]">Pending on this device</h4></div>
 							<time class="text-[12px] text-alloy-text-secondary" [dateTime]="capture.createdAt">{{ capture.createdAt | date: 'short' }}</time>
 						</header>
-						<p>{{ capture.error || 'This note is safely queued for upload.' }}</p>
+						@if (capture.text) { <p>{{ capture.text }}</p> }
+						<p>{{ capture.error || 'This note is saved on this device. Transcription and draft extraction wait for connectivity.' }}</p>
 						<div class="flex flex-wrap gap-2">
 							<button class="alloy-control alloy-control-secondary" type="button" (click)="retryQueued()" [disabled]="voiceStore.pending()">Retry now</button>
 							<button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardLocal(capture.id)" [disabled]="voiceStore.pending()">Discard local recording</button>
@@ -147,11 +149,11 @@
 											<option [value]="contextCarOption.id">{{ contextCarOption.name }}</option>
 										}
 									</select>
-									<button class="alloy-control alloy-control-secondary justify-self-start" type="button" (click)="saveContext(update)" [disabled]="voiceStore.pending()">Update context</button>
+									<button class="alloy-control alloy-control-secondary justify-self-start" type="button" (click)="saveContext(update)" [disabled]="voiceStore.pending() || !voiceStore.remoteAvailable()">Update context</button>
 								</div>
 								<div class="flex flex-wrap gap-2">
-									<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.process(update.id)" [disabled]="voiceStore.pending()">{{ update.status === 'failed' ? 'Retry processing' : 'Process note' }}</button>
-									<button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardServer(update.id, false)" [disabled]="voiceStore.pending()">Discard recording</button>
+									<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.process(update.id)" [disabled]="voiceStore.pending() || !voiceStore.remoteAvailable()">{{ update.status === 'failed' ? 'Retry processing' : 'Process note' }}</button>
+									<button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardServer(update.id, false)" [disabled]="voiceStore.pending() || !voiceStore.remoteAvailable()">Discard recording</button>
 								</div>
 							} @else if (update.status === 'processing') {
 								<p class="alloy-state alloy-live-state m-0" role="status">Transcribing and preparing a review draft…</p>
@@ -196,15 +198,15 @@
 										<label class="grid gap-2 text-sm font-semibold" [for]="'correction-' + update.id">Short correction or clarification<input class="alloy-field w-full" [id]="'correction-' + update.id" [value]="correctionText()" (input)="updateCorrection($event)" [attr.aria-describedby]="'correction-help-' + update.id + (correctionError() ? ' correction-error-' + update.id : '')" placeholder="Rear diff, not front — use 7k" /></label>
 										<p class="m-0 text-[12px] text-alloy-text-secondary" [id]="'correction-help-' + update.id">Up to 4,000 characters. If automated correction fails, the full text is kept as a review note.</p>
 										@if (correctionError()) { <p class="alloy-state alloy-error-state m-0" [id]="'correction-error-' + update.id" role="alert">{{ correctionError() }}</p> }
-											<div class="flex flex-wrap gap-2"><button class="alloy-control alloy-control-primary" type="button" (click)="applyTextCorrection(update.id)" [disabled]="voiceStore.pending()">Apply correction</button>@if (voiceStore.supported()) { <button class="alloy-control alloy-control-secondary" type="button" (click)="startRecording({ kind: 'correction', id: update.id })">Speak correction</button> }<button class="alloy-control alloy-control-tertiary" type="button" (click)="cancelCorrection()">Cancel</button></div>
+											<div class="flex flex-wrap gap-2"><button class="alloy-control alloy-control-primary" type="button" (click)="applyTextCorrection(update.id)" [disabled]="voiceStore.pending() || !voiceStore.remoteAvailable()">Apply correction</button>@if (voiceStore.supported()) { <button class="alloy-control alloy-control-secondary" type="button" (click)="startRecording({ kind: 'correction', id: update.id })">Speak correction</button> }<button class="alloy-control alloy-control-tertiary" type="button" (click)="cancelCorrection()">Cancel</button></div>
 										</div>
 									} @else {
 										<div class="flex flex-wrap gap-2 border-t border-alloy-separator pt-4">
 											<button class="alloy-control alloy-control-secondary" type="button" (click)="beginCorrection(update.id)">Correct or answer</button>
 											@if (hasUncertainty(update)) {
-												<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.confirm(update.id, true)" [disabled]="voiceStore.pending()">Keep uncertain wording as notes and save</button>
+												<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.confirm(update.id, true)" [disabled]="voiceStore.pending() || !voiceStore.remoteAvailable()">Keep uncertain wording as notes and save</button>
 											} @else {
-												<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.confirm(update.id, false)" [disabled]="voiceStore.pending()">Confirm and save</button>
+												<button class="alloy-control alloy-control-primary" type="button" (click)="voiceStore.confirm(update.id, false)" [disabled]="voiceStore.pending() || !voiceStore.remoteAvailable()">Confirm and save</button>
 											}
 										</div>
 									}
@@ -216,7 +218,7 @@
 										<details><summary class="alloy-focus-ring min-h-12 cursor-pointer py-3 font-semibold">Correction provenance</summary>@for (correction of update.corrections; track correction.id) { <p><strong>{{ correction.kind }}</strong> · {{ correction.transcript }}</p>@if (correction.audioUrl) { <!-- biome-ignore lint/a11y/useMediaCaption: The correction transcript is rendered immediately before its audio. --><audio class="w-full" controls preload="none" [src]="correction.audioUrl" aria-label="Voice correction recording"></audio> } }</details>
 									}
 									@if (update.audioUrl) {
-										<div class="border-t border-alloy-separator pt-4"><p class="mt-0 text-[13px] text-alloy-text-secondary">Removing the original audio keeps the transcript, draft, corrections, and garage history.</p><button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardServer(update.id, true)" [disabled]="voiceStore.pending()">Remove original audio</button></div>
+										<div class="border-t border-alloy-separator pt-4"><p class="mt-0 text-[13px] text-alloy-text-secondary">Removing the original audio keeps the transcript, draft, corrections, and garage history.</p><button class="alloy-control alloy-control-tertiary" type="button" (click)="voiceStore.discardServer(update.id, true)" [disabled]="voiceStore.pending() || !voiceStore.remoteAvailable()">Remove original audio</button></div>
 									} @else if (update.artifactDeletedAt) {
 										<p class="text-[13px] text-alloy-text-secondary">Original audio was removed; derived garage history remains.</p>
 									}

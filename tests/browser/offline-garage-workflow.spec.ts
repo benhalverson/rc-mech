@@ -892,3 +892,269 @@ test('retains Maintenance conflicts and rejection feedback while independent ser
 	).toEqual([]);
 	await expectAxeClean(page);
 });
+
+test('retains Voice text with a pending Drive context through restart and automatic sync', async ({
+	page,
+	context,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Offline voice context buggy' },
+	});
+	expect(created.ok()).toBe(true);
+	const { car } = (await created.json()) as { car: { id: string } };
+	await page.goto(`/garage/${car.id}/drive-sessions`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page
+		.getByRole('button', { name: 'Record the first drive session' })
+		.click();
+	await page.getByLabel('Started', { exact: false }).fill('2026-10-09T12:00');
+	await page
+		.getByLabel('Conditions', { exact: false })
+		.fill('Offline voice heat');
+	await page.getByRole('button', { name: 'Save session', exact: true }).click();
+	await expect(
+		page.getByText('Offline voice heat', { exact: true }),
+	).toBeVisible();
+	await page
+		.getByRole('link', { name: 'Voice track log', exact: true })
+		.click();
+	await expect(page.getByLabel('Drive-session context')).toContainText(
+		'Offline voice heat',
+	);
+	await page.getByRole('button', { name: 'Type instead' }).click();
+	await page
+		.getByLabel('Track note', { exact: true })
+		.fill('Rear slides on offline entry');
+	await page.getByRole('button', { name: 'Keep text note' }).click();
+	await expect(
+		page.getByText('Rear slides on offline entry', { exact: true }),
+	).toBeVisible();
+	await expect(page.getByText(/Pending sync/).first()).toBeVisible();
+	const reopened = await reopenOffline(
+		context,
+		page,
+		`/garage/${car.id}/voice`,
+	);
+	await expect(
+		reopened.getByText('Rear slides on offline entry', { exact: true }),
+	).toBeVisible();
+	await expect(
+		reopened.getByText(
+			/transcription, draft extraction, corrections, and confirmation are waiting/,
+		),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await context.setOffline(false);
+	await expect(
+		reopened.getByText('Pending on this device', { exact: true }),
+	).toHaveCount(0);
+	await expect(reopened.getByLabel('Transcript')).toContainText(
+		'Rear slides on offline entry',
+	);
+	const response = await reopened.request.get(
+		`/api/v1/cars/${car.id}/voice-updates`,
+	);
+	const { voiceUpdates } = (await response.json()) as {
+		voiceUpdates: Array<{ id: string; driveSessionId: string; status: string }>;
+	};
+	expect(voiceUpdates).toHaveLength(1);
+	expect(voiceUpdates[0].status).toBe('needs-review');
+	expect(voiceUpdates[0].driveSessionId).toBeTruthy();
+	const replay = await reopened.request.post(
+		`/api/v1/cars/${car.id}/voice-updates`,
+		{
+			data: {
+				captureId: voiceUpdates[0].id,
+				text: 'Rear slides on offline entry',
+				driveSessionId: voiceUpdates[0].driveSessionId,
+			},
+		},
+	);
+	expect(replay.ok()).toBe(true);
+	expect(
+		(
+			await (
+				await reopened.request.get(`/api/v1/cars/${car.id}/voice-updates`)
+			).json()
+		).voiceUpdates,
+	).toHaveLength(1);
+});
+
+test('preserves original Voice audio bytes through offline restart, upload and retained playback data', async ({
+	page,
+	context,
+}) => {
+	await page.addInitScript(() => {
+		navigator.mediaDevices.getUserMedia = async () => {
+			const audio = new AudioContext();
+			await audio.resume();
+			const destination = audio.createMediaStreamDestination();
+			const oscillator = audio.createOscillator();
+			oscillator.frequency.value = 440;
+			oscillator.connect(destination);
+			oscillator.start();
+			return destination.stream;
+		};
+	});
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Offline audio buggy' },
+	});
+	expect(created.ok()).toBe(true);
+	const { car } = (await created.json()) as { car: { id: string } };
+	await page.goto(`/garage/${car.id}/voice`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page.getByRole('button', { name: 'Start voice note' }).click();
+	await expect(page.getByText('Audio detected', { exact: true })).toBeVisible();
+	await page.waitForTimeout(1000);
+	await page.getByRole('button', { name: 'Stop and keep recording' }).click();
+	await expect(
+		page.getByText('Pending on this device', { exact: true }),
+	).toBeVisible();
+	const original = await page.evaluate(async (carId) => {
+		const database = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = indexedDB.open('chassis-notes-offline-v1');
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+		const captures = await new Promise<
+			Array<{ id: string; carId: string; blob: Blob }>
+		>((resolve, reject) => {
+			const request = database
+				.transaction('voiceCaptures')
+				.objectStore('voiceCaptures')
+				.getAll();
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+		database.close();
+		const capture = captures.find((c) => c.carId === carId);
+		if (!capture) throw new Error('No original retained');
+		const bytes = await capture.blob.arrayBuffer();
+		const digest = [
+			...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+		];
+		const audio = new AudioContext();
+		const decoded = await audio.decodeAudioData(bytes);
+		await audio.close();
+		return {
+			id: capture.id,
+			digest,
+			duration: decoded.duration,
+			size: capture.blob.size,
+		};
+	}, car.id);
+	expect(original.duration).toBeGreaterThan(0.8);
+	expect(original.size).toBeGreaterThan(1000);
+	const reopened = await reopenOffline(
+		context,
+		page,
+		`/garage/${car.id}/voice`,
+	);
+	await expect(
+		reopened.getByText('Pending on this device', { exact: true }),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await context.setOffline(false);
+	await expect(
+		reopened.getByText('Pending on this device', { exact: true }),
+	).toHaveCount(0);
+	await expect(reopened.getByLabel('Transcript')).toContainText(
+		'Offline audio fixture',
+	);
+	const remoteDigest = await reopened.evaluate(async (id) => {
+		const bytes = await (
+			await fetch(`/api/v1/voice-updates/${id}/audio`)
+		).arrayBuffer();
+		return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))];
+	}, original.id);
+	expect(remoteDigest).toEqual(original.digest);
+	expect(
+		(
+			await (
+				await reopened.request.get(`/api/v1/cars/${car.id}/voice-updates`)
+			).json()
+		).voiceUpdates,
+	).toHaveLength(1);
+});
+
+test('migrates legacy Voice intent once and retains processing rejection without blocking another capture', async ({
+	page,
+	context,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Legacy voice migration buggy' },
+	});
+	expect(created.ok()).toBe(true);
+	const { car } = (await created.json()) as { car: { id: string } };
+	await page.goto(`/garage/${car.id}/voice`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	const ids = await page.evaluate(async (carId) => {
+		const database = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = indexedDB.open('rc-mech-voice-queue');
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+		const captures = [
+			'Fixture processing rejection',
+			'Independent migrated note',
+		].map((text) => ({
+			id: crypto.randomUUID(),
+			ownerKey: 'owner@example.com',
+			carId,
+			driveSessionId: null,
+			text,
+			contentType: 'text/plain',
+			fileName: 'legacy.txt',
+			createdAt: new Date().toISOString(),
+			status: 'queued',
+			error: null,
+		}));
+		await new Promise<void>((resolve, reject) => {
+			const transaction = database.transaction('captures', 'readwrite');
+			for (const capture of captures)
+				transaction.objectStore('captures').put(capture);
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
+		});
+		database.close();
+		return captures.map((capture) => capture.id);
+	}, car.id);
+	const reopened = await reopenOffline(
+		context,
+		page,
+		`/garage/${car.id}/voice`,
+	);
+	await expect(
+		reopened.getByText('Fixture processing rejection', { exact: true }),
+	).toBeVisible();
+	await expect(
+		reopened.getByText('Independent migrated note', { exact: true }),
+	).toBeVisible();
+	await context.setOffline(false);
+	await expect(
+		reopened.getByText('Needs attention', { exact: true }),
+	).toBeVisible();
+	await expect(
+		reopened.getByText(
+			'The voice note could not be processed. Your recording is safe; try again.',
+			{ exact: true },
+		),
+	).toBeVisible();
+	await expect(reopened.getByLabel('Transcript')).toContainText(
+		'Independent migrated note',
+	);
+	const { voiceUpdates } = (await (
+		await reopened.request.get(`/api/v1/cars/${car.id}/voice-updates`)
+	).json()) as { voiceUpdates: Array<{ id: string; status: string }> };
+	expect(voiceUpdates.map((v) => v.id).sort()).toEqual(ids.sort());
+	expect(voiceUpdates.map((v) => v.status).sort()).toEqual([
+		'failed',
+		'needs-review',
+	]);
+	await expectAxeClean(reopened);
+});

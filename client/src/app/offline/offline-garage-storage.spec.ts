@@ -1,3 +1,5 @@
+/// <reference types="node" />
+import { Blob as NodeBlob } from 'node:buffer';
 import { TestBed } from '@angular/core/testing';
 import Dexie from 'dexie';
 import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
@@ -13,6 +15,10 @@ import {
 	maintenancePlanFixture,
 	maintenanceSnapshotFixture,
 } from '../maintenance/maintenance-sync.testing';
+import {
+	voiceCaptureFixture,
+	voiceUpdateFixture,
+} from '../voice/voice-sync.testing';
 import {
 	OFFLINE_CURRENT_TIME,
 	OFFLINE_DATABASE_NAME,
@@ -2186,4 +2192,205 @@ describe('OfflineGarageStorage', () => {
 			inspect.close();
 		},
 	);
+	const prepareVoice = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'owner@example.com',
+				offlineUntil: '2026-08-12T00:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car', 'Voice buggy')],
+			},
+			'session-a',
+		);
+	};
+	it('retains exact voice bytes and stable identity across restart, processing and metadata refresh', async () => {
+		await prepareVoice();
+		// Native Blob is structured-cloneable in fake-indexeddb; jsdom's wrapper is not.
+		const blob = new NodeBlob([new Uint8Array([1, 2, 3, 255])], {
+			type: 'audio/webm',
+		}) as unknown as Blob;
+		const capture = { ...voiceCaptureFixture, blob };
+		await storage.keepVoice(capture, userAFence);
+		await storage.keepVoice(
+			{ ...capture, text: 'duplicate must not overwrite' },
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		let view = await storage.voiceView(userAFence);
+		expect(view.captures).toHaveLength(1);
+		expect(view.captures[0].text).toBe(voiceCaptureFixture.text);
+		expect(await view.captures[0].blob?.arrayBuffer()).toEqual(
+			await blob.arrayBuffer(),
+		);
+		expect(await storage.readyVoice(userAFence)).toHaveLength(1);
+		view = await storage.changeVoice(
+			capture.id,
+			{ phase: 'processing', remote: voiceUpdateFixture },
+			userAFence,
+		);
+		expect(view.updates).toEqual([voiceUpdateFixture]);
+		await storage.changeVoice(
+			capture.id,
+			{
+				phase: 'retained',
+				remote: { ...voiceUpdateFixture, status: 'needs-review' },
+			},
+			userAFence,
+		);
+		expect(await storage.readyVoice(userAFence)).toEqual([]);
+		view = await storage.refreshVoice(
+			[
+				{
+					...voiceUpdateFixture,
+					status: 'saved',
+					updatedAt: '2026-10-10T12:00:00Z',
+				},
+			],
+			userAFence,
+		);
+		expect(view.updates[0].status).toBe('saved');
+		expect(await view.captures[0].blob?.arrayBuffer()).toEqual(
+			await blob.arrayBuffer(),
+		);
+		await storage.refreshVoice([voiceUpdateFixture], userAFence);
+		expect((await storage.voiceView(userAFence)).updates[0].status).toBe(
+			'saved',
+		);
+		await storage.refreshVoice(
+			[
+				{
+					...voiceUpdateFixture,
+					id: 'unretained',
+					artifactDeletedAt: '2026-10-11T12:00:00Z',
+				},
+				{
+					...voiceUpdateFixture,
+					status: 'saved',
+					updatedAt: '2026-10-11T12:00:00Z',
+					artifactDeletedAt: '2026-10-11T12:00:00Z',
+				},
+			],
+			userAFence,
+		);
+		expect(
+			(await storage.voiceView(userAFence)).captures[0].blob,
+		).toBeUndefined();
+		await storage.changeVoice('missing', 'discard', userAFence);
+		await storage.changeVoice(capture.id, 'discard', userAFence);
+		expect((await storage.voiceView(userAFence)).captures).toEqual([]);
+	});
+	it('imports legacy captures once and never overwrites progress or another owner', async () => {
+		await prepareVoice();
+		const legacy = {
+			...voiceCaptureFixture,
+			ownerKey: 'owner@example.com',
+			blob: new Blob(['original']),
+		};
+		await storage.importVoice(
+			[legacy, { ...legacy, id: 'failed', status: 'failed' }],
+			userAFence,
+		);
+		await storage.changeVoice(legacy.id, { phase: 'processing' }, userAFence);
+		await storage.importVoice([legacy], userAFence);
+		const view = await storage.voiceView(userAFence);
+		expect(view.captures).toHaveLength(2);
+		expect(view.captures.find((c) => c.id === legacy.id)?.phase).toBe(
+			'processing',
+		);
+		expect(await storage.readyVoice(userAFence)).toHaveLength(1);
+		await expect(
+			storage.importVoice(
+				[{ ...legacy, ownerKey: 'someone-else' }],
+				userAFence,
+			),
+		).rejects.toThrow('another User');
+		const database = new Dexie(databaseName);
+		await database.open();
+		await database.table('voiceCaptures').put({
+			...legacy,
+			id: 'collision',
+			ownerKey: 'someone-else',
+			phase: 'upload',
+			dependencies: [],
+		});
+		database.close();
+		await expect(
+			storage.importVoice([{ ...legacy, id: 'collision' }], userAFence),
+		).rejects.toThrow('identity');
+		await expect(
+			storage.keepVoice({ ...legacy, id: 'collision' }, userAFence),
+		).rejects.toThrow('identity');
+	});
+	it('waits for locally-created Car and Drive dependencies before voice upload', async () => {
+		await prepareVoice();
+		const created = await storage.commitCar(
+			{ type: 'create', input: { name: 'Local Car' } },
+			userAFence,
+		);
+		const drive = await storage.commitDrive(
+			{
+				action: 'save',
+				carId: created.car.id,
+				sessionId: null,
+				input: {
+					startedAt: '2026-08-11T12:00:00Z',
+					durationMinutes: null,
+					conditions: 'Dry',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+		const capture = {
+			...voiceCaptureFixture,
+			carId: created.car.id,
+			driveSessionId: drive.collection.sessions[0].id,
+		};
+		await storage.keepVoice(capture, userAFence);
+		expect(await storage.readyVoice(userAFence)).toEqual([]);
+		await storage.recordCarOutcome({
+			operationId: created.operation.operationId,
+			outcome: 'applied',
+			car: { ...created.car, version: 1 },
+		});
+		expect(await storage.readyVoice(userAFence)).toEqual([]);
+		await storage.recordDriveOutcome({
+			operationId: drive.operation.operationId,
+			outcome: 'applied',
+			collection: { ...drive.collection, version: 2 },
+		});
+		expect(await storage.readyVoice(userAFence)).toHaveLength(1);
+		await expect(
+			storage.keepVoice(
+				{ ...capture, id: 'invalid-drive', driveSessionId: 'missing' },
+				userAFence,
+			),
+		).rejects.toThrow('matching Drive');
+		await expect(
+			storage.keepVoice(
+				{ ...capture, id: 'invalid-car', carId: 'missing' },
+				userAFence,
+			),
+		).rejects.toThrow('active Car');
+	});
+	it('fences every voice storage operation and includes original bytes in owner cleanup', async () => {
+		for (const call of [
+			() => storage.voiceView(userAFence),
+			() => storage.keepVoice(voiceCaptureFixture, userAFence),
+			() => storage.importVoice([], userAFence),
+			() => storage.changeVoice('capture', 'discard', userAFence),
+			() => storage.refreshVoice([], userAFence),
+		])
+			await expect(call()).rejects.toThrow('unavailable');
+		await prepareVoice();
+		await storage.keepVoice(voiceCaptureFixture, userAFence);
+		await storage.deactivate('signout');
+		const database = new Dexie(databaseName);
+		await database.open();
+		expect(await database.table('voiceCaptures').count()).toBe(0);
+		database.close();
+	});
 });

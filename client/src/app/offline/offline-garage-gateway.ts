@@ -17,6 +17,8 @@ import {
 	type SettingsSnapshot,
 	settingsSnapshotSchema,
 } from '../settings/settings-sync.models';
+import type { VoiceUpdate } from '../voice/voice.models';
+import { parseVoiceUpdates } from '../voice/voice-gateway';
 
 export type OfflineGarageCollection = GarageCollection &
 	Readonly<{
@@ -24,6 +26,7 @@ export type OfflineGarageCollection = GarageCollection &
 		driveCollections: readonly DriveSyncCollection[];
 		setupCollections: readonly SetupSyncCollection[];
 		settings: SettingsSnapshot;
+		voiceUpdates: readonly VoiceUpdate[];
 		maintenance: MaintenanceSnapshot;
 		photos: readonly CarPhoto[];
 	}>;
@@ -34,6 +37,9 @@ export class OfflineGarageGateway {
 
 	load(): Observable<OfflineGarageCollection> {
 		return forkJoin({
+			voice: this.http.get<unknown>('/api/v1/voice-updates', {
+				withCredentials: true,
+			}),
 			maintenance: this.http.get<unknown>('/api/v1/maintenance/sync/snapshot', {
 				withCredentials: true,
 			}),
@@ -77,6 +83,7 @@ export class OfflineGarageGateway {
 					}),
 					photos: parsePhotoCollection(photos),
 					maintenance: maintenanceSnapshotSchema.parse(maintenance),
+					voiceUpdates: parseVoiceUpdates(voice),
 					...parseGarageCollection(garage),
 					setupCollections: parseSetupSyncCollections(setups),
 					buildCollections: parseBuildSyncCollections(builds),

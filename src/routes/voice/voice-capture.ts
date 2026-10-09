@@ -76,6 +76,17 @@ const loadPublicVoice = async (c: AppContext, id: string) => {
 export const createVoiceCaptureRoutes = () => {
 	const routes = new Hono<AppEnv>();
 
+	routes.get('/voice-updates', async (c) => {
+		const values = await db(c.env)
+			.select()
+			.from(voiceUpdate)
+			.where(eq(voiceUpdate.ownerId, c.get('userId')))
+			.orderBy(desc(voiceUpdate.createdAt));
+		return c.json({
+			voiceUpdates: values.map((value) => publicVoiceUpdate(value)),
+		});
+	});
+
 	routes.get('/cars/:carId/voice-updates', async (c) => {
 		const carId = c.req.param('carId');
 		if (!(await ownedCar(c, carId)))

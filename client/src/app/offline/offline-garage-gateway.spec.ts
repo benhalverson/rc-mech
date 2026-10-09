@@ -39,6 +39,7 @@ describe('OfflineGarageGateway', () => {
 			http.expectOne('/api/v1/invite-codes').flush(settings.invites);
 		};
 		const result = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
 		http
 			.expectOne('/api/v1/maintenance/sync/snapshot')
 			.flush({ collections: [], components: [], timezone: 'UTC' });
@@ -78,6 +79,7 @@ describe('OfflineGarageGateway', () => {
 		});
 		await expect(result).resolves.toEqual({
 			buildCollections: [],
+			voiceUpdates: [],
 			maintenance: { collections: [], components: [], timezone: 'UTC' },
 			photos: [],
 			settings,
@@ -101,6 +103,7 @@ describe('OfflineGarageGateway', () => {
 		});
 
 		const malformed = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
 		http
 			.expectOne('/api/v1/maintenance/sync/snapshot')
 			.flush({ collections: [], components: [], timezone: 'UTC' });
@@ -113,6 +116,7 @@ describe('OfflineGarageGateway', () => {
 		await expect(malformed).rejects.toThrow();
 
 		const empty = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
 		http
 			.expectOne('/api/v1/maintenance/sync/snapshot')
 			.flush({ collections: [], components: [], timezone: 'UTC' });
@@ -126,6 +130,7 @@ describe('OfflineGarageGateway', () => {
 			cars: [],
 			setupCollections: [],
 			buildCollections: [],
+			voiceUpdates: [],
 			maintenance: { collections: [], components: [], timezone: 'UTC' },
 			photos: [],
 			settings,
@@ -133,6 +138,7 @@ describe('OfflineGarageGateway', () => {
 		});
 
 		const malformedSetup = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
 		http
 			.expectOne('/api/v1/maintenance/sync/snapshot')
 			.flush({ collections: [], components: [], timezone: 'UTC' });
