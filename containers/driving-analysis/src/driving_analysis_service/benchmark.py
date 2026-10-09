@@ -30,6 +30,7 @@ from driving_analysis_service.contracts import (
     GroundTruthCase,
     GroundTruthPass,
     IdentityMetrics,
+    InferenceProvenance,
     NormalizedBox,
     NormalizedPoint,
     RepresentativeBenchmarkReportV2,
@@ -425,16 +426,15 @@ def _case_result(
 def _provenance_matches(
     benchmark: BenchmarkProvenance, observation: SubjectProvenance
 ) -> bool:
-    return (
-        observation.provider == benchmark.provider
-        and observation.model == benchmark.model
-        and observation.model_version == benchmark.model_version
-        and observation.model_digest == benchmark.model_digest
-        and observation.pipeline_version == benchmark.pipeline_version
-        and observation.configuration_digest == benchmark.configuration_digest
-        and observation.identity_confidence_threshold
-        == benchmark.identity_confidence_threshold
-        and observation.confidence_calibration == benchmark.confidence_calibration
+    """Compare only the shared inference identity of a report and observation.
+
+    Deriving the field set from InferenceProvenance keeps new identity fields
+    in the acceptance check without comparing benchmark-only evaluation policy.
+    """
+
+    fields = set(InferenceProvenance.model_fields)
+    return observation.model_dump(include=fields) == benchmark.model_dump(
+        include=fields
     )
 
 

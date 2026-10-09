@@ -1,3 +1,13 @@
+"""Wire contracts shared by media validation, observations, and benchmarks.
+
+InferenceProvenance owns the inference identity fields common to each saved
+observation and its benchmark report. SubjectProvenance carries that identity
+on observations; BenchmarkProvenance adds report/runtime and evaluation policy.
+Their inheritance retains flat serialized aliases while the benchmark compares
+the shared field set. Model class docstrings are left unchanged because
+Pydantic exposes them in generated schemas, including provider request schemas.
+"""
+
 # Pydantic uses these messages as validation context; the service never emits
 # them as public errors.
 # ruff: noqa: EM101, TRY003
@@ -296,7 +306,9 @@ class NormalizedBox(StrictContract):
         return self
 
 
-class SubjectProvenance(StrictContract):
+class InferenceProvenance(StrictContract):
+    """Shared inference identity; flat aliases preserve versioned wire contracts."""
+
     provider: ProviderIdentifier
     model: ModelIdentifier
     model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
@@ -313,6 +325,10 @@ class SubjectProvenance(StrictContract):
     confidence_calibration: SafeFreeFormIdentifier = Field(
         alias="confidenceCalibration"
     )
+
+
+class SubjectProvenance(InferenceProvenance):
+    """Inference identity attached to each Subject observation."""
 
 
 class SubjectObservation(StrictContract):
@@ -620,7 +636,7 @@ class RepresentativeBenchmarkCaseV2(BenchmarkCase):
     representative_facts: RepresentativeCaseFactsV1 = Field(alias="representativeFacts")
 
 
-class BenchmarkProvenance(StrictContract):
+class BenchmarkProvenance(InferenceProvenance):
     docker_image_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="dockerImageDigest")
@@ -628,22 +644,6 @@ class BenchmarkProvenance(StrictContract):
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="pythonLockfileDigest")
     ffmpeg_version: SafeFreeFormIdentifier = Field(alias="ffmpegVersion")
-    model_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="modelDigest")
-    provider: ProviderIdentifier
-    model: ModelIdentifier
-    model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
-    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
-    configuration_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="configurationDigest")
-    identity_confidence_threshold: float = Field(
-        alias="identityConfidenceThreshold", ge=0.0, le=1.0, strict=True
-    )
-    confidence_calibration: SafeFreeFormIdentifier = Field(
-        alias="confidenceCalibration"
-    )
     identity_match_iou_threshold: float = Field(
         alias="identityMatchIouThreshold", gt=0.0, le=1.0, strict=True
     )
