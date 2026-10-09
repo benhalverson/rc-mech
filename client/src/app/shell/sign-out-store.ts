@@ -60,6 +60,12 @@ const initialState: SignOutState = {
 	outcome: { status: 'idle', operation: 'sign-out', operationId: null },
 };
 
+/**
+ * Coordinates explicit sign-out as a local cleanup and server-session operation.
+ * Checks pending durable work before destructive confirmation, clears the fenced
+ * working copy, and retains deferred server cleanup when connectivity is absent.
+ * The shell renders its outcome; storage owns the atomic cleanup boundary.
+ */
 export const SignOutStore = signalStore(
 	{ providedIn: 'root' },
 	withState(initialState),

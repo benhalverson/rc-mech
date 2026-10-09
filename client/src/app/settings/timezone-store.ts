@@ -54,6 +54,11 @@ const initialState: TimezoneState = {
 const readFailure = (): string =>
 	'The timezone setting could not be loaded. Dates are shown in your browser timezone.';
 
+/**
+ * Presents timezone selection and save outcomes to Settings. Delegates prepared
+ * local-first changes to SettingsWorkspaceStore and retains the online fallback;
+ * the shared command records the saved base needed to detect a remote conflict.
+ */
 export const TimezoneStore = signalStore(
 	withState(initialState),
 	withProps(() => ({

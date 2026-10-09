@@ -16,6 +16,11 @@ export type OfflineGarageCollection = GarageCollection &
 		settings: SettingsSnapshot;
 	}>;
 
+/**
+ * Fetches the structured records and metadata needed by OfflineWorkspaceAccess
+ * to prepare a Garage snapshot. Keeps authenticated HTTP and response validation
+ * out of storage; a failed required read must not produce a partial ready snapshot.
+ */
 @Service()
 export class OfflineGarageGateway {
 	private readonly http = inject(HttpClient);

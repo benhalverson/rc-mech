@@ -5,6 +5,11 @@ import { OfflineWorkspaceAccess } from './offline/offline-workspace-access';
 import { OfflineWorkspaceStore } from './offline/offline-workspace-store';
 import { OwnerSessionStore, ownerSessionKey } from './owner-session-store';
 
+/**
+ * Admits protected routes from a verified online session or an eligible retained
+ * offline session. Uses the delivered-route allowlist so cached authentication
+ * cannot promise workflows whose data/capabilities are unavailable offline.
+ */
 export const ownerSessionCanMatch: CanMatchFn = async (_route, segments) => {
 	const sessionStore = inject(OwnerSessionStore);
 	const router = inject(Router);

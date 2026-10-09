@@ -38,6 +38,11 @@ import { isValidTimezone, type Passkey } from './settings.models';
 import { SettingsWorkspaceStore } from './settings-workspace-store';
 import { TimezoneStore } from './timezone-store';
 
+/**
+ * Composes timezone, invite, passkey, and appearance controls. Owns form validation
+ * and presentation while the feature stores handle commands; offline availability
+ * is shown at the control boundary rather than hidden behind failed HTTP calls.
+ */
 @Component({
 	selector: 'app-settings',
 	host: { class: 'block min-w-0' },
