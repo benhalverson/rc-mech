@@ -4,7 +4,7 @@ import {
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OfflineGarageStorage } from '../../offline/offline-garage-storage';
 import { PHOTO_OBJECT_URL, PhotoMediaAccess } from './photo-media-access';
@@ -125,6 +125,17 @@ describe('PhotoMediaAccess', () => {
 		expect(await result).toBeNull();
 		expect(storage.retainPhoto).not.toHaveBeenCalled();
 		http.verify();
+	});
+
+	it('never retains or creates a URL for a failed original read', async () => {
+		gateway.original.mockReturnValue(
+			throwError(() => ({ kind: 'http', status: 401 })),
+		);
+		await expect(
+			access.open('photo', fence, false, new AbortController().signal),
+		).rejects.toEqual({ kind: 'http', status: 401 });
+		expect(storage.retainPhoto).not.toHaveBeenCalled();
+		expect(urls.createObjectURL).not.toHaveBeenCalled();
 	});
 	it('exposes the browser object URL capability by default', () => {
 		TestBed.resetTestingModule();

@@ -1,11 +1,15 @@
-import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
+import {
+	HttpClient,
+	HttpErrorResponse,
+	provideHttpClient,
+} from '@angular/common/http';
 import {
 	HttpTestingController,
 	provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { firstValueFrom } from 'rxjs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { firstValueFrom, throwError } from 'rxjs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PhotoCapture } from './photo-sync.models';
 import { PhotoSyncGateway, photoSyncFailure } from './photo-sync-gateway';
 
@@ -112,5 +116,26 @@ describe('PhotoSyncGateway', () => {
 		});
 		http.expectOne('/api/v1/photos/capture').error(new ProgressEvent('error'));
 		await unavailable;
+	});
+	it.each([401, 403, 404, 503])(
+		'preserves original HTTP failure status %s',
+		async (status) => {
+			const result = firstValueFrom(gateway.original('capture'));
+			const rejected = expect(result).rejects.toEqual({ kind: 'http', status });
+			http
+				.expectOne('/api/v1/photos/capture')
+				.flush(null, { status, statusText: 'Error' });
+			await rejected;
+		},
+	);
+	it('preserves an unexpected HTTP-stack failure for diagnostics', async () => {
+		const failure = new Error('HTTP interceptor failed');
+		const request = vi
+			.spyOn(TestBed.inject(HttpClient), 'get')
+			.mockReturnValueOnce(throwError(() => failure));
+		await expect(firstValueFrom(gateway.original('capture'))).rejects.toBe(
+			failure,
+		);
+		request.mockRestore();
 	});
 });

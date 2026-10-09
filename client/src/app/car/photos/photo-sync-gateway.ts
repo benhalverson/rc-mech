@@ -3,7 +3,7 @@ import { inject, Service } from '@angular/core';
 import { catchError, map, type Observable, of, throwError } from 'rxjs';
 import * as z from 'zod/mini';
 import { type CarPhoto, carPhotoMutationSchema } from '../car.models';
-import { parsePhotoCollection } from './car-photo-gateway';
+import { parsePhotoCollection, photoGatewayFailure } from './car-photo-gateway';
 import type { PhotoCapture, PhotoCaptureOutcome } from './photo-sync.models';
 
 export const photoSyncFailure = (
@@ -78,6 +78,7 @@ export class PhotoSyncGateway {
 				),
 			);
 	}
+	/** Preserves HTTP status and unexpected read errors for per-photo recovery. */
 	original(photoId: string): Observable<Blob> {
 		return this.http
 			.get(`/api/v1/photos/${encodeURIComponent(photoId)}`, {
@@ -87,7 +88,11 @@ export class PhotoSyncGateway {
 			})
 			.pipe(
 				catchError((error: unknown) =>
-					throwError(() => photoSyncFailure(error)),
+					throwError(() =>
+						error instanceof HttpErrorResponse
+							? photoGatewayFailure(error)
+							: error,
+					),
 				),
 			);
 	}
