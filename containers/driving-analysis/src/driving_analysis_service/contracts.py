@@ -296,7 +296,9 @@ class NormalizedBox(StrictContract):
         return self
 
 
-class SubjectProvenance(StrictContract):
+class InferenceProvenance(StrictContract):
+    """Shared inference identity; flat aliases preserve versioned wire contracts."""
+
     provider: ProviderIdentifier
     model: ModelIdentifier
     model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
@@ -313,6 +315,10 @@ class SubjectProvenance(StrictContract):
     confidence_calibration: SafeFreeFormIdentifier = Field(
         alias="confidenceCalibration"
     )
+
+
+class SubjectProvenance(InferenceProvenance):
+    """Inference identity attached to each Subject observation."""
 
 
 class SubjectObservation(StrictContract):
@@ -620,7 +626,7 @@ class RepresentativeBenchmarkCaseV2(BenchmarkCase):
     representative_facts: RepresentativeCaseFactsV1 = Field(alias="representativeFacts")
 
 
-class BenchmarkProvenance(StrictContract):
+class BenchmarkProvenance(InferenceProvenance):
     docker_image_digest: Annotated[
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="dockerImageDigest")
@@ -628,22 +634,6 @@ class BenchmarkProvenance(StrictContract):
         str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
     ] = Field(alias="pythonLockfileDigest")
     ffmpeg_version: SafeFreeFormIdentifier = Field(alias="ffmpegVersion")
-    model_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="modelDigest")
-    provider: ProviderIdentifier
-    model: ModelIdentifier
-    model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
-    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
-    configuration_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="configurationDigest")
-    identity_confidence_threshold: float = Field(
-        alias="identityConfidenceThreshold", ge=0.0, le=1.0, strict=True
-    )
-    confidence_calibration: SafeFreeFormIdentifier = Field(
-        alias="confidenceCalibration"
-    )
     identity_match_iou_threshold: float = Field(
         alias="identityMatchIouThreshold", gt=0.0, le=1.0, strict=True
     )
