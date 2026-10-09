@@ -21,6 +21,7 @@ export class FakeMaintenanceWorkspace {
 	readonly components = signal<MaintenanceComponent[]>([]);
 	readonly timezone = signal('UTC');
 	readonly syncMessage = signal('');
+	readonly consumableSyncMessage = signal('');
 	readonly outcome = signal<MaintenanceMutationOutcome>({
 		status: 'idle',
 		requestId: null,

@@ -585,8 +585,23 @@ test('retains Consumable tire and fluid history with stable reports across resta
 				replay = { url: request.url(), body };
 		}
 	});
-	await context.setOffline(true);
 	const ledger = page.locator('.consumable-ledger');
+	const initialCount = Number.parseInt(
+		await ledger.locator('.history-total').innerText(),
+		10,
+	);
+	const initialSpend = Number(
+		(await ledger.locator('.spend-strip strong').last().innerText()).replace(
+			/[^0-9.]/g,
+			'',
+		),
+	);
+	const expectedSpend = new Intl.NumberFormat('en-US', {
+		style: 'currency',
+		currency: 'USD',
+	}).format(initialSpend + 30);
+	const expectedCount = `${initialCount + 3} entries`;
+	await context.setOffline(true);
 	await ledger
 		.getByRole('button', { name: 'Record change', exact: true })
 		.click();
@@ -606,7 +621,7 @@ test('retains Consumable tire and fluid history with stable reports across resta
 		.click();
 	await expect(ledger.getByText('Pending sync', { exact: true })).toBeVisible();
 	await expect(
-		ledger.locator('.spend-strip').getByText('$30.00'),
+		ledger.locator('.spend-strip').getByText(expectedSpend, { exact: true }),
 	).toBeVisible();
 	for (const kind of ['shock-fluid', 'differential-fluid']) {
 		await ledger
@@ -622,12 +637,12 @@ test('retains Consumable tire and fluid history with stable reports across resta
 			.getByRole('button', { name: 'Save change', exact: true })
 			.click();
 	}
-	await expect(ledger.locator('.history-total')).toHaveText('3 entries');
+	await expect(ledger.locator('.history-total')).toHaveText(expectedCount);
 	const restarted = await reopenOffline(context, page, '/maintenance');
 	const history = restarted.locator('.consumable-ledger');
-	await expect(history.locator('.history-total')).toHaveText('3 entries');
+	await expect(history.locator('.history-total')).toHaveText(expectedCount);
 	await expect(
-		history.locator('.spend-strip').getByText('$30.00'),
+		history.locator('.spend-strip').getByText(expectedSpend, { exact: true }),
 	).toBeVisible();
 	await expectAxeClean(restarted);
 	await context.setOffline(false);
@@ -648,9 +663,9 @@ test('retains Consumable tire and fluid history with stable reports across resta
 		snapshot.collections.find((value) => value.carId === car.id)?.consumables,
 	).toHaveLength(3);
 	await restarted.reload();
-	await expect(history.locator('.history-total')).toHaveText('3 entries');
+	await expect(history.locator('.history-total')).toHaveText(expectedCount);
 	await expect(
-		history.locator('.spend-strip').getByText('$30.00'),
+		history.locator('.spend-strip').getByText(expectedSpend, { exact: true }),
 	).toBeVisible();
 });
 

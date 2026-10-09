@@ -330,7 +330,7 @@ describe('ConsumableStore', () => {
 		workspace.cars.set([{ id: 'car-1', name: 'Buggy' }]);
 		workspace.timezone.set('America/New_York');
 		workspace.consumables.set([entry()]);
-		workspace.syncMessage.set('Pending sync');
+		workspace.consumableSyncMessage.set('Pending sync');
 		expect(store.cars()).toEqual(workspace.cars());
 		expect(store.timezone()).toBe('America/New_York');
 		expect(store.entries()).toEqual([entry()]);

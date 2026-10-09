@@ -331,6 +331,7 @@ it('projects due plans, component metadata, usage and all synchronization states
 	expect(store.components()).toEqual([]);
 	expect(store.timezone()).toBe('UTC');
 	expect(store.syncMessage()).toBe('');
+	expect(store.consumableSyncMessage()).toBe('');
 	expect(store.cars()).toHaveLength(1);
 	offline.hasSnapshot.set(true);
 	await settle();
@@ -364,6 +365,28 @@ it('projects due plans, component metadata, usage and all synchronization states
 	expect(store.syncMessage()).toContain('Pending sync');
 	expect(store.syncMessage()).toContain('Needs attention: Archived');
 	expect(store.syncMessage()).toContain('Sync conflict: Review this change.');
+	expect(store.consumableSyncMessage()).toBe('');
+	view = maintenanceView(canonical, [
+		{
+			...operation,
+			command: {
+				type: 'maintenance.change',
+				entity: 'consumable',
+				action: 'archive',
+				carId: 'car',
+				entryId: 'entry',
+				baseVersion: 1,
+				base: tireRecord,
+				input: tireRecord,
+			},
+		},
+	]);
+	storage.readyMaintenanceOperations.mockResolvedValueOnce([]);
+	store.open();
+	await settle();
+	expect(store.syncMessage()).toBe('');
+	expect(store.consumableSyncMessage()).toBe('Pending sync');
+
 	view = maintenanceView(
 		{
 			...canonical,

@@ -21,12 +21,26 @@ import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { consumableEntry } from './consumables/consumable-sync-rules';
 import type {
 	MaintenanceCommand,
+	MaintenanceOperation,
 	MaintenanceView,
 } from './maintenance-sync.models';
 import {
 	MaintenanceSyncGateway,
 	type MaintenanceSyncGatewayFailure,
 } from './maintenance-sync-gateway';
+
+const synchronizationMessage = (
+	operations: readonly MaintenanceOperation[],
+): string =>
+	operations
+		.map((operation) =>
+			operation.status === 'pending'
+				? 'Pending sync'
+				: operation.status === 'conflict'
+					? `Sync conflict: ${operation.feedback?.message ?? 'Review this change.'}`
+					: `Needs attention: ${operation.feedback?.message ?? 'Review this change.'}`,
+		)
+		.join('; ');
 
 export type MaintenanceMutationOutcome =
 	| Readonly<{ status: 'idle'; requestId: null }>
@@ -132,16 +146,18 @@ export const MaintenanceWorkspaceStore = signalStore(
 		components: computed(() => store.current()?.components ?? []),
 		timezone: computed(() => store.current()?.timezone ?? 'UTC'),
 		syncMessage: computed(() =>
-			store
-				.operations()
-				.map((operation) =>
-					operation.status === 'pending'
-						? 'Pending sync'
-						: operation.status === 'conflict'
-							? `Sync conflict: ${operation.feedback?.message ?? 'Review this change.'}`
-							: `Needs attention: ${operation.feedback?.message ?? 'Review this change.'}`,
-				)
-				.join('; '),
+			synchronizationMessage(
+				store
+					.operations()
+					.filter((operation) => operation.command.entity !== 'consumable'),
+			),
+		),
+		consumableSyncMessage: computed(() =>
+			synchronizationMessage(
+				store
+					.operations()
+					.filter((operation) => operation.command.entity === 'consumable'),
+			),
 		),
 	})),
 
