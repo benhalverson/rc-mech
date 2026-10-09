@@ -115,6 +115,7 @@ describe('VoiceNoteWorkspace', () => {
 		selectCar: ReturnType<typeof vi.fn>;
 	};
 	let store: {
+		remoteAvailable: ReturnType<typeof signal<boolean>>;
 		localCaptures: ReturnType<typeof signal<PendingVoiceCapture[]>>;
 		updates: ReturnType<typeof signal<VoiceUpdate[]>>;
 		cars: ReturnType<
@@ -192,6 +193,7 @@ describe('VoiceNoteWorkspace', () => {
 			selectCar: vi.fn(),
 		};
 		store = {
+			remoteAvailable: signal(true),
 			localCaptures: signal([]),
 			updates: signal([]),
 			cars: signal([
@@ -246,6 +248,24 @@ describe('VoiceNoteWorkspace', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		TestBed.resetTestingModule();
+	});
+
+	it('announces offline processing deferral and retained capture feedback', async () => {
+		store.remoteAvailable.set(false);
+		store.localCaptures.set([
+			{ ...localCapture(), status: 'failed', text: 'Offline text retained' },
+		]);
+		const element = await detect();
+		expect(element.textContent).toContain('waiting for connectivity');
+		expect(element.textContent).toContain('Needs attention');
+		expect(element.textContent).toContain('Offline text retained');
+		store.localCaptures.set([
+			{ ...localCapture(), text: undefined, blob: new Blob(['voice']) },
+		]);
+		await detect();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Offline text retained',
+		);
 	});
 
 	it('renders capture first, selects route context, and preserves no-setup independence', async () => {
@@ -702,6 +722,7 @@ describe('VoiceTrackLog route', () => {
 			retry: vi.fn(),
 		};
 		const workspaceStore = {
+			remoteAvailable: signal(true),
 			localCaptures: signal([]),
 			updates: signal([]),
 			cars: signal([]),
