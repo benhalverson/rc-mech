@@ -60,6 +60,10 @@ const driveSyncRemoteOutcomeSchema = union([
 	}),
 ]);
 
+/**
+ * Marks schema/identity rejection separately from an HTTP outage, so malformed
+ * acknowledgements cannot be accepted or mistaken for an offline retry signal.
+ */
 class InvalidDriveSyncResponse extends Error {}
 
 export type DriveSyncGatewayFailure =
@@ -101,6 +105,12 @@ const recoverTerminalOutcome = (
 	return throwError(() => driveSyncGatewayFailure(error));
 };
 
+/**
+ * Transports persisted Drive operations for CarWorkspaceStore and validates
+ * canonical collections and outcomes before they enter the working copy. Stable
+ * operation identities belong to the queue; this boundary owns URLs, credentials,
+ * and transport-error classification, not retry scheduling.
+ */
 @Service()
 export class DriveSyncGateway {
 	private readonly http = inject(HttpClient);
