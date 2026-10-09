@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from driving_analysis_service.contracts import RationalValue
 from driving_analysis_service.errors import MediaValidationError
+from driving_analysis_service.ffmpeg_tools import probe_ffmpeg_version
 from driving_analysis_service.media import (
     ProbeMetadata,
     claim_staged_media,
@@ -71,7 +72,6 @@ from driving_analysis_service.tracking_contracts import (
 )
 
 MAX_FRAME_TIMESTAMP_OUTPUT_BYTES = 64 * 1024 * 1024
-FFMPEG_VERSION_OUTPUT_BYTES = 16 * 1024
 MAX_COMPLETION_BYTES = 64 * 1024
 
 
@@ -150,7 +150,7 @@ class RaceWindowPreparationService:
                 self.settings,
                 deadline,
             )
-            ffmpeg_version = _ffmpeg_version(self.settings, deadline)
+            ffmpeg_version = probe_ffmpeg_version(self.settings, deadline)
             with tempfile.TemporaryDirectory(
                 prefix="prepare-", dir=self.settings.work_root
             ) as raw_work_directory:
@@ -528,25 +528,6 @@ def _seconds(milliseconds: int) -> str:
 
 def _rational(value: Fraction) -> RationalValue:
     return RationalValue(numerator=value.numerator, denominator=value.denominator)
-
-
-def _ffmpeg_version(settings: ServiceSettings, deadline: float) -> str:
-    result = run_bounded_process(
-        settings.ffmpeg_executable,
-        ("-version",),
-        timeout_seconds=remaining_seconds(deadline),
-        max_output_bytes=FFMPEG_VERSION_OUTPUT_BYTES,
-    )
-    if result.return_code != 0:
-        raise ValueError("FFmpeg version is unavailable")
-    try:
-        first_line = result.stdout.decode("utf-8", errors="strict").splitlines()[0]
-        prefix, version, *rest = first_line.split()
-    except (IndexError, UnicodeDecodeError, ValueError) as error:
-        raise ValueError("FFmpeg version is invalid") from error
-    if prefix != "ffmpeg" or version != "version" or not rest:
-        raise ValueError("FFmpeg version is invalid")
-    return rest[0]
 
 
 def _preparation_digest(

@@ -14,8 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from driving_analysis_service import ffmpeg_tools, render_geometry, rendering
 from driving_analysis_service import processes as process_module
-from driving_analysis_service import rendering
 from driving_analysis_service import tracking_artifacts as artifact_module
 from driving_analysis_service.api import create_app
 from driving_analysis_service.errors import MediaValidationError
@@ -389,7 +389,26 @@ def test_render_clamps_padding_at_real_source_boundaries(
     entry_timestamp_ms: int,
     exit_timestamp_ms: int,
 ) -> None:
-    source = _video(tmp_path)
+    source = tmp_path / "boundary.mp4"
+    subprocess.run(
+        (
+            "/usr/bin/ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=s=160x90:r=10:d=2,geq=lum=16+10*N:cb=128:cr=128",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(source),
+        ),
+        check=True,
+        capture_output=True,
+    )
     checksum = hashlib.sha256(source.read_bytes()).hexdigest()
     byte_count = stage_media(settings, source)
     body = _body(
@@ -403,6 +422,33 @@ def test_render_clamps_padding_at_real_source_boundaries(
         response = client.post("/v1/stages/render", json=body)
     assert response.json()["outcome"] == "accepted", response.text
     assert response.json()["artifact"]["durationMs"] == 1000
+    artifact = (
+        settings.artifact_root / f"{render_id}.corner" / f"{render_id}.corner.mp4"
+    )
+    pixels = subprocess.run(
+        (
+            "/usr/bin/ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(artifact),
+            "-vf",
+            "crop=2:2:0:0",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ),
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert len(pixels) == 10 * 4
+    first_source_index = max(0, entry_timestamp_ms - 500) // 100
+    for output_index in (0, 9):
+        # Limited-range luma expands to full-range gray, with codec rounding.
+        expected = (first_source_index + output_index) * 10 * 255 / 219
+        assert pixels[output_index * 4] == pytest.approx(expected, abs=3)
 
 
 def test_render_enforces_output_limit_during_real_ffmpeg_run(
@@ -450,7 +496,7 @@ def test_render_rejects_insufficient_storage_before_ffmpeg(
     def unexpected_ffmpeg(*_args: object, **_kwargs: object) -> str:
         raise AssertionError("FFmpeg was invoked without storage capacity")
 
-    monkeypatch.setattr(rendering, "_ffmpeg_version", unexpected_ffmpeg)
+    monkeypatch.setattr(rendering, "probe_ffmpeg_version", unexpected_ffmpeg)
     with _client(settings) as client:
         response = client.post(
             "/v1/stages/render",
@@ -726,7 +772,7 @@ def test_render_clips_overlay_outside_fixed_corner_view(
     assert response.json()["artifact"]["durationMs"] == 1500
     request = RenderStageRequest.model_validate(body)
     metadata = _metadata(duration_ms=2000)
-    crop = rendering._pixel_crop(request.specification, metadata)
+    crop = render_geometry.pixel_crop(request.specification, metadata)
     overlay_path = tmp_path / "overlay.ass"
     rendering._write_overlay_script(
         overlay_path, request.specification.overlay, metadata, crop
@@ -743,6 +789,7 @@ def test_render_clips_overlay_outside_fixed_corner_view(
         ProcessTimeoutError,
         ProcessOutputLimitError,
         rendering.RenderProcessError,
+        ffmpeg_tools.FfmpegVersionError,
         OSError,
         ValueError,
     ],
@@ -767,6 +814,7 @@ def test_render_maps_processing_failures_to_safe_errors(
         ProcessTimeoutError: "PROCESS_TIMEOUT",
         ProcessOutputLimitError: "RESOURCE_LIMIT",
         rendering.RenderProcessError: "RENDER_FAILED",
+        ffmpeg_tools.FfmpegVersionError: "MEDIA_UNAVAILABLE",
         OSError: "RENDER_FAILED",
         ValueError: "RENDER_FAILED",
     }[failure]
@@ -826,10 +874,10 @@ def test_render_validation_retains_a_gate_collapsed_by_pixel_mapping() -> None:
     request = RenderStageRequest.model_validate(body)
 
     rendering._validate_specification(request.specification, 1, _metadata())
-    assert rendering._pixel_gate(
+    assert render_geometry.pixel_gate(
         request.specification.overlay.entry_gate,
         _metadata(),
-        rendering._pixel_crop(request.specification, _metadata()),
+        render_geometry.pixel_crop(request.specification, _metadata()),
     ) == ((8, 10), (8, 10))
 
 
@@ -877,12 +925,12 @@ def test_gate_overlay_supports_diagonal_and_axis_aligned_gates() -> None:
 def test_overlay_coordinates_follow_even_pixel_crop_rounding() -> None:
     request = RenderStageRequest.model_validate(_body(1, SHA))
     metadata = _metadata(duration_ms=2000)
-    crop = rendering._pixel_crop(request.specification, metadata)
-    assert crop == rendering._PixelCrop(width=80, height=32, x=40, y=44)
-    assert rendering._pixel_gate(
+    crop = render_geometry.pixel_crop(request.specification, metadata)
+    assert crop == render_geometry.PixelCrop(width=80, height=32, x=40, y=44)
+    assert render_geometry.pixel_gate(
         request.specification.overlay.entry_gate, metadata, crop
     ) == ((8, 10), (8, 22))
-    assert rendering._pixel_point(
+    assert render_geometry.pixel_point(
         request.specification.overlay.subject_center, metadata, crop
     ) == (40, 16)
 
@@ -910,8 +958,8 @@ def test_overlay_coordinates_follow_even_pixel_crop_rounding() -> None:
         },
     }
     full_track = RenderStageRequest.model_validate(full_track_body)
-    assert rendering._pixel_crop(full_track.specification, metadata) == (
-        rendering._PixelCrop(width=160, height=60, x=0, y=30)
+    assert render_geometry.pixel_crop(full_track.specification, metadata) == (
+        render_geometry.PixelCrop(width=160, height=60, x=0, y=30)
     )
 
 
@@ -1051,16 +1099,12 @@ def test_ffmpeg_and_probe_metadata_failures_are_safe(
         lambda *_args, **_kwargs: SimpleNamespace(return_code=1, stdout=b""),
     )
     with pytest.raises(rendering.RenderInvalidMediaError):
-        rendering._ffmpeg_version(settings, time.monotonic() + 10)
-    with pytest.raises(rendering.RenderInvalidMediaError):
         rendering._output_duration(Path("missing"), settings, time.monotonic() + 10)
     monkeypatch.setattr(
         rendering,
         "run_bounded_process",
         lambda *_args, **_kwargs: SimpleNamespace(return_code=0, stdout=b"bad"),
     )
-    with pytest.raises(rendering.RenderInvalidMediaError):
-        rendering._ffmpeg_version(settings, time.monotonic() + 10)
 
     monkeypatch.setattr(
         rendering,
@@ -1069,8 +1113,6 @@ def test_ffmpeg_and_probe_metadata_failures_are_safe(
             return_code=0, stdout=b"not version 1"
         ),
     )
-    with pytest.raises(rendering.RenderInvalidMediaError):
-        rendering._ffmpeg_version(settings, time.monotonic() + 10)
     with pytest.raises(rendering.RenderInvalidMediaError):
         rendering._output_duration(Path("missing"), settings, time.monotonic() + 10)
     monkeypatch.setattr(
@@ -1182,7 +1224,7 @@ def test_render_accepts_subpixel_corner_view_at_source_boundaries(
         response = client.post("/v1/stages/render", json=body)
     assert response.json()["outcome"] == "accepted"
     assert response.json()["artifact"]["durationMs"] == 1500
-    crop = rendering._pixel_crop(
+    crop = render_geometry.pixel_crop(
         RenderStageRequest.model_validate(body).specification, _metadata()
     )
     assert (crop.width, crop.height) == (2, 2)

@@ -17,6 +17,7 @@ import driving_analysis_service.preparation as preparation_module
 import driving_analysis_service.processing_deadline as deadline_module
 import driving_analysis_service.tracking as tracking_module
 import driving_analysis_service.tracking_artifacts as artifact_module
+from driving_analysis_service import ffmpeg_tools
 from driving_analysis_service.contracts import SubjectProvenance
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.inference import (
@@ -1073,12 +1074,12 @@ def test_ffmpeg_version_rejects_invalid_process_output(
     message: str,
 ) -> None:
     monkeypatch.setattr(
-        preparation_module,
+        ffmpeg_tools,
         "run_bounded_process",
         lambda *_args, **_kwargs: result,
     )
     with pytest.raises(ValueError, match=message):
-        preparation_module._ffmpeg_version(settings, time.monotonic() + 10)
+        ffmpeg_tools.probe_ffmpeg_version(settings, time.monotonic() + 10)
 
 
 def test_publish_cleanup_and_artifact_verification_defenses(
