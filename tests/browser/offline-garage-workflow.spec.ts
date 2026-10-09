@@ -935,7 +935,10 @@ test('retains Maintenance conflicts and rejection feedback while independent ser
 		page.getByRole('heading', { name: 'Local conflict intent', exact: true }),
 	).toBeVisible();
 	await expect(
-		page.getByText('Rejected service retained', { exact: true }).first(),
+		page
+			.locator('app-service-records')
+			.getByText('Rejected service retained', { exact: true })
+			.first(),
 	).toBeVisible();
 	const snapshot = (await (
 		await page.request.get('/api/v1/maintenance/sync/snapshot')
