@@ -2,9 +2,9 @@
 benchmark.
 
 Model responsibilities (kept here to preserve generated schema descriptions):
-SubjectProvenance: Pins model, pipeline, configuration, and confidence calibration
-    to
-    each observation.
+InferenceProvenance: Owns the shared inference identity inherited by observations
+    and benchmark reports; flat aliases preserve their versioned wire formats.
+SubjectProvenance: Attaches that shared identity to each observation.
 SubjectObservation: Binds one detection/re-identification to source time, frame,
     normalized geometry, and provenance.
 TrackingGap: Marks a closed ambiguous/missing interval that pass interpolation must

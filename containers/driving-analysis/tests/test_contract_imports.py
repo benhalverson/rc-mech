@@ -39,3 +39,16 @@ def test_compatibility_models_preserve_wire_aliases_and_round_trip() -> None:
         )
         == response
     )
+
+
+def test_split_provenance_preserves_shared_identity() -> None:
+    assert contracts.InferenceProvenance is observation_contracts.InferenceProvenance
+    assert issubclass(
+        contracts.SubjectProvenance, observation_contracts.InferenceProvenance
+    )
+    assert issubclass(
+        benchmark_contracts.BenchmarkProvenance, contracts.InferenceProvenance
+    )
+    assert contracts.SubjectProvenance.model_fields.keys() == (
+        contracts.InferenceProvenance.model_fields.keys()
+    )
