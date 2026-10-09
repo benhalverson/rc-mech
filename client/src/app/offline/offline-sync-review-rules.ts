@@ -1,3 +1,4 @@
+import { photoChangeBase } from '../../../../shared/photo-sync';
 import { setupDraftFromSnapshot } from '../car/setups/setup-sync-rules';
 import type { CarEditableField } from '../garage/car-sync/car-sync.models';
 import type { ReviewOperation, SyncReview } from './offline-sync-review.models';
@@ -14,6 +15,33 @@ export const retryReviewedOperation = (
 		remote: undefined,
 	};
 	switch (review.family) {
+		case 'photo': {
+			const { command, remote } = review.operation;
+			if (
+				remote &&
+				command.photoId &&
+				!remote.some((value) => value.id === command.photoId)
+			)
+				throw new Error(
+					'This photo was removed. Discard the change or capture a new photo.',
+				);
+			if (
+				remote &&
+				command.action === 'reorder' &&
+				(remote.length !== command.order.length ||
+					remote.some((value) => !command.order.includes(value.id)))
+			)
+				throw new Error(
+					'The gallery membership changed. Discard this order and arrange the current gallery.',
+				);
+			return {
+				...review.operation,
+				...clean,
+				command: remote
+					? { ...command, base: photoChangeBase(command, remote) }
+					: command,
+			};
+		}
 		case 'car': {
 			const { command, remote } = review.operation;
 			if (!remote || command.type === 'car.create')

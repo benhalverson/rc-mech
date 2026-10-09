@@ -143,8 +143,12 @@ export const CarPhotoStore = signalStore(
 		),
 		offline: computed(() => store.workspace.offline.networkUnavailable()),
 		captureFeedback: computed(() =>
-			store.workspace
-				.captures()
+			[
+				...store.workspace.captures(),
+				...store.workspace
+					.changes()
+					.map((change) => ({ ...change, feedback: change.feedback?.message })),
+			]
 				.filter((capture) => capture.carId === store.carId())
 				.map((capture) =>
 					capture.status === 'pending'
@@ -300,10 +304,13 @@ export const CarPhotoStore = signalStore(
 			},
 			mutate(command: PhotoMutationCommand): void {
 				if (!store.carId() || store.action()) return;
-				if (command.kind === 'upload' && store.workspace.available()) {
+				if (store.workspace.available()) {
 					store.workspace.mutate({
 						requestId: String(++store.nextOperationId.value),
-						change: { carId: store.carId(), file: command.file },
+						change:
+							command.kind === 'upload'
+								? { carId: store.carId(), file: command.file }
+								: { carId: store.carId(), edit: command },
 					});
 					return;
 				}

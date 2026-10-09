@@ -2,9 +2,18 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, Service } from '@angular/core';
 import { catchError, map, type Observable, of, throwError } from 'rxjs';
 import * as z from 'zod/mini';
-import { type CarPhoto, carPhotoMutationSchema } from '../car.models';
+import {
+	type CarPhoto,
+	carPhotoMutationSchema,
+	carPhotoSchema,
+} from '../car.models';
 import { parsePhotoCollection } from './car-photo-gateway';
-import type { PhotoCapture, PhotoCaptureOutcome } from './photo-sync.models';
+import type {
+	PhotoCapture,
+	PhotoCaptureOutcome,
+	PhotoChangeOperation,
+	PhotoChangeOutcome,
+} from './photo-sync.models';
 
 export const photoSyncFailure = (
 	error: unknown,
@@ -18,6 +27,56 @@ export const photoSyncFailure = (
 @Service()
 export class PhotoSyncGateway {
 	private readonly http = inject(HttpClient);
+	change(operation: PhotoChangeOperation): Observable<PhotoChangeOutcome> {
+		const body = new FormData();
+		body.set('command', JSON.stringify(operation.command));
+		if (operation.blob && operation.command.replacement)
+			body.set('file', operation.blob, operation.command.replacement.fileName);
+		const rejected = z.object({
+			operationId: z.literal(operation.operationId),
+			outcome: z.union([z.literal('rejected'), z.literal('conflict')]),
+			error: z.object({ code: z.string(), message: z.string() }),
+			remote: z.optional(z.array(carPhotoSchema)),
+		});
+		return this.http
+			.put<unknown>(
+				`/api/v1/cars/${encodeURIComponent(operation.carId)}/photos/operations/${encodeURIComponent(operation.operationId)}`,
+				body,
+				{ withCredentials: true, headers: { 'ngsw-bypass': 'true' } },
+			)
+			.pipe(
+				map((value) => {
+					const result = z
+						.object({
+							operationId: z.literal(operation.operationId),
+							outcome: z.literal('applied'),
+							photos: z.array(carPhotoSchema),
+						})
+						.parse(value);
+					if (result.photos.some((photo) => photo.carId !== operation.carId))
+						throw new Error('Invalid gallery acknowledgement.');
+					return result;
+				}),
+				catchError((error: unknown) => {
+					if (
+						error instanceof HttpErrorResponse &&
+						error.status >= 400 &&
+						error.status < 500
+					) {
+						const result = rejected.safeParse(error.error);
+						if (
+							result.success &&
+							!result.data.remote?.some(
+								(photo) => photo.carId !== operation.carId,
+							)
+						)
+							return of(result.data);
+					}
+					return throwError(() => photoSyncFailure(error));
+				}),
+			);
+	}
+
 	apply(capture: PhotoCapture): Observable<PhotoCaptureOutcome> {
 		const body = new FormData();
 		body.append('file', capture.blob, capture.fileName);
@@ -72,14 +131,25 @@ export class PhotoSyncGateway {
 				),
 			);
 	}
-	original(photoId: string): Observable<Blob> {
+	original(
+		photoId: string,
+	): Observable<Readonly<{ blob: Blob; revision: number }>> {
 		return this.http
 			.get(`/api/v1/photos/${encodeURIComponent(photoId)}`, {
 				withCredentials: true,
 				responseType: 'blob',
-				headers: { 'ngsw-bypass': 'true' },
+				observe: 'response',
+				headers: { 'ngsw-bypass': 'true', 'Cache-Control': 'no-cache' },
 			})
 			.pipe(
+				map((response) => {
+					const revision = Number(
+						response.headers.get('X-Photo-Revision') ?? '1',
+					);
+					if (!response.body || !Number.isSafeInteger(revision) || revision < 1)
+						throw new Error('Invalid photo revision.');
+					return { blob: response.body, revision };
+				}),
 				catchError((error: unknown) =>
 					throwError(() => photoSyncFailure(error)),
 				),

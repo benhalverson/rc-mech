@@ -39,7 +39,7 @@ it('summarizes every workflow and clears the summary when the owner working copy
 			},
 			{
 				provide: PhotoWorkspaceStore,
-				useValue: { captures: () => [], syncing },
+				useValue: { captures: () => [], changes: () => [], syncing },
 			},
 			{ provide: VoiceWorkspaceStore, useValue: { captures: voice, syncing } },
 		],

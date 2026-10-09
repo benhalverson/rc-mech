@@ -1596,3 +1596,171 @@ test('keeps pending work through a compatible Service Worker version update and 
 		saved.cars.filter((car) => car.name === 'Queued across shell update'),
 	).toHaveLength(1);
 });
+
+test('retains replacement, primary, ordering, and deletion intent through an offline gallery restart', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const { car } = (await (
+		await page.request.post('/api/v1/cars', {
+			data: { name: 'Queued gallery edits' },
+		})
+	).json()) as { car: { id: string } };
+	const png = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXZkAAAAASUVORK5CYII=',
+		'base64',
+	);
+	for (const name of ['one.png', 'two.png', 'three.png'])
+		expect(
+			(
+				await page.request.post(`/api/v1/cars/${car.id}/photos`, {
+					multipart: { file: { name, mimeType: 'image/png', buffer: png } },
+				})
+			).ok(),
+		).toBe(true);
+	const path = `/garage/${car.id}/photos`;
+	await page.goto(path);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await expect(page.locator('.photo-grid img')).toHaveCount(3);
+	await context.setOffline(true);
+	await page.getByLabel('Replace photo 1', { exact: true }).setInputFiles({
+		name: 'replacement.png',
+		mimeType: 'image/png',
+		buffer: png,
+	});
+	await expect(
+		page
+			.locator('app-car-photo-gallery')
+			.getByText('Pending sync', { exact: true }),
+	).toBeVisible();
+	await page
+		.getByRole('button', { name: 'Make primary: photo 2', exact: true })
+		.click();
+	await page
+		.getByRole('button', { name: 'Move photo earlier: photo 2', exact: true })
+		.click();
+	await page
+		.getByRole('button', { name: 'Delete photo 3', exact: true })
+		.click();
+	await page
+		.getByRole('alertdialog')
+		.getByRole('button', { name: 'Delete photo', exact: true })
+		.click();
+	await expect(page.locator('.photo-grid img')).toHaveCount(2);
+	const reopened = await reopenOffline(context, page, path);
+	await expect(reopened.locator('.photo-grid img')).toHaveCount(2);
+	await expect(reopened.locator('.photo-card').first()).toHaveClass(
+		/primary-photo/,
+	);
+	await expectAxeClean(reopened);
+	const commands: string[] = [];
+	reopened.on('request', (request) => {
+		if (request.url().includes('/photos/operations/'))
+			commands.push(request.url());
+	});
+	await context.setOffline(false);
+	await expect(
+		reopened.locator('app-car-photo-gallery').getByText(/Pending sync/),
+	).toHaveCount(0);
+	expect(new Set(commands).size).toBe(4);
+	const { photos } = (await (
+		await reopened.request.get(`/api/v1/cars/${car.id}/photos`)
+	).json()) as {
+		photos: Array<{
+			id: string;
+			fileName: string;
+			sortOrder: number;
+			isPrimary: boolean;
+			revision: number;
+		}>;
+	};
+	expect(photos).toHaveLength(2);
+	expect(photos.find((value) => value.fileName === 'two.png')).toMatchObject({
+		isPrimary: true,
+		sortOrder: 0,
+	});
+	const replaced = photos.find((value) => value.fileName === 'replacement.png');
+	expect(replaced).toMatchObject({ sortOrder: 1, isPrimary: false });
+	expect(
+		await (await reopened.request.get(`/api/v1/photos/${replaced?.id}`)).body(),
+	).toEqual(png);
+	await reopened.reload();
+	await expect(reopened.locator('.photo-grid img')).toHaveCount(2);
+	await expectAxeClean(reopened);
+});
+
+test('reviews a conflicting photo replacement against the exact remote revision and retries safely', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const { car } = (await (
+		await page.request.post('/api/v1/cars', {
+			data: { name: 'Photo revision conflict' },
+		})
+	).json()) as { car: { id: string } };
+	const png = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXZkAAAAASUVORK5CYII=',
+		'base64',
+	);
+	const { photo } = (await (
+		await page.request.post(`/api/v1/cars/${car.id}/photos`, {
+			multipart: {
+				file: { name: 'original.png', mimeType: 'image/png', buffer: png },
+			},
+		})
+	).json()) as { photo: { id: string } };
+	await page.goto(`/garage/${car.id}/photos`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page
+		.getByLabel('Replace photo 1', { exact: true })
+		.setInputFiles({ name: 'device.png', mimeType: 'image/png', buffer: png });
+	await expect(
+		page.locator('app-car-photo-gallery').getByText(/Pending sync/),
+	).toBeVisible();
+	// APIRequestContext is independent from the page's offline browser transport.
+	expect(
+		(
+			await page.request.put(`/api/v1/photos/${photo.id}`, {
+				multipart: {
+					file: { name: 'remote.png', mimeType: 'image/png', buffer: png },
+				},
+			})
+		).ok(),
+	).toBe(true);
+	await context.setOffline(false);
+	const review = page.getByRole('region', { name: 'Review device changes' });
+	await expect(
+		review.getByText('Photo · Sync conflict', { exact: true }),
+	).toBeVisible();
+	await review.locator('summary').click();
+	await expect(review.getByText('device.png', { exact: true })).toBeVisible();
+	await expect(review.getByText('remote.png', { exact: true })).toBeVisible();
+	await expectAxeClean(page);
+	expect(
+		(
+			await page.request.put(`/api/v1/photos/${photo.id}`, {
+				multipart: {
+					file: { name: 'newer.png', mimeType: 'image/png', buffer: png },
+				},
+			})
+		).ok(),
+	).toBe(true);
+	await review
+		.getByRole('button', { name: 'Keep device version and retry' })
+		.click();
+	await expect(review.getByText('newer.png', { exact: true })).toHaveCount(1);
+	await review.locator('summary').click();
+	await expect(review.getByText('newer.png', { exact: true })).toBeVisible();
+	await review
+		.getByRole('button', { name: 'Keep device version and retry' })
+		.click();
+	await expect(review).toHaveCount(0);
+	const { photos } = (await (
+		await page.request.get(`/api/v1/cars/${car.id}/photos`)
+	).json()) as { photos: Array<{ id: string; fileName: string }> };
+	expect(photos).toMatchObject([{ id: photo.id, fileName: 'device.png' }]);
+	await expectAxeClean(page);
+});

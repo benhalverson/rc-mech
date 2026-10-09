@@ -1,5 +1,10 @@
 import { InjectionToken, inject, Service } from '@angular/core';
 import Dexie, { type Table } from 'dexie';
+import {
+	applyPhotoChange,
+	type PhotoChange,
+	photoChangeBase,
+} from '../../../../shared/photo-sync';
 import type {
 	BuildSyncCollection,
 	BuildSyncCommand,
@@ -14,7 +19,7 @@ import {
 	readyBuildSyncOperations,
 	rebaseBuildSyncOperation,
 } from '../car/build-sync/build-sync-rules';
-import type { CarPhoto } from '../car/car.models';
+import type { CarPhoto, PhotoMutationCommand } from '../car/car.models';
 import type {
 	DriveSyncCollection,
 	DriveSyncCommand,
@@ -29,6 +34,10 @@ import {
 	readyDriveSyncOperations,
 	rebaseDriveSyncOperation,
 } from '../car/drive-sync/drive-sync-rules';
+import type {
+	PhotoChangeOperation,
+	PhotoChangeOutcome,
+} from '../car/photos/photo-sync.models';
 import {
 	materializePhotos,
 	type PhotoCapture,
@@ -219,6 +228,7 @@ export class OfflineGarageStorage {
 	private readonly settingsOperations: Table<SettingsOperation, string>;
 	private readonly voiceCaptures: Table<VoiceCapture, string>;
 	private readonly maintenanceOperations: Table<MaintenanceOperation, string>;
+	private readonly photoChanges: Table<PhotoChangeOperation, string>;
 	private readonly photoCaptures: Table<PhotoCapture, string>;
 	private readonly photoMedia: Table<PhotoMedia, [string, string]>;
 
@@ -264,6 +274,19 @@ export class OfflineGarageStorage {
 			.version(10)
 			.stores({ voiceCaptures: '&id,ownerKey,carId,status,phase,createdAt' });
 
+		this.database
+			.version(11)
+			.stores({ photoChanges: '&operationId,ownerKey,carId,status,createdAt' })
+			.upgrade(async (transaction) => {
+				await transaction
+					.table('snapshots')
+					.toCollection()
+					.modify((snapshot: { contractVersion?: number }) => {
+						if (snapshot.contractVersion === 1)
+							snapshot.contractVersion = OFFLINE_CONTRACT_VERSION;
+					});
+			});
+		this.photoChanges = this.database.table('photoChanges');
 		this.maintenanceOperations = this.database.table('maintenanceOperations');
 		this.voiceCaptures = this.database.table('voiceCaptures');
 		this.photoCaptures = this.database.table('photoCaptures');
@@ -559,6 +582,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -593,6 +617,10 @@ export class OfflineGarageStorage {
 							.equals(active.ownerKey)
 							.delete(),
 						this.photoMedia.where('ownerKey').equals(active.ownerKey).delete(),
+						this.photoChanges
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.settingsOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
@@ -661,6 +689,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 			].map((table) => table.where('ownerKey').equals(ownerKey).count()),
 		);
 		return (
@@ -697,6 +726,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 			],
 			async () => {
@@ -741,6 +771,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -764,6 +795,10 @@ export class OfflineGarageStorage {
 							.equals(active.ownerKey)
 							.delete(),
 						this.photoMedia.where('ownerKey').equals(active.ownerKey).delete(),
+						this.photoChanges
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.settingsOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
@@ -874,11 +909,244 @@ export class OfflineGarageStorage {
 			.where('ownerKey')
 			.equals(current.ownerKey)
 			.toArray();
-		return {
-			photos: materializePhotos(current.photos ?? [], captures),
-			captures,
-		};
+		const changes = await this.photoChanges
+			.where('ownerKey')
+			.equals(current.ownerKey)
+			.sortBy('createdAt');
+		let photos = materializePhotos(current.photos ?? [], captures);
+		for (const change of changes)
+			photos = [
+				...photos.filter((value) => value.carId !== change.carId),
+				...applyPhotoChange(
+					photos.filter((value) => value.carId === change.carId),
+					change.command,
+				),
+			];
+		return { photos, captures, changes };
 	}
+	async commitPhotoChange(
+		carId: string,
+		change: Exclude<PhotoMutationCommand, { kind: 'upload' }>,
+		fence: OfflineWorkspaceFence,
+	): Promise<PhotoView> {
+		return this.database.transaction(
+			'rw',
+			[
+				this.metadata,
+				this.snapshots,
+				this.operations,
+				this.photoCaptures,
+				this.photoChanges,
+				this.photoMedia,
+			],
+			async () => {
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				if (!snapshot) throw new Error('The offline Garage is unavailable.');
+				const dependencies = await this.ownerOperations(fence.ownerKey);
+				const parent = materializeCars(snapshot.cars, dependencies).find(
+					(value) => value.id === carId,
+				);
+				if (!parent || parent.archivedAt)
+					throw new Error('An active Car is required.');
+				const view = await this.photoView(fence);
+				const photos = view.photos.filter((value) => value.carId === carId);
+				const replacement =
+					change.kind === 'replace'
+						? {
+								fileName: change.file.name,
+								contentType: change.file.type,
+								byteSize: change.file.size,
+							}
+						: null;
+				if (
+					replacement &&
+					(!['image/jpeg', 'image/png', 'image/webp'].includes(
+						replacement.contentType,
+					) ||
+						!replacement.fileName.trim() ||
+						replacement.fileName.length > 255 ||
+						replacement.byteSize === 0 ||
+						replacement.byteSize > 10 * 1024 * 1024)
+				)
+					throw new Error('Choose a valid photo.');
+				const command: PhotoChange = {
+					type: 'photo.change',
+					carId,
+					action: change.kind,
+					photoId: change.kind === 'reorder' ? null : change.photo.id,
+					order:
+						change.kind === 'reorder'
+							? change.photos.map((value) => value.id)
+							: [],
+					base: photoChangeBase(
+						{
+							action: change.kind,
+							photoId: change.kind === 'reorder' ? null : change.photo.id,
+						},
+						photos,
+					),
+					replacement,
+				};
+				if (
+					command.photoId !== null
+						? !photos.some((value) => value.id === command.photoId)
+						: command.order.length !== photos.length ||
+							new Set(command.order).size !== photos.length ||
+							command.order.some(
+								(id) => !photos.some((value) => value.id === id),
+							)
+				)
+					throw new Error(
+						'The gallery changed. Reopen it before trying again.',
+					);
+				await this.photoChanges.add({
+					ownerKey: fence.ownerKey,
+					operationId: this.nextOperationId(),
+					carId,
+					createdAt: this.now(),
+					command,
+					status: 'pending',
+					dependencies: [
+						...dependencies
+							.filter((value) => value.carId === carId)
+							.map((value) => value.operationId),
+						...view.captures
+							.filter((value) => value.carId === carId)
+							.map((value) => value.operationId),
+						...view.changes
+							.filter((value) => value.carId === carId)
+							.map((value) => value.operationId),
+					],
+					...(change.kind === 'replace' ? { blob: change.file } : {}),
+				});
+				return this.photoView(fence);
+			},
+		);
+	}
+	async readyPhotoChanges(
+		fence: OfflineWorkspaceFence,
+	): Promise<readonly PhotoChangeOperation[]> {
+		const view = await this.photoView(fence);
+		const pendingIds = new Set(
+			[
+				...(await this.ownerOperations(fence.ownerKey)),
+				...view.captures,
+				...view.changes,
+			].map((value) => value.operationId),
+		);
+		return view.changes.filter(
+			(value) =>
+				value.status === 'pending' &&
+				!value.dependencies.some((id) => pendingIds.has(id)),
+		);
+	}
+	async recordPhotoChangeOutcome(
+		outcome: PhotoChangeOutcome,
+		fence: OfflineWorkspaceFence,
+	): Promise<PhotoView> {
+		return this.database.transaction(
+			'rw',
+			[
+				this.metadata,
+				this.snapshots,
+				this.photoCaptures,
+				this.photoChanges,
+				this.photoMedia,
+			],
+			async () => {
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				if (!snapshot) throw new Error('The offline Garage is unavailable.');
+				const operation = await this.photoChanges.get(outcome.operationId);
+				if (operation?.ownerKey === fence.ownerKey) {
+					if (outcome.outcome === 'applied') {
+						await this.snapshots.put({
+							...snapshot,
+							photos: [
+								...(snapshot.photos ?? []).filter(
+									(value) => value.carId !== operation.carId,
+								),
+								...outcome.photos,
+							],
+						});
+						await this.photoChanges.delete(operation.operationId);
+						for (const photo of outcome.photos) {
+							if (
+								operation.command.action === 'replace' &&
+								photo.id === operation.command.photoId
+							)
+								continue;
+							const media = await this.photoMedia.get([
+								fence.ownerKey,
+								photo.id,
+							]);
+							const base = operation.command.base.find(
+								(value) => value.id === photo.id,
+							);
+							if (media && base && (media.revision ?? 1) === base.revision)
+								await this.photoMedia.put({
+									...media,
+									revision: photo.revision ?? 1,
+								});
+						}
+
+						if (
+							operation.command.photoId &&
+							['replace', 'delete'].includes(operation.command.action)
+						) {
+							await this.photoMedia.delete([
+								fence.ownerKey,
+								operation.command.photoId,
+							]);
+							if (operation.blob)
+								await this.photoMedia.put({
+									ownerKey: fence.ownerKey,
+									photoId: operation.command.photoId,
+									blob: operation.blob,
+									revision:
+										outcome.photos.find(
+											(value) => value.id === operation.command.photoId,
+										)?.revision ?? 1,
+								});
+						}
+						// Each queued gallery action was based on the previous local result.
+						// Rebase only that dependency, preserving the remaining local sequence.
+						let photos = outcome.photos;
+						for (const next of await this.photoChanges
+							.where('ownerKey')
+							.equals(fence.ownerKey)
+							.sortBy('createdAt')) {
+							if (
+								next.carId !== operation.carId ||
+								!next.dependencies.includes(operation.operationId)
+							)
+								continue;
+							const command = {
+								...next.command,
+								base: photoChangeBase(next.command, photos),
+							};
+							await this.photoChanges.put({
+								...next,
+								command,
+								dependencies: next.dependencies.filter(
+									(id) => id !== operation.operationId,
+								),
+							});
+							photos = applyPhotoChange(photos, command);
+						}
+					} else
+						await this.photoChanges.put({
+							...operation,
+							status:
+								outcome.outcome === 'conflict' ? 'conflict' : 'needs-attention',
+							feedback: outcome.error,
+							remote: outcome.remote,
+						});
+				}
+				return this.photoView(fence);
+			},
+		);
+	}
+
 	async commitPhoto(
 		carId: string,
 		file: File,
@@ -892,6 +1160,7 @@ export class OfflineGarageStorage {
 				this.metadata,
 				this.operations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 			],
 			async () => {
@@ -915,6 +1184,9 @@ export class OfflineGarageStorage {
 				const view = await this.photoView(fence);
 				const photos = view.photos.filter((photo) => photo.carId === carId);
 				const photo: CarPhoto = {
+					revision: 1,
+					fileName: file.name,
+					byteSize: file.size,
 					id: operationId,
 					carId,
 					contentType: file.type,
@@ -958,7 +1230,7 @@ export class OfflineGarageStorage {
 	): Promise<PhotoView> {
 		return this.database.transaction(
 			'rw',
-			[this.snapshots, this.metadata, this.photoCaptures],
+			[this.snapshots, this.metadata, this.photoCaptures, this.photoChanges],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -995,7 +1267,13 @@ export class OfflineGarageStorage {
 	): Promise<PhotoView> {
 		return this.database.transaction(
 			'rw',
-			[this.snapshots, this.metadata, this.photoCaptures, this.photoMedia],
+			[
+				this.snapshots,
+				this.metadata,
+				this.photoCaptures,
+				this.photoChanges,
+				this.photoMedia,
+			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -1011,15 +1289,33 @@ export class OfflineGarageStorage {
 		photoId: string,
 		blob: Blob,
 		fence: OfflineWorkspaceFence,
+		revision = 1,
 	): Promise<void> {
 		await this.database.transaction(
 			'rw',
-			[this.snapshots, this.metadata, this.photoCaptures, this.photoMedia],
+			[
+				this.snapshots,
+				this.metadata,
+				this.photoCaptures,
+				this.photoChanges,
+				this.photoMedia,
+			],
 			async () => {
 				const view = await this.photoView(fence);
 				if (!view.photos.some((photo) => photo.id === photoId))
 					throw new Error('Photo metadata is unavailable.');
-				await this.photoMedia.put({ ownerKey: fence.ownerKey, photoId, blob });
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				const canonical =
+					snapshot?.photos?.find((photo) => photo.id === photoId) ??
+					view.photos.find((photo) => photo.id === photoId);
+				if ((canonical?.revision ?? 1) !== revision)
+					throw new Error('The original belongs to an earlier photo revision.');
+				await this.photoMedia.put({
+					ownerKey: fence.ownerKey,
+					photoId,
+					blob,
+					revision,
+				});
 			},
 		);
 	}
@@ -1029,7 +1325,18 @@ export class OfflineGarageStorage {
 	): Promise<Blob | null> {
 		const view = await this.photoView(fence);
 		if (!view.photos.some((photo) => photo.id === photoId)) return null;
-		return (await this.photoMedia.get([fence.ownerKey, photoId]))?.blob ?? null;
+		const replacement = [...view.changes]
+			.reverse()
+			.find((value) => value.command.photoId === photoId && value.blob);
+		if (replacement?.blob) return replacement.blob;
+		const media = await this.photoMedia.get([fence.ownerKey, photoId]);
+		const snapshot = await this.currentSnapshot(undefined, fence);
+		const canonical =
+			snapshot?.photos?.find((photo) => photo.id === photoId) ??
+			view.photos.find((photo) => photo.id === photoId);
+		return media && (media.revision ?? 1) === (canonical?.revision ?? 1)
+			? media.blob
+			: null;
 	}
 
 	async maintenanceSyncView(
@@ -1310,6 +1617,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -1710,6 +2018,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -1744,6 +2053,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -1832,6 +2142,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -1945,6 +2256,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -2093,6 +2405,7 @@ export class OfflineGarageStorage {
 				this.snapshots,
 				this.metadata,
 				this.voiceCaptures,
+				this.photoMedia,
 				...Object.values(tables),
 			],
 			async () => {
@@ -2172,6 +2485,7 @@ export class OfflineGarageStorage {
 			drive: this.driveOperations as Table<ReviewOperation, string>,
 			maintenance: this.maintenanceOperations as Table<ReviewOperation, string>,
 			settings: this.settingsOperations as Table<ReviewOperation, string>,
+			photo: this.photoChanges as Table<ReviewOperation, string>,
 		};
 	}
 	private async mergeReviewedRemote(
@@ -2179,6 +2493,21 @@ export class OfflineGarageStorage {
 		snapshot: OfflineGarageSnapshot,
 	): Promise<void> {
 		switch (review.family) {
+			case 'photo':
+				if (review.operation.remote)
+					for (const photo of review.operation.remote)
+						await this.photoMedia.delete([snapshot.ownerKey, photo.id]);
+				if (review.operation.remote)
+					await this.snapshots.put({
+						...snapshot,
+						photos: [
+							...(snapshot.photos ?? []).filter(
+								(value) => value.carId !== review.operation.carId,
+							),
+							...review.operation.remote,
+						],
+					});
+				return;
 			case 'car':
 				if (review.operation.remote)
 					await this.snapshots.put({
@@ -2275,6 +2604,7 @@ export class OfflineGarageStorage {
 				this.buildOperations,
 				this.driveOperations,
 				this.photoCaptures,
+				this.photoChanges,
 				this.photoMedia,
 				this.settingsOperations,
 				this.voiceCaptures,
@@ -2298,6 +2628,10 @@ export class OfflineGarageStorage {
 							.equals(active.ownerKey)
 							.delete(),
 						this.photoMedia.where('ownerKey').equals(active.ownerKey).delete(),
+						this.photoChanges
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.settingsOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)

@@ -513,6 +513,7 @@ export const serviceRecord = sqliteTable('service_record', {
 	deletedAt: text('deleted_at'),
 });
 export const photo = sqliteTable('photo', {
+	revision: integer('revision').notNull().default(1),
 	id: id('id'),
 	carId: text('car_id').notNull(),
 	objectKey: text('object_key').notNull().unique(),

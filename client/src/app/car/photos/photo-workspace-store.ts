@@ -15,6 +15,7 @@ import {
 	type OfflineWorkspaceFence,
 } from '../../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../../offline/offline-workspace-store';
+import type { PhotoMutationCommand } from '../car.models';
 import type { PhotoView } from './photo-sync.models';
 import { PhotoSyncGateway } from './photo-sync-gateway';
 
@@ -52,6 +53,12 @@ export const PhotoWorkspaceStore = signalStore(
 				? (store.view()?.photos ?? [])
 				: [],
 		),
+		changes: computed(() =>
+			store.fence()?.ownerKey === store.offline.ownerKey() &&
+			store.fence()?.sessionKey === store.offline.sessionKey()
+				? (store.view()?.changes ?? [])
+				: [],
+		),
 		captures: computed(() =>
 			store.fence()?.ownerKey === store.offline.ownerKey() &&
 			store.fence()?.sessionKey === store.offline.sessionKey()
@@ -81,7 +88,22 @@ export const PhotoWorkspaceStore = signalStore(
 					const operation = (
 						await store.storage.readyPhotoCaptures(identity)
 					)[0];
-					if (!operation || !matches(identity)) return;
+					if (!matches(identity)) return;
+					if (!operation) {
+						const change = (await store.storage.readyPhotoChanges(identity))[0];
+						if (!change || !matches(identity)) return;
+						const result = await firstValueFrom(store.gateway.change(change));
+						if (!matches(identity)) return;
+						const next = await store.storage.recordPhotoChangeOutcome(
+							result,
+							identity,
+						);
+						if (!matches(identity)) return;
+						store.offline.markOnline();
+						store.connectivity.markRequestSucceeded();
+						patchState(store, { view: next });
+						continue;
+					}
 					const outcome = await firstValueFrom(store.gateway.apply(operation));
 					if (!matches(identity)) return;
 					store.offline.markOnline();
@@ -133,17 +155,29 @@ export const PhotoWorkspaceStore = signalStore(
 			}
 		};
 		const mutate = async (
-			command: Readonly<{ carId: string; file: File }>,
+			command:
+				| Readonly<{ carId: string; file: File }>
+				| Readonly<{
+						carId: string;
+						edit: Exclude<PhotoMutationCommand, { kind: 'upload' }>;
+				  }>,
 			requestId: string,
 		): Promise<void> => {
 			const identity = fence();
 			patchState(store, { outcome: { status: 'pending', requestId } });
 			try {
-				const view = await store.storage.commitPhoto(
-					command.carId,
-					command.file,
-					identity,
-				);
+				const view =
+					'edit' in command
+						? await store.storage.commitPhotoChange(
+								command.carId,
+								command.edit,
+								identity,
+							)
+						: await store.storage.commitPhoto(
+								command.carId,
+								command.file,
+								identity,
+							);
 				if (!matches(identity)) return;
 				patchState(store, {
 					view,
@@ -196,7 +230,12 @@ export const PhotoWorkspaceStore = signalStore(
 			mutate(
 				command: Readonly<{
 					requestId: string;
-					change: Readonly<{ carId: string; file: File }>;
+					change:
+						| Readonly<{ carId: string; file: File }>
+						| Readonly<{
+								carId: string;
+								edit: Exclude<PhotoMutationCommand, { kind: 'upload' }>;
+						  }>;
 				}>,
 			): void {
 				void mutate(command.change, command.requestId);

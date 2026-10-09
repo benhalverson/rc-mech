@@ -99,7 +99,7 @@ describe('PhotoSyncGateway', () => {
 		const original = firstValueFrom(gateway.original('capture'));
 		const blob = capture.blob;
 		http.expectOne('/api/v1/photos/capture').flush(blob);
-		expect(await original).toBe(blob);
+		expect(await original).toEqual({ blob, revision: 1 });
 		const invalid = firstValueFrom(gateway.metadata());
 		const rejected = expect(invalid).rejects.toEqual({
 			kind: 'invalid-response',
@@ -112,5 +112,113 @@ describe('PhotoSyncGateway', () => {
 		});
 		http.expectOne('/api/v1/photos/capture').error(new ProgressEvent('error'));
 		await unavailable;
+	});
+	it('persists gallery change identities and replacement bytes, parsing only owner-scoped outcomes', async () => {
+		const operation: import('./photo-sync.models').PhotoChangeOperation = {
+			ownerKey: 'owner',
+			operationId: 'change',
+			carId: 'car',
+			createdAt: 1,
+			status: 'pending',
+			dependencies: [],
+			command: {
+				type: 'photo.change',
+				carId: 'car',
+				action: 'replace',
+				photoId: 'capture',
+				order: [],
+				base: [{ id: 'capture', revision: 1 }],
+				replacement: {
+					fileName: 'car.jpg',
+					contentType: 'image/jpeg',
+					byteSize: 5,
+				},
+			},
+			blob: capture.blob,
+		};
+		const url = '/api/v1/cars/car/photos/operations/change';
+		const response = firstValueFrom(gateway.change(operation));
+		const request = http.expectOne(url);
+		expect(request.request.method).toBe('PUT');
+		expect(request.request.withCredentials).toBe(true);
+		expect(request.request.body.get('file').size).toBe(5);
+		expect(JSON.parse(request.request.body.get('command'))).toEqual(
+			operation.command,
+		);
+		request.flush({
+			operationId: 'change',
+			outcome: 'applied',
+			photos: [capture.photo],
+		});
+		expect(await response).toMatchObject({ outcome: 'applied' });
+		for (const remote of [undefined, [capture.photo]]) {
+			const result = firstValueFrom(
+				gateway.change({ ...operation, blob: undefined }),
+			);
+			http.expectOne(url).flush(
+				{
+					operationId: 'change',
+					outcome: 'conflict',
+					error: { code: 'CONFLICT', message: 'Changed' },
+					remote,
+				},
+				{ status: 409, statusText: 'Conflict' },
+			);
+			expect(await result).toMatchObject({ outcome: 'conflict' });
+		}
+		for (const [body, status] of [
+			[
+				{
+					operationId: 'change',
+					outcome: 'applied',
+					photos: [{ ...capture.photo, carId: 'other' }],
+				},
+				200,
+			],
+			[{}, 200],
+			[{}, 409],
+			[
+				{
+					operationId: 'change',
+					outcome: 'conflict',
+					error: { code: 'CONFLICT', message: 'Changed' },
+					remote: [{ ...capture.photo, carId: 'other' }],
+				},
+				409,
+			],
+			[{}, 503],
+		] as const) {
+			const result = firstValueFrom(
+				gateway.change({
+					...operation,
+					command: { ...operation.command, replacement: null },
+				}),
+			);
+			const rejected = expect(result).rejects.toEqual({
+				kind: status === 503 ? 'unavailable' : 'invalid-response',
+			});
+			http.expectOne(url).flush(body, { status, statusText: 'Error' });
+			await rejected;
+		}
+	});
+	it('validates the original revision before retaining private bytes', async () => {
+		for (const revision of ['2', 'invalid', '0', '1.5']) {
+			const result = firstValueFrom(gateway.original('capture'));
+			const rejected =
+				revision === '2'
+					? null
+					: expect(result).rejects.toEqual({ kind: 'invalid-response' });
+			http.expectOne('/api/v1/photos/capture').flush(new Blob(['image']), {
+				headers: { 'X-Photo-Revision': revision },
+			});
+			if (rejected) await rejected;
+			else expect(await result).toMatchObject({ revision: 2 });
+		}
+		const result = firstValueFrom(gateway.original('capture'));
+		const rejected = expect(result).rejects.toEqual({
+			kind: 'invalid-response',
+		});
+		http.expectOne('/api/v1/photos/capture').flush(null);
+		await rejected;
 	});
 });

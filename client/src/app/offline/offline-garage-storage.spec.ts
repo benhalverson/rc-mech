@@ -2596,6 +2596,7 @@ describe('OfflineGarageStorage', () => {
 		});
 	});
 	const reviewTableNames = {
+		photo: 'photoChanges',
 		car: 'operations',
 		setup: 'setupOperations',
 		build: 'buildOperations',
@@ -2846,7 +2847,7 @@ describe('OfflineGarageStorage', () => {
 				.put({ ...snapshot, contractVersion: 99 });
 			expect(await storage.restoreCurrent()).toBeNull();
 			expect(
-				await storage.save({ ...snapshot, contractVersion: 1 }, 'session-a'),
+				await storage.save({ ...snapshot, contractVersion: 2 }, 'session-a'),
 			).toBe(false);
 			await expect(storage.requestSignOut('session-a', true)).rejects.toThrow(
 				'Reload',
@@ -2854,9 +2855,9 @@ describe('OfflineGarageStorage', () => {
 			expect(
 				(await inspect.table('snapshots').get('user-a')).contractVersion,
 			).toBe(99);
-			await inspect.table('snapshots').put({ ...snapshot, contractVersion: 1 });
+			await inspect.table('snapshots').put({ ...snapshot, contractVersion: 2 });
 			expect(
-				await storage.save({ ...snapshot, contractVersion: 1 }, 'session-a'),
+				await storage.save({ ...snapshot, contractVersion: 2 }, 'session-a'),
 			).toBe(true);
 			expect(await storage.restoreCurrent()).not.toBeNull();
 			expect((await storage.requestSignOut('session-a', true)).kind).toBe(
@@ -2865,5 +2866,432 @@ describe('OfflineGarageStorage', () => {
 		} finally {
 			inspect.close();
 		}
+	});
+	it('persists every photo edit and its original through restart, dependencies, conflict review, and cleanup', async () => {
+		await preparePhotos();
+		const a = {
+			id: 'photo-a',
+			carId: 'car-a',
+			revision: 1,
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+			sortOrder: 0,
+			isPrimary: true,
+		};
+		const b = { ...a, id: 'photo-b', sortOrder: 1, isPrimary: false };
+		await storage.refreshPhotos([a, b], undefined, userAFence);
+		await storage.retainPhoto(
+			b.id,
+			new NodeBlob(['retained b']) as unknown as Blob,
+			userAFence,
+			1,
+		);
+		const file = Object.assign(
+			new NodeBlob(['replacement'], { type: 'image/jpeg' }),
+			{ name: 'new.jpg' },
+		) as unknown as File;
+		const first = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'replace', photo: a, file },
+			userAFence,
+		);
+		expect(first.photos[0]).toMatchObject({ revision: 2, byteSize: 11 });
+		expect(await (await storage.retainedPhoto(a.id, userAFence))?.text()).toBe(
+			'replacement',
+		);
+		const replaced = first.photos[0];
+		const second = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: b },
+			userAFence,
+		);
+		expect(second.changes?.[1].dependencies).toEqual([
+			first.changes?.[0].operationId,
+		]);
+		await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [b, replaced] },
+			userAFence,
+		);
+		expect(await storage.pendingWorkCount()).toBe(3);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(
+			(await storage.readyPhotoChanges(userAFence)).map(
+				(value) => value.operationId,
+			),
+		).toEqual([first.changes?.[0].operationId]);
+		const operation = first.changes[0];
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: operation.operationId,
+				outcome: 'conflict',
+				error: { code: 'CONFLICT', message: 'Changed elsewhere' },
+				remote: [{ ...a, revision: 3 }, b],
+			},
+			userAFence,
+		);
+		expect(await storage.readyPhotoChanges(userAFence)).toEqual([]);
+		const review = (await storage.photoView(userAFence)).changes[0];
+		await storage.resolveSyncReview(
+			{ family: 'photo', operation: review },
+			'device',
+			userAFence,
+		);
+		const retried = (await storage.readyPhotoChanges(userAFence))[0];
+		expect(retried.command.base[0].revision).toBe(3);
+		const saved = { ...replaced, revision: 4 };
+		let view = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: retried.operationId,
+				outcome: 'applied',
+				photos: [saved, b],
+			},
+			userAFence,
+		);
+		expect(await (await storage.retainedPhoto(a.id, userAFence))?.text()).toBe(
+			'replacement',
+		);
+		const primary = (await storage.readyPhotoChanges(userAFence))[0];
+		expect(primary.command.base[0].revision).toBe(4);
+		view = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: primary.operationId,
+				outcome: 'applied',
+				photos: [
+					{ ...saved, isPrimary: false, revision: 5 },
+					{ ...b, isPrimary: true, revision: 2 },
+				],
+			},
+			userAFence,
+		);
+		const order = (await storage.readyPhotoChanges(userAFence))[0];
+		view = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: order.operationId,
+				outcome: 'applied',
+				photos: view.photos,
+			},
+			userAFence,
+		);
+		expect(view.changes).toEqual([]);
+		const removed = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'delete', photo: b },
+			userAFence,
+		);
+		expect(removed.photos.some((value) => value.id === b.id)).toBe(false);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: removed.changes[0].operationId,
+				outcome: 'applied',
+				photos: removed.photos,
+			},
+			userAFence,
+		);
+		expect(await storage.retainedPhoto(b.id, userAFence)).toBeNull();
+		await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: a },
+			userAFence,
+		);
+		expect(await storage.requestSignOut('session-a', false)).toMatchObject({
+			kind: 'confirmation',
+			count: 1,
+		});
+		await storage.requestSignOut('session-a', true);
+		expect(await storage.pendingWorkCount()).toBe(0);
+	});
+	it('retains rejected photo changes, fences stale writes, and validates local edits before acceptance', async () => {
+		const a = {
+			id: 'photo-a',
+			carId: 'car-a',
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+		};
+		await expect(
+			storage.commitPhotoChange(
+				'car-a',
+				{ kind: 'delete', photo: a },
+				userAFence,
+			),
+		).rejects.toThrow();
+		await expect(
+			storage.recordPhotoChangeOutcome(
+				{ operationId: 'missing', outcome: 'applied', photos: [] },
+				userAFence,
+			),
+		).rejects.toThrow();
+		await preparePhotos();
+		await storage.refreshPhotos([a], undefined, userAFence);
+		for (const file of [
+			new File(['x'], 'a.gif', { type: 'image/gif' }),
+			new File(['x'], ' ', { type: 'image/jpeg' }),
+			new File(['x'], 'x'.repeat(256), { type: 'image/jpeg' }),
+			new File([], 'a.jpg', { type: 'image/jpeg' }),
+			new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'a.jpg', {
+				type: 'image/jpeg',
+			}),
+		])
+			await expect(
+				storage.commitPhotoChange(
+					'car-a',
+					{ kind: 'replace', photo: a, file },
+					userAFence,
+				),
+			).rejects.toThrow();
+		await expect(
+			storage.commitPhotoChange(
+				'missing',
+				{ kind: 'delete', photo: a },
+				userAFence,
+			),
+		).rejects.toThrow();
+		await expect(
+			storage.commitPhotoChange(
+				'car-a',
+				{ kind: 'delete', photo: { ...a, id: 'missing' } },
+				userAFence,
+			),
+		).rejects.toThrow();
+		for (const photos of [[], [a, a], [{ ...a, id: 'missing' }]])
+			await expect(
+				storage.commitPhotoChange(
+					'car-a',
+					{ kind: 'reorder', photos },
+					userAFence,
+				),
+			).rejects.toThrow();
+		const view = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: a },
+			userAFence,
+		);
+		const id = view.changes[0].operationId;
+		const failure = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: id,
+				outcome: 'rejected',
+				error: { code: 'ARCHIVED', message: 'Restore the Car' },
+			},
+			userAFence,
+		);
+		expect(failure.changes[0].status).toBe('needs-attention');
+		await storage.resolveSyncReview(
+			{ family: 'photo', operation: failure.changes[0] },
+			'remote',
+			userAFence,
+		);
+		expect((await storage.photoView(userAFence)).changes).toEqual([]);
+		await storage.recordPhotoChangeOutcome(
+			{ operationId: 'missing', outcome: 'applied', photos: [] },
+			userAFence,
+		);
+	});
+	it('waits for capture and Car prerequisites while preserving independent gallery operations', async () => {
+		await preparePhotos();
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		await storage.save(
+			{ ...snapshot, cars: [...snapshot.cars, car('car-b', 'Second')] },
+			'session-a',
+		);
+		const capture = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		await storage.commitCar(
+			{ type: 'edit', carId: 'car-a', input: { name: 'Renamed' } },
+			userAFence,
+		);
+		const pending = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: capture.photo },
+			userAFence,
+		);
+		expect(pending.changes[0].dependencies).toHaveLength(2);
+		const independent = await storage.commitPhotoChange(
+			'car-b',
+			{ kind: 'reorder', photos: [] },
+			userAFence,
+		);
+		const ready = (await storage.readyPhotoChanges(userAFence))[0];
+		expect(ready.carId).toBe('car-b');
+		// Existing independent work is never rebased by a different gallery acknowledgement.
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('photoChanges').put({
+				...independent.changes[1],
+				operationId: 'separate',
+				dependencies: [],
+			});
+		} finally {
+			inspect.close();
+		}
+		await storage.recordPhotoChangeOutcome(
+			{ operationId: ready.operationId, outcome: 'applied', photos: [] },
+			userAFence,
+		);
+		expect(
+			(await storage.photoView(userAFence)).changes.map(
+				(value) => value.operationId,
+			),
+		).toContain('separate');
+	});
+	it('handles empty galleries from earlier snapshots and retains review intent across migration', async () => {
+		await preparePhotos();
+		const first = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [] },
+			userAFence,
+		);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: first.changes[0].operationId,
+				outcome: 'applied',
+				photos: [],
+			},
+			userAFence,
+		);
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		await storage.save({ ...snapshot, photos: undefined }, 'session-a');
+		const pending = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [] },
+			userAFence,
+		);
+		const conflicted = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: pending.changes[0].operationId,
+				outcome: 'conflict',
+				error: { code: 'CONFLICT', message: 'Changed' },
+				remote: [],
+			},
+			userAFence,
+		);
+		await storage.resolveSyncReview(
+			{ family: 'photo', operation: conflicted.changes[0] },
+			'remote',
+			userAFence,
+		);
+		expect((await storage.photoView(userAFence)).changes).toEqual([]);
+	});
+	it('upgrades compatible photo queues without letting an older shell clear new photo edits', async () => {
+		storage.close();
+		const old = new Dexie(databaseName);
+		old
+			.version(10)
+			.stores({ snapshots: '&ownerKey,preparedAt', metadata: '&key' });
+		await old.open();
+		await old.table('snapshots').bulkPut([
+			{ ownerKey: 'user-a', contractVersion: 1 },
+			{ ownerKey: 'future', contractVersion: 99 },
+		]);
+		old.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		await storage.read('user-a');
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			expect(
+				(await inspect.table('snapshots').get('user-a')).contractVersion,
+			).toBe(2);
+			expect(
+				(await inspect.table('snapshots').get('future')).contractVersion,
+			).toBe(99);
+			expect(inspect.tables.map((table) => table.name)).toContain(
+				'photoChanges',
+			);
+		} finally {
+			inspect.close();
+		}
+	});
+	it('never replaces a newer retained original with a late response from an older photo revision', async () => {
+		await preparePhotos();
+		const photo = {
+			id: 'original',
+			carId: 'car-a',
+			revision: 1,
+			createdAt: 'today',
+			contentType: 'image/jpeg',
+		};
+		const blob = new NodeBlob(['original']) as unknown as Blob;
+		await storage.refreshPhotos([photo], undefined, userAFence);
+		await storage.retainPhoto(photo.id, blob, userAFence, 1);
+		await storage.refreshPhotos(
+			[{ ...photo, revision: 2 }],
+			undefined,
+			userAFence,
+		);
+		expect(await storage.retainedPhoto(photo.id, userAFence)).toBeNull();
+		await expect(
+			storage.retainPhoto(photo.id, blob, userAFence, 1),
+		).rejects.toThrow('earlier');
+		await storage.retainPhoto(photo.id, blob, userAFence, 2);
+		expect(
+			await (await storage.retainedPhoto(photo.id, userAFence))?.text(),
+		).toBe('original');
+	});
+	it('preserves compatible cached originals when gallery metadata changes and fences stale migrated media', async () => {
+		await preparePhotos();
+		const legacy = {
+			id: 'legacy',
+			carId: 'car-a',
+			createdAt: 'today',
+			contentType: 'image/jpeg',
+			isPrimary: false,
+		};
+		await storage.refreshPhotos([legacy], undefined, userAFence);
+		const blob = new NodeBlob(['legacy']) as unknown as Blob;
+		await storage.retainPhoto(legacy.id, blob, userAFence);
+		expect(await storage.retainedPhoto(legacy.id, userAFence)).not.toBeNull();
+		const capture = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		await storage.retainPhoto(capture.photo.id, blob, userAFence);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect
+				.table('photoMedia')
+				.put({ ownerKey: 'user-a', photoId: legacy.id, blob });
+		} finally {
+			inspect.close();
+		}
+		const primary = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: legacy },
+			userAFence,
+		);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: primary.changes[0].operationId,
+				outcome: 'applied',
+				photos: [legacy, capture.photo],
+			},
+			userAFence,
+		);
+		expect(await storage.retainedPhoto(legacy.id, userAFence)).not.toBeNull();
+		const replacement = await storage.commitPhotoChange(
+			'car-a',
+			{
+				kind: 'replace',
+				photo: legacy,
+				file: Object.assign(new NodeBlob(['new'], { type: 'image/jpeg' }), {
+					name: 'new.jpg',
+				}) as unknown as File,
+			},
+			userAFence,
+		);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: replacement.changes[0].operationId,
+				outcome: 'applied',
+				photos: [legacy, capture.photo],
+			},
+			userAFence,
+		);
+		expect(
+			await (await storage.retainedPhoto(legacy.id, userAFence))?.text(),
+		).toBe('new');
 	});
 });

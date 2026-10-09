@@ -1,7 +1,7 @@
 import type { OfflineGarageSnapshot } from './offline-garage-storage';
 
 /** Increment when a shell can no longer safely read the preceding working copy. */
-export const OFFLINE_CONTRACT_VERSION = 1;
+export const OFFLINE_CONTRACT_VERSION = 2;
 
 export const hasCompleteOfflineContract = (
 	snapshot: OfflineGarageSnapshot,

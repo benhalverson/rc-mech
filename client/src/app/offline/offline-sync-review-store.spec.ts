@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, expect, it, vi } from 'vitest';
+import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { CarWorkspaceStore } from '../garage/car-sync/car-workspace-store';
 import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
 import { SettingsWorkspaceStore } from '../settings/settings-workspace-store';
@@ -32,6 +33,10 @@ it('coordinates durable review decisions and fences late failures by owner and s
 	);
 	TestBed.configureTestingModule({
 		providers: [
+			{
+				provide: PhotoWorkspaceStore,
+				useValue: { open, changes: () => [{ status: 'pending' }] },
+			},
 			{
 				provide: OfflineWorkspaceStore,
 				useValue: { hasSnapshot, ownerKey, sessionKey },
@@ -82,7 +87,7 @@ it('coordinates durable review decisions and fences late failures by owner and s
 	expect(resolveSyncReview).toHaveBeenCalledOnce();
 	resolve();
 	await vi.waitFor(() => expect(store.pending()).toBe(false));
-	expect(open).toHaveBeenCalledTimes(4);
+	expect(open).toHaveBeenCalledTimes(5);
 	resolveSyncReview.mockRejectedValueOnce(new Error('stale'));
 	store.resolve(syncReviewFixtures[0], 'remote');
 	await vi.waitFor(() => expect(store.error()).toContain('could not be saved'));

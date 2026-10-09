@@ -12,7 +12,7 @@ describe('PhotoMediaAccess', () => {
 			retainedPhoto: vi.fn().mockResolvedValue(null),
 			retainPhoto: vi.fn().mockResolvedValue(undefined),
 		};
-		const gateway = { original: vi.fn(() => of(blob)) };
+		const gateway = { original: vi.fn(() => of({ blob, revision: 2 })) };
 		const urls = {
 			createObjectURL: vi.fn(() => 'blob:private'),
 			revokeObjectURL: vi.fn(),
@@ -29,7 +29,7 @@ describe('PhotoMediaAccess', () => {
 		expect(await access.open('photo', fence, true)).toBeNull();
 		expect(gateway.original).not.toHaveBeenCalled();
 		expect(await access.open('photo', fence, false)).toBe('blob:private');
-		expect(storage.retainPhoto).toHaveBeenCalledWith('photo', blob, fence);
+		expect(storage.retainPhoto).toHaveBeenCalledWith('photo', blob, fence, 2);
 		storage.retainedPhoto.mockResolvedValue(blob);
 		expect(await access.open('photo', fence, true)).toBe('blob:private');
 		expect(gateway.original).toHaveBeenCalledTimes(1);
@@ -37,13 +37,13 @@ describe('PhotoMediaAccess', () => {
 		expect(urls.revokeObjectURL).toHaveBeenCalledWith('blob:private');
 		access.clear();
 		expect(urls.revokeObjectURL).toHaveBeenCalledTimes(1);
-		const pending = new Subject<Blob>();
+		const pending = new Subject<{ blob: Blob; revision: number }>();
 		storage.retainedPhoto.mockResolvedValue(null);
 		gateway.original.mockReturnValue(pending);
 		const late = access.open('photo', fence, false);
 		await Promise.resolve();
 		access.clear();
-		pending.next(blob);
+		pending.next({ blob, revision: 2 });
 		pending.complete();
 		expect(await late).toBeNull();
 		TestBed.resetTestingModule();

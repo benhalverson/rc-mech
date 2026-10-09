@@ -7,6 +7,7 @@ import {
 	withProps,
 	withState,
 } from '@ngrx/signals';
+import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { CarWorkspaceStore } from '../garage/car-sync/car-workspace-store';
 import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
 import { SettingsWorkspaceStore } from '../settings/settings-workspace-store';
@@ -25,6 +26,7 @@ export const OfflineSyncReviewStore = signalStore(
 		maintenance: inject(MaintenanceWorkspaceStore),
 		settings: inject(SettingsWorkspaceStore),
 		voice: inject(VoiceWorkspaceStore),
+		photos: inject(PhotoWorkspaceStore),
 	})),
 	withComputed((store) => ({
 		names: computed(() =>
@@ -49,6 +51,9 @@ export const OfflineSyncReviewStore = signalStore(
 		reviews: computed<readonly SyncReview[]>(() =>
 			store.offline.hasSnapshot()
 				? [
+						...store.photos
+							.changes()
+							.map((operation) => ({ family: 'photo' as const, operation })),
 						...store.cars
 							.operations()
 							.map((operation) => ({ family: 'car' as const, operation })),
@@ -87,6 +92,7 @@ export const OfflineSyncReviewStore = signalStore(
 					store.maintenance.open();
 					store.settings.open();
 					store.voice.open();
+					store.photos.open();
 				})
 				.catch(() => {
 					if (

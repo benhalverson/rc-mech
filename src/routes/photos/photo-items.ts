@@ -228,6 +228,7 @@ export const createPhotoItemRoutes = () => {
 		return new Response(object.body, {
 			headers: {
 				'Content-Type': metadata.contentType,
+				'X-Photo-Revision': String(metadata.revision),
 				'Content-Length': String(metadata.byteSize),
 				'Cache-Control': 'private, max-age=300',
 				'Content-Disposition': `inline; filename="${metadata.fileName.replace(/["\\\r\n]/g, '_')}"`,

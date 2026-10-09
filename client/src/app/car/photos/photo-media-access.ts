@@ -24,8 +24,9 @@ export class PhotoMediaAccess {
 		const generation = this.generation;
 		let blob = await this.storage.retainedPhoto(photoId, fence);
 		if (!blob && !offline) {
-			blob = await firstValueFrom(this.gateway.original(photoId));
-			await this.storage.retainPhoto(photoId, blob, fence);
+			const original = await firstValueFrom(this.gateway.original(photoId));
+			blob = original.blob;
+			await this.storage.retainPhoto(photoId, blob, fence, original.revision);
 		}
 		if (!blob || generation !== this.generation) return null;
 		const url = this.urls.createObjectURL(blob);

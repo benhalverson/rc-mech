@@ -29,6 +29,7 @@ export const OfflineSyncStatusStore = signalStore(
 				...store.maintenance.operations(),
 				...store.settings.operations(),
 				...store.photos.captures(),
+				...store.photos.changes(),
 			].map((operation) => operation.status);
 			statuses.push(
 				...store.voice

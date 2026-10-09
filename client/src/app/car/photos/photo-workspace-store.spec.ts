@@ -32,6 +32,7 @@ const operation: PhotoCapture = {
 };
 const photoView = (captures: readonly PhotoCapture[]): PhotoView => ({
 	photos: [photo],
+	changes: [],
 	captures,
 });
 let store: InstanceType<typeof PhotoWorkspaceStore>;
@@ -49,10 +50,14 @@ let storage: {
 	commitPhoto: ReturnType<typeof vi.fn>;
 	recordPhotoOutcome: ReturnType<typeof vi.fn>;
 	readyPhotoCaptures: ReturnType<typeof vi.fn>;
+	readyPhotoChanges: ReturnType<typeof vi.fn>;
+	commitPhotoChange: ReturnType<typeof vi.fn>;
+	recordPhotoChangeOutcome: ReturnType<typeof vi.fn>;
 	refreshPhotos: ReturnType<typeof vi.fn>;
 };
 let gateway: {
 	apply: ReturnType<typeof vi.fn>;
+	change: ReturnType<typeof vi.fn>;
 	metadata: ReturnType<typeof vi.fn>;
 };
 let connectivity: {
@@ -77,6 +82,9 @@ beforeEach(() => {
 	};
 	view = photoView([]);
 	storage = {
+		readyPhotoChanges: vi.fn(async () => []),
+		commitPhotoChange: vi.fn(async () => view),
+		recordPhotoChangeOutcome: vi.fn(async () => view),
 		readyPhotoCaptures: vi.fn(async () => view?.captures ?? []),
 		refreshPhotos: vi.fn(async () => view),
 		photoView: vi.fn(async () => view),
@@ -90,6 +98,9 @@ beforeEach(() => {
 		}),
 	};
 	gateway = {
+		change: vi.fn(() =>
+			of({ operationId: 'change', outcome: 'applied', photos: [photo] }),
+		),
 		metadata: vi.fn(() => of([photo])),
 		apply: vi.fn(() => of({ operationId: 'op', outcome: 'applied', photo })),
 	};
@@ -360,4 +371,74 @@ it('ignores late metadata persistence and refresh failures', async () => {
 	response.error(new Error('late'));
 	await settle();
 	expect(store.failure()).toBe('');
+});
+
+it('saves prepared edits before acknowledging and synchronizes their durable identities', async () => {
+	offline.hasSnapshot.set(true);
+	await settle();
+	store.mutate({
+		requestId: 'edit',
+		change: { carId: 'car', edit: { kind: 'primary', photo } },
+	});
+	await settle();
+	expect(storage.commitPhotoChange).toHaveBeenCalledWith(
+		'car',
+		{ kind: 'primary', photo },
+		{ ownerKey: 'owner', sessionKey: 'session' },
+	);
+	expect(store.outcome().status).toBe('succeeded');
+	const operation = {
+		operationId: 'change',
+		ownerKey: 'owner',
+		carId: 'car',
+		status: 'pending',
+	};
+	storage.readyPhotoChanges.mockResolvedValueOnce([operation]);
+	store.synchronize();
+	await settle();
+	expect(gateway.change).toHaveBeenCalledWith(operation);
+	expect(storage.recordPhotoChangeOutcome).toHaveBeenCalled();
+	const response = new Subject();
+	gateway.change.mockReturnValue(response);
+	storage.readyPhotoChanges.mockResolvedValueOnce([operation]);
+	store.synchronize();
+	await settle();
+	offline.sessionKey.set('other');
+	response.next({ operationId: 'change', outcome: 'applied', photos: [photo] });
+	response.complete();
+	await settle();
+	expect(store.changes()).toEqual([]);
+});
+
+it.each(['readyPhotoCaptures', 'recordPhotoChangeOutcome'] as const)(
+	'fences a late photo change %s completion',
+	async (method) => {
+		offline.hasSnapshot.set(true);
+		await settle();
+		storage.readyPhotoChanges.mockResolvedValueOnce([
+			{ operationId: 'change' },
+		]);
+		let finish: (value: unknown) => void = () => {};
+		storage[method].mockReturnValueOnce(
+			new Promise((resolve) => {
+				finish = resolve;
+			}),
+		);
+		store.synchronize();
+		await settle();
+		offline.hasSnapshot.set(false);
+		TestBed.tick();
+		finish(method === 'readyPhotoCaptures' ? [] : view);
+		await settle();
+		expect(store.photos()).toEqual([]);
+	},
+);
+
+it('exposes an empty change list before a prepared gallery read completes', async () => {
+	offline.hasSnapshot.set(true);
+	await settle();
+	view = null;
+	store.open();
+	await settle();
+	expect(store.changes()).toEqual([]);
 });

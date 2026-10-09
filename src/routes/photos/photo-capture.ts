@@ -144,6 +144,7 @@ export const createPhotoCaptureRoutes = () => {
 				return reject('Photo capture identity is already in use.');
 		}
 		const record = {
+			revision: 1,
 			id: operationId,
 			carId,
 			objectKey,
@@ -178,6 +179,7 @@ export const createPhotoCaptureRoutes = () => {
 			database.insert(photo).select(
 				database
 					.select({
+						revision: sql<number>`1`.as('revision'),
 						id: sql<string>`${record.id}`.as('id'),
 						carId: sql<string>`${carId}`.as('carId'),
 						objectKey: sql<string>`${objectKey}`.as('objectKey'),

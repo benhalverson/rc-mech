@@ -97,7 +97,7 @@ describe('OfflineWorkspaceAccess', () => {
 		await expect(access.prepare(owner)).resolves.toEqual({
 			kind: 'ready',
 			snapshot: {
-				contractVersion: 1,
+				contractVersion: 2,
 				ownerKey: 'user-1',
 				ownerEmail: 'racer@example.test',
 				offlineUntil: '2026-08-12T12:00:00.000Z',

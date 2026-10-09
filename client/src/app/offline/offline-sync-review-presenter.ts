@@ -2,6 +2,9 @@ import type { SyncReview } from './offline-sync-review.models';
 export type ReviewField = Readonly<{ label: string; value: string }>;
 const hidden = new Set([
 	'id',
+	'revision',
+	'url',
+	'objectKey',
 	'ownerKey',
 	'carId',
 	'operationId',

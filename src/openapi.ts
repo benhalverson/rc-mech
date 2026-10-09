@@ -448,6 +448,64 @@ export const openApi = {
 				},
 			},
 		},
+		'/api/v1/cars/{carId}/photos/operations/{operationId}': {
+			put: {
+				summary:
+					'Idempotently replace, delete, designate, or reorder private photos against reviewed revisions',
+				parameters: [
+					{
+						name: 'carId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'multipart/form-data': {
+							schema: {
+								type: 'object',
+								required: ['command'],
+								properties: {
+									command: {
+										type: 'string',
+										description:
+											'Strict photo.change JSON with carId, action, photoId, order, base photo revisions, and replacement metadata (null unless replacing).',
+									},
+									file: {
+										type: 'string',
+										format: 'binary',
+										description:
+											'Required only for replace; bytes and metadata must match the immutable command.',
+									},
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					200: {
+						description:
+							'Applied gallery; repeated identities replay the same result after durable byte cleanup',
+					},
+					409: {
+						description:
+							'Canonical rejection or conflict with current gallery metadata; device intent remains retained',
+					},
+					422: { description: 'Invalid command or replacement metadata' },
+					503: {
+						description: 'Retry the same operation identity and retained bytes',
+					},
+				},
+			},
+		},
 		'/api/v1/cars/{carId}/photos/captures/{operationId}': {
 			put: {
 				summary: 'Idempotently upload a locally retained photo capture',

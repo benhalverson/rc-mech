@@ -207,3 +207,71 @@ it('keeps replacement identity separate from the reviewed Component it replaces'
 		base: previous,
 	});
 });
+
+it('retries photo intent only against the reviewed gallery and retains removed-photo evidence', () => {
+	const photo = {
+		id: 'photo',
+		carId: 'car',
+		revision: 3,
+		contentType: 'image/jpeg',
+		createdAt: 'today',
+	};
+	const review: SyncReview = {
+		family: 'photo',
+		operation: {
+			ownerKey: 'owner',
+			operationId: 'op',
+			carId: 'car',
+			createdAt: 1,
+			status: 'conflict',
+			dependencies: [],
+			command: {
+				type: 'photo.change',
+				carId: 'car',
+				action: 'primary',
+				photoId: 'photo',
+				base: [],
+				order: [],
+				replacement: null,
+			},
+			remote: [photo],
+		},
+	};
+	expect(retryReviewedOperation(review, 'new').command).toMatchObject({
+		base: [{ id: 'photo', revision: 3 }],
+	});
+	expect(
+		retryReviewedOperation(
+			{ ...review, operation: { ...review.operation, remote: undefined } },
+			'new',
+		).command,
+	).toEqual(review.operation.command);
+	expect(() =>
+		retryReviewedOperation(
+			{ ...review, operation: { ...review.operation, remote: [] } },
+			'new',
+		),
+	).toThrow('removed');
+	const reorder = {
+		...review,
+		operation: {
+			...review.operation,
+			command: {
+				...review.operation.command,
+				action: 'reorder' as const,
+				photoId: null,
+				order: ['photo'],
+			},
+		},
+	};
+	expect(retryReviewedOperation(reorder, 'new').command).toMatchObject({
+		order: ['photo'],
+	});
+	for (const remote of [[], [{ ...photo, id: 'other' }]])
+		expect(() =>
+			retryReviewedOperation(
+				{ ...reorder, operation: { ...reorder.operation, remote } },
+				'new',
+			),
+		).toThrow('membership');
+});

@@ -15,7 +15,7 @@
 	</header>
 
 @if (captureFeedback()) { <p role="status" class="alloy-supporting-text">{{ captureFeedback() }}</p> }
-@if (offline()) { <p class="alloy-supporting-text">New photos are saved on this device. Replacing, deleting, and arranging photos needs a connection.</p> }
+@if (offline()) { <p class="alloy-supporting-text">Photo changes are saved on this device and synchronize when the connection returns.</p> }
 	@if (archived()) {
 		<p class="alloy-state alloy-attention-state mt-0">
 			<span class="alloy-state-heading"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span>
@@ -90,7 +90,7 @@
 								<span class="alloy-technical mt-1 block text-alloy-text-secondary">Position {{ index + 1 }}</span>
 							</div>
 						</div>
-						@if (!archived() && !offline()) {
+						@if (!archived()) {
 							<div class="photo-actions flex flex-wrap gap-2" role="group" [attr.aria-label]="'Photo ' + (index + 1) + ' actions'">
 								<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring inline-flex min-w-12 items-center justify-center" type="button" (click)="move(photo, -1)" [disabled]="index === 0 || action() !== null" [attr.aria-label]="'Move photo earlier: photo ' + (index + 1)">
 									<svg lucideMoveUp size="18" strokeWidth="1.8" aria-hidden="true"></svg>

@@ -146,6 +146,9 @@ describe('CarPhotoStore', () => {
 		available: signal(false),
 		photos: signal<readonly CarPhoto[]>([]),
 		captures: signal<readonly PhotoCapture[]>([]),
+		changes: signal<
+			readonly import('./photo-sync.models').PhotoChangeOperation[]
+		>([]),
 		outcome: signal<PhotoCaptureMutationOutcome>({
 			status: 'idle',
 			requestId: null,
@@ -457,20 +460,69 @@ describe('CarPhotoStore', () => {
 		await Promise.resolve();
 		expect(store.media()['photo-1']).toBeUndefined();
 	});
-	it('refreshes the shared metadata after online replacement, deletion, and ordering', () => {
+	it('routes every prepared gallery edit through durable persistence', () => {
 		workspace.available.set(true);
 		workspace.photos.set([photo()]);
 		store.selectCar('car-1');
-		store.mutate({ kind: 'replace', photo: photo(), file });
-		gateway.succeed('replace', photo());
-		expect(workspace.refresh).toHaveBeenCalledWith('photo-1');
-		store.mutate({ kind: 'delete', photo: photo() });
-		gateway.succeed('delete', { deleted: true });
-		expect(workspace.refresh).toHaveBeenCalledWith('photo-1');
-		store.mutate({ kind: 'primary', photo: photo() });
-		gateway.succeed('primary', photo());
-		expect(workspace.refresh).toHaveBeenCalledWith(undefined);
+		for (const command of [
+			{ kind: 'replace' as const, photo: photo(), file },
+			{ kind: 'delete' as const, photo: photo() },
+			{ kind: 'primary' as const, photo: photo() },
+			{ kind: 'reorder' as const, photos: [photo()] },
+		]) {
+			store.mutate(command);
+			expect(workspace.mutate).toHaveBeenLastCalledWith({
+				requestId: expect.any(String),
+				change: { carId: 'car-1', edit: command },
+			});
+		}
+		expect(gateway.replace).not.toHaveBeenCalled();
 		store.retry();
 		expect(workspace.refresh).toHaveBeenCalled();
+	});
+	it('refreshes metadata when offline preparation completes during a legacy request', () => {
+		store.selectCar('car-1');
+		for (const kind of ['replace', 'delete', 'primary'] as const) {
+			workspace.available.set(false);
+			store.mutate(
+				kind === 'replace'
+					? { kind, photo: photo(), file }
+					: { kind, photo: photo() },
+			);
+			workspace.available.set(true);
+			if (kind === 'delete') gateway.succeed(kind, { deleted: true });
+			else gateway.succeed(kind, photo());
+			expect(workspace.refresh).toHaveBeenLastCalledWith(
+				kind === 'primary' ? undefined : 'photo-1',
+			);
+		}
+		workspace.changes.set([
+			{
+				ownerKey: 'owner',
+				operationId: 'change',
+				carId: 'car-1',
+				createdAt: 1,
+				status: 'conflict',
+				dependencies: [],
+				command: {
+					type: 'photo.change',
+					carId: 'car-1',
+					action: 'primary',
+					photoId: 'photo-1',
+					order: [],
+					base: [],
+					replacement: null,
+				},
+				feedback: { code: 'CONFLICT', message: 'Changed' },
+			},
+		]);
+		expect(store.captureFeedback()).toContain('Changed');
+		workspace.changes.set([{ ...workspace.changes()[0], feedback: undefined }]);
+		expect(store.captureFeedback()).toContain('Needs attention');
+		workspace.changes.set([]);
+		workspace.available.set(false);
+		workspace.offline.networkUnavailable.set(true);
+		store.mutate({ kind: 'delete', photo: photo() });
+		expect(gateway.delete).toHaveBeenCalledTimes(1);
 	});
 });

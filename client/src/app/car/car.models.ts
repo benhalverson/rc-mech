@@ -52,6 +52,9 @@ export type InstalledComponent = {
 };
 
 export type CarPhoto = {
+	revision?: number;
+	fileName?: string;
+	byteSize?: number;
 	id: string;
 	carId: string;
 	objectKey?: string;
@@ -65,6 +68,9 @@ export type CarPhoto = {
 };
 
 export const carPhotoSchema = object({
+	revision: optional(number()),
+	fileName: optional(string()),
+	byteSize: optional(number()),
 	id: string(),
 	carId: string(),
 	objectKey: optional(string()),
