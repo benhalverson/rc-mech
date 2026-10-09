@@ -1725,4 +1725,81 @@ describe('OfflineGarageStorage', () => {
 			inspect.close();
 		},
 	);
+	it('retains Consumable identities and dependencies through restart, archive, restore, and duplicate acknowledgement', async () => {
+		await prepareMaintenance();
+		const committed = await storage.commitMaintenance(
+			{
+				kind: 'save',
+				mode: 'create',
+				carId: 'car',
+				id: null,
+				maintenance: {
+					kind: 'tires',
+					axle: 'front',
+					frontDetails: 'Pins',
+					frontCost: 12,
+					performedAt: '2026-08-11T12:00:00.000Z',
+				},
+			},
+			userAFence,
+		);
+		const record = committed.current.collections[0].consumables?.[0];
+		expect(record).toBeDefined();
+		if (!record) throw new Error('Missing retained fixture');
+		await storage.commitMaintenance(
+			{
+				kind: 'change',
+				action: 'archive',
+				entry: {
+					id: record.id,
+					carId: 'car',
+					kind: 'tires',
+					performedAt: record.performedAt,
+				},
+			},
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		const acknowledgement = {
+			operationId: committed.operations[0].operationId,
+			outcome: 'applied' as const,
+			collection: { ...committed.current.collections[0], version: 2 },
+		};
+		await storage.recordMaintenanceOutcome(acknowledgement, userAFence);
+		await storage.recordMaintenanceOutcome(acknowledgement, userAFence);
+		const archived = await storage.maintenanceSyncView(userAFence);
+		expect(archived.current.collections[0].consumables).toHaveLength(1);
+		expect(
+			archived.current.collections[0].consumables?.[0].archivedAt,
+		).not.toBeNull();
+		const pending = await storage.readyMaintenanceOperations(userAFence);
+		expect(pending).toHaveLength(1);
+		expect(pending[0].command.base).toMatchObject({ id: record.id });
+		await storage.commitMaintenance(
+			{
+				kind: 'change',
+				action: 'restore',
+				entry: {
+					id: record.id,
+					carId: 'car',
+					kind: 'tires',
+					performedAt: record.performedAt,
+				},
+			},
+			userAFence,
+		);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		const restored = await storage.maintenanceSyncView(userAFence);
+		expect(restored.current.collections[0].consumables?.[0]).toMatchObject({
+			id: record.id,
+			frontCost: 12,
+			archivedAt: null,
+		});
+	});
 });

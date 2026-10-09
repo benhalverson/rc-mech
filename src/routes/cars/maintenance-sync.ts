@@ -9,14 +9,16 @@ import { maintenanceSyncCommandInput } from '../../maintenance-sync-contract';
 import {
 	car,
 	component,
+	consumableMaintenanceEntry,
 	maintenancePlan,
 	serviceRecord,
 	syncOperation,
 } from '../../schema';
 import type { AppContext } from '../../types';
 import { ownedCar } from './car-records';
+import { applyConsumableSyncOperation } from './consumable-sync';
 
-type SyncContext = Readonly<{
+export type SyncContext = Readonly<{
 	command: Readonly<{ type: string; carId: string }>;
 	operationId: string;
 	requestHash: string;
@@ -65,6 +67,8 @@ export const applyMaintenanceSyncOperation = async (
 	const parsed = maintenanceSyncCommandInput.safeParse(command);
 	if (!parsed.success) return reject('Maintenance change needs attention', 422);
 	const change = parsed.data;
+	if (change.entity === 'consumable')
+		return applyConsumableSyncOperation(c, context, change);
 	const parent = await ownedCar(c, change.carId);
 	if (!parent) return reject('Car not found', 404);
 	if (parent.archivedAt !== null)
@@ -72,6 +76,12 @@ export const applyMaintenanceSyncOperation = async (
 	const read = async (version: number): Promise<MaintenanceCollection> => ({
 		carId: parent.id,
 		version,
+		consumables: (await database
+			.select()
+			.from(consumableMaintenanceEntry)
+			.where(
+				eq(consumableMaintenanceEntry.carId, parent.id),
+			)) as MaintenanceCollection['consumables'],
 		plans: (await database
 			.select()
 			.from(maintenancePlan)

@@ -46,7 +46,10 @@ const reportAxle = (
 ): TireReportAxle => {
 	const events = entries
 		.filter((entry) => includesAxle(entry, axle))
-		.sort((a, b) => b.performedAt.localeCompare(a.performedAt));
+		.sort(
+			(a, b) =>
+				b.performedAt.localeCompare(a.performedAt) || a.id.localeCompare(b.id),
+		);
 	return {
 		latest: events[0] ?? null,
 		eventCount: events.length,
@@ -59,13 +62,39 @@ const reportAxle = (
 	};
 };
 
+const tireSpend = (
+	entries: readonly ConsumableEntry[],
+	axles: readonly ('front' | 'rear')[],
+): number | null => {
+	const values = entries
+		.flatMap((entry) =>
+			axles
+				.filter((axle) => includesAxle(entry, axle))
+				.map((axle) => ({
+					cost: axle === 'front' ? entry.frontCost : entry.rearCost,
+					currency:
+						(axle === 'front' ? entry.frontCurrency : entry.rearCurrency) ??
+						'USD',
+				})),
+		)
+		.filter((value) => value.cost != null);
+	return new Set(values.map((value) => value.currency)).size > 1
+		? null
+		: values.reduce(
+				(total, value) => total + Math.round(Number(value.cost) * 100),
+				0,
+			) / 100;
+};
 export const buildTireReport = (entries: ConsumableEntry[]): TireReport => {
 	const tires = entries.filter(
 		(entry) => entry.kind === 'tires' && !entry.deletedAt,
 	);
 	const fluidEntries = entries
 		.filter((entry) => entry.kind !== 'tires' && !entry.deletedAt)
-		.sort((a, b) => b.performedAt.localeCompare(a.performedAt));
+		.sort(
+			(a, b) =>
+				b.performedAt.localeCompare(a.performedAt) || a.id.localeCompare(b.id),
+		);
 	const missingCostEntries = tires.filter((entry) => {
 		const frontMissing =
 			includesAxle(entry, 'front') && entry.frontCost == null;
@@ -76,13 +105,9 @@ export const buildTireReport = (entries: ConsumableEntry[]): TireReport => {
 		front: reportAxle(tires, 'front'),
 		rear: reportAxle(tires, 'rear'),
 		spend: {
-			front: tires.reduce((total, entry) => total + (entry.frontCost ?? 0), 0),
-			rear: tires.reduce((total, entry) => total + (entry.rearCost ?? 0), 0),
-			combined: tires.reduce(
-				(total, entry) =>
-					total + (entry.frontCost ?? 0) + (entry.rearCost ?? 0),
-				0,
-			),
+			front: tireSpend(tires, ['front']),
+			rear: tireSpend(tires, ['rear']),
+			combined: tireSpend(tires, ['front', 'rear']),
 			missingCostEntries,
 		},
 		fluidEntries,

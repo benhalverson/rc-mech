@@ -9,6 +9,7 @@ import {
 	OfflineGarageStorage,
 } from '../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
+import { tireRecord } from './consumables/consumable-sync.testing';
 import type {
 	MaintenanceRemoteOutcome,
 	MaintenanceView,
@@ -44,6 +45,9 @@ let offline: {
 };
 let view: MaintenanceView | null;
 const cars = {
+	setupCollections: signal<
+		import('../car/setups/setup-sync.models').SetupSyncCollection[]
+	>([]),
 	cars: signal([{ id: 'car', name: 'Buggy' }]),
 	operations: signal([]),
 	driveOperations: signal([]),
@@ -423,4 +427,52 @@ it('refreshes remote snapshots while fencing late transport and persistence', as
 	failure.error(new Error('late'));
 	await settle();
 	expect(store.failure()).toBe('');
+});
+
+it('projects Consumables and selected local Setup tires without a request', async () => {
+	expect(store.consumables()).toEqual([]);
+	expect(store.tireSetups().size).toBe(0);
+	view = maintenanceView(
+		{
+			...canonical,
+			collections: [{ ...canonical.collections[0], consumables: [tireRecord] }],
+		},
+		[],
+	);
+	offline.hasSnapshot.set(true);
+	await settle();
+	expect(store.consumables()[0]).toMatchObject({
+		id: 'tire',
+		frontDetails: 'Front pins',
+	});
+	const sections = {
+		vehicle: {},
+		drivetrain: {},
+		electronics: {},
+		tires: { frontTire: 'Pins' },
+		shocks: {},
+		frontSuspension: {},
+		rearSuspension: {},
+		notes: {},
+	};
+	cars.setupCollections.set([
+		{
+			carId: 'car',
+			currentSetupId: 'setup',
+			currentSetupVersion: 1,
+			setups: [{ id: 'setup', carId: 'car', name: 'Current', sections }],
+		},
+		{
+			carId: 'empty',
+			currentSetupId: null,
+			currentSetupVersion: 0,
+			setups: [],
+		},
+	]);
+	expect(store.tireSetups().get('car')).toEqual({ frontTire: 'Pins' });
+	expect(store.tireSetups().get('empty')).toBeNull();
+	view = maintenanceView(canonical, []);
+	store.open();
+	await settle();
+	expect(store.consumables()).toEqual([]);
 });

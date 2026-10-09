@@ -41,6 +41,7 @@ export class ConsumableMaintenance {
 		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
 	);
 	protected readonly error = this.store.error;
+	protected readonly syncMessage = this.store.syncMessage;
 	protected readonly action = this.store.action;
 	protected readonly hasActiveCars = computed(() =>
 		this.store.cars().some((car) => !car.archivedAt),

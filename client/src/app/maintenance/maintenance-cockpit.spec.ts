@@ -74,6 +74,7 @@ const serviceStore = {
 };
 
 const consumableStore = {
+	syncMessage: signal(''),
 	cars: planStore.cars,
 	timezone: planStore.timezone,
 	entries: signal([]),

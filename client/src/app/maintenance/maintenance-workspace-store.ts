@@ -18,6 +18,7 @@ import {
 	type OfflineWorkspaceFence,
 } from '../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
+import { consumableEntry } from './consumables/consumable-sync-rules';
 import type {
 	MaintenanceCommand,
 	MaintenanceView,
@@ -106,6 +107,27 @@ export const MaintenanceWorkspaceStore = signalStore(
 				store
 					.current()
 					?.collections.flatMap((collection) => collection.records) ?? [],
+		),
+		tireSetups: computed(
+			() =>
+				new Map(
+					store.carWorkspace
+						.setupCollections()
+						.map((collection) => [
+							collection.carId,
+							collection.setups.find(
+								(setup) => setup.id === collection.currentSetupId,
+							)?.sections.tires ?? null,
+						]),
+				),
+		),
+		consumables: computed(
+			() =>
+				store
+					.current()
+					?.collections.flatMap((collection) =>
+						(collection.consumables ?? []).map(consumableEntry),
+					) ?? [],
 		),
 		components: computed(() => store.current()?.components ?? []),
 		timezone: computed(() => store.current()?.timezone ?? 'UTC'),

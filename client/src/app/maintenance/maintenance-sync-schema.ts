@@ -32,11 +32,40 @@ export const serviceSnapshotSchema = z.object({
 	previousBaselineSessionCount: nullableNumber,
 	deletedAt: nullableString,
 });
+export const consumableSnapshotSchema = z.object({
+	...identity,
+	kind: z.enum(['tires', 'fluid']),
+	performedAt: z.string(),
+	fluidArea: z.nullable(
+		z.enum([
+			'front-shocks',
+			'rear-shocks',
+			'front-differential',
+			'rear-differential',
+			'custom',
+		]),
+	),
+	customFluidArea: nullableString,
+	frontDetails: nullableString,
+	frontCost: nullableNumber,
+	frontCurrency: nullableString,
+	rearDetails: nullableString,
+	rearCost: nullableNumber,
+	rearCurrency: nullableString,
+	cost: nullableNumber,
+	currency: nullableString,
+	notes: nullableString,
+	prefilledFromSetupId: nullableString,
+	archivedAt: nullableString,
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
 export const maintenanceCollectionSchema = z.object({
 	carId: z.string(),
 	version: z.number(),
 	plans: z.array(planSnapshotSchema),
 	records: z.array(serviceSnapshotSchema),
+	consumables: z.optional(z.array(consumableSnapshotSchema)),
 });
 export const maintenanceSnapshotSchema = z.object({
 	collections: z.array(maintenanceCollectionSchema),

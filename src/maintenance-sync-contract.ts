@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { consumableChangeInput } from './consumable-sync-contract';
 
 const identity = { id: z.uuid(), carId: z.uuid() };
 export const maintenancePlanSnapshot = z
@@ -40,6 +41,7 @@ const common = {
 	baseVersion: z.number().int().nonnegative(),
 };
 export const maintenanceSyncCommandInput = z.discriminatedUnion('entity', [
+	consumableChangeInput,
 	z
 		.object({
 			...common,

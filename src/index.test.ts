@@ -194,6 +194,7 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 		'drive.change',
 		'maintenance.change',
 		'maintenance.change',
+		'maintenance.change',
 		'car.create',
 		'car.edit',
 		'car.archive',
