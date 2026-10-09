@@ -29,6 +29,8 @@ export const installedComponentSchema = object({
 
 export const installedComponentCollectionSchema = object({
 	components: array(installedComponentSchema),
+	carId: optional(string()),
+	version: optional(number()),
 });
 
 export const installedComponentMutationSchema = object({
@@ -50,6 +52,9 @@ export type InstalledComponent = {
 };
 
 export type CarPhoto = {
+	revision?: number;
+	fileName?: string;
+	byteSize?: number;
 	id: string;
 	carId: string;
 	objectKey?: string;
@@ -62,7 +67,17 @@ export type CarPhoto = {
 	url?: string;
 };
 
+/**
+ * Parses authenticated API photo metadata into the shape also used by local
+ * gallery records. Revision supports conflict/cache freshness checks, fileName
+ * labels review evidence, and byteSize preserves replacement metadata. These
+ * keys must survive parsing; optionality accommodates older local records and
+ * fixtures even though the current server returns all three fields.
+ */
 export const carPhotoSchema = object({
+	revision: optional(number()),
+	fileName: optional(string()),
+	byteSize: optional(number()),
 	id: string(),
 	carId: string(),
 	objectKey: optional(string()),
@@ -158,7 +173,7 @@ export type CarLifecycleOutcome =
 			readonly error: CarGatewayFailure;
 	  };
 
-export type BuildMode = 'add' | 'edit' | 'replace';
+export type BuildMode = 'add' | 'edit' | 'replace' | 'remove';
 
 export type BuildComponentInput = {
 	readonly slot?: string;

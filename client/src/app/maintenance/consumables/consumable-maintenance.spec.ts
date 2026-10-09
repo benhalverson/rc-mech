@@ -35,6 +35,7 @@ const store = {
 	report: signal<MaintenanceReport | null>(null),
 	loading: signal(false),
 	error: signal(''),
+	syncMessage: signal(''),
 	action: signal<string | null>(null),
 	outcome: signal<ConsumableOutcome>({ status: 'idle', operationId: null }),
 	tireLookup: signal<TireLookupOutcome>({ status: 'idle', carId: null }),
@@ -68,6 +69,7 @@ describe('ConsumableMaintenance', () => {
 		store.error.set('');
 		store.action.set(null);
 		store.outcome.set({ status: 'idle', operationId: null });
+		store.syncMessage.set('');
 		store.tireLookup.set({ status: 'idle', carId: null });
 		await TestBed.configureTestingModule({
 			imports: [ConsumableMaintenance],
@@ -100,7 +102,9 @@ describe('ConsumableMaintenance', () => {
 		expect(store.clearOutcome).toHaveBeenCalledOnce();
 		expect(store.retry).toHaveBeenCalledOnce();
 		store.error.set('');
+		store.syncMessage.set('Pending sync');
 		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Pending sync');
 		expect(fixture.nativeElement.textContent).toContain('Current history');
 		expect(app.hasVisibleEntries()).toBe(true);
 	});

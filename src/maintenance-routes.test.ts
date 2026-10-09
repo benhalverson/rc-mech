@@ -568,7 +568,7 @@ describe('drive and preference routes', () => {
 		const { d1, request } = fixture();
 		d1.queue(
 			{ kind: 'first', value: car() },
-			{ kind: 'run' },
+			{ kind: 'batch', changes: [1, 1] },
 			{ kind: 'first', value: drive() },
 			{ kind: 'first', value: { timezone: 'UTC' } },
 		);
@@ -588,7 +588,7 @@ describe('drive and preference routes', () => {
 		d1.queue(
 			{ kind: 'first', value: car() },
 			{ kind: 'first', value: drive() },
-			{ kind: 'run' },
+			{ kind: 'batch', changes: [1, 1] },
 			{ kind: 'first', value: drive({ notes: 'updated' }) },
 			{ kind: 'first', value: { timezone: 'UTC' } },
 		);
@@ -608,7 +608,7 @@ describe('drive and preference routes', () => {
 		d1.queue(
 			{ kind: 'first', value: car() },
 			{ kind: 'first', value: drive() },
-			{ kind: 'run' },
+			{ kind: 'batch', changes: [1, 1] },
 			{ kind: 'first', value: { timezone: 'UTC' } },
 		);
 		expect(
@@ -861,7 +861,7 @@ describe('maintenance plans and service records', () => {
 			const { d1, request } = fixture();
 			d1.queue(
 				{ kind: 'first', value: car() },
-				{ kind: 'run' },
+				{ kind: 'batch', changes: [1, 1] },
 				{ kind: 'first', value: drive() },
 				{ kind: 'first', value: { timezone: 'UTC' } },
 			);
@@ -1278,6 +1278,7 @@ describe('maintenance plans and service records', () => {
 		for (const [action, before, after] of [
 			['pause', plan(), plan({ status: 'paused' })],
 			['resume', plan({ status: 'paused' }), plan()],
+			['restore', plan({ status: 'archived' }), plan()],
 			['archive', plan(), plan({ status: 'archived' })],
 		] as const) {
 			d1.queue(
@@ -2072,7 +2073,7 @@ describe('maintenance route failures', () => {
 		d1.queue(
 			{ kind: 'first', value: car() },
 			{ kind: 'first', value: drive() },
-			{ kind: 'run' },
+			{ kind: 'batch', changes: [1, 1] },
 			{ kind: 'first', value: null },
 		);
 		expect(

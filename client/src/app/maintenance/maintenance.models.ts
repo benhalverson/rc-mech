@@ -97,6 +97,8 @@ export type ConsumableEntry = {
 	frontDetails?: string | null;
 	rearDetails?: string | null;
 	frontCost?: number | null;
+	frontCurrency?: string | null;
+	rearCurrency?: string | null;
 	rearCost?: number | null;
 	cost?: number | null;
 	currency?: string | null;

@@ -1,8 +1,9 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -27,10 +28,11 @@ import { VoiceConnectivity } from './voice-connectivity';
 import { VoiceGateway } from './voice-gateway';
 import { VoiceOfflineQueue } from './voice-offline-queue';
 import { VoiceRecorder } from './voice-recorder';
+import { VoiceWorkspaceStore } from './voice-workspace-store';
 
 type VoiceLogState = {
 	readonly carId: string;
-	readonly localCaptures: PendingVoiceCapture[];
+	readonly legacyCaptures: PendingVoiceCapture[];
 	readonly optimisticUpdates: VoiceUpdate[];
 	readonly recordingMode: VoiceRecordingMode | null;
 	readonly recorderError: string;
@@ -155,10 +157,16 @@ const successMessage = (
 	}
 };
 
+/**
+ * Route workflow for Voice capture, provenance, corrections, and confirmation.
+ * Delegates prepared captures to VoiceWorkspaceStore while retaining the legacy
+ * online path; server-dependent processing remains explicit rather than being
+ * reported as completed by a local save.
+ */
 export const VoiceLogStore = signalStore(
 	withState<VoiceLogState>({
 		carId: '',
-		localCaptures: [],
+		legacyCaptures: [],
 		optimisticUpdates: [],
 		recordingMode: null,
 		recorderError: '',
@@ -167,6 +175,17 @@ export const VoiceLogStore = signalStore(
 	}),
 	withProps(() => ({
 		gateway: inject(VoiceGateway),
+		workspace: inject(VoiceWorkspaceStore),
+		localRequest: {
+			value: null as null | Readonly<{
+				requestId: string;
+				operationId: number;
+				operation: 'capture-text' | 'capture-audio' | 'discard-local';
+				subjectId: string;
+				carId: string;
+				generation: number;
+			}>,
+		},
 		queue: inject(VoiceOfflineQueue),
 		connectivity: inject(VoiceConnectivity),
 		ownerSession: inject(OwnerSessionStore),
@@ -175,12 +194,26 @@ export const VoiceLogStore = signalStore(
 		selectionGeneration: { value: 0 },
 	})),
 	withComputed((store) => ({
+		offlinePrepared: computed(() => store.workspace.available()),
+		media: computed(() => store.workspace.media()),
+		localCaptures: computed(() =>
+			store.workspace.available()
+				? store.workspace
+						.captures()
+						.filter((capture) => capture.carId === store.carId())
+				: store.legacyCaptures(),
+		),
+		remoteAvailable: computed(() => store.workspace.remoteAvailable()),
 		updates: computed<readonly VoiceUpdate[]>(() => {
-			const remote = store.gateway.updates.hasValue()
-				? store.gateway.updates
-						.value()
+			const remote = store.workspace.available()
+				? store.workspace
+						.updates()
 						.filter((update) => update.carId === store.carId())
-				: [];
+				: store.gateway.updates.hasValue()
+					? store.gateway.updates
+							.value()
+							.filter((update) => update.carId === store.carId())
+					: [];
 			const remoteById = new Map(remote.map((update) => [update.id, update]));
 			const optimistic = store.optimisticUpdates().filter((update) => {
 				if (update.carId !== store.carId()) return false;
@@ -194,12 +227,17 @@ export const VoiceLogStore = signalStore(
 			];
 		}),
 		cars: computed(() =>
-			store.gateway.contextCars.hasValue()
-				? store.gateway.contextCars.value()
-				: [],
+			store.workspace.available()
+				? store.workspace.cars()
+				: store.gateway.contextCars.hasValue()
+					? store.gateway.contextCars.value()
+					: [],
 		),
-		loading: computed(() => store.gateway.updates.isLoading()),
+		loading: computed(
+			() => !store.workspace.available() && store.gateway.updates.isLoading(),
+		),
 		readError: computed(() => {
+			if (store.workspace.available()) return store.workspace.failure();
 			const failure = store.gateway.updatesFailure();
 			if (!failure) return '';
 			if ('status' in failure && failure.status === 401)
@@ -244,7 +282,7 @@ export const VoiceLogStore = signalStore(
 			const captures = await store.queue.list(ownerKey());
 			if (!active(carId, generation)) return;
 			patchState(store, {
-				localCaptures: captures.filter((capture) => capture.carId === carId),
+				legacyCaptures: captures.filter((capture) => capture.carId === carId),
 			});
 		};
 
@@ -390,6 +428,19 @@ export const VoiceLogStore = signalStore(
 			pendingCapture: PendingVoiceCapture,
 			generation: number,
 		): Promise<void> => {
+			if (store.workspace.available()) {
+				const requestId = pendingCapture.id;
+				store.localRequest.value = {
+					requestId,
+					operationId,
+					operation,
+					subjectId: pendingCapture.id,
+					carId: pendingCapture.carId,
+					generation,
+				};
+				store.workspace.keep({ capture: pendingCapture, requestId });
+				return;
+			}
 			try {
 				await store.queue.put(pendingCapture);
 				await reloadLocal(pendingCapture.carId, generation);
@@ -436,12 +487,21 @@ export const VoiceLogStore = signalStore(
 		): void => {
 			const operationId = begin(operation, subjectId);
 			if (operationId === null) return;
+			if (!store.workspace.remoteAvailable()) {
+				fail(operation, operationId, subjectId, {
+					kind: 'processing',
+					message:
+						'Voice transcription, corrections, and confirmation are waiting for connectivity.',
+				});
+				return;
+			}
 			const carId = store.carId();
 			const generation = store.selectionGeneration.value;
 			void firstValueFrom(request()).then(
 				(response) => {
 					if (!active(carId, generation)) return;
 					store.gateway.refresh();
+					if (store.workspace.available()) store.workspace.refresh();
 					succeed(
 						operation,
 						operationId,
@@ -497,11 +557,15 @@ export const VoiceLogStore = signalStore(
 		};
 
 		const loadLocalAndRetry = (carId: string, generation: number): void => {
+			if (store.workspace.available()) {
+				store.workspace.synchronize();
+				return;
+			}
 			void store.queue.list(ownerKey()).then(
 				(captures) => {
 					if (!active(carId, generation)) return;
 					patchState(store, {
-						localCaptures: captures.filter(
+						legacyCaptures: captures.filter(
 							(capture) => capture.carId === carId,
 						),
 					});
@@ -531,7 +595,7 @@ export const VoiceLogStore = signalStore(
 				store.selectionGeneration.value += 1;
 				patchState(store, {
 					carId,
-					localCaptures: [],
+					legacyCaptures: [],
 					optimisticUpdates: [],
 					recordingMode: null,
 					recorderError: '',
@@ -551,6 +615,13 @@ export const VoiceLogStore = signalStore(
 					mode.kind === 'correction' ? mode.id : null,
 				);
 				if (operationId === null) return;
+				if (mode.kind === 'correction' && !store.workspace.remoteAvailable()) {
+					fail('start-recording', operationId, mode.id, {
+						kind: 'processing',
+						message: 'Voice corrections are waiting for connectivity.',
+					});
+					return;
+				}
 				const carId = store.carId();
 				const generation = store.selectionGeneration.value;
 				patchState(store, { recordingMode: mode });
@@ -605,6 +676,7 @@ export const VoiceLogStore = signalStore(
 							(response) => {
 								if (!active(carId, generation)) return;
 								store.gateway.refresh();
+								if (store.workspace.available()) store.workspace.refresh();
 								succeed('correct-audio', operationId, mode.id, response);
 							},
 							(error: unknown) => {
@@ -659,6 +731,10 @@ export const VoiceLogStore = signalStore(
 				);
 			},
 			retryQueued(): void {
+				if (store.workspace.available()) {
+					store.workspace.retry();
+					return;
+				}
 				if (!store.connectivity.isOnline()) return;
 				const operationId = begin('retry-queued', null);
 				if (operationId === null) return;
@@ -671,6 +747,19 @@ export const VoiceLogStore = signalStore(
 				if (operationId === null) return;
 				const carId = store.carId();
 				const generation = store.selectionGeneration.value;
+				if (store.workspace.available()) {
+					const requestId = `discard:${id}:${operationId}`;
+					store.localRequest.value = {
+						requestId,
+						operationId,
+						operation: 'discard-local',
+						subjectId: id,
+						carId,
+						generation,
+					};
+					store.workspace.discard({ id, requestId });
+					return;
+				}
 				void (async () => {
 					try {
 						await store.queue.remove(id);
@@ -729,7 +818,11 @@ export const VoiceLogStore = signalStore(
 					saved,
 				});
 			},
+			openOriginal(id: string): void {
+				store.workspace.openOriginal(id);
+			},
 			retryRead(): void {
+				if (store.workspace.available()) store.workspace.refresh();
 				store.gateway.refresh();
 			},
 			clearFeedback(): void {
@@ -742,4 +835,45 @@ export const VoiceLogStore = signalStore(
 			},
 		};
 	}),
+	withHooks((store) => ({
+		onInit() {
+			effect(() => {
+				const result = store.workspace.outcome();
+				const request = store.localRequest.value;
+				if (
+					!request ||
+					result.requestId !== request.requestId ||
+					result.status === 'pending' ||
+					request.carId !== store.carId() ||
+					request.generation !== store.selectionGeneration.value
+				)
+					return;
+				if (result.status === 'succeeded')
+					patchState(store, {
+						message:
+							request.operation === 'discard-local'
+								? 'Pending recording discarded.'
+								: 'Voice note saved on this device. Pending sync; transcription and draft extraction wait for connectivity.',
+						outcome: {
+							status: 'succeeded',
+							operation: request.operation,
+							operationId: request.operationId,
+							subjectId: request.subjectId,
+							update: null,
+							destinationCarId: null,
+						},
+					});
+				else
+					patchState(store, {
+						outcome: {
+							status: 'failed',
+							operation: request.operation,
+							operationId: request.operationId,
+							subjectId: request.subjectId,
+							error: { kind: 'local-storage', message: result.message },
+						},
+					});
+			});
+		},
+	})),
 );

@@ -24,6 +24,7 @@ const owner: OfflineOwner = {
 
 class FakeCapabilities {
 	supported = true;
+	storageAvailable = true;
 	readonly prepareShell = vi.fn(async () => true);
 }
 
@@ -31,6 +32,15 @@ class FakeGateway {
 	readonly load = vi.fn(() =>
 		of({
 			cars: [{ id: 'car-1', name: 'Track buggy' }],
+			buildCollections: [],
+			driveCollections: [],
+			photos: [],
+			voiceUpdates: [],
+			settings: {
+				timezone: 'UTC',
+				invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+			},
+			maintenance: { timezone: 'UTC', collections: [], components: [] },
 			setupCollections: [
 				{
 					carId: 'car-1',
@@ -44,6 +54,7 @@ class FakeGateway {
 }
 
 class FakeStorage {
+	readonly isSessionRevoked = vi.fn(async (_sessionKey: string) => false);
 	readonly activate = vi.fn(
 		async (_ownerKey: string, _sessionKey: string) => true,
 	);
@@ -86,11 +97,21 @@ describe('OfflineWorkspaceAccess', () => {
 		await expect(access.prepare(owner)).resolves.toEqual({
 			kind: 'ready',
 			snapshot: {
+				contractVersion: 2,
 				ownerKey: 'user-1',
 				ownerEmail: 'racer@example.test',
 				offlineUntil: '2026-08-12T12:00:00.000Z',
 				preparedAt: '2026-08-11T12:00:00.000Z',
 				cars: [{ id: 'car-1', name: 'Track buggy' }],
+				buildCollections: [],
+				driveCollections: [],
+				photos: [],
+				voiceUpdates: [],
+				settings: {
+					timezone: 'UTC',
+					invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+				},
+				maintenance: { timezone: 'UTC', collections: [], components: [] },
 				setupCollections: [
 					{
 						carId: 'car-1',
@@ -112,6 +133,11 @@ describe('OfflineWorkspaceAccess', () => {
 		const snapshot = storage.save.mock.calls[0]?.[0] ?? null;
 		storage.restoreCurrent.mockResolvedValue(snapshot);
 		await expect(access.restore()).resolves.toEqual(snapshot);
+		storage.restoreCurrent.mockResolvedValue({
+			...(snapshot as OfflineGarageSnapshot),
+			contractVersion: 99,
+		});
+		await expect(access.restore()).resolves.toBeNull();
 		expect(systemClock()).toBe(systemNow);
 		expect(systemNow()).toBeInstanceOf(Date);
 	});
@@ -145,5 +171,12 @@ describe('OfflineWorkspaceAccess', () => {
 		expect(storage.activate).toHaveBeenCalledWith(owner.key, owner.sessionKey);
 		expect(storage.save).not.toHaveBeenCalled();
 		expect(gateway.load).not.toHaveBeenCalled();
+	});
+	it('checks durable revocation only when device storage is available', async () => {
+		expect(await access.isSessionRevoked('session')).toBe(false);
+		storage.isSessionRevoked.mockResolvedValueOnce(true);
+		expect(await access.isSessionRevoked('old')).toBe(true);
+		capabilities.storageAvailable = false;
+		expect(await access.isSessionRevoked('new')).toBe(false);
 	});
 });

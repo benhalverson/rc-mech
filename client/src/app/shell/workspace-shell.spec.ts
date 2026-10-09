@@ -6,10 +6,16 @@ import {
 	withDisabledInitialNavigation,
 } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
+import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
+import { OfflineSyncReviewStore } from '../offline/offline-sync-review-store';
+import { OfflineSyncStatusStore } from '../offline/offline-sync-status-store';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
+import { SettingsWorkspaceStore } from '../settings/settings-workspace-store';
+import { VoiceWorkspaceStore } from '../voice/voice-workspace-store';
 import { ResponsiveViewport } from './responsive-viewport';
 import type { ShellCar } from './shell-car-gateway';
 import { ShellCarStore } from './shell-car-store';
@@ -41,6 +47,7 @@ class FakeSignOutStore {
 			? 'We could not sign you out. Try again.'
 			: '',
 	);
+	readonly cancelSignOut = vi.fn();
 	readonly signOut = vi.fn((_command: SignOutCommand): void => undefined);
 }
 
@@ -100,6 +107,15 @@ describe('WorkspaceShell', () => {
 		await TestBed.configureTestingModule({
 			imports: [WorkspaceShell],
 			providers: [
+				{ provide: OfflineSyncReviewStore, useValue: { reviews: () => [] } },
+				{
+					provide: OfflineSyncStatusStore,
+					useValue: { message: signal('Pending sync: 2') },
+				},
+				{ provide: SettingsWorkspaceStore, useValue: {} },
+				{ provide: PhotoWorkspaceStore, useValue: {} },
+				{ provide: MaintenanceWorkspaceStore, useValue: {} },
+				{ provide: VoiceWorkspaceStore, useValue: {} },
 				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([], withDisabledInitialNavigation()),
 				{ provide: OwnerSessionStore, useValue: session },
@@ -519,6 +535,83 @@ describe('WorkspaceShell', () => {
 		fixture.detectChanges();
 		expect(root.querySelector('.current-car-control')?.textContent).toContain(
 			'Current car unavailable',
+		);
+	});
+	it('warns before destructive sign-out, traps focus, and returns focus when cancelled', async () => {
+		const root = render();
+		const trigger = Array.from(
+			root.querySelectorAll<HTMLButtonElement>('button'),
+		).find(
+			(button) => button.textContent?.trim() === 'Sign out',
+		) as HTMLButtonElement;
+		trigger.click();
+		signOut.outcome.set({
+			status: 'confirmation',
+			operation: 'sign-out',
+			operationId: 1,
+			count: 2,
+		});
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		const dialog = root.querySelector<HTMLElement>(
+			'[role="alertdialog"]',
+		) as HTMLElement;
+		expect(root.querySelector('main')?.hasAttribute('inert')).toBe(true);
+		expect(dialog.textContent).toContain('permanently discarded');
+		const buttons = dialog.querySelectorAll<HTMLButtonElement>('button');
+		expect(document.activeElement).toBe(buttons[0]);
+		buttons[0]?.dispatchEvent(
+			new KeyboardEvent('keydown', {
+				key: 'Tab',
+				shiftKey: true,
+				bubbles: true,
+				cancelable: true,
+			}),
+		);
+		expect(document.activeElement).toBe(buttons[1]);
+		buttons[0]?.click();
+		expect(signOut.cancelSignOut).toHaveBeenCalled();
+		signOut.outcome.set({
+			status: 'idle',
+			operation: 'sign-out',
+			operationId: null,
+		});
+		fixture.detectChanges();
+		await fixture.whenStable();
+		expect(document.activeElement).toBe(trigger);
+		signOut.outcome.set({
+			status: 'confirmation',
+			operation: 'sign-out',
+			operationId: 2,
+			count: 1,
+		});
+		fixture.detectChanges();
+		await fixture.whenStable();
+		const next = root.querySelector<HTMLElement>(
+			'[role="alertdialog"]',
+		) as HTMLElement;
+		next.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+		);
+		expect(signOut.cancelSignOut).toHaveBeenCalledTimes(2);
+		next.querySelectorAll<HTMLButtonElement>('button')[1]?.click();
+		expect(signOut.signOut).toHaveBeenLastCalledWith({
+			operation: 'sign-out',
+			discardPending: true,
+		});
+	});
+	it('can scope the Settings coordinator to a shell host without creating a second remote workflow', async () => {
+		const coordinator = {};
+		TestBed.overrideComponent(WorkspaceShell, {
+			add: {
+				providers: [{ provide: SettingsWorkspaceStore, useValue: coordinator }],
+			},
+		});
+		await TestBed.compileComponents();
+		render();
+		expect(fixture.debugElement.injector.get(SettingsWorkspaceStore)).toBe(
+			coordinator,
 		);
 	});
 });

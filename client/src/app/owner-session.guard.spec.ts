@@ -37,8 +37,9 @@ describe('ownerSessionCanMatch', () => {
 	let router: Router;
 	let loadPrivateFeature: ReturnType<typeof privateFeatureLoader>;
 	const sessionStore = { resolved: vi.fn(), resolutionFailed: vi.fn() };
-	const offlineAccess = { restore: vi.fn() };
+	const offlineAccess = { restore: vi.fn(), isSessionRevoked: vi.fn() };
 	const offlineWorkspace = {
+		networkUnavailable: vi.fn(() => false),
 		hasSnapshotFor: vi.fn(() => false),
 		prepare: vi.fn(),
 		openOffline: vi.fn(),
@@ -49,15 +50,18 @@ describe('ownerSessionCanMatch', () => {
 		sessionStore.resolved.mockReset();
 		sessionStore.resolutionFailed.mockReset().mockReturnValue(false);
 		offlineAccess.restore.mockReset();
+		offlineAccess.isSessionRevoked.mockReset().mockResolvedValue(false);
 		offlineWorkspace.prepare.mockReset();
+		offlineWorkspace.networkUnavailable.mockReset().mockReturnValue(false);
 		offlineWorkspace.openOffline.mockReset();
 		offlineWorkspace.hasSnapshotFor.mockReset().mockReturnValue(false);
 		TestBed.configureTestingModule({
 			providers: [
 				provideRouter([
 					{ path: 'sign-in', component: PublicSignIn },
+					{ path: 'offline-unavailable', component: PublicSignIn },
 					{
-						path: 'garage/:carId/photos',
+						path: 'garage/:carId/:section',
 						canMatch: [ownerSessionCanMatch],
 						loadComponent: loadPrivateFeature,
 					},
@@ -135,7 +139,7 @@ describe('ownerSessionCanMatch', () => {
 		});
 	});
 
-	it('opens a still-valid local Garage only after the live session request fails', async () => {
+	it('restores a still-valid local Garage but blocks an undelivered deep link', async () => {
 		const snapshot = {
 			ownerKey: 'user-1',
 			ownerEmail: 'owner@example.test',
@@ -147,11 +151,34 @@ describe('ownerSessionCanMatch', () => {
 		sessionStore.resolutionFailed.mockReturnValue(true);
 		offlineAccess.restore.mockResolvedValue(snapshot);
 
-		await router.navigateByUrl('/garage/car-1/photos');
+		await router.navigateByUrl('/garage/car-1/runs');
 
-		expect(loadPrivateFeature).toHaveBeenCalledOnce();
+		expect(loadPrivateFeature).not.toHaveBeenCalled();
 		expect(offlineWorkspace.openOffline).toHaveBeenCalledWith({ snapshot });
-		expect(router.url).toBe('/garage/car-1/photos');
+		expect(router.url).toBe('/offline-unavailable');
+	});
+
+	it('keeps delivered routes available after restoring a snapshot', async () => {
+		sessionStore.resolved.mockResolvedValue(null);
+		sessionStore.resolutionFailed.mockReturnValue(true);
+		offlineAccess.restore.mockResolvedValue({ ownerKey: 'user-1', cars: [] });
+		const result = await TestBed.runInInjectionContext(() =>
+			ownerSessionCanMatch(
+				{ path: '' },
+				[new UrlSegment('garage', {})],
+				router.routerState.snapshot.root,
+			),
+		);
+		expect(result).toBe(true);
+	});
+
+	it('checks outage-time admission even while a live session remains cached', async () => {
+		sessionStore.resolved.mockResolvedValue({ session: { id: 'session-1' } });
+		offlineWorkspace.networkUnavailable.mockReturnValue(true);
+		await router.navigateByUrl('/garage/car-1/runs');
+		expect(router.url).toBe('/offline-unavailable');
+		expect(loadPrivateFeature).not.toHaveBeenCalled();
+		expect(offlineWorkspace.prepare).not.toHaveBeenCalled();
 	});
 
 	it('keeps a live session authorized without claiming readiness from incomplete identity data', async () => {
@@ -213,5 +240,39 @@ describe('ownerSessionCanMatch', () => {
 				queryParams: { returnTo: '/maintenance' },
 			}),
 		);
+	});
+	it('rejects a signed-out cookie while keeping valid server access usable when device storage fails', async () => {
+		sessionStore.resolved.mockResolvedValue({
+			session: { id: 'old-session' },
+			user: { email: 'owner@example.test' },
+		});
+		offlineAccess.isSessionRevoked.mockResolvedValueOnce(true);
+		await router.navigateByUrl('/garage/car-1/photos');
+		expect(router.url).toContain('reason=signed-out');
+		expect(loadPrivateFeature).not.toHaveBeenCalled();
+		offlineAccess.isSessionRevoked.mockRejectedValueOnce(new Error('storage'));
+		await router.navigateByUrl('/garage/car-2/photos');
+		expect(router.url).toBe('/garage/car-2/photos');
+		expect(loadPrivateFeature).toHaveBeenCalledOnce();
+	});
+	it('admits a current authenticated session whose durable revocation fence is clear', async () => {
+		sessionStore.resolved.mockResolvedValue({
+			session: { id: 'current-session' },
+			user: { email: 'owner@example.test' },
+		});
+		await router.navigateByUrl('/garage/car-1/photos');
+		expect(offlineAccess.isSessionRevoked).toHaveBeenCalledWith(
+			'current-session',
+		);
+		expect(loadPrivateFeature).toHaveBeenCalledOnce();
+	});
+	it('keeps online-only sessions usable when they lack an offline session identity', async () => {
+		sessionStore.resolved.mockResolvedValue({
+			session: {},
+			user: { email: 'owner@example.test' },
+		});
+		await router.navigateByUrl('/garage/car-1/photos');
+		expect(offlineAccess.isSessionRevoked).not.toHaveBeenCalled();
+		expect(loadPrivateFeature).toHaveBeenCalledOnce();
 	});
 });
