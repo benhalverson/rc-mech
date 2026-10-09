@@ -116,7 +116,74 @@ const serviceCompletionSchema = {
 	properties: serviceRecordSchema.properties,
 	allOf: serviceRecordSchema.allOf,
 };
+// Response readers strip unknown fields; unlike strict mutation witnesses,
+// these envelopes intentionally remain extensible.
+const carSyncFeedbackSchema = {
+	type: 'object',
+	additionalProperties: true,
+	required: ['code', 'message'],
+	properties: {
+		code: { type: 'string', minLength: 1 },
+		message: { type: 'string', minLength: 1 },
+		details: { type: 'object', additionalProperties: true },
+	},
+};
+const syncedCarSchema = {
+	type: 'object',
+	additionalProperties: true,
+	required: ['id', 'name'],
+	properties: {
+		...carBaseProperties,
+		id: { type: 'string' },
+		version: { type: 'integer', minimum: 0 },
+		currentSetupId: { type: ['string', 'null'] },
+		createdAt: { type: 'string' },
+		archivedAt: { type: ['string', 'null'] },
+	},
+};
+const carSyncOutcomeSchema = {
+	oneOf: [
+		{
+			type: 'object',
+			additionalProperties: true,
+			required: ['operationId', 'outcome', 'car'],
+			properties: {
+				operationId: { type: 'string', minLength: 1 },
+				outcome: { const: 'applied' },
+				car: syncedCarSchema,
+			},
+		},
+		{
+			type: 'object',
+			additionalProperties: true,
+			required: ['operationId', 'outcome', 'error'],
+			properties: {
+				operationId: { type: 'string', minLength: 1 },
+				outcome: { const: 'rejected' },
+				error: carSyncFeedbackSchema,
+			},
+		},
+		{
+			type: 'object',
+			additionalProperties: true,
+			required: ['operationId', 'outcome', 'error', 'remote'],
+			properties: {
+				operationId: { type: 'string', minLength: 1 },
+				outcome: { const: 'conflict' },
+				error: carSyncFeedbackSchema,
+				remote: {
+					type: 'object',
+					additionalProperties: true,
+					required: ['car'],
+					properties: { car: syncedCarSchema },
+				},
+			},
+		},
+	],
+};
+
 export const openApi = {
+	components: { schemas: { CarSyncOutcome: carSyncOutcomeSchema } },
 	openapi: '3.1.0',
 	info: { title: 'Chassis Notes API', version: '0.1.0' },
 	paths: {
@@ -266,6 +333,8 @@ export const openApi = {
 			put: {
 				summary:
 					'Idempotently apply one owner-scoped, version-aware Car, Setup, Component, or Drive-session operation',
+				description:
+					'Car commands reject unknown fields at strict edit/lifecycle and base-witness boundaries. Car create fields and edit changes retain the existing unknown-field stripping behavior. Car outcomes, feedback and remote-conflict objects remain extensible to match their response readers. Other outcomes use their feature contracts.',
 				requestBody: {
 					required: true,
 					content: {
@@ -297,6 +366,7 @@ export const openApi = {
 											},
 											{
 												type: 'object',
+												additionalProperties: false,
 												required: [
 													'type',
 													'carId',
@@ -310,6 +380,7 @@ export const openApi = {
 													baseVersion: { type: 'integer', minimum: 0 },
 													base: {
 														type: 'object',
+														additionalProperties: false,
 														description:
 															'Must contain exactly the fields present in changes.',
 														properties: carBaseProperties,
@@ -323,6 +394,7 @@ export const openApi = {
 											},
 											...(['archive', 'restore'] as const).map((action) => ({
 												type: 'object',
+												additionalProperties: false,
 												required: ['type', 'carId', 'baseVersion', 'base'],
 												properties: {
 													type: { const: `car.${action}` },
@@ -330,6 +402,7 @@ export const openApi = {
 													baseVersion: { type: 'integer', minimum: 0 },
 													base: {
 														type: 'object',
+														additionalProperties: false,
 														required: ['archivedAt'],
 														properties: {
 															archivedAt:
