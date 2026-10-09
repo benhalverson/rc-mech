@@ -118,7 +118,10 @@ export const GarageStore = signalStore(
 				const outcome = store.workspace.mutationOutcome();
 				if (outcome.status !== 'succeeded' || outcome.command.type !== 'create')
 					return '';
-				return outcome.retainedLocally && store.workspace.operations().length
+				return outcome.retainedLocally &&
+					store.workspace
+						.operations()
+						.some((operation) => operation.operationId === outcome.operationId)
 					? 'Car saved locally. Pending sync.'
 					: 'Car added to the garage.';
 			}),

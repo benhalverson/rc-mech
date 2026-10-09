@@ -172,7 +172,10 @@ export const CarStore = signalStore(
 					outcome.command.carId !== store.carId()
 				)
 					return '';
-				return outcome.retainedLocally && store.workspace.operations().length
+				return outcome.retainedLocally &&
+					store.workspace
+						.operations()
+						.some((operation) => operation.operationId === outcome.operationId)
 					? 'Car details saved locally. Pending sync.'
 					: 'Car details saved.';
 			}),

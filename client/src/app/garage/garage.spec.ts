@@ -613,6 +613,21 @@ describe('Garage', () => {
 		});
 		fixture.detectChanges();
 		expect(fixture.nativeElement.textContent).toContain('saved locally');
+		// Acknowledging this operation must not depend on another Car's queue.
+		workspace.operations.update((operations) =>
+			operations.map((operation) => ({
+				...operation,
+				operationId: 'unrelated-operation',
+				carId: 'another-car',
+			})),
+		);
+		expect(TestBed.inject(GarageStore).carMessage()).toBe(
+			'Car added to the garage.',
+		);
+		workspace.operations.set([]);
+		expect(TestBed.inject(GarageStore).carMessage()).toBe(
+			'Car added to the garage.',
+		);
 
 		workspace.mutationOutcome.set({
 			status: 'failed',
