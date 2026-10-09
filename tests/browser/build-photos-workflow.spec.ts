@@ -129,15 +129,20 @@ test('renders the private photo list and archived state accessibly in dark mode'
 			page.evaluate(() => Boolean(navigator.serviceWorker.controller)),
 		)
 		.toBe(true);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
 	const photoUpload = page.waitForResponse(
 		(response) =>
-			response.url().endsWith(`/api/v1/cars/${created.car.id}/photos`) &&
-			response.request().method() === 'POST',
+			response
+				.url()
+				.includes(`/api/v1/cars/${created.car.id}/photos/captures/`) &&
+			response.request().method() === 'PUT',
 	);
 	const photoRequest = page.waitForRequest(
 		(request) =>
-			request.url().endsWith(`/api/v1/cars/${created.car.id}/photos`) &&
-			request.method() === 'POST',
+			request
+				.url()
+				.includes(`/api/v1/cars/${created.car.id}/photos/captures/`) &&
+			request.method() === 'PUT',
 	);
 	await page.locator('.upload-button input').setInputFiles({
 		name: 'browser-upload.webp',
@@ -148,7 +153,7 @@ test('renders the private photo list and archived state accessibly in dark mode'
 		photoUpload,
 		photoRequest,
 	]);
-	expect(uploadResponse.status()).toBe(201);
+	expect(uploadResponse.status()).toBe(200);
 	expect(uploadRequest.headers()['content-type']).toMatch(
 		/^multipart\/form-data;\s*boundary=.+$/i,
 	);
