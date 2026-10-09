@@ -53,7 +53,9 @@ export const createPhotoCaptureRoutes = () => {
 		);
 		const read = () =>
 			database.select().from(syncOperation).where(identity).get();
-		const reply = (receipt: typeof syncOperation.$inferSelect | undefined) => {
+		const reply = async (
+			receipt: typeof syncOperation.$inferSelect | undefined,
+		) => {
 			if (
 				!receipt ||
 				receipt.outcome === 'pending' ||
@@ -61,6 +63,12 @@ export const createPhotoCaptureRoutes = () => {
 				receipt.responseJson === null
 			)
 				throw new Error('Capture receipt is pending.');
+			if (receipt.outcome === 'rejected') {
+				const key = photoObjectKey(carId, operationId);
+				const object = await c.env.PHOTOS.head(key);
+				if (object?.customMetadata?.requestHash === requestHash)
+					await c.env.PHOTOS.delete(key);
+			}
 			return new Response(receipt.responseJson, {
 				status: receipt.httpStatus,
 				headers: { 'content-type': 'application/json' },
@@ -154,7 +162,14 @@ export const createPhotoCaptureRoutes = () => {
 			isPrimary: !photos.some((value) => value.isPrimary),
 			createdAt: now,
 		};
+		const receiptPending = exists(
+			database
+				.select({ id: syncOperation.operationId })
+				.from(syncOperation)
+				.where(pending),
+		);
 		const witness = and(
+			receiptPending,
 			eq(car.id, carId),
 			eq(car.ownerId, ownerId),
 			eq(car.lastOperationId, operationId),
@@ -173,6 +188,7 @@ export const createPhotoCaptureRoutes = () => {
 						eq(car.id, carId),
 						eq(car.ownerId, ownerId),
 						eq(car.version, parent.version),
+						receiptPending,
 					),
 				),
 			database.insert(photo).select(

@@ -35,7 +35,9 @@ const setup = () => {
 				.flatMap((query) => query.values)
 				.find(
 					(value) =>
-						typeof value === 'string' && value.startsWith('{"operationId"'),
+						typeof value === 'string' &&
+						value.startsWith('{"operationId"') &&
+						JSON.parse(value).outcome === outcome,
 				);
 		},
 	});
@@ -253,6 +255,28 @@ describe('idempotent photo capture', () => {
 			await (await fixture.request('/api/v1/photos')).json(),
 		).toMatchObject({ photos: [{ id: operationId, carId }] });
 		expect(fixture.d1.queries.at(-1)).toMatchObject({ values: ['owner-1'] });
+		fixture.d1.expectConsumed();
+	});
+	test('cleans its own abandoned upload only after a terminal rejection and guards duplicate writers by receipt', async () => {
+		const fixture = setup();
+		fixture.d1.queue(
+			{ kind: 'first', value: fixture.receipt },
+			...ownedSteps,
+			{ kind: 'batch' },
+			{ kind: 'first', value: fixture.receipt },
+		);
+		expect((await fixture.request(endpoint, form())).status).toBe(503);
+		expect(fixture.r2.objects.has(key)).toBe(true);
+		expect(fixture.d1.batches[0][0]).toContain('sync_operation');
+		expect(fixture.d1.batches[0][1]).toContain('sync_operation');
+		fixture.d1.queue(
+			{ kind: 'first', value: fixture.receipt },
+			{ kind: 'first', value: { ...parent, archivedAt: 'today' } },
+			{ kind: 'run' },
+			{ kind: 'first', value: fixture.terminal('rejected') },
+		);
+		expect((await fixture.request(endpoint, form())).status).toBe(409);
+		expect(fixture.r2.objects.has(key)).toBe(false);
 		fixture.d1.expectConsumed();
 	});
 });
