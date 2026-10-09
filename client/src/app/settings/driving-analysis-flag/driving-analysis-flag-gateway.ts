@@ -9,6 +9,11 @@ import type { SaveDrivingAnalysisFlagCommand } from './driving-analysis-flag.mod
 const flagSchema = object({ enabled: boolean() });
 type DrivingAnalysisFlag = z.infer<typeof flagSchema>;
 
+/**
+ * HTTP boundary for the Owner's Driving analysis visibility setting. The Settings
+ * store sends one enabled value here; response validation and the existing endpoint
+ * stay separate from session-scoped UI outcomes. This is not a generic flag registry.
+ */
 @Injectable()
 export class DrivingAnalysisFlagGateway {
 	private readonly http = inject(HttpClient);

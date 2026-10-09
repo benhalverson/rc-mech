@@ -22,6 +22,11 @@ type Outcome =
 			operationId: number;
 			key: string;
 	  };
+/**
+ * Owner-only Settings workflow for changing Driving analysis visibility. Combines
+ * the current visibility with acknowledged saves and fences results by session
+ * key, so an old Owner's request cannot update a later session's controls.
+ */
 export const DrivingAnalysisFlagStore = signalStore(
 	withState<{
 		saved: { key: string; enabled: boolean } | null;
