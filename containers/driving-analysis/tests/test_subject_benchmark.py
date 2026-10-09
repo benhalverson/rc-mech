@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from driving_analysis_service import subject_benchmark, subject_benchmark_cli
+from driving_analysis_service import subject_benchmark_cli
 from driving_analysis_service.benchmark import (
     CandidatePass,
     _candidate_passes,
@@ -217,7 +217,6 @@ def test_contracts_are_strict_immutable_and_serializable() -> None:
     with pytest.raises(ValidationError):
         candidates["case-a"].observations[0].timestamp_ms = 1  # type: ignore[misc]
     assert truth.cases[0].subject_identity == "subject"
-    assert subject_benchmark.evaluate_benchmark is evaluate_benchmark
 
     report = evaluate_benchmark(manifest, truth, candidates)
     invalid = report.model_dump(by_alias=True)

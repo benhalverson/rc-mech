@@ -458,9 +458,6 @@ SubjectObservationEnvelope = Annotated[
     AcceptedSubjectObservations | RejectedSubjectObservations,
     Field(discriminator="outcome"),
 ]
-AcceptedSubjectObservationEnvelope = AcceptedSubjectObservations
-RejectedSubjectObservationEnvelope = RejectedSubjectObservations
-CandidateObservations = AcceptedSubjectObservations
 
 
 class DirectedGate(StrictContract):
