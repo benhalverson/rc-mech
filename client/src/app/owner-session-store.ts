@@ -43,7 +43,7 @@ export class OwnerSessionStore {
 
 	async resolved(): Promise<OwnerSessionResponse> {
 		// Reading the resource starts its first request in zoneless test and browser runtimes.
-		this.session.value();
+		if (!this.resolutionFailed()) this.session.value();
 		await firstValueFrom(
 			this.sessionStatuses.pipe(
 				filter((status) => status === 'resolved' || status === 'error'),
