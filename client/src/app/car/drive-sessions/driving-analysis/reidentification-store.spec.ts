@@ -46,6 +46,7 @@ const setup = () => {
 			},
 		),
 		correct: vi.fn(() => of(receipt)),
+		frames: vi.fn(() => []),
 	};
 	TestBed.configureTestingModule({
 		providers: [
@@ -69,6 +70,18 @@ const setup = () => {
 afterEach(() => TestBed.resetTestingModule());
 
 describe('ReidentificationStore', () => {
+	it('delegates presentation enrichment with immutable recording identity and current context', () => {
+		const f = setup();
+		const identity = Object.freeze({
+			recordingId: 'recording',
+			checksumSha256: 'checksum',
+		});
+		expect(f.store.framesFor(identity)).toEqual([]);
+		expect(f.gateway.frames).toHaveBeenLastCalledWith(context, identity);
+		f.hasValue.set(false);
+		f.store.framesFor(null);
+		expect(f.gateway.frames).toHaveBeenLastCalledWith(null, null);
+	});
 	it('uses the persisted correction identity after remount', () => {
 		const f = setup();
 		const saved = {

@@ -52,3 +52,14 @@ export type ReidentifySubjectCommand = Readonly<{
 	context: ReidentificationContext;
 	subjectSeed: DrivingAnalysis['subjectSeed'];
 }>;
+
+/** Immutable source identity used to bind correction previews to validated media. */
+export type CorrectionRecordingIdentity = Readonly<{
+	recordingId: string;
+	checksumSha256: string;
+}>;
+
+/** Gateway-enriched metadata for one exact prepared correction frame. */
+export type CorrectionFrame = Readonly<
+	ReidentificationContext['frames'][number] & { contentUrl: string | null }
+>;

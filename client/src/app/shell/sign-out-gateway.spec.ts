@@ -67,6 +67,24 @@ describe('SignOutGateway', () => {
 		return request;
 	};
 
+	it('resumes only the session named by a durable sign-out request', async () => {
+		const resumed = firstValueFrom(gateway.resumeSignOut('old-session'));
+		http
+			.expectOne('/api/auth/get-session')
+			.flush({ session: { id: 'old-session' } });
+		(await nextRequest()).flush({ success: true });
+		await expect(resumed).resolves.toEqual({ success: true });
+		for (const session of [null, { session: { id: 'new-session' } }]) {
+			const skipped = firstValueFrom(gateway.resumeSignOut('old-session'));
+			http.expectOne('/api/auth/get-session').flush(session);
+			await expect(skipped).resolves.toEqual({ success: true });
+			http.expectNone('/api/auth/sign-out');
+		}
+		const unavailable = firstValueFrom(gateway.resumeSignOut('old-session'));
+		http.expectOne('/api/auth/get-session').error(new ProgressEvent('offline'));
+		await expect(unavailable).rejects.toEqual({ kind: 'unavailable' });
+	});
+
 	it('loads the parser before posting and returns parsed success', async () => {
 		let resolveParser!: (module: SignOutResponseModule) => void;
 		loadResponseParser.mockReturnValueOnce(

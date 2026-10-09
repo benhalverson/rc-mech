@@ -5,10 +5,15 @@ import {
 	defer,
 	map,
 	type Observable,
+	of,
 	switchMap,
 	throwError,
 	timeout,
 } from 'rxjs';
+import {
+	type OwnerSessionResponse,
+	ownerSessionKey,
+} from '../owner-session-store';
 import {
 	InvalidSignOutResponse,
 	type SignOutGatewayFailure,
@@ -42,11 +47,36 @@ export const signOutGatewayFailure = (
 	return { kind: 'unavailable' };
 };
 
+/**
+ * Server-session boundary for SignOutStore. Parses bounded sign-out responses
+ * and, when resuming durable cleanup, verifies that the current server session
+ * is the original one before revocation; a subsequently authenticated session
+ * must remain untouched.
+ */
 @Service()
 export class SignOutGateway {
 	private readonly http = inject(HttpClient);
 	private readonly loadResponseParser = inject(SIGN_OUT_RESPONSE_LOADER);
 	private readonly timeoutMs = inject(SIGN_OUT_TIMEOUT_MS);
+
+	/** A persisted request must never sign out a subsequently authenticated User. */
+	resumeSignOut(sessionKey: string): Observable<SignOutResponse> {
+		return this.http
+			.get<OwnerSessionResponse>('/api/auth/get-session', {
+				withCredentials: true,
+			})
+			.pipe(
+				switchMap((session) =>
+					ownerSessionKey(session) === sessionKey
+						? this.signOut()
+						: of({ success: true } as const),
+				),
+				timeout({ first: this.timeoutMs }),
+				catchError((error: unknown) =>
+					throwError(() => signOutGatewayFailure(error)),
+				),
+			);
+	}
 
 	signOut(): Observable<SignOutResponse> {
 		return defer(this.loadResponseParser).pipe(

@@ -76,7 +76,8 @@ describe('SubjectBoxEditor', () => {
 			setPointerCapture: capture,
 			releasePointerCapture: release,
 		});
-		surface.dispatchEvent(
+		// Drawing must begin even when the press lands inside the existing box.
+		box?.dispatchEvent(
 			pointerEvent('pointerdown', {
 				pointerId: 7,
 				clientX: 20,

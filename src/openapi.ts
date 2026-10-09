@@ -1,3 +1,8 @@
+import { z } from 'zod';
+import { buildSyncCommandInput } from './build-sync-contract';
+import { driveSyncCommandInput } from './drive-sync-contract';
+import { maintenanceSyncCommandInput } from './maintenance-sync-contract';
+import { settingsSyncEnvelope } from './settings-sync-contract';
 import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 
 const carProperties = {
@@ -260,7 +265,7 @@ export const openApi = {
 			],
 			put: {
 				summary:
-					'Idempotently apply one owner-scoped, version-aware Car or Setup operation',
+					'Idempotently apply one owner-scoped, version-aware Car, Setup, Component, or Drive-session operation',
 				requestBody: {
 					required: true,
 					content: {
@@ -272,6 +277,11 @@ export const openApi = {
 									contractVersion: { type: 'integer', enum: [1] },
 									command: {
 										oneOf: [
+											z.toJSONSchema(buildSyncCommandInput, { io: 'input' }),
+											z.toJSONSchema(driveSyncCommandInput, { io: 'input' }),
+											...maintenanceSyncCommandInput.options.map((command) =>
+												z.toJSONSchema(command, { io: 'input' }),
+											),
 											{
 												type: 'object',
 												required: ['type', 'carId', 'car'],
@@ -408,7 +418,10 @@ export const openApi = {
 					},
 				},
 				responses: {
-					200: { description: 'Applied or exact terminal replay' },
+					200: {
+						description:
+							'Applied or exact terminal replay. Build and Drive outcomes include versioned collections with complete records.',
+					},
 					400: { description: 'Malformed operation envelope or identifier' },
 					401: { description: 'Authentication required' },
 					404: { description: 'Owned Car or Setup is unavailable' },
@@ -419,6 +432,133 @@ export const openApi = {
 					422: { description: 'Stable Needs-attention validation rejection' },
 					503: {
 						description: 'Transient synchronization infrastructure failure',
+					},
+				},
+			},
+		},
+
+		'/api/v1/photos': {
+			get: {
+				summary: 'List owner-scoped photo metadata for offline preparation',
+				responses: {
+					200: {
+						description:
+							'Private photo metadata; original bytes are not downloaded',
+					},
+				},
+			},
+		},
+		'/api/v1/cars/{carId}/photos/operations/{operationId}': {
+			put: {
+				summary:
+					'Idempotently replace, delete, designate, or reorder private photos against reviewed revisions',
+				parameters: [
+					{
+						name: 'carId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'multipart/form-data': {
+							schema: {
+								type: 'object',
+								required: ['command'],
+								properties: {
+									command: {
+										type: 'string',
+										description:
+											'Strict photo.change JSON with carId, action, photoId, order, base photo revisions, and replacement metadata (null unless replacing).',
+									},
+									file: {
+										type: 'string',
+										format: 'binary',
+										description:
+											'Required only for replace; bytes and metadata must match the immutable command.',
+									},
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					200: {
+						description:
+							'Applied gallery; repeated identities replay the same result after durable byte cleanup',
+					},
+					409: {
+						description:
+							'Canonical rejection or conflict with current gallery metadata; device intent remains retained',
+					},
+					422: { description: 'Invalid command or replacement metadata' },
+					503: {
+						description: 'Retry the same operation identity and retained bytes',
+					},
+				},
+			},
+		},
+		'/api/v1/cars/{carId}/photos/captures/{operationId}': {
+			put: {
+				summary: 'Idempotently upload a locally retained photo capture',
+				parameters: [
+					{
+						name: 'carId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'multipart/form-data': {
+							schema: {
+								type: 'object',
+								required: ['file'],
+								properties: { file: { type: 'string', format: 'binary' } },
+							},
+						},
+					},
+				},
+				responses: {
+					200: {
+						description:
+							'Applied or replayed receipt with stable photo identity',
+					},
+					400: { description: 'Invalid capture identity' },
+					409: {
+						description: 'Canonical rejection or operation identity reuse',
+					},
+					422: { description: 'Invalid image metadata or multipart request' },
+					503: {
+						description:
+							'Retryable infrastructure failure; retain the local capture',
+					},
+				},
+			},
+		},
+		'/api/v1/maintenance/sync/snapshot': {
+			get: {
+				summary: 'Read the owner-scoped maintenance working copy',
+				responses: {
+					200: {
+						description:
+							'Raw versioned plans and service history, component metadata, and timezone',
 					},
 				},
 			},
@@ -670,6 +810,32 @@ export const openApi = {
 				},
 			},
 		},
+		'/api/v1/components': {
+			get: {
+				summary:
+					'Prepare the authenticated owner’s complete Component history for offline use',
+				responses: {
+					200: {
+						description:
+							'Build collections with carId, version, and complete Component metadata; empty builds are included',
+					},
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
+		'/api/v1/drives': {
+			get: {
+				summary:
+					'Prepare the authenticated owner’s complete Drive-session history for offline use',
+				responses: {
+					200: {
+						description:
+							'Drive-session collections with carId, version, and complete Drive-session metadata; empty histories are included',
+					},
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
 		'/api/v1/component-slots': {
 			get: {
 				summary: 'List standard component slots',
@@ -797,6 +963,37 @@ export const openApi = {
 					400: { description: 'Invalid component or slot' },
 					404: { description: 'Component not found' },
 					409: { description: 'Component is not current or car is archived' },
+				},
+			},
+		},
+		'/api/v1/settings/sync/operations/{operationId}': {
+			put: {
+				summary: 'Apply an owner-scoped Settings operation idempotently',
+				parameters: [
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'application/json': {
+							schema: z.toJSONSchema(settingsSyncEnvelope),
+						},
+					},
+				},
+				responses: {
+					200: { description: 'Applied or replayed Settings receipt' },
+					400: { description: 'Malformed operation' },
+					401: { description: 'Authentication required' },
+					409: {
+						description:
+							'Retained canonical rejection, timezone conflict, or reused operation identity',
+					},
+					503: { description: 'Retry the same stable operation later' },
 				},
 			},
 		},

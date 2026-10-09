@@ -1,7 +1,13 @@
-import { signal } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import {
+	HttpTestingController,
+	provideHttpClientTesting,
+} from '@angular/common/http/testing';
+import { ApplicationRef, ErrorHandler, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineGarageStorage } from '../../offline/offline-garage-storage';
 import type {
 	CarPhoto,
 	PhotoGatewayFailure,
@@ -9,6 +15,12 @@ import type {
 } from '../car.models';
 import { CarPhotoGateway } from './car-photo-gateway';
 import { CarPhotoStore } from './car-photo-store';
+import { PHOTO_OBJECT_URL, PhotoMediaAccess } from './photo-media-access';
+import type { PhotoCapture } from './photo-sync.models';
+import {
+	type PhotoCaptureMutationOutcome,
+	PhotoWorkspaceStore,
+} from './photo-workspace-store';
 
 const photo = (overrides: Partial<CarPhoto> = {}): CarPhoto => ({
 	id: 'photo-1',
@@ -136,12 +148,51 @@ class FakePhotoGateway {
 describe('CarPhotoStore', () => {
 	let gateway: FakePhotoGateway;
 	let store: InstanceType<typeof CarPhotoStore>;
+	const workspace = {
+		available: signal(false),
+		photos: signal<readonly CarPhoto[]>([]),
+		captures: signal<readonly PhotoCapture[]>([]),
+		changes: signal<
+			readonly import('./photo-sync.models').PhotoChangeOperation[]
+		>([]),
+		outcome: signal<PhotoCaptureMutationOutcome>({
+			status: 'idle',
+			requestId: null,
+		}),
+		mutate: vi.fn(),
+		refresh: vi.fn(),
+		offline: {
+			ownerKey: signal('owner'),
+			sessionKey: signal('session'),
+			networkUnavailable: signal(false),
+		},
+	};
+	const errorHandler = { handleError: vi.fn() };
+	const media = {
+		open: vi.fn().mockResolvedValue('blob:photo'),
+	};
+
 	const file = new File(['image'], 'car.webp', { type: 'image/webp' });
 
 	beforeEach(() => {
+		workspace.available.set(false);
+		errorHandler.handleError.mockClear();
+		workspace.offline.ownerKey.set('owner');
+		workspace.offline.sessionKey.set('session');
+		media.open.mockReset().mockResolvedValue('blob:photo');
+		workspace.mutate.mockClear();
+		workspace.refresh.mockClear();
+		workspace.changes.set([]);
+		workspace.photos.set([]);
+		workspace.captures.set([]);
+		workspace.outcome.set({ status: 'idle', requestId: null });
+		workspace.offline.networkUnavailable.set(false);
 		gateway = new FakePhotoGateway();
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: PhotoWorkspaceStore, useValue: workspace },
+				{ provide: ErrorHandler, useValue: errorHandler },
+				{ provide: PhotoMediaAccess, useValue: media },
 				CarPhotoStore,
 				{ provide: CarPhotoGateway, useValue: gateway },
 			],
@@ -357,5 +408,318 @@ describe('CarPhotoStore', () => {
 		expect(store.photos()[0].id).toBe('photo-2');
 		gateway.fail('reorder', { kind: 'unavailable' });
 		expect(store.photos()).toEqual([first, second]);
+	});
+	it('uses local metadata and publishes durable capture state with private original handles', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo(), photo({ id: 'other', carId: 'other' })]);
+		store.selectCar('car-1');
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.photos()).toEqual([photo()]);
+		expect(store.loading()).toBe(false);
+		expect(store.failure()).toBeNull();
+		expect(store.media()['photo-1']).toBe('blob:photo');
+		workspace.captures.set([
+			{
+				ownerKey: 'owner',
+				operationId: 'op',
+				carId: 'car-1',
+				fileName: 'car.jpg',
+				blob: file,
+				photo: photo(),
+				status: 'pending',
+			},
+		]);
+		expect(store.captureFeedback()).toBe('Pending sync');
+		workspace.captures.set([
+			{
+				...workspace.captures()[0],
+				status: 'needs-attention',
+				feedback: 'Archived',
+			},
+		]);
+		expect(store.captureFeedback()).toContain('Needs attention: Archived');
+		workspace.outcome.set({ status: 'pending', requestId: 'request' });
+		expect(store.action()).toBe('upload');
+		expect(store.captureOutcome().status).toBe('pending');
+		workspace.outcome.set({
+			status: 'failed',
+			requestId: 'request',
+			message: 'Quota',
+		});
+		expect(store.error()).toBe('Quota');
+		store.mutate({ kind: 'upload', file });
+		expect(workspace.mutate).toHaveBeenCalled();
+		expect(gateway.upload).not.toHaveBeenCalled();
+		workspace.offline.networkUnavailable.set(true);
+		store.mutate({ kind: 'delete', photo: photo() });
+		expect(gateway.delete).not.toHaveBeenCalled();
+		media.open.mockRejectedValueOnce({ kind: 'unavailable' });
+		store.mediaResource.reload();
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBeNull();
+		let finish: (value: string | null) => void = () => {};
+		media.open.mockReturnValueOnce(
+			new Promise<string | null>((resolve) => {
+				finish = resolve;
+			}),
+		);
+		store.mediaResource.reload();
+		TestBed.tick();
+		store.selectCar('other');
+		TestBed.tick();
+		finish('blob:late');
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBeUndefined();
+	});
+	it('shows cached originals while another original is still downloading', async () => {
+		TestBed.resetTestingModule();
+		const cached = new Blob(['cached']);
+		const urls = {
+			createObjectURL: vi.fn(() => 'blob:cached'),
+			revokeObjectURL: vi.fn(),
+		};
+		const storage = {
+			retainedPhoto: vi.fn(async (id: string) =>
+				id === 'cached' ? cached : null,
+			),
+			retainPhoto: vi.fn().mockResolvedValue(undefined),
+		};
+		TestBed.configureTestingModule({
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				CarPhotoStore,
+				{ provide: CarPhotoGateway, useValue: gateway },
+				{ provide: PhotoWorkspaceStore, useValue: workspace },
+				{ provide: ErrorHandler, useValue: errorHandler },
+				{ provide: OfflineGarageStorage, useValue: storage },
+				{ provide: PHOTO_OBJECT_URL, useValue: urls },
+			],
+		});
+		store = TestBed.inject(CarPhotoStore);
+		const http = TestBed.inject(HttpTestingController);
+		workspace.available.set(true);
+		workspace.photos.set([photo({ id: 'cached' }), photo({ id: 'remote' })]);
+		store.selectCar('car-1');
+		TestBed.tick();
+		// Do not await application stability: the second HTTP read stays pending.
+		for (let i = 0; i < 6; i++) await Promise.resolve();
+		const remote = http.expectOne('/api/v1/photos/remote');
+		expect(remote.cancelled).toBe(false);
+		expect(store.media()['cached']).toBe('blob:cached');
+		expect(store.media()['remote']).toBeUndefined();
+		expect(storage.retainPhoto).not.toHaveBeenCalled();
+		workspace.offline.ownerKey.set('other-owner');
+		workspace.available.set(false);
+		expect(store.media()).toEqual({});
+		TestBed.tick();
+		expect(remote.cancelled).toBe(true);
+		expect(urls.revokeObjectURL).toHaveBeenCalledWith('blob:cached');
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()).toEqual({});
+		http.verify();
+	});
+
+	it.each([
+		[{ kind: 'unavailable' }, '', false],
+		[{ kind: 'http', status: 404 }, '', false],
+		[{ kind: 'http', status: 503 }, '', false],
+		[{ kind: 'http', status: 401 }, 'Sign in again', false],
+		[{ kind: 'http', status: 403 }, 'Sign in again', false],
+		[{ kind: 'http', status: 400 }, 'could not be loaded', true],
+		[
+			new Error('unexpected storage or URL failure'),
+			'could not be loaded',
+			true,
+		],
+		[null, 'could not be loaded', true],
+	] as const)(
+		'keeps other images visible and classifies original failure %j',
+		async (failure, message, reported) => {
+			workspace.available.set(true);
+			workspace.photos.set([photo({ id: 'cached' }), photo({ id: 'failed' })]);
+			media.open
+				.mockResolvedValueOnce('blob:cached')
+				.mockRejectedValueOnce(failure);
+			store.selectCar('car-1');
+			TestBed.tick();
+			await TestBed.inject(ApplicationRef).whenStable();
+			expect(store.media()).toEqual({ cached: 'blob:cached', failed: null });
+			if (message) expect(store.error()).toContain(message);
+			else expect(store.error()).toBe('');
+			if (reported)
+				expect(errorHandler.handleError).toHaveBeenCalledWith(failure);
+			else expect(errorHandler.handleError).not.toHaveBeenCalled();
+			store.mediaResource.reload();
+			TestBed.tick();
+			await TestBed.inject(ApplicationRef).whenStable();
+			expect(store.error()).toBe('');
+		},
+	);
+	it('silently discards a rejected read after its resource was cancelled', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		let reject!: (error: Error) => void;
+		media.open.mockReturnValueOnce(
+			new Promise<string>((_, fail) => {
+				reject = fail;
+			}),
+		);
+		store.selectCar('car-1');
+		TestBed.tick();
+		workspace.available.set(false);
+		TestBed.tick();
+		reject(new Error('late cancellation'));
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.error()).toBe('');
+		expect(store.media()).toEqual({});
+		expect(errorHandler.handleError).not.toHaveBeenCalled();
+	});
+
+	it('cancels stale gallery reads on owner changes and destruction', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		store.selectCar('car-1');
+		let finish!: (value: string) => void;
+		media.open.mockReturnValueOnce(
+			new Promise<string>((resolve) => {
+				finish = resolve;
+			}),
+		);
+		TestBed.tick();
+		const oldSignal = media.open.mock.calls[0][3] as AbortSignal;
+		workspace.offline.ownerKey.set('new-owner');
+		expect(store.media()).toEqual({});
+		TestBed.tick();
+		expect(oldSignal.aborted).toBe(true);
+		finish('blob:stale-owner');
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBe('blob:photo');
+		const activeSignal = media.open.mock.lastCall?.[3] as AbortSignal;
+		TestBed.resetTestingModule();
+		expect(activeSignal.aborted).toBe(true);
+		expect(store.media()).toEqual({});
+	});
+	it('reloads media after reconnect and clears it when preparation is lost', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		workspace.offline.networkUnavailable.set(true);
+		media.open.mockResolvedValueOnce(null);
+		store.selectCar('car-1');
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBeNull();
+		expect(media.open.mock.lastCall?.[2]).toBe(true);
+		workspace.offline.networkUnavailable.set(false);
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBe('blob:photo');
+		const load = media.open.mock.lastCall?.[3] as AbortSignal;
+		workspace.available.set(false);
+		expect(store.media()).toEqual({});
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(load.aborted).toBe(true);
+		expect(store.media()).toEqual({});
+	});
+
+	it('routes every prepared gallery edit through durable persistence', () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		store.selectCar('car-1');
+		for (const command of [
+			{ kind: 'replace' as const, photo: photo(), file },
+			{ kind: 'delete' as const, photo: photo() },
+			{ kind: 'primary' as const, photo: photo() },
+			{ kind: 'reorder' as const, photos: [photo()] },
+		]) {
+			store.mutate(command);
+			expect(workspace.mutate).toHaveBeenLastCalledWith({
+				requestId: expect.any(String),
+				change: { carId: 'car-1', edit: command },
+			});
+		}
+		expect(gateway.replace).not.toHaveBeenCalled();
+		store.retry();
+		expect(workspace.refresh).toHaveBeenCalled();
+	});
+	it('refreshes metadata when offline preparation completes during a legacy request', () => {
+		store.selectCar('car-1');
+		for (const kind of ['replace', 'delete', 'primary'] as const) {
+			workspace.available.set(false);
+			store.mutate(
+				kind === 'replace'
+					? { kind, photo: photo(), file }
+					: { kind, photo: photo() },
+			);
+			workspace.available.set(true);
+			if (kind === 'delete') gateway.succeed(kind, { deleted: true });
+			else gateway.succeed(kind, photo());
+			expect(workspace.refresh).toHaveBeenLastCalledWith(
+				kind === 'primary' ? undefined : 'photo-1',
+			);
+		}
+		workspace.changes.set([
+			{
+				ownerKey: 'owner',
+				operationId: 'change',
+				carId: 'car-1',
+				createdAt: 1,
+				status: 'conflict',
+				dependencies: [],
+				command: {
+					type: 'photo.change',
+					carId: 'car-1',
+					action: 'primary',
+					photoId: 'photo-1',
+					order: [],
+					base: [],
+					replacement: null,
+				},
+				feedback: { code: 'CONFLICT', message: 'Changed' },
+			},
+		]);
+		expect(store.captureFeedback()).toContain('Changed');
+		workspace.changes.set([{ ...workspace.changes()[0], feedback: undefined }]);
+		expect(store.captureFeedback()).toContain('Sync conflict');
+		workspace.changes.set([]);
+		workspace.available.set(false);
+		workspace.offline.networkUnavailable.set(true);
+		store.mutate({ kind: 'delete', photo: photo() });
+		expect(gateway.delete).toHaveBeenCalledTimes(1);
+	});
+	it('fences capture recovery by route, local capability, and current mutation', () => {
+		const capture: PhotoCapture = {
+			operationId: 'capture',
+			ownerKey: 'owner',
+			carId: 'car-1',
+			photo: photo(),
+			blob: file,
+			fileName: file.name,
+			status: 'needs-attention',
+			feedback: 'Rejected',
+		};
+		store.selectCar('car-1');
+		workspace.captures.set([capture, { ...capture, carId: 'other' }]);
+		expect(store.captureFailures()).toEqual([capture]);
+		store.resolveCapture({ capture, decision: 'retry' });
+		expect(workspace.mutate).not.toHaveBeenCalled();
+		workspace.available.set(true);
+		store.resolveCapture({
+			capture: { ...capture, carId: 'other' },
+			decision: 'retry',
+		});
+		expect(workspace.mutate).not.toHaveBeenCalled();
+		workspace.outcome.set({ status: 'pending', requestId: 'pending' });
+		store.resolveCapture({ capture, decision: 'retry' });
+		expect(workspace.mutate).not.toHaveBeenCalled();
+		workspace.outcome.set({ status: 'idle', requestId: null });
+		store.resolveCapture({ capture, decision: 'retry' });
+		expect(workspace.mutate).toHaveBeenCalledWith({
+			requestId: expect.any(String),
+			change: { carId: 'car-1', capture, decision: 'retry' },
+		});
 	});
 });

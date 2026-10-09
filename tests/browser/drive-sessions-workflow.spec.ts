@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
@@ -434,7 +435,7 @@ test('keeps dark Drive session editing, history, and archive states accessible',
 
 test('creates a queued Driving analysis from a ready private Race recording', async ({
 	page,
-}) => {
+}, testInfo) => {
 	test.setTimeout(45_000);
 	await authenticateOwner(page);
 	const created = await createCar(page, 'Driving analysis browser fixture');
@@ -458,7 +459,7 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 			fileName: 'Analysis.mp4',
 			contentType: 'video/mp4',
 			sizeBytes: playableRaceVideo.length,
-			requestId: '00000000-0000-4000-8000-000000000236',
+			requestId: randomUUID(),
 		},
 	});
 	expect(createResponse.status()).toBe(201);
@@ -486,7 +487,7 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	});
 	const trackMap = await createApprovedTrackMap(
 		page,
-		'Analysis browser circuit',
+		`Analysis browser circuit ${randomUUID()}`,
 		recording.raceVideo.id,
 	);
 
@@ -496,6 +497,119 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	);
 	await expect(section.getByText('Ready for analysis')).toBeVisible();
 	const creator = section.locator('app-driving-analysis-creator');
+	await expect(
+		creator.getByRole('heading', { name: 'Select the car to follow' }),
+	).toBeVisible();
+	await expect(
+		creator.getByRole('button', { name: 'Select car in this frame' }),
+	).toBeVisible();
+	await expect(creator.locator('[data-box-surface]')).toHaveCount(0);
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-before-frame.png'),
+	});
+	// Exercise real native playback across repeated SPA teardown and replacement.
+	for (let navigation = 0; navigation < 3; navigation++) {
+		await creator.locator('[data-toggle-playback]').click();
+		await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+		const previousVideo = await creator.locator('video').elementHandle();
+		if (!previousVideo) throw new Error('Missing previous native player');
+		await page.getByRole('link', { name: 'Overview', exact: true }).click();
+		await expect(creator).toHaveCount(0);
+		expect(await previousVideo.evaluate((video) => video.paused)).toBe(true);
+		await page
+			.getByRole('link', { name: 'Drive sessions', exact: true })
+			.click();
+		await expect(creator).toBeVisible();
+		await previousVideo.evaluate((video) => {
+			video.dispatchEvent(new Event('play'));
+			video.dispatchEvent(new Event('timeupdate'));
+		});
+		await expect(creator.locator('output')).toHaveText('0 ms');
+		await expect(creator.locator('[data-toggle-playback]')).toHaveText(
+			'Play recording',
+		);
+		await previousVideo.dispose();
+	}
+	// Leaving while a source image is pending cancels its presentation lifetime.
+	const abandonedImageResponse = Promise.withResolvers<void>();
+	let abandonImage = true;
+	await page.route('**/subject-frames/*/content?checksum=*', async (route) => {
+		if (!abandonImage) return route.continue();
+		abandonImage = false;
+		await abandonedImageResponse.promise;
+		await route.fulfill({ status: 503, body: 'Abandoned image' });
+	});
+	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-mark-seed]').click();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		true,
+	);
+	const abandonedImage = await creator
+		.locator('[data-subject-frame]')
+		.elementHandle();
+	if (!abandonedImage) throw new Error('Missing pending creator image');
+	await page.getByRole('link', { name: 'Overview', exact: true }).click();
+	await expect(creator).toHaveCount(0);
+	abandonedImageResponse.resolve();
+	await abandonedImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await page.getByRole('link', { name: 'Drive sessions', exact: true }).click();
+	await expect(creator).toBeVisible();
+	await expect(creator.locator('[data-subject-frame]')).toHaveCount(0);
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Choose and load a verified Subject frame' }),
+	).toBeVisible();
+	await abandonedImage.dispose();
+	// Native failures are injected locally; the browser still renders and retries the capability.
+	await creator.locator('video').evaluate((video) => {
+		Object.defineProperty(video, 'play', {
+			configurable: true,
+			value: () => Promise.reject(new Error('Denied')),
+		});
+	});
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Private playback is unavailable' }),
+	).toContainText('Private playback is unavailable');
+	await creator.locator('video').evaluate((video) => {
+		Reflect.deleteProperty(video, 'play');
+	});
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+	await creator.locator('[data-toggle-playback]').click();
+	await creator.locator('[data-race-seek]').fill('250');
+	await expect(creator.locator('output')).toHaveText('250 ms');
+	await creator.locator('video').evaluate((video) => {
+		Object.defineProperty(video, 'currentTime', {
+			configurable: true,
+			set: () => {
+				throw new Error('Seek denied');
+			},
+		});
+	});
+	await creator.locator('[data-race-seek]').fill('500');
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Private playback is unavailable' }),
+	).toContainText('Private playback is unavailable');
+	await expect(creator.locator('output')).toHaveText('250 ms');
+	await creator.locator('video').evaluate((video) => {
+		Reflect.deleteProperty(video, 'currentTime');
+	});
+	await creator.locator('[data-race-seek]').fill('125');
+	await expect(creator.locator('output')).toHaveText('125 ms');
+	await expect(
+		creator.getByText('Private playback is unavailable', { exact: false }),
+	).toHaveCount(0);
 	const mapSelector = creator.getByLabel('Approved Track map');
 	await mapSelector.selectOption(trackMap.id);
 	await expect(mapSelector).toHaveValue(trackMap.id);
@@ -525,9 +639,86 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await creator.getByLabel('Race start').fill('100');
 	await creator.getByLabel('Race end').fill('900');
 	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+	await creator.locator('[data-race-seek]').fill('125');
+	// Hold and fail the real creator image, then retry the exact same frame.
+	const creatorImageFailure = Promise.withResolvers<void>();
+	let failCreatorImage = true;
+	await page.route('**/subject-frames/2/content?checksum=*', async (route) => {
+		if (!failCreatorImage) return route.continue();
+		failCreatorImage = false;
+		await creatorImageFailure.promise;
+		await route.fulfill({ status: 503, body: 'Frame unavailable' });
+	});
+	await creator.locator('[data-mark-seed]').focus();
+	await page.keyboard.press('Enter');
+	await expect(creator.locator('[data-mark-seed]')).toBeFocused();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', true);
+	await expect(creator.locator('[data-subject-frame]')).toBeAttached();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		true,
+	);
+	const failedCreatorImage = await creator
+		.locator('[data-subject-frame]')
+		.elementHandle();
+	if (!failedCreatorImage) throw new Error('Missing creator frame image');
+	creatorImageFailure.resolve();
+	await expect(
+		creator.getByText(
+			'The verified image could not be loaded. Choose the frame again.',
+		),
+	).toBeVisible();
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Choose and load a verified Subject frame' }),
+	).toBeVisible();
 	await creator.locator('[data-mark-seed]').click();
-	await expect(creator.locator('[data-subject-frame]')).toBeVisible();
-	await expect(creator.locator('[data-frame-editor]')).toBeEnabled();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		false,
+	);
+	await failedCreatorImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		false,
+	);
+	await failedCreatorImage.dispose();
+	// Each repeated selection remounts an exact image and waits for its own load.
+	for (let selection = 0; selection < 3; selection++) {
+		const priorImage = await creator
+			.locator('[data-subject-frame]')
+			.elementHandle();
+		if (!priorImage) throw new Error('Missing previous creator image');
+		await creator.locator('[data-mark-seed]').click();
+		await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+			'disabled',
+			false,
+		);
+		await expect
+			.poll(() =>
+				priorImage.evaluate(
+					(image) => image !== document.querySelector('[data-subject-frame]'),
+				),
+			)
+			.toBe(true);
+		await priorImage.evaluate((image) => {
+			image.dispatchEvent(new Event('load'));
+			image.dispatchEvent(new Event('error'));
+		});
+		await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+			'disabled',
+			false,
+		);
+		await priorImage.dispose();
+	}
+
 	await expect(
 		creator.getByLabel('Verified Subject timestamp (ms)'),
 	).toHaveValue('200');
@@ -538,8 +729,46 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	const subjectBox = creator.locator('[data-subject-box]');
 	const surface = creator.locator('[data-box-surface]');
 	await surface.scrollIntoViewIfNeeded();
-	const surfaceBounds = await surface.boundingBox();
+	let surfaceBounds = await surface.boundingBox();
 	if (!surfaceBounds) throw new Error('Subject-box surface bounds missing');
+	// A redraw must also start inside the default box already covering the car.
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.46,
+		surfaceBounds.y + surfaceBounds.height * 0.46,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.65,
+		surfaceBounds.y + surfaceBounds.height * 0.6,
+	);
+	await page.mouse.up();
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-redraw-from-existing-box.png'),
+	});
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue('0.46');
+	await expect(subjectBox).toBeFocused();
+	// Capturing the whole selection panel scrolls it; remeasure before the next drag.
+	await surface.scrollIntoViewIfNeeded();
+	surfaceBounds = await surface.boundingBox();
+	if (!surfaceBounds) throw new Error('Subject-box redraw bounds missing');
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.63,
+		surfaceBounds.y + surfaceBounds.height * 0.58,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.47,
+		surfaceBounds.y + surfaceBounds.height * 0.47,
+	);
+	await page.mouse.up();
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue('0.47');
+	await expect(creator.getByLabel('Top', { exact: true })).toHaveValue('0.47');
+	await expect(creator.getByLabel('Width', { exact: true })).toHaveValue(
+		'0.16',
+	);
+	await expect(creator.getByLabel('Height', { exact: true })).toHaveValue(
+		'0.11',
+	);
 	const pointerFractions = {
 		start: { x: 0.237, y: 0.183 },
 		end: { x: 0.688, y: 0.516 },
@@ -569,6 +798,21 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await page.mouse.down();
 	await page.mouse.move(pointerEnd.x, pointerEnd.y);
 	await page.mouse.up();
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.x),
+	);
+	await expect(creator.getByLabel('Top', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.y),
+	);
+	await expect(creator.getByLabel('Width', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.width),
+	);
+	await expect(creator.getByLabel('Height', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.height),
+	);
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-drawn-box.png'),
+	});
 	await creator.getByLabel('Width').fill('');
 	await expect(
 		creator.getByText('Enter all four normalized Subject-box coordinates.'),
@@ -695,6 +939,15 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 			);
 		},
 	);
+	// Hold the real correction image request to exercise local loading and retry.
+	const firstFrameFailure = Promise.withResolvers<void>();
+	let failFirstFrame = true;
+	await page.route('**/subject-frames/7/content?checksum=*', async (route) => {
+		if (!failFirstFrame) return route.continue();
+		failFirstFrame = false;
+		await firstFrameFailure.promise;
+		await route.fulfill({ status: 503, body: 'Frame unavailable' });
+	});
 	trackingState = {
 		...trackingState,
 		stateVersion: trackingState.stateVersion + 1,
@@ -717,6 +970,19 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 		'src',
 		/\/subject-frames\/7\/content\?checksum=/,
 	);
+	const confirmCorrection = correctionEditor.getByRole('button', {
+		name: 'Confirm Subject and resume',
+	});
+	await expect(confirmCorrection).toBeDisabled();
+	firstFrameFailure.resolve();
+	await expect(correctionEditor.getByRole('alert')).toContainText(
+		'exact frame image could not be loaded',
+	);
+	await expect(confirmCorrection).toBeDisabled();
+	expect(await scan(page)).toEqual([]);
+	await correctionEditor
+		.getByRole('button', { name: 'Retry frame image' })
+		.click();
 	await expect
 		.poll(() =>
 			correctionEditor
@@ -724,6 +990,49 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 				.evaluate((image: HTMLImageElement) => image.naturalWidth),
 		)
 		.toBeGreaterThan(0);
+	// Change the accepted gap to two exact frames, delaying the second image.
+	const oldImage = await correctionEditor.locator('img').elementHandle();
+	if (!oldImage) throw new Error('Missing correction image');
+	const nextFrame = Promise.withResolvers<void>();
+	await page.route('**/subject-frames/8/content?checksum=*', async (route) => {
+		await nextFrame.promise;
+		await route.continue();
+	});
+	gapContext.frames.push({ frameIndex: 8, timestampMs: 800 });
+	trackingState = {
+		...trackingState,
+		stateVersion: trackingState.stateVersion + 1,
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '1');
+	await correctionEditor.getByLabel('Inspect a later clear frame').fill('1');
+	await correctionEditor
+		.getByLabel('Inspect a later clear frame')
+		.dispatchEvent('change');
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/8\/content\?checksum=/,
+	);
+	await oldImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await expect(confirmCorrection).toBeDisabled();
+	expect(await scan(page)).toEqual([]);
+	nextFrame.resolve();
+	await expect(confirmCorrection).toBeEnabled();
+	await correctionEditor.getByLabel('Inspect a later clear frame').fill('0');
+	await correctionEditor
+		.getByLabel('Inspect a later clear frame')
+		.dispatchEvent('change');
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	await expect(confirmCorrection).toBeEnabled();
+	await oldImage.dispose();
 	await correctionEditor.getByLabel('Width', { exact: true }).fill('0.12');
 	expect(await scan(page)).toEqual([]);
 	await correctionEditor

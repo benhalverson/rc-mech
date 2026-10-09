@@ -37,6 +37,7 @@ from driving_analysis_service.processing_errors import (
     tracking_error_code,
 )
 from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.stage_admission import processing_slot
 from driving_analysis_service.tracking_artifacts import (
     FRAME_MANIFEST_SUFFIX,
     MAX_COMPRESSED_MANIFEST_BYTES,
@@ -49,9 +50,9 @@ from driving_analysis_service.tracking_artifacts import (
     PREPARED_MEDIA_SUFFIX,
     ArtifactConflictError,
     InvalidArtifactError,
+    artifact_path,
     bundle_exists,
     bundle_member_path,
-    bundle_path,
     canonical_json,
     compressed_contract,
     copy_verified_artifact,
@@ -78,6 +79,14 @@ MAX_COMPLETION_BYTES = 64 * 1024
 
 
 class SubjectTrackingService:
+    """Executes one bounded Subject-tracking segment from prepared media.
+
+    Coordinates frame extraction, the injected inference provider, first-gap
+    termination, and immutable observation publication for the media-stage API.
+    Admission and deadlines belong to this request; application lifecycle and
+    GPU scheduling remain outside the media service.
+    """
+
     def __init__(
         self,
         settings: ServiceSettings,
@@ -91,25 +100,24 @@ class SubjectTrackingService:
         )
 
     def track(self, request: TrackStageRequest) -> TrackStageResponse:
-        if not self._admission.acquire(blocking=False):
-            return rejected(request, "SERVICE_BUSY")
-        deadline = start_deadline(self.settings.limits.process_timeout_seconds)
-        try:
-            return self._track(request, deadline)
-        except (
-            ArtifactConflictError,
-            InferenceFailureError,
-            InferenceUnavailableError,
-            InvalidArtifactError,
-            OSError,
-            ProcessOutputLimitError,
-            ProcessTimeoutError,
-            ValidationError,
-            ValueError,
-        ) as error:
-            return rejected(request, tracking_error_code(error))
-        finally:
-            self._admission.release()
+        with processing_slot(self._admission) as admitted:
+            if not admitted:
+                return rejected(request, "SERVICE_BUSY")
+            deadline = start_deadline(self.settings.limits.process_timeout_seconds)
+            try:
+                return self._track(request, deadline)
+            except (
+                ArtifactConflictError,
+                InferenceFailureError,
+                InferenceUnavailableError,
+                InvalidArtifactError,
+                OSError,
+                ProcessOutputLimitError,
+                ProcessTimeoutError,
+                ValidationError,
+                ValueError,
+            ) as error:
+                return rejected(request, tracking_error_code(error))
 
     def _track(
         self,
@@ -209,7 +217,7 @@ class SubjectTrackingService:
         )
         check_deadline(deadline)
         created = publish_bundle(
-            bundle_path(
+            artifact_path(
                 self.settings,
                 request.observation_segment_id,
                 OBSERVATION_BUNDLE_SUFFIX,
@@ -323,7 +331,7 @@ def _recover_completed_segment(
     tracking_input_digest: str,
     deadline: float,
 ) -> ObservationSegmentArtifact | None:
-    bundle = bundle_path(
+    bundle = artifact_path(
         settings,
         request.observation_segment_id,
         OBSERVATION_BUNDLE_SUFFIX,

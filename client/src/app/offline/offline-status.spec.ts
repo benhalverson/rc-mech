@@ -2,6 +2,8 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OfflineStatus } from './offline-status';
+import { OfflineSyncReviewStore } from './offline-sync-review-store';
+import { OfflineSyncStatusStore } from './offline-sync-status-store';
 import { OfflineWorkspaceStore } from './offline-workspace-store';
 
 class FakeOfflineWorkspaceStore {
@@ -24,7 +26,14 @@ describe('OfflineStatus', () => {
 		store = new FakeOfflineWorkspaceStore();
 		await TestBed.configureTestingModule({
 			imports: [OfflineStatus],
-			providers: [{ provide: OfflineWorkspaceStore, useValue: store }],
+			providers: [
+				{ provide: OfflineSyncReviewStore, useValue: { reviews: () => [] } },
+				{
+					provide: OfflineSyncStatusStore,
+					useValue: { message: signal('Pending sync: 2') },
+				},
+				{ provide: OfflineWorkspaceStore, useValue: store },
+			],
 		}).compileComponents();
 		fixture = TestBed.createComponent(OfflineStatus);
 		fixture.detectChanges();
@@ -48,6 +57,11 @@ describe('OfflineStatus', () => {
 				'Offline access is unavailable in this browser. Chassis Notes remains available while connected.',
 			],
 		] as const) {
+			(
+				TestBed.inject(OfflineSyncStatusStore).message as ReturnType<
+					typeof signal<string>
+				>
+			).set(status === 'ready' ? '' : 'Pending sync: 2');
 			store.status.set(status);
 			store.message.set(message);
 			fixture.detectChanges();

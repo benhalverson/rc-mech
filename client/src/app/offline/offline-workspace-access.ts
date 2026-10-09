@@ -1,6 +1,10 @@
 import { InjectionToken, inject, Service } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { OfflineCapabilities } from './offline-capabilities';
+import {
+	hasCompleteOfflineContract,
+	OFFLINE_CONTRACT_VERSION,
+} from './offline-contract';
 import { OfflineGarageGateway } from './offline-garage-gateway';
 import {
 	type OfflineGarageSnapshot,
@@ -19,6 +23,12 @@ export type OfflinePreparationResult =
 	| Readonly<{ kind: 'unsupported' }>
 	| Readonly<{ kind: 'ready'; snapshot: OfflineGarageSnapshot }>;
 
+/**
+ * Preparation/restoration capability used by OfflineWorkspaceStore and session
+ * admission. Coordinates shell capability checks, snapshot loading, and fenced
+ * storage so a ready result means durable offline access, not just a successful
+ * HTTP read. It does not publish UI state or replay feature commands.
+ */
 @Service()
 export class OfflineWorkspaceAccess {
 	private readonly capabilities = inject(OfflineCapabilities);
@@ -33,20 +43,34 @@ export class OfflineWorkspaceAccess {
 		await this.capabilities.prepareShell();
 		const collection = await firstValueFrom(this.gateway.load());
 		const snapshot: OfflineGarageSnapshot = {
+			contractVersion: OFFLINE_CONTRACT_VERSION,
 			ownerKey: owner.key,
 			ownerEmail: owner.email,
 			offlineUntil: owner.offlineUntil,
 			preparedAt: this.now().toISOString(),
 			cars: collection.cars,
+			photos: collection.photos,
 			setupCollections: collection.setupCollections,
+			buildCollections: collection.buildCollections,
+			driveCollections: collection.driveCollections,
+			settings: collection.settings,
+			maintenance: collection.maintenance,
+			voiceUpdates: collection.voiceUpdates,
 		};
 		if (!(await this.storage.save(snapshot, owner.sessionKey)))
 			throw new Error('Offline preparation was superseded by another User.');
 		return { kind: 'ready', snapshot };
 	}
 
+	async isSessionRevoked(sessionKey: string): Promise<boolean> {
+		return this.capabilities.storageAvailable
+			? this.storage.isSessionRevoked(sessionKey)
+			: false;
+	}
+
 	async restore(): Promise<OfflineGarageSnapshot | null> {
 		if (!this.capabilities.supported) return null;
-		return this.storage.restoreCurrent(this.now());
+		const snapshot = await this.storage.restoreCurrent(this.now());
+		return snapshot && hasCompleteOfflineContract(snapshot) ? snapshot : null;
 	}
 }

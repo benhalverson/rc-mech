@@ -1,7 +1,7 @@
 <main
 		class="workspace-shell min-h-dvh bg-alloy-canvas text-alloy-text"
-		[attr.aria-hidden]="overlayOpen() ? 'true' : null"
-		[attr.inert]="overlayOpen() ? '' : null"
+		[attr.aria-hidden]="overlayOpen() || signOutStore.outcome().status === 'confirmation' ? 'true' : null"
+		[attr.inert]="overlayOpen() || signOutStore.outcome().status === 'confirmation' ? '' : null"
 	>
 		<h1 class="sr-only">Chassis Notes owner workspace</h1>
 		<header class="command-bar sticky top-0 z-30 bg-graphite text-alloy-command-text">
@@ -55,7 +55,7 @@
 					</nav>
 					<div class="command-account ml-auto flex min-w-0 items-center gap-4 border-l border-alloy-command-separator pl-6">
 						<span class="owner-email max-w-64 truncate text-[13px] text-alloy-command-secondary" [title]="ownerEmail()">{{ ownerEmail() }}</span>
-						<button class="command-action alloy-focus-ring flex min-h-12 items-center gap-2 border border-alloy-command-separator bg-alloy-command-control px-3 text-sm font-semibold text-alloy-command-text" type="button" (click)="signOut()" [disabled]="signOutStore.signingOut()" [attr.aria-busy]="signOutStore.signingOut()">
+						<button class="command-action alloy-focus-ring flex min-h-12 items-center gap-2 border border-alloy-command-separator bg-alloy-command-control px-3 text-sm font-semibold text-alloy-command-text" type="button" (click)="signOut($event)" [disabled]="signOutStore.signingOut()" [attr.aria-busy]="signOutStore.signingOut()">
 							{{ signOutStore.signingOut() ? 'Signing out…' : 'Sign out' }}
 						</button>
 					</div>
@@ -139,7 +139,7 @@
 			</nav>
 			<div class="mt-auto border-t border-alloy-command-separator p-3">
 				<a class="drawer-utility alloy-focus-ring flex min-h-12 items-center px-3 text-sm font-semibold text-alloy-command-accent no-underline" href="/api/docs">API notes</a>
-				<button class="drawer-utility alloy-focus-ring flex min-h-12 w-full items-center justify-between border-0 bg-transparent px-3 text-left text-sm font-semibold text-alloy-command-text" type="button" (click)="signOut()" [disabled]="signOutStore.signingOut()" [attr.aria-busy]="signOutStore.signingOut()">
+				<button class="drawer-utility alloy-focus-ring flex min-h-12 w-full items-center justify-between border-0 bg-transparent px-3 text-left text-sm font-semibold text-alloy-command-text" type="button" (click)="signOut($event)" [disabled]="signOutStore.signingOut()" [attr.aria-busy]="signOutStore.signingOut()">
 					{{ signOutStore.signingOut() ? 'Signing out…' : 'Sign out' }}
 				</button>
 			</div>
@@ -173,3 +173,12 @@
 			</section>
 		}
 	}
+
+@if (signOutStore.outcome().status === 'confirmation') {
+ <section class="fixed inset-x-4 top-1/3 z-50 mx-auto grid max-w-lg gap-4 border border-alloy-separator bg-alloy-surface p-6 shadow-xl" role="alertdialog" aria-modal="true" aria-labelledby="sign-out-confirm-title" aria-describedby="sign-out-confirm-description" #signOutConfirmation (keydown)="trapFocus($event, signOutConfirmation)" (keydown.escape)="cancelSignOut()">
+  <h2 id="sign-out-confirm-title" class="alloy-screen-title">Discard Pending sync work?</h2>
+  <p id="sign-out-confirm-description">Signing out removes your saved Garage and pending structured changes from this device. Changes that have not synchronized will be permanently discarded. While offline, server sign-out waits for a connection.</p>
+  <button class="alloy-control alloy-focus-ring" type="button" #keepWorking (click)="cancelSignOut()">Keep working</button>
+  <button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="signOutStore.signOut({operation: 'sign-out', discardPending: true})">Discard changes and sign out</button>
+ </section>
+}

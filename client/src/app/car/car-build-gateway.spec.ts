@@ -119,6 +119,12 @@ describe('CarBuildGateway', () => {
 		for (const [mode, componentId, method, endpoint] of [
 			['add', null, 'POST', '/api/v1/cars/car%2F1/components'],
 			[
+				'remove',
+				'component/1',
+				'POST',
+				'/api/v1/cars/car%2F1/components/component%2F1/remove',
+			],
+			[
 				'edit',
 				'component/1',
 				'PATCH',
@@ -135,10 +141,14 @@ describe('CarBuildGateway', () => {
 			const request = http.expectOne(endpoint);
 			expect(request.request.method).toBe(method);
 			expect(request.request.withCredentials).toBe(true);
-			expect(request.request.body).toEqual({
-				slot: 'motor',
-				name: 'Race motor',
-			});
+			expect(request.request.body).toEqual(
+				mode === 'remove'
+					? {}
+					: {
+							slot: 'motor',
+							name: 'Race motor',
+						},
+			);
 			request.flush({ component: component() });
 			await expect(saved).resolves.toEqual(component());
 		}

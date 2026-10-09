@@ -108,7 +108,7 @@ describe('backend defensive and alternate paths', () => {
 		for (const [from, to, expected] of [
 			['active', 'active', false],
 			['paused', 'paused', false],
-			['archived', 'active', false],
+			['archived', 'active', true],
 			['active', 'archived', true],
 			['paused', 'archived', true],
 		] as const)

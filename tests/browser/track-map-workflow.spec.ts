@@ -52,6 +52,52 @@ test.describe('rendered Corner pointer geometry', () => {
 			name: /Track-view geometry editor/,
 		});
 		const target = page.getByLabel('Geometry target', { exact: true });
+		const endpoints = [
+			{ name: '1. Entry line start', target: 'entryStart', x: 0.2, y: 0.4 },
+			{ name: '2. Entry line end', target: 'entryEnd', x: 0.4, y: 0.4 },
+			{ name: '3. Exit line start', target: 'exitStart', x: 0.6, y: 0.7 },
+			{ name: '4. Exit line end', target: 'exitEnd', x: 0.8, y: 0.7 },
+		];
+		for (const endpoint of endpoints) {
+			const action = page.getByRole('button', {
+				name: endpoint.name,
+				exact: true,
+			});
+			await action.click();
+			await expect(action).toHaveAttribute('aria-pressed', 'true');
+			await expect(target).toHaveValue(endpoint.target);
+			await canvas.scrollIntoViewIfNeeded();
+			const bounds = await canvas.boundingBox();
+			if (!bounds) throw new Error('Corner canvas is not rendered');
+			await canvas.click({
+				position: {
+					x: bounds.width * endpoint.x,
+					y: bounds.height * endpoint.y,
+				},
+			});
+			await expect
+				.poll(
+					async () =>
+						Math.abs(
+							Number(await page.getByLabel('X', { exact: true }).inputValue()) -
+								endpoint.x,
+						) * bounds.width,
+				)
+				.toBeLessThanOrEqual(1);
+			await expect
+				.poll(
+					async () =>
+						Math.abs(
+							Number(await page.getByLabel('Y', { exact: true }).inputValue()) -
+								endpoint.y,
+						) * bounds.height,
+				)
+				.toBeLessThanOrEqual(1);
+		}
+		await page.screenshot({
+			path: testInfo.outputPath('corner-entry-exit-marked.png'),
+			fullPage: true,
+		});
 		for (const viewport of [
 			{ width: 1280, height: 900 },
 			{ width: 390, height: 844 },

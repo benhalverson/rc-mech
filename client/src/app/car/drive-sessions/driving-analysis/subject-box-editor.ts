@@ -39,6 +39,10 @@ export class SubjectBoxEditor {
 		const box = this.box();
 		return `Subject box: ${percent(box.x)} from the left, ${percent(box.y)} from the top, ${percent(box.width)} wide, and ${percent(box.height)} high in the Track view.`;
 	});
+	/** Preserve keyboard focus while the drawing surface captures a box redraw. */
+	protected focusBox(event: PointerEvent): void {
+		(event.currentTarget as HTMLButtonElement).focus({ preventScroll: true });
+	}
 
 	protected pointerDown(event: PointerEvent): void {
 		if (event.button !== 0) return;

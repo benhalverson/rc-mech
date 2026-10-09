@@ -115,6 +115,10 @@ describe('VoiceNoteWorkspace', () => {
 		selectCar: ReturnType<typeof vi.fn>;
 	};
 	let store: {
+		offlinePrepared: ReturnType<typeof signal<boolean>>;
+		media: ReturnType<typeof signal<Record<string, string | null>>>;
+		openOriginal: ReturnType<typeof vi.fn>;
+		remoteAvailable: ReturnType<typeof signal<boolean>>;
 		localCaptures: ReturnType<typeof signal<PendingVoiceCapture[]>>;
 		updates: ReturnType<typeof signal<VoiceUpdate[]>>;
 		cars: ReturnType<
@@ -192,6 +196,10 @@ describe('VoiceNoteWorkspace', () => {
 			selectCar: vi.fn(),
 		};
 		store = {
+			offlinePrepared: signal(false),
+			media: signal({}),
+			openOriginal: vi.fn(),
+			remoteAvailable: signal(true),
 			localCaptures: signal([]),
 			updates: signal([]),
 			cars: signal([
@@ -246,6 +254,42 @@ describe('VoiceNoteWorkspace', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		TestBed.resetTestingModule();
+	});
+
+	it('offers original playback from retained media and explains an uncached offline recording', async () => {
+		store.offlinePrepared.set(true);
+		store.updates.set([voiceUpdate({ audioUrl: '/audio/voice-1' })]);
+		await detect();
+		button('View original recording').click();
+		expect(store.openOriginal).toHaveBeenCalledWith('voice-1');
+		store.media.set({ 'voice-1': 'blob:original' });
+		let root = await detect();
+		expect(root.querySelector('audio')?.getAttribute('src')).toBe(
+			'blob:original',
+		);
+		store.media.set({ 'voice-1': null });
+		root = await detect();
+		expect(root.textContent).toContain(
+			'Original recording is not available on this device',
+		);
+	});
+
+	it('announces offline processing deferral and retained capture feedback', async () => {
+		store.remoteAvailable.set(false);
+		store.localCaptures.set([
+			{ ...localCapture(), status: 'failed', text: 'Offline text retained' },
+		]);
+		const element = await detect();
+		expect(element.textContent).toContain('waiting for connectivity');
+		expect(element.textContent).toContain('Needs attention');
+		expect(element.textContent).toContain('Offline text retained');
+		store.localCaptures.set([
+			{ ...localCapture(), text: undefined, blob: new Blob(['voice']) },
+		]);
+		await detect();
+		expect(fixture.nativeElement.textContent).not.toContain(
+			'Offline text retained',
+		);
 	});
 
 	it('renders capture first, selects route context, and preserves no-setup independence', async () => {
@@ -702,6 +746,10 @@ describe('VoiceTrackLog route', () => {
 			retry: vi.fn(),
 		};
 		const workspaceStore = {
+			offlinePrepared: signal(false),
+			media: signal({}),
+			openOriginal: vi.fn(),
+			remoteAvailable: signal(true),
 			localCaptures: signal([]),
 			updates: signal([]),
 			cars: signal([]),

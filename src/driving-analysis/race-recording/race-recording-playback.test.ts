@@ -40,6 +40,93 @@ const request = (headers?: HeadersInit, method = 'GET') =>
 	);
 
 describe('Race-recording playback', () => {
+	test('publishes a storage failure to the large response body', async () => {
+		vi.stubGlobal(
+			'FixedLengthStream',
+			class extends TransformStream {
+				constructor(_length: number) {
+					super();
+				}
+			},
+		);
+		try {
+			const size = 8 * 1024 * 1024 + 1;
+			const large = { ...metadata, size };
+			const content = vi.fn(
+				async (
+					_identity: unknown,
+					range?: { offset: number; length: number },
+				) => {
+					if (range?.offset !== 0) throw new Error('storage failed');
+					return {
+						...large,
+						body: new Blob([new Uint8Array(range.length)]).stream(),
+					};
+				},
+			);
+			const response = await raceRecordingPlaybackResponse(
+				{ content },
+				identity,
+				request(),
+				large,
+			);
+			await expect(response.arrayBuffer()).rejects.toThrow('storage failed');
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	test('preserves complete HTTP ranges while windowing large storage reads', async () => {
+		vi.stubGlobal(
+			'FixedLengthStream',
+			class extends TransformStream {
+				constructor(_length: number) {
+					super();
+				}
+			},
+		);
+		try {
+			for (const partial of [false, true]) {
+				const size = 8 * 1024 * 1024 + 7;
+				const large = { ...metadata, size };
+				const content = vi.fn(
+					async (
+						_identity: unknown,
+						range?: { offset: number; length: number },
+					) => ({
+						...large,
+						body: new Blob([new Uint8Array(range?.length ?? 0)]).stream(),
+					}),
+				);
+				const response = await raceRecordingPlaybackResponse(
+					{ content },
+					identity,
+					request(partial ? { range: 'bytes=3-' } : undefined),
+					large,
+				);
+				expect(response.status).toBe(partial ? 206 : 200);
+				expect(response.headers.get('content-length')).toBe(
+					String(size - (partial ? 3 : 0)),
+				);
+				expect(response.headers.get('content-range')).toBe(
+					partial ? `bytes 3-${size - 1}/${size}` : null,
+				);
+				expect((await response.arrayBuffer()).byteLength).toBe(
+					size - (partial ? 3 : 0),
+				);
+				expect(content.mock.calls.map((call) => call[1])).toEqual([
+					{ offset: partial ? 3 : 0, length: 8 * 1024 * 1024 },
+					{
+						offset: 8 * 1024 * 1024 + (partial ? 3 : 0),
+						length: partial ? 4 : 7,
+					},
+				]);
+			}
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	test('parses bounded open, closed, clamped, and suffix ranges', () => {
 		expect(parseSingleByteRange('bytes=2-5', 10)).toEqual({
 			offset: 2,

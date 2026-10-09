@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, isNull, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { canWrite } from '../../car-policy';
 import { db } from '../../db';
@@ -7,7 +7,7 @@ import {
 	canEditDriveSession,
 	isIanaTimezone,
 } from '../../drive-session-policy';
-import { driveSession, owner } from '../../schema';
+import { car, driveSession, owner } from '../../schema';
 import {
 	type AppEnv,
 	driveSessionInput,
@@ -22,8 +22,49 @@ import {
 	publicDriveSession,
 } from './drive-records';
 
+/**
+ * Online Drive-session endpoints plus owner-scoped preparation reads. Mutations
+ * participate in the Car version witness used by durable Drive replay, keeping
+ * legacy writers visible to offline conflict detection and usage calculations.
+ */
 export const createDriveSessionRoutes = () => {
 	const routes = new Hono<AppEnv>();
+
+	routes.get('/drives', async (c) => {
+		const timezone = await ownerTimezone(c);
+		const rows = await db(c.env)
+			.select({
+				ownerCarId: sql<string>`${car.id}`.as('ownerCarId'),
+				version: car.version,
+				...getTableColumns(driveSession),
+			})
+			.from(car)
+			.leftJoin(driveSession, eq(driveSession.carId, car.id))
+			.where(eq(car.ownerId, c.get('userId')));
+		const collections = new Map<
+			string,
+			{
+				carId: string;
+				version: number;
+				timezone: string;
+				sessions: (typeof driveSession.$inferSelect)[];
+			}
+		>();
+		for (const row of rows) {
+			const collection = collections.get(row.ownerCarId) ?? {
+				carId: row.ownerCarId,
+				version: row.version,
+				timezone,
+				sessions: [],
+			};
+			if (row.id) {
+				const { ownerCarId: _ownerCarId, version: _version, ...session } = row;
+				collection.sessions.push(session);
+			}
+			collections.set(row.ownerCarId, collection);
+		}
+		return c.json({ collections: [...collections.values()] });
+	});
 
 	routes.get('/preferences/timezone', async (c) =>
 		c.json({ timezone: await ownerTimezone(c) }),
@@ -86,15 +127,21 @@ export const createDriveSessionRoutes = () => {
 		const id = crypto.randomUUID();
 		const value = parsed.data;
 		const database = db(c.env);
-		await database.insert(driveSession).values({
-			id,
-			carId,
-			startedAt: new Date(value.startedAt).toISOString(),
-			durationMinutes: value.durationMinutes ?? null,
-			conditions: value.conditions ?? null,
-			notes: value.notes ?? null,
-			deletedAt: null,
-		});
+		await database.batch([
+			database
+				.update(car)
+				.set({ version: sql`${car.version} + 1`, lastOperationId: null })
+				.where(and(eq(car.id, carId), eq(car.ownerId, c.get('userId')))),
+			database.insert(driveSession).values({
+				id,
+				carId,
+				startedAt: new Date(value.startedAt).toISOString(),
+				durationMinutes: value.durationMinutes ?? null,
+				conditions: value.conditions ?? null,
+				notes: value.notes ?? null,
+				deletedAt: null,
+			}),
+		]);
 		const created = await database
 			.select()
 			.from(driveSession)
@@ -130,23 +177,29 @@ export const createDriveSessionRoutes = () => {
 			return c.json({ error: 'Deleted drive sessions are immutable' }, 409);
 		const parsed = driveSessionUpdateInput.safeParse(await c.req.json());
 		if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-		await db(c.env)
-			.update(driveSession)
-			.set({
-				startedAt: parsed.data.startedAt
-					? new Date(parsed.data.startedAt).toISOString()
-					: undefined,
-				durationMinutes: parsed.data.durationMinutes,
-				conditions: parsed.data.conditions,
-				notes: parsed.data.notes,
-			})
-			.where(
-				and(
-					eq(driveSession.id, driveId),
-					eq(driveSession.carId, carId),
-					isNull(driveSession.deletedAt),
+		await db(c.env).batch([
+			db(c.env)
+				.update(car)
+				.set({ version: sql`${car.version} + 1`, lastOperationId: null })
+				.where(and(eq(car.id, carId), eq(car.ownerId, c.get('userId')))),
+			db(c.env)
+				.update(driveSession)
+				.set({
+					startedAt: parsed.data.startedAt
+						? new Date(parsed.data.startedAt).toISOString()
+						: undefined,
+					durationMinutes: parsed.data.durationMinutes,
+					conditions: parsed.data.conditions,
+					notes: parsed.data.notes,
+				})
+				.where(
+					and(
+						eq(driveSession.id, driveId),
+						eq(driveSession.carId, carId),
+						isNull(driveSession.deletedAt),
+					),
 				),
-			);
+		]);
 		const updated = await db(c.env)
 			.select()
 			.from(driveSession)
@@ -186,16 +239,22 @@ export const createDriveSessionRoutes = () => {
 		if (!canDeleteDriveSession(existing))
 			return c.json({ error: 'Drive session is already deleted' }, 409);
 		const deletedAt = new Date().toISOString();
-		await db(c.env)
-			.update(driveSession)
-			.set({ deletedAt })
-			.where(
-				and(
-					eq(driveSession.id, driveId),
-					eq(driveSession.carId, carId),
-					isNull(driveSession.deletedAt),
+		await db(c.env).batch([
+			db(c.env)
+				.update(car)
+				.set({ version: sql`${car.version} + 1`, lastOperationId: null })
+				.where(and(eq(car.id, carId), eq(car.ownerId, c.get('userId')))),
+			db(c.env)
+				.update(driveSession)
+				.set({ deletedAt })
+				.where(
+					and(
+						eq(driveSession.id, driveId),
+						eq(driveSession.carId, carId),
+						isNull(driveSession.deletedAt),
+					),
 				),
-			);
+		]);
 		const deleted = { ...existing, deletedAt };
 		return c.json({
 			driveSession: publicDriveSession(deleted, await ownerTimezone(c)),
