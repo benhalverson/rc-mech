@@ -36,6 +36,7 @@ from driving_analysis_service.processing_errors import (
     rejected,
 )
 from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.stage_admission import processing_slot
 from driving_analysis_service.tracking_artifacts import (
     FRAME_MANIFEST_SUFFIX,
     MAX_COMPRESSED_MANIFEST_BYTES,
@@ -44,9 +45,9 @@ from driving_analysis_service.tracking_artifacts import (
     PREPARED_MEDIA_SUFFIX,
     ArtifactConflictError,
     InvalidArtifactError,
+    artifact_path,
     bundle_exists,
     bundle_member_path,
-    bundle_path,
     canonical_json,
     compressed_contract,
     ensure_bundle_durable,
@@ -93,24 +94,23 @@ class RaceWindowPreparationService:
         )
 
     def prepare(self, request: PrepareStageRequest) -> PrepareStageResponse:
-        if not self._admission.acquire(blocking=False):
-            return rejected(request, "SERVICE_BUSY")
-        deadline = start_deadline(self.settings.limits.process_timeout_seconds)
-        try:
-            return self._prepare(request, deadline)
-        except (
-            ArtifactConflictError,
-            InvalidArtifactError,
-            MediaValidationError,
-            OSError,
-            ProcessOutputLimitError,
-            ProcessTimeoutError,
-            ValidationError,
-            ValueError,
-        ) as error:
-            return rejected(request, preparation_error_code(error))
-        finally:
-            self._admission.release()
+        with processing_slot(self._admission) as admitted:
+            if not admitted:
+                return rejected(request, "SERVICE_BUSY")
+            deadline = start_deadline(self.settings.limits.process_timeout_seconds)
+            try:
+                return self._prepare(request, deadline)
+            except (
+                ArtifactConflictError,
+                InvalidArtifactError,
+                MediaValidationError,
+                OSError,
+                ProcessOutputLimitError,
+                ProcessTimeoutError,
+                ValidationError,
+                ValueError,
+            ) as error:
+                return rejected(request, preparation_error_code(error))
 
     def _prepare(
         self,
@@ -221,7 +221,7 @@ class RaceWindowPreparationService:
                 )
                 names = _prepared_member_names(request.prepared_media_id)
                 created = publish_bundle(
-                    bundle_path(
+                    artifact_path(
                         self.settings,
                         request.prepared_media_id,
                         PREPARED_BUNDLE_SUFFIX,
@@ -254,7 +254,7 @@ def _recover_completed_preparation(
     settings: ServiceSettings,
     deadline: float,
 ) -> PreparedMediaArtifact | None:
-    bundle = bundle_path(settings, request.prepared_media_id, PREPARED_BUNDLE_SUFFIX)
+    bundle = artifact_path(settings, request.prepared_media_id, PREPARED_BUNDLE_SUFFIX)
     if not bundle_exists(settings, request.prepared_media_id, PREPARED_BUNDLE_SUFFIX):
         return None
     completed = read_completion(

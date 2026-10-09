@@ -50,13 +50,14 @@ from driving_analysis_service.rendering_contracts import (
     RenderStageResponse,
 )
 from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.stage_admission import processing_slot
 from driving_analysis_service.tracking_artifacts import (
     ArtifactConflictError,
     BundleReservation,
     InvalidArtifactError,
+    artifact_path,
     bundle_exists,
     bundle_member_path,
-    bundle_path,
     canonical_json,
     copy_verified_artifact,
     ensure_bundle_durable,
@@ -109,35 +110,34 @@ class CornerRenderService:
     def render(  # noqa: C901, PLR0911 - each safe failure maps directly to one response
         self, request: RenderStageRequest
     ) -> RenderStageResponse:
-        if not self._admission.acquire(blocking=False):
-            return _rejected(request, "SERVICE_BUSY")
-        started_at = time.monotonic()
-        try:
-            return self._render(
-                request,
-                start_deadline(self.settings.limits.process_timeout_seconds),
-                started_at,
-            )
-        except MediaValidationError as error:
-            if error.code == "PROCESS_TIMEOUT":
+        with processing_slot(self._admission) as admitted:
+            if not admitted:
+                return _rejected(request, "SERVICE_BUSY")
+            started_at = time.monotonic()
+            try:
+                return self._render(
+                    request,
+                    start_deadline(self.settings.limits.process_timeout_seconds),
+                    started_at,
+                )
+            except MediaValidationError as error:
+                if error.code == "PROCESS_TIMEOUT":
+                    return _rejected(request, "PROCESS_TIMEOUT")
+                return _rejected(request, "MEDIA_UNAVAILABLE")
+            except RenderInvalidMediaError:
+                return _rejected(request, "MEDIA_UNAVAILABLE")
+            except RenderProcessError:
+                return _rejected(request, "RENDER_FAILED")
+            except InvalidArtifactError:
+                return _rejected(request, "RENDER_FAILED")
+            except ArtifactConflictError:
+                return _rejected(request, "ARTIFACT_CONFLICT")
+            except ProcessTimeoutError:
                 return _rejected(request, "PROCESS_TIMEOUT")
-            return _rejected(request, "MEDIA_UNAVAILABLE")
-        except RenderInvalidMediaError:
-            return _rejected(request, "MEDIA_UNAVAILABLE")
-        except RenderProcessError:
-            return _rejected(request, "RENDER_FAILED")
-        except InvalidArtifactError:
-            return _rejected(request, "RENDER_FAILED")
-        except ArtifactConflictError:
-            return _rejected(request, "ARTIFACT_CONFLICT")
-        except ProcessTimeoutError:
-            return _rejected(request, "PROCESS_TIMEOUT")
-        except ProcessOutputLimitError:
-            return _rejected(request, "RESOURCE_LIMIT")
-        except (OSError, ValidationError, ValueError):
-            return _rejected(request, "RENDER_FAILED")
-        finally:
-            self._admission.release()
+            except ProcessOutputLimitError:
+                return _rejected(request, "RESOURCE_LIMIT")
+            except (OSError, ValidationError, ValueError):
+                return _rejected(request, "RENDER_FAILED")
 
     def _render(
         self,
@@ -153,7 +153,7 @@ class CornerRenderService:
         media_name = f"{request.render_id}{RENDER_MEDIA_SUFFIX}"
         completion_name = f"{request.render_id}{RENDER_COMPLETION_SUFFIX}"
         with reserve_bundle(
-            bundle_path(self.settings, request.render_id, RENDER_BUNDLE_SUFFIX),
+            artifact_path(self.settings, request.render_id, RENDER_BUNDLE_SUFFIX),
             {
                 media_name: request.specification.max_output_bytes,
                 completion_name: MAX_COMPLETION_BYTES,
@@ -282,7 +282,7 @@ def _recover(
     settings: ServiceSettings,
     deadline: float,
 ) -> RenderArtifact | None:
-    bundle = bundle_path(settings, request.render_id, RENDER_BUNDLE_SUFFIX)
+    bundle = artifact_path(settings, request.render_id, RENDER_BUNDLE_SUFFIX)
     if not bundle_exists(settings, request.render_id, RENDER_BUNDLE_SUFFIX):
         return None
     completion = read_completion(

@@ -253,10 +253,6 @@ def artifact_path(settings: ServiceSettings, artifact_id: str, suffix: str) -> P
     return settings.artifact_root / f"{artifact_id}{suffix}"
 
 
-def bundle_path(settings: ServiceSettings, artifact_id: str, suffix: str) -> Path:
-    return artifact_path(settings, artifact_id, suffix)
-
-
 def bundle_member_path(
     settings: ServiceSettings,
     artifact_id: str,
