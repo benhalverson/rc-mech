@@ -3,6 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultTimezone, type TimezonePreference } from './settings.models';
+import { FakeSettingsWorkspace } from './settings-sync.testing';
+import { SettingsWorkspaceStore } from './settings-workspace-store';
 import {
 	TimezoneGateway,
 	type TimezoneGatewayFailure,
@@ -62,6 +64,7 @@ describe('TimezoneStore', () => {
 		gateway = new FakeTimezoneGateway();
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: SettingsWorkspaceStore, useClass: FakeSettingsWorkspace },
 				TimezoneStore,
 				{ provide: TimezoneGateway, useValue: gateway },
 			],
@@ -138,5 +141,62 @@ describe('TimezoneStore', () => {
 			operationId: 3,
 		});
 		expect(store.error()).toBe('That timezone is disabled.');
+	});
+	it('retains local timezone intent, exposes conflicts, and reports failed durable storage', () => {
+		const workspace = TestBed.inject(
+			SettingsWorkspaceStore,
+		) as unknown as FakeSettingsWorkspace;
+		workspace.available.set(true);
+		workspace.current.set({
+			timezone: 'UTC',
+			invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+		});
+		expect(store.timezone()).toBe('UTC');
+		gateway.setLoading(true);
+		gateway.setReadError(new Error('offline'));
+		expect(store.loading()).toBe(false);
+		expect(store.error()).toBe('');
+		store.saveTimezone({ timezone: 'Europe/London' });
+		const request = workspace.mutate.mock.lastCall?.[0] as {
+			requestId: string;
+		};
+		expect(gateway.saveTimezone).not.toHaveBeenCalled();
+		workspace.outcome.set({ status: 'pending', requestId: request.requestId });
+		TestBed.tick();
+		workspace.outcome.set({
+			status: 'succeeded',
+			requestId: request.requestId,
+		});
+		TestBed.tick();
+		expect(store.message()).toBe('Saved on this device.');
+		store.saveTimezone({ timezone: 'Asia/Tokyo' });
+		const failed = workspace.mutate.mock.lastCall?.[0] as { requestId: string };
+		workspace.outcome.set({
+			status: 'failed',
+			requestId: failed.requestId,
+			message: 'Storage full',
+		});
+		TestBed.tick();
+		expect(store.error()).toBe('Storage full');
+		const operation = {
+			operationId: 'op',
+			ownerKey: 'owner',
+			createdAt: 'today',
+			command: {
+				type: 'timezone' as const,
+				base: 'UTC',
+				timezone: 'Europe/London',
+			},
+			status: 'conflict' as const,
+			dependencies: [],
+			feedback: 'Changed',
+			remote: 'Asia/Tokyo',
+		};
+		workspace.operations.set([operation]);
+		expect(store.error()).toContain('Remote timezone: Asia/Tokyo');
+		workspace.operations.set([
+			{ ...operation, status: 'needs-attention', remote: undefined },
+		]);
+		expect(store.error()).toContain('Needs attention');
 	});
 });

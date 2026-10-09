@@ -20,10 +20,16 @@ import {
 } from '@lucide/angular';
 import type { CarPhoto } from '../car.models';
 import { CarPhotoStore } from './car-photo-store';
+import type { PhotoCapture } from './photo-sync.models';
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
+/**
+ * Gallery presentation and file-selection boundary. Sends validated photo intents
+ * to CarPhotoStore and renders its local, pending, and failure states; persistence,
+ * HTTP sequencing, and object-URL lifetime stay outside the component.
+ */
 @Component({
 	selector: 'app-car-photo-gallery',
 	host: { class: 'block' },
@@ -51,6 +57,15 @@ export class CarPhotoGallery {
 		this.store.loading() ? 'loading' : this.store.failure() ? 'error' : 'ready',
 	);
 	protected readonly readFailure = this.store.failure;
+	protected readonly offline = this.store.offline;
+	protected readonly captureFailures = this.store.captureFailures;
+	protected resolveCapture(
+		capture: PhotoCapture,
+		decision: 'retry' | 'discard',
+	): void {
+		this.store.resolveCapture({ capture, decision });
+	}
+	protected readonly captureFeedback = this.store.captureFeedback;
 	protected readonly error = this.store.error;
 	protected readonly action = this.store.action;
 	protected readonly validationError = signal('');
@@ -69,7 +84,9 @@ export class CarPhotoGallery {
 		});
 	}
 
-	protected photoUrl(photo: CarPhoto): string {
+	protected photoUrl(photo: CarPhoto): string | null {
+		if (this.store.workspace.available())
+			return this.store.media()[photo.id] ?? null;
 		return photo.url || `/api/v1/photos/${encodeURIComponent(photo.id)}`;
 	}
 

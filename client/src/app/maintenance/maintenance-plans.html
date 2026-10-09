@@ -1,3 +1,4 @@
+@if (syncMessage()) { <p class="alloy-supporting-text" role="status">{{ syncMessage() }}</p> }
 <ng-content select="[service-totals]" />
 
 <div class="maintenance-totals grid grid-cols-2 divide-x divide-y divide-alloy-separator border-y border-alloy-separator sm:grid-cols-4 sm:divide-y-0" aria-label="Maintenance plan totals">
@@ -45,6 +46,7 @@
 					} @else if (plan.status === 'paused') {
 						<button class="text-button alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="transition(plan, 'resume')" [disabled]="isReadOnly(plan) || action()">Resume</button>
 					}
+					@if (plan.status === 'archived') { <button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="transition(plan,'restore')" [disabled]="action()">Restore plan</button> }
 					@if (plan.status !== 'archived') { <button class="text-button danger alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="transition(plan, 'archive')" [disabled]="isReadOnly(plan) || action()"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg>Archive</button> }
 				</div>
 			</article>

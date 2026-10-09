@@ -10,6 +10,7 @@
 		}
 	</header>
 
+	@if(syncMessage()){<p class="alloy-state" role="status">{{syncMessage()}}</p>}
 	@if (state() === 'loading') {
 		<div class="state-card alloy-state alloy-live-state mt-0" role="status"><span class="alloy-state-heading"><svg class="animate-spin" lucideRefreshCw size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Opening consumable history</strong></span><span>Reading consumable history…</span></div>
 	} @else if (state() === 'error') {

@@ -14,6 +14,7 @@ from driving_analysis_service.benchmark import (
     _gap_counts,
     _intersection_over_union,
     _matching_pass,
+    _provenance_matches,
     evaluate_benchmark,
 )
 from driving_analysis_service.contracts import (
@@ -28,6 +29,7 @@ from driving_analysis_service.contracts import (
     GroundTruth,
     GroundTruthCase,
     GroundTruthPass,
+    InferenceProvenance,
     NormalizedBox,
     NormalizedPoint,
     RationalValue,
@@ -1078,3 +1080,22 @@ def test_committed_rejected_envelope_is_safe_and_invalid_fixtures_are_rejected()
     for path in sorted((FIXTURE_ROOT / "rejected").glob("*.json")):
         with pytest.raises(ValidationError):
             adapter.validate_json(path.read_text())
+
+
+@pytest.mark.parametrize("field", InferenceProvenance.model_fields)
+def test_every_shared_inference_field_participates_in_compatibility(field: str) -> None:
+    assert _provenance_matches(BENCHMARK_PROVENANCE, PROVENANCE)
+    value = getattr(PROVENANCE, field)
+    changed = 0.25 if isinstance(value, float) else "different"
+    observation = PROVENANCE.model_copy(update={field: changed})
+    assert not _provenance_matches(BENCHMARK_PROVENANCE, observation)
+
+
+def test_benchmark_runtime_identity_is_separate_from_inference_identity() -> None:
+    benchmark = BENCHMARK_PROVENANCE.model_copy(update={"ffmpeg_version": "different"})
+    assert _provenance_matches(benchmark, PROVENANCE)
+    assert PROVENANCE.model_dump(by_alias=True) == {
+        name: value
+        for name, value in BENCHMARK_PROVENANCE.model_dump(by_alias=True).items()
+        if name in PROVENANCE.model_dump(by_alias=True)
+    }

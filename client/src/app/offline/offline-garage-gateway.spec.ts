@@ -30,7 +30,27 @@ describe('OfflineGarageGateway', () => {
 	});
 
 	it('loads and parses the complete authenticated Car snapshot', async () => {
+		const settings = {
+			timezone: 'UTC',
+			invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+		};
+		const flushSettings = () => {
+			http.expectOne('/api/v1/preferences/timezone').flush({ timezone: 'UTC' });
+			http.expectOne('/api/v1/invite-codes').flush(settings.invites);
+		};
 		const result = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
+		http.expectOne('/api/v1/photos').flush({ photos: [] });
+		flushSettings();
+		const drives = http.expectOne('/api/v1/drives');
+		expect(drives.request.withCredentials).toBe(true);
+		drives.flush({ collections: [] });
+		const builds = http.expectOne('/api/v1/components');
+		expect(builds.request.withCredentials).toBe(true);
+		builds.flush({ collections: [] });
 		const cars = http.expectOne(
 			(candidate) =>
 				candidate.url === '/api/v1/cars' &&
@@ -58,6 +78,12 @@ describe('OfflineGarageGateway', () => {
 			],
 		});
 		await expect(result).resolves.toEqual({
+			buildCollections: [],
+			voiceUpdates: [],
+			maintenance: { collections: [], components: [], timezone: 'UTC' },
+			photos: [],
+			settings,
+			driveCollections: [],
 			cars: [{ id: 'car-1', name: 'Track buggy' }],
 			setupCollections: [
 				{
@@ -77,16 +103,49 @@ describe('OfflineGarageGateway', () => {
 		});
 
 		const malformed = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
+		http.expectOne('/api/v1/photos').flush({ photos: [] });
+		flushSettings();
+		http.expectOne('/api/v1/components').flush({ collections: [] });
+		http.expectOne('/api/v1/drives').flush({ collections: [] });
 		http.expectOne('/api/v1/cars?archived=all').flush({ cars: [{ id: 4 }] });
 		http.expectOne('/api/v1/setups').flush({ setupCollections: [] });
 		await expect(malformed).rejects.toThrow();
 
 		const empty = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
+		http.expectOne('/api/v1/photos').flush({ photos: [] });
+		flushSettings();
+		http.expectOne('/api/v1/components').flush({ collections: [] });
+		http.expectOne('/api/v1/drives').flush({ collections: [] });
 		http.expectOne('/api/v1/cars?archived=all').flush({ cars: [] });
 		http.expectOne('/api/v1/setups').flush({ setupCollections: [] });
-		await expect(empty).resolves.toEqual({ cars: [], setupCollections: [] });
+		await expect(empty).resolves.toEqual({
+			cars: [],
+			setupCollections: [],
+			buildCollections: [],
+			voiceUpdates: [],
+			maintenance: { collections: [], components: [], timezone: 'UTC' },
+			photos: [],
+			settings,
+			driveCollections: [],
+		});
 
 		const malformedSetup = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/voice-updates').flush({ voiceUpdates: [] });
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
+		http.expectOne('/api/v1/photos').flush({ photos: [] });
+		flushSettings();
+		http.expectOne('/api/v1/components').flush({ collections: [] });
+		http.expectOne('/api/v1/drives').flush({ collections: [] });
 		http
 			.expectOne('/api/v1/cars?archived=all')
 			.flush({ cars: [{ id: 'car-1', name: 'Track buggy' }] });

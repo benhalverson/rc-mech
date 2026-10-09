@@ -92,6 +92,14 @@ describe('application routes', () => {
 		}
 	});
 
+	it('lazy-loads the offline limitation page without a workflow store', async () => {
+		const limitation = workspaceRoutes.find(
+			(route) => route.path === 'offline-unavailable',
+		);
+		expect(limitation?.providers).toBeUndefined();
+		expect(await limitation?.loadComponent?.()).toBeTypeOf('function');
+	});
+
 	it('keeps Garage collection and overview independently route scoped', () => {
 		const collection = workspaceRoutes.find((route) => route.path === 'garage');
 		const overview = workspaceRoutes.find(

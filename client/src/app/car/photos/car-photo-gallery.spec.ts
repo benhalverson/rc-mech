@@ -16,6 +16,14 @@ const photo = (overrides: Partial<CarPhoto> = {}): CarPhoto => ({
 });
 
 class FakePhotoStore {
+	readonly offline = signal(false);
+	readonly captureFailures = signal<
+		readonly import('./photo-sync.models').PhotoCapture[]
+	>([]);
+	readonly resolveCapture = vi.fn();
+	readonly captureFeedback = signal('');
+	readonly workspace = { available: signal(false) };
+	readonly media = signal<Record<string, string | null>>({});
 	readonly photos = signal<CarPhoto[]>([]);
 	readonly loading = signal(false);
 	readonly failure = signal<{ message: string; retryable: boolean } | null>(
@@ -71,6 +79,21 @@ describe('CarPhotoGallery', () => {
 		fixture.componentRef.setInput('carId', carId);
 		fixture.detectChanges();
 	};
+
+	it('shows retained originals and honest uncached placeholders offline', () => {
+		store.workspace.available.set(true);
+		store.offline.set(true);
+		store.captureFeedback.set('Pending sync');
+		store.photos.set([photo()]);
+		open();
+		expect(fixture.nativeElement.textContent).toContain('Original unavailable');
+		store.media.set({ 'photo-1': 'blob:retained' });
+		fixture.detectChanges();
+		expect(fixture.nativeElement.querySelector('img').getAttribute('src')).toBe(
+			'blob:retained',
+		);
+		expect(fixture.nativeElement.textContent).toContain('Pending sync');
+	});
 
 	it('selects route cars and clears presentation state when the car changes', () => {
 		fixture.detectChanges();
@@ -386,5 +409,43 @@ describe('CarPhotoGallery', () => {
 				])
 				.map((item) => item.id),
 		).toEqual(['a', 'c', 'b']);
+	});
+	it('offers explicit retry and discard for a retained rejected capture', () => {
+		const capture: import('./photo-sync.models').PhotoCapture = {
+			ownerKey: 'owner',
+			operationId: 'capture',
+			carId: 'car-1',
+			fileName: 'race.jpg',
+			photo: photo(),
+			blob: new Blob(['image']),
+			status: 'needs-attention',
+			feedback: 'Restore the Car',
+		};
+		store.captureFailures.set([capture]);
+		open();
+		const buttons = [
+			...fixture.nativeElement.querySelectorAll('button'),
+		] as HTMLButtonElement[];
+		buttons
+			.find((button) => button.textContent?.includes('Retry photo capture'))
+			?.click();
+		expect(store.resolveCapture).toHaveBeenLastCalledWith({
+			capture,
+			decision: 'retry',
+		});
+		buttons
+			.find((button) => button.textContent?.includes('Discard unsynced photo'))
+			?.click();
+		expect(store.resolveCapture).toHaveBeenLastCalledWith({
+			capture,
+			decision: 'discard',
+		});
+		fixture.componentRef.setInput('archived', true);
+		fixture.detectChanges();
+		expect(
+			buttons.find((button) =>
+				button.textContent?.includes('Retry photo capture'),
+			)?.disabled,
+		).toBe(true);
 	});
 });

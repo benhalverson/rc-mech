@@ -13,6 +13,11 @@ import { ownedCar } from '../cars/car-records';
 import { required } from '../invariant';
 import { ownedPhoto, parsePhotoForm, publicPhoto } from './photo-records';
 
+/**
+ * Online original-photo reads and item edits retained beside durable gallery
+ * replay. Original responses expose the stored revision so the client can reject
+ * a stale download when newer gallery metadata has already arrived.
+ */
 export const createPhotoItemRoutes = () => {
 	const routes = new Hono<AppEnv>();
 
@@ -228,6 +233,7 @@ export const createPhotoItemRoutes = () => {
 		return new Response(object.body, {
 			headers: {
 				'Content-Type': metadata.contentType,
+				'X-Photo-Revision': String(metadata.revision),
 				'Content-Length': String(metadata.byteSize),
 				'Cache-Control': 'private, max-age=300',
 				'Content-Disposition': `inline; filename="${metadata.fileName.replace(/["\\\r\n]/g, '_')}"`,

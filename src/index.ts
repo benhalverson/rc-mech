@@ -19,6 +19,7 @@ import { createCarsRoutes } from './routes/cars';
 import { createInviteRoutes } from './routes/invites';
 import { createMaintenanceRoutes } from './routes/maintenance';
 import { createPhotosRoutes } from './routes/photos';
+import { createSettingsSyncRoutes } from './routes/settings-sync';
 import { createSetupsRoutes } from './routes/setups';
 import { createVoiceRoutes } from './routes/voice';
 import { spaFallback } from './spa-fallback';
@@ -75,6 +76,7 @@ export const createApp = (
 
 	app.get('/api/v1/health', (c) => c.json({ ok: true, service: 'rc-mech' }));
 	app.route('/api/v1', createInviteRoutes());
+	app.route('/api/v1', createSettingsSyncRoutes());
 	app.route('/api/v1', createFeatureFlagRoutes());
 	app.route('/api/v1', createCarsRoutes());
 	app.route('/api/v1', createSetupsRoutes());

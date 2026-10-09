@@ -73,8 +73,25 @@ const loadPublicVoice = async (c: AppContext, id: string) => {
 		: undefined;
 };
 
+/**
+ * Accepts stable-ID text/audio Voice captures before server processing. Upload
+ * acknowledgement identifies the retained original; it does not mean transcription
+ * or draft extraction has finished, allowing the shared offline queue to resume
+ * those phases independently after reconnect.
+ */
 export const createVoiceCaptureRoutes = () => {
 	const routes = new Hono<AppEnv>();
+
+	routes.get('/voice-updates', async (c) => {
+		const values = await db(c.env)
+			.select()
+			.from(voiceUpdate)
+			.where(eq(voiceUpdate.ownerId, c.get('userId')))
+			.orderBy(desc(voiceUpdate.createdAt));
+		return c.json({
+			voiceUpdates: values.map((value) => publicVoiceUpdate(value)),
+		});
+	});
 
 	routes.get('/cars/:carId/voice-updates', async (c) => {
 		const carId = c.req.param('carId');

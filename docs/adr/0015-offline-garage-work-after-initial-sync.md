@@ -15,3 +15,35 @@ queued synchronization immediately without waiting for a browser connectivity
 event. The coordinator fences its published view and every asynchronous
 completion to the exact owner and session identity, so a sign-out or account
 switch hides the previous working copy synchronously and discards stale work.
+
+## Working-copy compatibility and recovery
+
+A prepared working copy carries an explicit synchronization contract version.
+Restoration requires every delivered structured collection and media metadata
+collection. An older or partial snapshot does not establish Offline ready; its
+queued commands remain stored for compatible online preparation. A client also
+refuses to replace, mutate, or claim cleanup of a working copy carrying an
+incompatible future contract. IndexedDB schema version alone is insufficient:
+Dexie can allow an older schema reader to open an upgraded database.
+
+The Service Worker prefetches the complete application version. A running page
+keeps its assigned version; the application does not activate new lazy code into
+an existing page. Compatible updates take effect through a new page, preserving
+queued work. Database migrations remain additive after the original session-fence
+migration. Legacy Voice captures are copied before removal, and an interrupted
+migration remains part of sign-out confirmation and cleanup. The compatibility
+reader stays until deployed consumer and production migration checks justify its
+removal.
+
+Conflict review shows the device intent and saved record separately. Retrying a
+review creates a new operation identity with the concurrency evidence that was
+shown to the User. A newer remote change therefore creates another conflict.
+Discarding a prerequisite retains dependent commands with Needs attention instead
+of silently deleting them. A changed review or changed owner/session is rejected
+before storage is modified.
+
+Offline sign-out records deferred server cleanup durably. After restart, cleanup
+first checks that the server session still matches the original request. It must
+never revoke a subsequently authenticated session. Original Voice audio kept for
+playback shares the same owner-scoped storage and cleanup lifecycle as captures;
+object URLs are revoked when that owner context changes.

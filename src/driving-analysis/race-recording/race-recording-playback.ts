@@ -1,8 +1,12 @@
-import {
-	type RaceRecordingAuthority,
-	type RaceRecordingContentMetadata,
-	type RaceRecordingIdentity,
+import type {
+	RaceRecordingAuthority,
+	RaceRecordingContentMetadata,
+	RaceRecordingIdentity,
 } from './race-recording-authority';
+import {
+	RACE_RECORDING_READ_WINDOW,
+	raceRecordingContentStream,
+} from './race-recording-content-stream';
 
 type ByteRange = Readonly<{ offset: number; length: number }>;
 
@@ -145,8 +149,25 @@ export const raceRecordingPlaybackResponse = async (
 	if (request.method === 'HEAD')
 		return new Response(null, { status: range ? 206 : 200, headers });
 
-	const content = await authority.content(identity, range);
-	return new Response(content.body, {
+	const requested = range ?? { offset: 0, length: metadata.size };
+	const windowed = requested.length > RACE_RECORDING_READ_WINDOW;
+	const content = await authority.content(
+		identity,
+		windowed
+			? { offset: requested.offset, length: RACE_RECORDING_READ_WINDOW }
+			: range,
+	);
+	let body = content.body;
+	if (windowed) {
+		const output = new FixedLengthStream(requested.length);
+		void raceRecordingContentStream(content, requested, (next) =>
+			authority.content(identity, next),
+		)
+			.pipeTo(output.writable)
+			.catch(() => undefined);
+		body = output.readable;
+	}
+	return new Response(body, {
 		status: range ? 206 : 200,
 		headers,
 	});

@@ -51,6 +51,10 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.cars()).toEqual(snapshot.cars);
 		expect(store.hasSnapshot()).toBe(true);
 		expect(store.ownerEmail()).toBe('racer@example.test');
+		store.openOffline({
+			snapshot: { ...snapshot, sessionKey: 'restored-session' },
+		});
+		expect(store.sessionKey()).toBe('restored-session');
 
 		let finishPreparation!: (result: OfflinePreparationResult) => void;
 		access.prepare.mockImplementationOnce(
@@ -278,6 +282,16 @@ describe('OfflineWorkspaceStore', () => {
 		rejectPreparation(new Error('network unavailable'));
 		await vi.waitFor(() => expect(store.status()).toBe('offline-unavailable'));
 		expect(store.networkUnavailable()).toBe(true);
+		expect(store.hasSnapshot()).toBe(false);
+	});
+	it('clears the in-memory owner working copy after explicit sign-out', () => {
+		store.openOffline({ snapshot: { ...snapshot, sessionKey: 'session' } });
+		expect(store.hasSnapshot()).toBe(true);
+		store.clear();
+		expect(store.ownerKey()).toBe('');
+		expect(store.ownerEmail()).toBe('');
+		expect(store.sessionKey()).toBe('');
+		expect(store.cars()).toEqual([]);
 		expect(store.hasSnapshot()).toBe(false);
 	});
 });
