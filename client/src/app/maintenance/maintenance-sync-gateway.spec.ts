@@ -6,6 +6,8 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { tireRecord } from './consumables/consumable-sync.testing';
+import { consumableChange } from './consumables/consumable-sync-rules';
 import {
 	maintenanceOperationFixture as operation,
 	maintenanceRecordFixture as record,
@@ -160,6 +162,41 @@ describe('MaintenanceSyncGateway', () => {
 				collection: { ...collection, plans: [], records: [] },
 			});
 			await rejected;
+		}
+	});
+	it('accepts only acknowledgements containing the expected Consumable identity', async () => {
+		const command = consumableChange(
+			{
+				kind: 'change',
+				action: 'archive',
+				entry: {
+					id: 'tire',
+					carId: 'car',
+					kind: 'tires',
+					performedAt: tireRecord.performedAt,
+				},
+			},
+			[tireRecord],
+			'unused',
+			1,
+		);
+		for (const consumables of [
+			undefined,
+			[],
+			[{ ...tireRecord, id: 'other' }],
+			[tireRecord],
+		]) {
+			const promise = firstValueFrom(gateway.apply({ ...operation, command }));
+			const check =
+				consumables?.[0]?.id === 'tire'
+					? expect(promise).resolves.toMatchObject({ outcome: 'applied' })
+					: expect(promise).rejects.toEqual({ kind: 'invalid-response' });
+			http.expectOne('/api/v1/sync/operations/operation').flush({
+				operationId: 'operation',
+				outcome: 'applied',
+				collection: { ...collection, consumables },
+			});
+			await check;
 		}
 	});
 });

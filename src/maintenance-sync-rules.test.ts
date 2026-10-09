@@ -255,3 +255,39 @@ describe('shared maintenance history rules', () => {
 		).toBe(plan.name);
 	});
 });
+
+test('materializes Consumable intent against an older snapshot without losing its stable identity', () => {
+	const change: MaintenanceChange = {
+		type: 'maintenance.change',
+		entity: 'consumable',
+		carId: 'car',
+		baseVersion: 0,
+		entryId: 'entry',
+		action: 'archive',
+		base: null,
+		input: {
+			kind: 'tires',
+			performedAt: now,
+			fluidArea: null,
+			customFluidArea: null,
+			frontDetails: '{"details":"Pins"}',
+			frontCost: null,
+			frontCurrency: null,
+			rearDetails: null,
+			rearCost: null,
+			rearCurrency: null,
+			cost: null,
+			currency: null,
+			notes: null,
+		},
+	};
+	const result = applyMaintenanceChange(
+		{ carId: 'car', version: 0, plans: [], records: [] },
+		change,
+		now,
+		0,
+	);
+	expect(result.consumables).toEqual([
+		expect.objectContaining({ id: 'entry', archivedAt: now }),
+	]);
+});

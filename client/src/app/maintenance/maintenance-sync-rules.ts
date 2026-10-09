@@ -5,6 +5,7 @@ import {
 	type PlanRecord,
 	type ServiceRecord,
 } from '../../../../shared/maintenance-sync';
+import { consumableChange } from './consumables/consumable-sync-rules';
 import type {
 	MaintenanceCommand,
 	MaintenanceOperation,
@@ -56,6 +57,45 @@ export const buildMaintenanceOperation = (
 		dependencies: readonly { carId: string; operationId: string }[];
 	}>,
 ): MaintenanceOperation => {
+	if (intent.kind === 'save' || intent.kind === 'change') {
+		const carId = intent.kind === 'save' ? intent.carId : intent.entry.carId;
+		const collection = view.current.collections.find(
+			(value) => value.carId === carId,
+		);
+		const command = consumableChange(
+			intent,
+			collection?.consumables ?? [],
+			context.entityId,
+			collection?.version ?? 0,
+		);
+		return {
+			ownerKey: context.ownerKey,
+			operationId: context.operationId,
+			carId,
+			command,
+			createdAt: context.createdAt,
+			sessionCount: 0,
+			sequence:
+				Math.max(0, ...view.operations.map((value) => value.sequence)) + 1,
+			status: 'pending',
+			dependencies: [
+				...new Set([
+					...context.dependencies
+						.filter((value) => value.carId === carId)
+						.map((value) => value.operationId),
+					...view.operations
+						.filter(
+							(value) =>
+								value.carId === carId &&
+								(value.command.entity === 'service' ||
+									(value.command.entity === 'consumable' &&
+										value.command.entryId === command.entryId)),
+						)
+						.map((value) => value.operationId),
+				]),
+			],
+		};
+	}
 	const allPlans = view.current.collections.flatMap(
 		(collection) => collection.plans,
 	);
@@ -186,9 +226,11 @@ export const buildMaintenanceOperation = (
 		if (operation.carId !== carId) return false;
 		const change = operation.command;
 		const ids = (value: MaintenanceChange) =>
-			value.entity === 'plan'
-				? [value.planId]
-				: [value.recordId, value.planBase?.id].filter(Boolean);
+			value.entity === 'consumable'
+				? [value.entryId]
+				: value.entity === 'plan'
+					? [value.planId]
+					: [value.recordId, value.planBase?.id].filter(Boolean);
 		return ids(command).some((id) => ids(change).includes(id));
 	};
 	return {
@@ -222,29 +264,39 @@ export const rebaseMaintenanceOperation = (
 	if (!operation.dependencies.includes(acknowledgedId)) return operation;
 	const command = operation.command;
 	const next: MaintenanceChange =
-		command.entity === 'plan'
+		command.entity === 'consumable'
 			? {
 					...command,
 					baseVersion: collection.version,
 					base: command.base
-						? (collection.plans.find((plan) => plan.id === command.planId) ??
-							command.base)
-						: null,
-				}
-			: {
-					...command,
-					baseVersion: collection.version,
-					base: command.base
-						? (collection.records.find(
-								(record) => record.id === command.recordId,
+						? (collection.consumables?.find(
+								(entry) => entry.id === command.entryId,
 							) ?? command.base)
 						: null,
-					planBase: command.planBase
-						? (collection.plans.find(
-								(plan) => plan.id === command.planBase?.id,
-							) ?? command.planBase)
-						: null,
-				};
+				}
+			: command.entity === 'plan'
+				? {
+						...command,
+						baseVersion: collection.version,
+						base: command.base
+							? (collection.plans.find((plan) => plan.id === command.planId) ??
+								command.base)
+							: null,
+					}
+				: {
+						...command,
+						baseVersion: collection.version,
+						base: command.base
+							? (collection.records.find(
+									(record) => record.id === command.recordId,
+								) ?? command.base)
+							: null,
+						planBase: command.planBase
+							? (collection.plans.find(
+									(plan) => plan.id === command.planBase?.id,
+								) ?? command.planBase)
+							: null,
+					};
 	return {
 		...operation,
 		command: next,

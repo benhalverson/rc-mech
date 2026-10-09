@@ -9,6 +9,12 @@ import type {
 import type { MaintenanceMutationOutcome } from './maintenance-workspace-store';
 export class FakeMaintenanceWorkspace {
 	readonly available = signal(false);
+	readonly consumables = signal<
+		import('./maintenance.models').ConsumableEntry[]
+	>([]);
+	readonly tireSetups = signal(
+		new Map<string, Record<string, unknown> | null>(),
+	);
 	readonly cars = signal<MaintenanceCar[]>([]);
 	readonly plans = signal<MaintenancePlan[]>([]);
 	readonly records = signal<ServiceRecord[]>([]);

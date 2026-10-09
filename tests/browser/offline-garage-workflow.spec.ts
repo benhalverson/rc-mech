@@ -1158,3 +1158,206 @@ test('migrates legacy Voice intent once and retains processing rejection without
 	]);
 	await expectAxeClean(reopened);
 });
+
+test('retains Consumable tire and fluid history with stable reports across restart and replay', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Consumable trackside buggy' },
+	});
+	const { car } = (await created.json()) as { car: { id: string } };
+	await page.goto('/maintenance');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	let replay: { url: string; body: unknown } | undefined;
+	page.on('request', (request) => {
+		if (
+			request.method() === 'PUT' &&
+			request.url().includes('/api/v1/sync/operations/')
+		) {
+			const body = request.postDataJSON() as { command?: { entity?: string } };
+			if (body.command?.entity === 'consumable')
+				replay = { url: request.url(), body };
+		}
+	});
+	await context.setOffline(true);
+	const ledger = page.locator('.consumable-ledger');
+	await ledger
+		.getByRole('button', { name: 'Record change', exact: true })
+		.click();
+	await ledger
+		.getByRole('combobox', { name: 'Car', exact: true })
+		.selectOption(car.id);
+	await ledger
+		.getByRole('combobox', { name: 'What changed', exact: true })
+		.selectOption('tires');
+	await ledger.getByText('both axles', { exact: true }).click();
+	await ledger.getByLabel('Front tire details').fill('Trackside front pins');
+	await ledger.getByLabel('Rear tire details').fill('Trackside rear pins');
+	await ledger.getByLabel('Front cost (USD)').fill('12');
+	await ledger.getByLabel('Rear cost (USD)').fill('18');
+	await ledger
+		.getByRole('button', { name: 'Save change', exact: true })
+		.click();
+	await expect(ledger.getByText('Pending sync', { exact: true })).toBeVisible();
+	await expect(
+		ledger.locator('.spend-strip').getByText('$30.00'),
+	).toBeVisible();
+	for (const kind of ['shock-fluid', 'differential-fluid']) {
+		await ledger
+			.getByRole('button', { name: 'Record change', exact: true })
+			.click();
+		await ledger
+			.getByRole('combobox', { name: 'Car', exact: true })
+			.selectOption(car.id);
+		await ledger
+			.getByRole('combobox', { name: 'What changed', exact: true })
+			.selectOption(kind);
+		await ledger
+			.getByRole('button', { name: 'Save change', exact: true })
+			.click();
+	}
+	await expect(ledger.locator('.history-total')).toHaveText('3 entries');
+	const restarted = await reopenOffline(context, page, '/maintenance');
+	const history = restarted.locator('.consumable-ledger');
+	await expect(history.locator('.history-total')).toHaveText('3 entries');
+	await expect(
+		history.locator('.spend-strip').getByText('$30.00'),
+	).toBeVisible();
+	await expectAxeClean(restarted);
+	await context.setOffline(false);
+	await expect(history.getByText(/Pending sync/)).toHaveCount(0);
+	expect(replay).toBeDefined();
+	if (!replay) throw new Error('Missing Consumable sync request');
+	expect(
+		(await restarted.request.put(replay.url, { data: replay.body })).ok(),
+	).toBe(true);
+	const response = await restarted.request.get(
+		'/api/v1/maintenance/sync/snapshot',
+	);
+	expect(response.ok()).toBe(true);
+	const snapshot = (await response.json()) as {
+		collections: Array<{ carId: string; consumables: Array<{ id: string }> }>;
+	};
+	expect(
+		snapshot.collections.find((value) => value.carId === car.id)?.consumables,
+	).toHaveLength(3);
+	await restarted.reload();
+	await expect(history.locator('.history-total')).toHaveText('3 entries');
+	await expect(
+		history.locator('.spend-strip').getByText('$30.00'),
+	).toBeVisible();
+});
+
+test('preserves conflicting and rejected Consumable work while independent fluid entries synchronize', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const create = async (name: string) => {
+		const response = await page.request.post('/api/v1/cars', {
+			data: { name },
+		});
+		expect(response.ok()).toBe(true);
+		return ((await response.json()) as { car: { id: string } }).car;
+	};
+	const car = await create('Consumable conflict buggy');
+	const archived = await create('Consumable rejection buggy');
+	const created = await page.request.post(
+		`/api/v1/cars/${car.id}/consumable-maintenance`,
+		{
+			data: {
+				kind: 'tires',
+				performedAt: '2026-10-01T12:00:00.000Z',
+				axle: 'front',
+				frontDetails: 'Original pins',
+				frontCost: 10,
+			},
+		},
+	);
+	expect(created.ok()).toBe(true);
+	const { consumableMaintenance: entry } = (await created.json()) as {
+		consumableMaintenance: { id: string };
+	};
+	await page.goto('/maintenance');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	const ledger = page.locator('.consumable-ledger');
+	await ledger
+		.locator('article.consumable-row')
+		.filter({ hasText: 'Original pins' })
+		.getByRole('button', { name: 'Edit', exact: true })
+		.click();
+	await ledger.getByLabel('Front tire details').fill('Local pending pins');
+	await ledger
+		.getByRole('button', { name: 'Save change', exact: true })
+		.click();
+	for (const [carId, note] of [
+		[archived.id, 'Rejected fluid retained'],
+		[car.id, 'Independent fluid retained'],
+	]) {
+		await ledger
+			.getByRole('button', { name: 'Record change', exact: true })
+			.click();
+		await ledger
+			.getByRole('combobox', { name: 'Car', exact: true })
+			.selectOption(carId);
+		await ledger.getByLabel('Notes', { exact: true }).fill(note);
+		await ledger
+			.getByRole('button', { name: 'Save change', exact: true })
+			.click();
+	}
+	expect(
+		(
+			await page.request.patch(
+				`/api/v1/cars/${car.id}/consumable-maintenance/${entry.id}`,
+				{ data: { frontDetails: 'Remote newer pins', frontCost: 40 } },
+			)
+		).ok(),
+	).toBe(true);
+	expect(
+		(await page.request.post(`/api/v1/cars/${archived.id}/archive`)).ok(),
+	).toBe(true);
+	await context.setOffline(false);
+	await expect(
+		ledger.getByText(/Sync conflict: This Consumable entry/),
+	).toBeVisible();
+	await expect(
+		ledger.getByText(/Needs attention: Restore this Car/),
+	).toBeVisible();
+	await expect(ledger.getByText(/Pending sync/)).toHaveCount(0);
+	await expect(
+		ledger
+			.locator('article.consumable-row')
+			.filter({ hasText: 'Local pending pins' }),
+	).toBeVisible();
+	await expect(
+		ledger.getByText('Rejected fluid retained', { exact: true }),
+	).toBeVisible();
+	await expectAxeClean(page);
+	const snapshot = (await (
+		await page.request.get('/api/v1/maintenance/sync/snapshot')
+	).json()) as {
+		collections: Array<{
+			carId: string;
+			consumables: Array<{
+				id: string;
+				notes: string | null;
+				frontCost: number | null;
+			}>;
+		}>;
+	};
+	const saved = snapshot.collections.find(
+		(value) => value.carId === car.id,
+	)?.consumables;
+	expect(saved).toHaveLength(2);
+	expect(saved?.find((value) => value.id === entry.id)?.frontCost).toBe(40);
+	expect(
+		saved?.filter((value) => value.notes === 'Independent fluid retained'),
+	).toHaveLength(1);
+	expect(
+		snapshot.collections.find((value) => value.carId === archived.id)
+			?.consumables,
+	).toEqual([]);
+});

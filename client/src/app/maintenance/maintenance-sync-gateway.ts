@@ -130,13 +130,17 @@ export class MaintenanceSyncGateway {
 				const command = operation.command;
 				if (
 					outcome.outcome === 'applied' &&
-					!(command.entity === 'plan'
-						? outcome.collection.plans.some(
-								(plan) => plan.id === command.planId,
+					!(command.entity === 'consumable'
+						? outcome.collection.consumables?.some(
+								(entry) => entry.id === command.entryId,
 							)
-						: outcome.collection.records.some(
-								(record) => record.id === command.recordId,
-							))
+						: command.entity === 'plan'
+							? outcome.collection.plans.some(
+									(plan) => plan.id === command.planId,
+								)
+							: outcome.collection.records.some(
+									(record) => record.id === command.recordId,
+								))
 				)
 					throw { kind: 'invalid-response' };
 				return outcome;

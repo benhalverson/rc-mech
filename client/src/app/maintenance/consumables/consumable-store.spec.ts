@@ -8,6 +8,8 @@ import type {
 	MaintenanceReport,
 } from '../maintenance.models';
 import { MaintenanceGateway } from '../maintenance-gateway';
+import { FakeMaintenanceWorkspace } from '../maintenance-sync.testing';
+import { MaintenanceWorkspaceStore } from '../maintenance-workspace-store';
 import { ConsumableStore } from './consumable-store';
 
 const entry = (overrides: Partial<ConsumableEntry> = {}): ConsumableEntry => ({
@@ -130,13 +132,16 @@ class FakeMaintenanceGateway {
 
 describe('ConsumableStore', () => {
 	let gateway: FakeMaintenanceGateway;
+	let workspace: FakeMaintenanceWorkspace;
 	let store: InstanceType<typeof ConsumableStore>;
 
 	beforeEach(() => {
 		gateway = new FakeMaintenanceGateway();
+		workspace = new FakeMaintenanceWorkspace();
 		TestBed.configureTestingModule({
 			providers: [
 				ConsumableStore,
+				{ provide: MaintenanceWorkspaceStore, useValue: workspace },
 				{ provide: MaintenanceGateway, useValue: gateway },
 			],
 		});
@@ -318,4 +323,75 @@ describe('ConsumableStore', () => {
 		gateway.failTires('car-3');
 		expect(store.tireLookup()).toEqual({ status: 'failed', carId: 'car-3' });
 	});
+	it('uses durable histories, local tire prefill, and scoped mutation feedback', () => {
+		TestBed.tick();
+		expect(store.syncMessage()).toBe('');
+		workspace.available.set(true);
+		workspace.cars.set([{ id: 'car-1', name: 'Buggy' }]);
+		workspace.timezone.set('America/New_York');
+		workspace.consumables.set([entry()]);
+		workspace.syncMessage.set('Pending sync');
+		expect(store.cars()).toEqual(workspace.cars());
+		expect(store.timezone()).toBe('America/New_York');
+		expect(store.entries()).toEqual([entry()]);
+		expect(store.report()).toBeNull();
+		expect(store.loading()).toBe(false);
+		expect(store.error()).toBe('');
+		expect(store.syncMessage()).toBe('Pending sync');
+		workspace.tireSetups.set(new Map([['car-1', { frontTire: 'Pins' }]]));
+		store.loadTires('car-1');
+		expect(store.tireLookup()).toMatchObject({
+			status: 'succeeded',
+			tires: { frontTire: 'Pins' },
+		});
+		store.loadTires('missing');
+		expect(store.tireLookup()).toMatchObject({ tires: null });
+		store.retry();
+		expect(workspace.refresh).toHaveBeenCalledOnce();
+		const command = {
+			kind: 'save' as const,
+			mode: 'create' as const,
+			carId: 'car-1',
+			id: null,
+			maintenance: {
+				kind: 'shock-fluid' as const,
+				fluidArea: 'front-shocks' as const,
+				performedAt: '2026-10-09T12:00:00.000Z',
+			},
+		};
+		store.mutate(command);
+		const request = workspace.mutate.mock.calls[0][0];
+		expect(store.outcome().status).toBe('pending');
+		expect(gateway.saveConsumable).not.toHaveBeenCalled();
+		workspace.outcome.set({ status: 'pending', requestId: request.requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+		workspace.outcome.set({
+			status: 'succeeded',
+			requestId: request.requestId,
+		});
+		TestBed.tick();
+		expect(store.outcome().status).toBe('succeeded');
+		store.clearOutcome();
+		store.mutate(command);
+		const failed = workspace.mutate.mock.calls[1][0];
+		workspace.outcome.set({
+			status: 'failed',
+			requestId: failed.requestId,
+			message: 'Storage full',
+		});
+		TestBed.tick();
+		expect(store.outcome().status).toBe('failed');
+		expect(store.syncMessage()).toBe('Storage full');
+		store.clearOutcome();
+		workspace.outcome.set({ status: 'succeeded', requestId: failed.requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('idle');
+		store.mutate(command);
+		workspace.outcome.set({ status: 'succeeded', requestId: 'other' });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+	});
 });
+
+// Shared working-copy behavior is covered in the same scoped fixture above.

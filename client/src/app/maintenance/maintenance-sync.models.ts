@@ -3,10 +3,14 @@ import type {
 	MaintenanceCollection,
 } from '../../../../shared/maintenance-sync';
 import type { CarSyncFeedback } from '../garage/car-sync/car-sync.models';
+import type { ConsumableCommand } from './consumables/consumable-store';
 import type { MaintenanceComponent } from './maintenance.models';
 import type { MaintenancePlanCommand } from './maintenance-plan-store';
 import type { ServiceRecordCommand } from './service-record-store';
-export type MaintenanceCommand = MaintenancePlanCommand | ServiceRecordCommand;
+export type MaintenanceCommand =
+	| MaintenancePlanCommand
+	| ServiceRecordCommand
+	| ConsumableCommand;
 export type MaintenanceSnapshot = Readonly<{
 	collections: readonly MaintenanceCollection[];
 	components: readonly MaintenanceComponent[];

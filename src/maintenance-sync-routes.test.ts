@@ -72,6 +72,7 @@ const reads = (
 	records: Record<string, unknown>[] = [],
 ): D1Step[] => [
 	{ kind: 'first', value: parent },
+	{ kind: 'all', rows: [] },
 	{ kind: 'all', rows: plans },
 	{ kind: 'all', rows: records },
 ];
@@ -388,6 +389,7 @@ describe('Maintenance synchronization', () => {
 					{ kind: 'first', value: latest },
 					...(latest
 						? [
+								{ kind: 'all' as const, rows: [] },
 								{ kind: 'all' as const, rows: [plan] },
 								{ kind: 'all' as const, rows: [] },
 							]
@@ -410,6 +412,7 @@ describe('Maintenance synchronization', () => {
 			},
 			{ kind: 'all', rows: [plan] },
 			{ kind: 'all', rows: [record] },
+			{ kind: 'all', rows: [] },
 			{
 				kind: 'all',
 				rows: [

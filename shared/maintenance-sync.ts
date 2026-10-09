@@ -1,4 +1,7 @@
 import type { z } from 'zod';
+import type { consumableSnapshot } from '../src/consumable-sync-contract';
+export type ConsumableRecord = z.infer<typeof consumableSnapshot>;
+
 import type {
 	maintenancePlanSnapshot,
 	maintenanceSyncCommandInput,
@@ -12,11 +15,12 @@ export type MaintenanceCollection = Readonly<{
 	version: number;
 	plans: readonly PlanRecord[];
 	records: readonly ServiceRecord[];
+	consumables?: readonly ConsumableRecord[];
 }>;
 
 export const maintenanceBaseMatches = (
-	base: PlanRecord | ServiceRecord | null,
-	current: PlanRecord | ServiceRecord | null,
+	base: PlanRecord | ServiceRecord | ConsumableRecord | null,
+	current: PlanRecord | ServiceRecord | ConsumableRecord | null,
 ): boolean =>
 	base === null
 		? current === null
@@ -32,6 +36,23 @@ export const applyMaintenanceChange = (
 	now: string,
 	sessionCount: number,
 ): MaintenanceCollection => {
+	if (change.entity === 'consumable') {
+		const records = new Map(
+			(collection.consumables ?? []).map((entry) => [entry.id, entry]),
+		);
+		const input =
+			change.action === 'save' ? change.input : (change.base ?? change.input);
+		records.set(change.entryId, {
+			...input,
+			id: change.entryId,
+			carId: change.carId,
+			prefilledFromSetupId: change.base?.prefilledFromSetupId ?? null,
+			createdAt: change.base?.createdAt ?? now,
+			updatedAt: now,
+			archivedAt: change.action === 'archive' ? now : null,
+		});
+		return { ...collection, consumables: [...records.values()] };
+	}
 	const plans = new Map(collection.plans.map((plan) => [plan.id, plan]));
 	const records = new Map(
 		collection.records.map((record) => [record.id, record]),

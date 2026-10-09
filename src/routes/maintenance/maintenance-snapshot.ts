@@ -1,7 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db';
-import { car, component, maintenancePlan, serviceRecord } from '../../schema';
+import {
+	car,
+	component,
+	consumableMaintenanceEntry,
+	maintenancePlan,
+	serviceRecord,
+} from '../../schema';
 import type { AppEnv } from '../../types';
 import { ownerTimezone } from './drive-records';
 export const createMaintenanceSnapshotRoutes = () => {
@@ -23,6 +29,11 @@ export const createMaintenanceSnapshotRoutes = () => {
 			.from(serviceRecord)
 			.innerJoin(car, eq(serviceRecord.carId, car.id))
 			.where(eq(car.ownerId, ownerId));
+		const consumables = await database
+			.select({ entry: consumableMaintenanceEntry })
+			.from(consumableMaintenanceEntry)
+			.innerJoin(car, eq(consumableMaintenanceEntry.carId, car.id))
+			.where(eq(car.ownerId, ownerId));
 		const components = await database
 			.select({ component })
 			.from(component)
@@ -32,6 +43,9 @@ export const createMaintenanceSnapshotRoutes = () => {
 			collections: cars.map((car) => ({
 				carId: car.id,
 				version: car.version,
+				consumables: consumables
+					.map((row) => row.entry)
+					.filter((entry) => entry.carId === car.id),
 				plans: plans
 					.map((row) => row.plan)
 					.filter((plan) => plan.carId === car.id),
