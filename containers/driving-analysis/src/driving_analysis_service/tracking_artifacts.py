@@ -381,15 +381,6 @@ def read_compressed_contract[ContractT: BaseModel](  # noqa: PLR0913
         raise InvalidArtifactError from error
 
 
-def remove_published(artifact: PublishedArtifact) -> None:
-    try:
-        identity = artifact.path.stat(follow_symlinks=False)
-    except FileNotFoundError:
-        return
-    if stat.S_ISREG(identity.st_mode):
-        artifact.path.unlink()
-
-
 def read_artifact(
     source: ArtifactSource,
     *,
