@@ -12,8 +12,8 @@ from driving_analysis_service.tracking_artifacts import (
     OBSERVATION_SEGMENT_SUFFIX,
     PREPARED_BUNDLE_SUFFIX,
     PREPARED_MEDIA_SUFFIX,
+    artifact_path,
     bundle_member_path,
-    bundle_path,
     read_artifact,
 )
 from driving_analysis_service.tracking_contracts import (
@@ -173,7 +173,7 @@ class _TrackingService:
         )
         response = _TrackingService.response
         if isinstance(response, TrackStageAccepted):
-            bundle_path(
+            artifact_path(
                 settings,
                 request.observation_segment_id,
                 OBSERVATION_BUNDLE_SUFFIX,

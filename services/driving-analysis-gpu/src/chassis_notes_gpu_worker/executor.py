@@ -23,8 +23,8 @@ from driving_analysis_service.tracking_artifacts import (
     OBSERVATION_SEGMENT_SUFFIX,
     PREPARED_BUNDLE_SUFFIX,
     PREPARED_MEDIA_SUFFIX,
+    artifact_path,
     bundle_member_path,
-    bundle_path,
 )
 from driving_analysis_service.tracking_contracts import (
     ProviderCandidate,
@@ -154,7 +154,7 @@ class Sam31TrackingExecutor:
         )
         settings.prepare_roots()
         prepared_id = submission.tracking_request.prepared.prepared_media_id
-        prepared_bundle = bundle_path(settings, prepared_id, PREPARED_BUNDLE_SUFFIX)
+        prepared_bundle = artifact_path(settings, prepared_id, PREPARED_BUNDLE_SUFFIX)
         prepared_bundle.mkdir(mode=0o700)
         shutil.copyfile(
             inputs.prepared_media,
