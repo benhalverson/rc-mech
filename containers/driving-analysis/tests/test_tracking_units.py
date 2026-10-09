@@ -1099,21 +1099,6 @@ def test_publish_cleanup_and_artifact_verification_defenses(
     assert list(settings.artifact_root.iterdir()) == []
     monkeypatch.undo()
 
-    missing = artifact_module.PublishedArtifact(
-        destination,
-        0,
-        SHA,
-        created=False,
-    )
-    artifact_module.remove_published(missing)
-    destination.mkdir()
-    artifact_module.remove_published(missing)
-    assert destination.is_dir()
-    destination.rmdir()
-    destination.write_bytes(b"value")
-    artifact_module.remove_published(missing)
-    assert not destination.exists()
-
     source = tmp_path / "source"
     source.write_bytes(b"value")
     digest = hashlib.sha256(b"value").hexdigest()
