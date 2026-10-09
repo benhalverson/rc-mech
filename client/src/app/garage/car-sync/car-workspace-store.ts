@@ -295,6 +295,13 @@ export const setupWorkspaceGatewayFailure = (
 	return { kind: 'unavailable' };
 };
 
+/**
+ * Application-wide coordinator for the Garage's structured operation queues.
+ * Route stores submit intents here; storage persists them before success and the
+ * sync gateways replay dependency-ready commands. Publishes the materialized
+ * working copy across navigation and fences completion by owner/session so late
+ * responses cannot replace the next User's data.
+ */
 export const CarWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<CarWorkspaceState>({

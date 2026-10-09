@@ -15,6 +15,12 @@ type BuildSyncContext = Readonly<{
 	requireTerminalReceipt: () => Promise<Response>;
 }>;
 
+/**
+ * Applies an owner's durable Component command inside Car sync admission. Compares
+ * the saved base and uses one conditional database batch for record changes and
+ * the operation receipt. Car-version and pending-receipt witnesses prevent a
+ * concurrent edit or in-flight duplicate from repeating child writes.
+ */
 export const applyBuildSyncOperation = async (
 	c: AppContext,
 	context: BuildSyncContext,

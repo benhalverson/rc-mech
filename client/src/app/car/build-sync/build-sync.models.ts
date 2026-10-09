@@ -1,3 +1,7 @@
+/**
+ * Component commands, comparison bases, and queued outcomes shared by Build rules, storage, and HTTP replay.
+ */
+
 import type { CarSyncFeedback } from '../../garage/car-sync/car-sync.models';
 import type { BuildComponentInput, InstalledComponent } from '../car.models';
 

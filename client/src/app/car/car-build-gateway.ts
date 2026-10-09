@@ -39,6 +39,11 @@ export const buildGatewayFailure = (error: unknown): BuildGatewayFailure => {
 		: { kind: 'unavailable' };
 };
 
+/**
+ * Selected-car HTTP resource and legacy Component mutation transport used by
+ * CarBuildStore when the shared workspace is unavailable. Response parsing stays
+ * here; the root BuildSyncGateway handles stable-operation replay separately.
+ */
 @Injectable()
 export class CarBuildGateway {
 	private readonly http = inject(HttpClient);
