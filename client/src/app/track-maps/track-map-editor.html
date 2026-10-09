@@ -57,7 +57,7 @@
 	<div class="flex flex-wrap items-end justify-between gap-3">
 		<div>
 			<h3 class="m-0 text-lg font-semibold">Corner geometry</h3>
-			<p class="alloy-supporting-text mt-1 max-w-2xl">Select a gate point or Corner-view target, then click the lower Track-view region or use arrow keys. Hold Shift for larger keyboard steps.</p>
+			<p class="alloy-supporting-text mt-1 max-w-2xl">Entry and exit are lines across the car’s path. Mark both ends of the entry line before the turn, then both ends of the exit line after the turn. Click each point in the lower Track view; use arrow keys for precise adjustment and hold Shift for larger steps.</p>
 		</div>
 		<div class="flex gap-2">
 			<button class="alloy-control alloy-control-secondary" type="button" (click)="addCorner()" [disabled]="busy() || !version()?.referenceFrame">Add corner</button>
@@ -66,18 +66,30 @@
 	</div>
 
 	<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+		<div class="grid content-start gap-3">
+			@if (activeCorner()) {
+				<div class="flex flex-wrap gap-2" role="group" aria-label="Corner line endpoints">
+					<button class="alloy-control alloy-control-secondary" type="button" (click)="selectTarget('entryStart')" [attr.aria-pressed]="selectedTarget() === 'entryStart'" [disabled]="busy()">1. Entry line start</button>
+					<button class="alloy-control alloy-control-secondary" type="button" (click)="selectTarget('entryEnd')" [attr.aria-pressed]="selectedTarget() === 'entryEnd'" [disabled]="busy()">2. Entry line end</button>
+					<button class="alloy-control alloy-control-secondary" type="button" (click)="selectTarget('exitStart')" [attr.aria-pressed]="selectedTarget() === 'exitStart'" [disabled]="busy()">3. Exit line start</button>
+					<button class="alloy-control alloy-control-secondary" type="button" (click)="selectTarget('exitEnd')" [attr.aria-pressed]="selectedTarget() === 'exitEnd'" [disabled]="busy()">4. Exit line end</button>
+				</div>
+				<p class="m-0 text-sm font-semibold" role="status">Click the image to place {{ targetLabel() }}.</p>
+			}
+
 		<div class="track-canvas-wrap border border-alloy-command-separator bg-alloy-command-control p-2">
 			<div class="mb-2 flex flex-wrap gap-4 text-xs font-semibold text-alloy-command-text" aria-hidden="true"><span>━ Entry gate</span><span>┅ Exit gate</span><span>┄ Corner view</span></div>
 			@if (version()?.referenceFrame) {
 				<div class="relative aspect-video overflow-hidden bg-black">
 					<img class="absolute inset-0 h-full w-full object-cover" [src]="frameUrl()" width="1920" height="1080" alt="Selected private Race recording reference frame" />
 					<button class="track-canvas-button alloy-focus-ring absolute inset-x-0 bottom-0 h-2/3 w-full border-0 bg-transparent p-0 text-left" type="button" aria-label="Track-view geometry editor. Click to place the selected geometry target, or use arrow keys." (click)="moveFromCanvas($event, selectedCorner()!)" (keydown)="moveSelected($event, selectedCorner()!)" [disabled]="busy() || !activeCorner()">
-						<app-track-map-geometry class="absolute inset-0" [corners]="corners()" [activeCorner]="activeCorner()" [overlay]="true" label="Editable Track map geometry over the selected frame" [decorative]="true" />
+						<app-track-map-geometry class="absolute inset-0" [corners]="corners()" [activeCorner]="activeCorner()" [activePoint]="activePoint()" [overlay]="true" label="Editable Track map geometry over the selected frame" [decorative]="true" />
 					</button>
 				</div>
 			} @else {
 				<div class="grid aspect-video place-items-center border border-dashed border-alloy-command-separator p-6 text-center text-sm text-alloy-command-text">Select a validated recording and frame to reveal the geometry canvas.</div>
 			}
+		</div>
 		</div>
 		<div class="grid content-start gap-3">
 			<label class="grid gap-1 text-sm font-semibold" for="corner-select">Corner</label>
@@ -94,7 +106,7 @@
 				<fieldset class="grid gap-2 border-t border-alloy-separator pt-3">
 					<legend class="text-sm font-semibold">Geometry target</legend>
 					<select class="alloy-control" aria-label="Geometry target" [value]="selectedTarget()" (change)="selectTarget($any($event.target).value)" [disabled]="busy()">
-						<option value="entryStart">Entry start</option><option value="entryEnd">Entry end</option><option value="exitStart">Exit start</option><option value="exitEnd">Exit end</option><option value="viewPosition">Corner-view position</option><option value="viewSize">Corner-view size</option>
+						<option value="entryStart">Entry line start</option><option value="entryEnd">Entry line end</option><option value="exitStart">Exit line start</option><option value="exitEnd">Exit line end</option><option value="viewPosition">Corner-view position</option><option value="viewSize">Corner-view size</option>
 					</select>
 					@if (selectedPointTarget(); as target) {
 						<div class="grid grid-cols-2 gap-2">

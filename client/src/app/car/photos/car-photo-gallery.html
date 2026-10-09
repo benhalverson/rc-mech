@@ -14,6 +14,18 @@
 		}
 	</header>
 
+@if (captureFeedback()) { <p role="status" class="alloy-supporting-text">{{ captureFeedback() }}</p> }
+@for(capture of captureFailures();track capture.operationId) {
+ <section class="alloy-state alloy-attention-state mt-0 grid gap-3" [attr.aria-label]="'Recover photo ' + capture.fileName">
+  <strong>{{ capture.fileName }} · Needs attention</strong><p>{{ capture.feedback }}</p>
+  <p>Retry keeps the original bytes and related photo edits. Discard removes this unsynchronized original from this device; any dependent changes remain available for review.</p>
+  <div class="flex flex-wrap gap-2">
+   <button type="button" class="alloy-control alloy-focus-ring" [disabled]="action() !== null || archived()" (click)="resolveCapture(capture,'retry')">Retry photo capture</button>
+   <button type="button" class="alloy-control alloy-control-secondary alloy-focus-ring" [disabled]="action() !== null" (click)="resolveCapture(capture,'discard')">Discard unsynced photo</button>
+  </div>
+ </section>
+}
+@if (offline()) { <p class="alloy-supporting-text">Photo changes are saved on this device and synchronize when the connection returns.</p> }
 	@if (archived()) {
 		<p class="alloy-state alloy-attention-state mt-0">
 			<span class="alloy-state-heading"><svg lucideArchive size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span>
@@ -76,7 +88,7 @@
 				<li class="py-4">
 				<article class="photo-card grid gap-4 border-l-4 border-alloy-separator pl-3 md:grid-cols-[minmax(220px,360px)_minmax(0,1fr)]" [class.primary-photo]="isPrimary(photo)" [style.border-inline-start-color]="isPrimary(photo) ? 'var(--alloy-accent)' : 'transparent'">
 					<div class="photo-frame relative aspect-[4/3] overflow-hidden bg-graphite">
-						<img class="block size-full object-cover" [src]="photoUrl(photo)" [alt]="isPrimary(photo) ? 'Primary photo of this car' : 'Photo of this car'" loading="lazy" />
+						@if (photoUrl(photo); as url) { <img class="block size-full object-cover" [src]="url" [alt]="isPrimary(photo) ? 'Primary photo of this car' : 'Photo of this car'" loading="lazy" /> } @else { <p class="p-4 text-white">Original unavailable on this device. Connect to retain this photo for offline viewing.</p> }
 					</div>
 					<div class="photo-meta grid min-w-0 content-start gap-4 px-1">
 						<div class="flex flex-wrap items-start justify-between gap-3">

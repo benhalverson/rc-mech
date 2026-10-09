@@ -1,7 +1,10 @@
+/// <reference types="node" />
+
+import { Blob as NodeBlob } from 'node:buffer';
 import { TestBed } from '@angular/core/testing';
 import Dexie from 'dexie';
 import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, assert, beforeEach, describe, expect, it } from 'vitest';
 import type { SetupSnapshot } from '../car/setups/setup-snapshot';
 import type {
 	SetupSyncCollection,
@@ -9,6 +12,14 @@ import type {
 } from '../car/setups/setup-sync.models';
 import type { CarSyncRemoteOutcome } from '../garage/car-sync/car-sync.models';
 import type { GarageCar } from '../garage/garage.models';
+import {
+	maintenancePlanFixture,
+	maintenanceSnapshotFixture,
+} from '../maintenance/maintenance-sync.testing';
+import {
+	voiceCaptureFixture,
+	voiceUpdateFixture,
+} from '../voice/voice-sync.testing';
 import {
 	OFFLINE_CURRENT_TIME,
 	OFFLINE_DATABASE_NAME,
@@ -25,6 +36,8 @@ import {
 	offlineOwnerFenceKey,
 	offlineOwnerFenceStorage,
 } from './offline-garage-storage';
+import type { SyncReview } from './offline-sync-review.models';
+import { syncReviewFixtures } from './offline-sync-review.testing';
 
 const car = (id: string, name: string): GarageCar => ({ id, name });
 const userAFence = { ownerKey: 'user-a', sessionKey: 'session-a' } as const;
@@ -1288,5 +1301,2203 @@ describe('OfflineGarageStorage', () => {
 			currentSetupVersion: 0,
 		});
 		expect(view.collections).toEqual([]);
+	});
+	const prepareBuild = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car-a', 'Buggy')],
+			},
+			'session-a',
+		);
+	};
+	const buildCommand = {
+		action: 'install',
+		carId: 'car-a',
+		componentId: null,
+		input: { slot: 'motor', name: 'Motor' },
+	} as const;
+
+	it('restores the validated session fence for new writes after a restart', async () => {
+		await prepareBuild();
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		const restored = await storage.restoreCurrent();
+		expect(restored?.sessionKey).toBe('session-a');
+		assert(restored?.sessionKey);
+		const committed = await storage.commitBuild(buildCommand, {
+			ownerKey: restored.ownerKey,
+			sessionKey: restored.sessionKey,
+		});
+		expect(committed.collection.components[0]?.name).toBe('Motor');
+	});
+
+	it('retains build history through a database restart and acknowledges dependent work in order', async () => {
+		await prepareBuild();
+		const first = await storage.commitBuild(buildCommand, userAFence);
+		const second = await storage.commitBuild(
+			{
+				...buildCommand,
+				action: 'edit',
+				componentId: first.operation.command.componentId,
+				input: { name: 'Tuned' },
+			},
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(
+			(await storage.restoreCurrent())?.buildCollections?.[0]?.components[0]
+				?.name,
+		).toBe('Tuned');
+		expect(await storage.readyBuildOperations()).toEqual([first.operation]);
+		await storage.recordBuildOutcome({
+			operationId: first.operation.operationId,
+			outcome: 'applied',
+			collection: first.collection,
+		});
+		expect((await storage.readyBuildOperations())[0]?.operationId).toBe(
+			second.operation.operationId,
+		);
+		await storage.recordBuildOutcome({
+			operationId: second.operation.operationId,
+			outcome: 'applied',
+			collection: second.collection,
+		});
+		expect((await storage.buildSyncView())?.operations).toEqual([]);
+		await storage.mergeBuildCollection(
+			{ ...second.collection, version: 8 },
+			userAFence,
+		);
+		expect(
+			(await storage.buildSyncView())?.canonicalCollections[0]?.version,
+		).toBe(8);
+	});
+
+	it('waits for a locally created Car while retaining independent build work', async () => {
+		await prepareBuild();
+		const created = await storage.commitCar(
+			{ type: 'create', input: { name: 'New Car' } },
+			userAFence,
+		);
+		const dependent = await storage.commitBuild(
+			{ ...buildCommand, carId: created.car.id },
+			userAFence,
+		);
+		const independent = await storage.commitBuild(buildCommand, userAFence);
+		expect(await storage.readyBuildOperations()).toEqual([
+			independent.operation,
+		]);
+		await storage.recordCarOutcome({
+			operationId: created.operation.operationId,
+			outcome: 'applied',
+			car: { ...created.car, version: 1 },
+		});
+		expect(
+			(await storage.readyBuildOperations()).map(
+				(operation) => operation.operationId,
+			),
+		).toContain(dependent.operation.operationId);
+	});
+
+	it('retains rejection and remote conflict data without blocking independent work', async () => {
+		await prepareBuild();
+		const first = await storage.commitBuild(buildCommand, userAFence);
+		const independent = await storage.commitBuild(
+			{ ...buildCommand, input: { slot: 'esc', name: 'ESC' } },
+			userAFence,
+		);
+		const error = { code: 'INVALID', message: 'Correct the Component name.' };
+		await storage.recordBuildOutcome({
+			operationId: first.operation.operationId,
+			outcome: 'rejected',
+			error,
+		});
+		expect((await storage.buildSyncView())?.operations[0]).toMatchObject({
+			status: 'needs-attention',
+			feedback: error,
+		});
+		expect(await storage.readyBuildOperations()).toEqual([
+			independent.operation,
+		]);
+		await storage.recordBuildOutcome({
+			operationId: independent.operation.operationId,
+			outcome: 'conflict',
+			error,
+			remote: independent.collection,
+		});
+		expect((await storage.buildSyncView())?.operations[1]).toMatchObject({
+			status: 'conflict',
+			remote: independent.collection,
+		});
+		expect(
+			(
+				await storage.recordBuildOutcome({
+					operationId: 'unknown',
+					outcome: 'rejected',
+					error,
+				})
+			).operations,
+		).toHaveLength(2);
+		await storage.deactivate('session-a');
+		expect(await storage.buildSyncView()).toBeNull();
+		const inspection = new Dexie(databaseName);
+		await inspection.open();
+		expect(await inspection.table('buildOperations').count()).toBe(0);
+		inspection.close();
+	});
+
+	it('fails closed when local identity, storage, or Car availability prevents a durable build write', async () => {
+		expect(await storage.buildSyncView()).toBeNull();
+		expect(await storage.readyBuildOperations()).toEqual([]);
+		await expect(storage.commitBuild(buildCommand, userAFence)).rejects.toThrow(
+			'unavailable',
+		);
+		await expect(
+			storage.recordBuildOutcome({
+				operationId: 'unknown',
+				outcome: 'rejected',
+				error: { code: 'INVALID', message: 'Review' },
+			}),
+		).rejects.toThrow('unavailable');
+		await expect(
+			storage.mergeBuildCollection(
+				{ carId: 'car-a', version: 1, components: [] },
+				userAFence,
+			),
+		).rejects.toThrow('unavailable');
+		await prepareBuild();
+		await storage.mergeBuildCollection(
+			{ carId: 'car-a', version: 0, components: [] },
+			userAFence,
+		);
+		await expect(
+			storage.commitBuild({ ...buildCommand, carId: 'missing' }, userAFence),
+		).rejects.toThrow('Restore');
+		await storage.commitCar({ type: 'archive', carId: 'car-a' }, userAFence);
+		await expect(storage.commitBuild(buildCommand, userAFence)).rejects.toThrow(
+			'Restore',
+		);
+		await storage.activate('user-b', 'session-b');
+		expect(await storage.buildSyncView()).toBeNull();
+	});
+	const prepareDrive = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car-a', 'Buggy')],
+			},
+			'session-a',
+		);
+	};
+	const driveCommand = {
+		action: 'save',
+		carId: 'car-a',
+		sessionId: null,
+		input: {
+			startedAt: '2026-10-09T12:00:00Z',
+			durationMinutes: null,
+			conditions: 'Dry',
+			notes: '',
+		},
+	} as const;
+
+	it('retains Drive history through a database restart and acknowledges dependent work in order', async () => {
+		await prepareDrive();
+		const first = await storage.commitDrive(driveCommand, userAFence);
+		const second = await storage.commitDrive(
+			{
+				...driveCommand,
+				action: 'save',
+				sessionId: first.operation.command.sessionId,
+				input: {
+					startedAt: '2026-10-09T12:00:00Z',
+					durationMinutes: 10,
+					conditions: 'Tuned',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(
+			(await storage.restoreCurrent())?.driveCollections?.[0]?.sessions[0]
+				?.conditions,
+		).toBe('Tuned');
+		expect(await storage.readyDriveOperations()).toEqual([first.operation]);
+		await storage.recordDriveOutcome({
+			operationId: first.operation.operationId,
+			outcome: 'applied',
+			collection: first.collection,
+		});
+		expect((await storage.readyDriveOperations())[0]?.operationId).toBe(
+			second.operation.operationId,
+		);
+		await storage.recordDriveOutcome({
+			operationId: second.operation.operationId,
+			outcome: 'applied',
+			collection: second.collection,
+		});
+		expect((await storage.driveSyncView())?.operations).toEqual([]);
+		await storage.mergeDriveCollection(
+			{ ...second.collection, version: 8 },
+			userAFence,
+		);
+		expect(
+			(await storage.driveSyncView())?.canonicalCollections[0]?.version,
+		).toBe(8);
+	});
+
+	it('waits for a locally created Car while retaining independent Drive work', async () => {
+		await prepareDrive();
+		const created = await storage.commitCar(
+			{ type: 'create', input: { name: 'New Car' } },
+			userAFence,
+		);
+		const dependent = await storage.commitDrive(
+			{ ...driveCommand, carId: created.car.id },
+			userAFence,
+		);
+		const independent = await storage.commitDrive(driveCommand, userAFence);
+		expect(await storage.readyDriveOperations()).toEqual([
+			independent.operation,
+		]);
+		await storage.recordCarOutcome({
+			operationId: created.operation.operationId,
+			outcome: 'applied',
+			car: { ...created.car, version: 1 },
+		});
+		expect(
+			(await storage.readyDriveOperations()).map(
+				(operation) => operation.operationId,
+			),
+		).toContain(dependent.operation.operationId);
+	});
+
+	it('retains rejection and remote conflict data without blocking independent work', async () => {
+		await prepareDrive();
+		const first = await storage.commitDrive(driveCommand, userAFence);
+		const independent = await storage.commitDrive(
+			{
+				...driveCommand,
+				input: {
+					startedAt: '2026-10-10T12:00:00Z',
+					durationMinutes: null,
+					conditions: 'Wet',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+		const error = { code: 'INVALID', message: 'Correct the Drive session.' };
+		await storage.recordDriveOutcome({
+			operationId: first.operation.operationId,
+			outcome: 'rejected',
+			error,
+		});
+		expect((await storage.driveSyncView())?.operations[0]).toMatchObject({
+			status: 'needs-attention',
+			feedback: error,
+		});
+		expect(await storage.readyDriveOperations()).toEqual([
+			independent.operation,
+		]);
+		await storage.recordDriveOutcome({
+			operationId: independent.operation.operationId,
+			outcome: 'conflict',
+			error,
+			remote: independent.collection,
+		});
+		expect((await storage.driveSyncView())?.operations[1]).toMatchObject({
+			status: 'conflict',
+			remote: independent.collection,
+		});
+		expect(
+			(
+				await storage.recordDriveOutcome({
+					operationId: 'unknown',
+					outcome: 'rejected',
+					error,
+				})
+			).operations,
+		).toHaveLength(2);
+		await storage.deactivate('session-a');
+		expect(await storage.driveSyncView()).toBeNull();
+		const inspection = new Dexie(databaseName);
+		await inspection.open();
+		expect(await inspection.table('driveOperations').count()).toBe(0);
+		inspection.close();
+	});
+
+	it('fails closed when local identity, storage, or Car availability prevents a durable Drive write', async () => {
+		expect(await storage.driveSyncView()).toBeNull();
+		expect(await storage.readyDriveOperations()).toEqual([]);
+		await expect(storage.commitDrive(driveCommand, userAFence)).rejects.toThrow(
+			'unavailable',
+		);
+		await expect(
+			storage.recordDriveOutcome({
+				operationId: 'unknown',
+				outcome: 'rejected',
+				error: { code: 'INVALID', message: 'Review' },
+			}),
+		).rejects.toThrow('unavailable');
+		await expect(
+			storage.mergeDriveCollection(
+				{ carId: 'car-a', version: 1, sessions: [] },
+				userAFence,
+			),
+		).rejects.toThrow('unavailable');
+		await prepareDrive();
+		await storage.mergeDriveCollection(
+			{ carId: 'car-a', version: 0, sessions: [] },
+			userAFence,
+		);
+		await expect(
+			storage.commitDrive({ ...driveCommand, carId: 'missing' }, userAFence),
+		).rejects.toThrow('Restore');
+		await storage.commitCar({ type: 'archive', carId: 'car-a' }, userAFence);
+		await expect(storage.commitDrive(driveCommand, userAFence)).rejects.toThrow(
+			'Restore',
+		);
+		await storage.activate('user-b', 'session-b');
+		expect(await storage.driveSyncView()).toBeNull();
+	});
+	it('retains settings through restart, applies acknowledgements once, and keeps rejected intent', async () => {
+		expect(await storage.isSessionRevoked('session-a')).toBe(false);
+		expect(await storage.settingsSyncView()).toBeNull();
+		const command = {
+			type: 'timezone' as const,
+			base: 'UTC',
+			timezone: 'Europe/London',
+		};
+		await expect(storage.commitSettings(command, userAFence)).rejects.toThrow(
+			'unavailable',
+		);
+		expect(
+			await storage.recordSettingsOutcome(
+				{ operationId: 'missing', outcome: 'applied', timezone: 'UTC' },
+				userAFence,
+			),
+		).toBeNull();
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [],
+				settings: {
+					timezone: 'UTC',
+					invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+				},
+			},
+			'session-a',
+		);
+		const committed = await storage.commitSettings(command, userAFence);
+		const operationId = committed.operations[0]?.operationId as string;
+		expect(committed.current.timezone).toBe('Europe/London');
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect((await storage.settingsSyncView())?.operations).toEqual(
+			committed.operations,
+		);
+		expect((await storage.restoreCurrent())?.sessionKey).toBe('session-a');
+		const acknowledged = await storage.recordSettingsOutcome(
+			{ operationId, outcome: 'applied', timezone: 'Europe/London' },
+			userAFence,
+		);
+		expect(acknowledged?.operations).toEqual([]);
+		expect(acknowledged?.current.timezone).toBe('Europe/London');
+		expect(
+			await storage.recordSettingsOutcome(
+				{ operationId, outcome: 'applied', timezone: 'UTC' },
+				userAFence,
+			),
+		).toEqual(acknowledged);
+		const second = await storage.commitSettings(
+			{ ...command, base: 'Europe/London', timezone: 'Asia/Tokyo' },
+			userAFence,
+		);
+		const secondId = second.operations[0]?.operationId as string;
+		const conflicted = await storage.recordSettingsOutcome(
+			{
+				operationId: secondId,
+				outcome: 'conflict',
+				error: 'Changed',
+				remote: 'UTC',
+			},
+			userAFence,
+		);
+		expect(conflicted?.current.timezone).toBe('Asia/Tokyo');
+		expect(conflicted?.operations[0]?.remote).toBe('UTC');
+		const invite = await storage.commitSettings(
+			{ type: 'invite-create', code: 'SETTINGS' },
+			userAFence,
+		);
+		const inviteId = invite.operations[1]?.operationId as string;
+		const rejected = await storage.recordSettingsOutcome(
+			{ operationId: inviteId, outcome: 'rejected', error: 'Reserved' },
+			userAFence,
+		);
+		expect(rejected?.operations[1]).toMatchObject({
+			status: 'needs-attention',
+			feedback: 'Reserved',
+		});
+		expect(await storage.requestSignOut('session-a', false)).toEqual({
+			kind: 'confirmation',
+			count: 2,
+		});
+		expect(await storage.settingsSyncView()).not.toBeNull();
+		expect((await storage.requestSignOut('session-a', true)).kind).toBe(
+			'cleared',
+		);
+		expect(await storage.settingsSyncView()).toBeNull();
+	});
+	it('clears only confirmed owner work and prevents another owner reading settings', async () => {
+		expect(await storage.pendingWorkCount()).toBe(0);
+		expect(await storage.pendingSignOut()).toBeNull();
+		expect((await storage.requestSignOut(null, false)).kind).toBe('cleared');
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [],
+				settings: {
+					timezone: 'UTC',
+					invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+				},
+			},
+			'session-a',
+		);
+		expect((await storage.requestSignOut('session-a', false)).kind).toBe(
+			'cleared',
+		);
+		const pending = await storage.pendingSignOut();
+		expect(pending).toMatchObject({ sessionKey: 'session-a' });
+		if (!pending) throw new Error('Missing pending sign-out');
+		await storage.completeSignOut(pending.operationId);
+		expect(await storage.pendingSignOut()).toBeNull();
+		await storage.activate('user-b', 'session-b');
+		expect(await storage.settingsSyncView()).toBeNull();
+		expect(await storage.read('user-a')).toBeNull();
+	});
+	const preparePhotos = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car-a', 'Buggy')],
+			},
+			'session-a',
+		);
+	};
+	const image = () => new File(['photo'], 'car.jpg', { type: 'image/jpeg' });
+	it('retains photo bytes and metadata atomically through restart and acknowledgement', async () => {
+		await preparePhotos();
+		const view = await storage.commitPhoto('car-a', image(), userAFence);
+		const capture = view.captures[0];
+		expect(view.photos).toHaveLength(1);
+		expect((await storage.readyPhotoCaptures(userAFence))[0].operationId).toBe(
+			capture.operationId,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect((await storage.restoreCurrent())?.sessionKey).toBe('session-a');
+		expect(
+			await storage.retainedPhoto(capture.operationId, userAFence),
+		).not.toBeNull();
+		await expect(
+			storage.recordPhotoOutcome(
+				{
+					operationId: capture.operationId,
+					outcome: 'applied',
+					photo: capture.photo,
+				},
+				[],
+				userAFence,
+			),
+		).rejects.toThrow('metadata');
+		expect((await storage.photoView(userAFence)).captures).toHaveLength(1);
+		const result = await storage.recordPhotoOutcome(
+			{
+				operationId: capture.operationId,
+				outcome: 'applied',
+				photo: capture.photo,
+			},
+			[capture.photo],
+			userAFence,
+		);
+		expect(result.captures).toEqual([]);
+		expect(result.photos).toEqual([capture.photo]);
+		await storage.retainPhoto(
+			capture.operationId,
+			new Blob(['retained']),
+			userAFence,
+		);
+		expect(
+			await storage.retainedPhoto(capture.operationId, userAFence),
+		).not.toBeNull();
+		await storage.refreshPhotos(
+			[capture.photo],
+			capture.operationId,
+			userAFence,
+		);
+		expect(
+			await storage.retainedPhoto(capture.operationId, userAFence),
+		).toBeNull();
+		expect(await storage.retainedPhoto('missing', userAFence)).toBeNull();
+		await expect(
+			storage.retainPhoto('missing', image(), userAFence),
+		).rejects.toThrow('metadata');
+		await storage.refreshPhotos([], undefined, userAFence);
+		expect((await storage.photoView(userAFence)).photos).toEqual([]);
+	});
+	it('preserves rejected photos, continues independent captures, and waits for Car changes', async () => {
+		await preparePhotos();
+		const first = await storage.commitPhoto('car-a', image(), userAFence);
+		const capture = first.captures[0];
+		await storage.recordPhotoOutcome(
+			{
+				operationId: capture.operationId,
+				outcome: 'rejected',
+				error: 'Archived',
+			},
+			[],
+			userAFence,
+		);
+		expect((await storage.photoView(userAFence)).captures[0]).toMatchObject({
+			status: 'needs-attention',
+			feedback: 'Archived',
+		});
+		const second = await storage.commitPhoto('car-a', image(), userAFence);
+		expect(second.photos).toHaveLength(2);
+		expect(second.photos[1].isPrimary).toBe(false);
+		expect(await storage.readyPhotoCaptures(userAFence)).toHaveLength(1);
+		await storage.recordPhotoOutcome(
+			{ operationId: 'unknown', outcome: 'rejected', error: 'No' },
+			[],
+			userAFence,
+		);
+		await storage.commitCar(
+			{ type: 'edit', carId: 'car-a', input: { name: 'Renamed' } },
+			userAFence,
+		);
+		expect(await storage.readyPhotoCaptures(userAFence)).toEqual([]);
+	});
+	it('rejects invalid photos and prevents writes or reads beyond the owner fence', async () => {
+		const capture = {
+			operationId: 'missing',
+			outcome: 'rejected' as const,
+			error: 'No',
+		};
+		await expect(storage.photoView(userAFence)).rejects.toThrow();
+		await expect(
+			storage.commitPhoto('car-a', image(), userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.recordPhotoOutcome(capture, [], userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.refreshPhotos([], undefined, userAFence),
+		).rejects.toThrow();
+		await preparePhotos();
+		await expect(
+			storage.commitPhoto('missing', image(), userAFence),
+		).rejects.toThrow('active Car');
+		for (const file of [
+			new File(['x'], 'bad.txt', { type: 'text/plain' }),
+			new File([], 'empty.jpg', { type: 'image/jpeg' }),
+			new File([new Uint8Array(10485761)], 'big.jpg', { type: 'image/jpeg' }),
+			new File(['x'], ' ', { type: 'image/jpeg' }),
+			new File(['x'], 'x'.repeat(256), { type: 'image/jpeg' }),
+		])
+			await expect(
+				storage.commitPhoto('car-a', file, userAFence),
+			).rejects.toThrow('valid photo');
+		await storage.replaceCars([
+			{ ...car('car-a', 'Buggy'), archivedAt: 'today' },
+		]);
+		await expect(
+			storage.commitPhoto('car-a', image(), userAFence),
+		).rejects.toThrow('active Car');
+	});
+	it.each(['sign-out', 'switch', 'invalidate'] as const)(
+		'removes owner photo bytes and captures on %s',
+		async (action) => {
+			await preparePhotos();
+			await storage.commitPhoto('car-a', image(), userAFence);
+			if (action === 'sign-out') await storage.deactivate();
+			else if (action === 'switch')
+				await storage.activate('user-b', 'session-b');
+			else {
+				fenceFailure = 'set';
+				await expect(storage.activate('user-b', 'session-b')).rejects.toThrow();
+			}
+			const inspect = new Dexie(databaseName);
+			await inspect.open();
+			expect(await inspect.table('photoCaptures').count()).toBe(0);
+			expect(await inspect.table('photoMedia').count()).toBe(0);
+			inspect.close();
+		},
+	);
+	const prepareMaintenance = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car', 'Buggy')],
+				maintenance: maintenanceSnapshotFixture,
+			},
+			'session-a',
+		);
+	};
+	const maintenanceCommand = {
+		kind: 'save-plan' as const,
+		mode: 'create' as const,
+		id: null,
+		plan: {
+			carId: 'car',
+			name: 'New plan',
+			intervalUnit: 'days' as const,
+			intervalValue: 7,
+			baselineSessionCount: 0,
+		},
+	};
+	it('retains maintenance intent across restart, rebases dependencies, and avoids stale acknowledgements', async () => {
+		await prepareMaintenance();
+		const committed = await storage.commitMaintenance(
+			maintenanceCommand,
+			userAFence,
+		);
+		const operation = committed.operations[0];
+		expect(committed.current.collections[0].plans).toHaveLength(2);
+		const plan = committed.current.collections[0].plans[1];
+		await storage.commitMaintenance(
+			{ kind: 'transition-plan', planId: plan.id, action: 'pause' },
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: operation.operationId,
+				outcome: 'applied',
+				collection: { ...committed.current.collections[0], version: 3 },
+			},
+			userAFence,
+		);
+		const next = (await storage.readyMaintenanceOperations(userAFence))[0];
+		expect(next.command.base).toMatchObject({ id: plan.id });
+		await storage.refreshMaintenance(
+			{
+				...maintenanceSnapshotFixture,
+				collections: [{ ...committed.current.collections[0], version: 5 }],
+			},
+			userAFence,
+		);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: next.operationId,
+				outcome: 'applied',
+				collection: { ...committed.current.collections[0], version: 4 },
+			},
+			userAFence,
+		);
+		expect(
+			(await storage.maintenanceSyncView(userAFence)).canonical.collections[0]
+				.version,
+		).toBe(5);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: 'missing',
+				outcome: 'rejected',
+				error: { code: 'NO', message: 'Unavailable' },
+			},
+			userAFence,
+		);
+		await storage.refreshMaintenance(
+			{
+				...maintenanceSnapshotFixture,
+				collections: [
+					{ ...committed.current.collections[0], version: 1 },
+					{ carId: 'other', version: 1, plans: [], records: [] },
+				],
+			},
+			userAFence,
+		);
+		expect(
+			(await storage.maintenanceSyncView(userAFence)).canonical.collections[0]
+				.version,
+		).toBe(5);
+	});
+	it('retains a plan for a pending Component across restart and releases it only after the build is acknowledged', async () => {
+		await prepareMaintenance();
+		const build = await storage.commitBuild(
+			{ ...buildCommand, carId: 'car' },
+			userAFence,
+		);
+		const componentId = build.operation.command.componentId;
+		const saved = await storage.commitMaintenance(
+			{
+				...maintenanceCommand,
+				plan: { ...maintenanceCommand.plan, componentId },
+			},
+			userAFence,
+		);
+		expect(saved.operations[0].dependencies).toContain(
+			build.operation.operationId,
+		);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toEqual([]);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(await storage.readyMaintenanceOperations(userAFence)).toEqual([]);
+		await storage.recordBuildOutcome({
+			operationId: build.operation.operationId,
+			outcome: 'applied',
+			collection: build.collection,
+		});
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		expect(
+			(
+				await storage.maintenanceSyncView(userAFence)
+			).current.collections[0].plans.find(
+				(plan) => plan.componentId === componentId,
+			),
+		).toBeDefined();
+		expect(await storage.requestSignOut('session-a', false)).toEqual({
+			kind: 'confirmation',
+			count: 1,
+		});
+	});
+
+	it('waits for pending Car and Drive work while retaining service usage exactly once', async () => {
+		await prepareMaintenance();
+		const drive = await storage.commitDrive(
+			{
+				action: 'save',
+				carId: 'car',
+				sessionId: null,
+				input: {
+					startedAt: '2026-08-11T12:00:00Z',
+					durationMinutes: null,
+					conditions: '',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+		const view = await storage.commitMaintenance(
+			{
+				kind: 'save-service',
+				mode: 'complete',
+				carId: 'car',
+				id: 'plan',
+				service: {
+					performedAt: '2026-08-11T12:00:00Z',
+					description: 'Completed',
+				},
+			},
+			userAFence,
+		);
+		expect(view.operations[0].sessionCount).toBe(1);
+		expect(view.current.collections[0].plans[0].baselineSessionCount).toBe(1);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toEqual([]);
+		await storage.recordDriveOutcome({
+			operationId: drive.operation.operationId,
+			outcome: 'applied',
+			collection: drive.collection,
+		});
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		await storage.commitCar(
+			{ type: 'edit', carId: 'car', input: { name: 'Renamed' } },
+			userAFence,
+		);
+		await storage.commitMaintenance(maintenanceCommand, userAFence);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+	});
+	it('keeps rejection and conflicts durable without blocking independent maintenance', async () => {
+		await prepareMaintenance();
+		const first = await storage.commitMaintenance(
+			maintenanceCommand,
+			userAFence,
+		);
+		const operation = first.operations[0];
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: operation.operationId,
+				outcome: 'rejected',
+				error: { code: 'NO', message: 'Archived' },
+			},
+			userAFence,
+		);
+		await storage.commitMaintenance(maintenanceCommand, userAFence);
+		const ready = await storage.readyMaintenanceOperations(userAFence);
+		expect(ready).toHaveLength(1);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: ready[0].operationId,
+				outcome: 'conflict',
+				error: { code: 'CONFLICT', message: 'Remote edit' },
+				remote: {
+					carId: 'car',
+					version: 3,
+					plans: [maintenancePlanFixture],
+					records: [],
+				},
+			},
+			userAFence,
+		);
+		const view = await storage.maintenanceSyncView(userAFence);
+		expect(view.operations.map((operation) => operation.status)).toEqual([
+			'needs-attention',
+			'conflict',
+		]);
+		expect(view.operations[1].remote?.version).toBe(3);
+	});
+	it('fails closed without a valid owner, and prepares missing maintenance metadata safely', async () => {
+		await expect(storage.maintenanceSyncView(userAFence)).rejects.toThrow();
+		await expect(
+			storage.commitMaintenance(maintenanceCommand, userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.refreshMaintenance(maintenanceSnapshotFixture, userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.recordMaintenanceOutcome(
+				{
+					operationId: 'missing',
+					outcome: 'rejected',
+					error: { code: 'NO', message: 'No' },
+				},
+				userAFence,
+			),
+		).rejects.toThrow();
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [],
+			},
+			'session-a',
+		);
+		expect(
+			(await storage.maintenanceSyncView(userAFence)).current.collections,
+		).toEqual([]);
+		await expect(
+			storage.commitMaintenance(maintenanceCommand, userAFence),
+		).rejects.toThrow('active Car');
+		await storage.refreshMaintenance(maintenanceSnapshotFixture, userAFence);
+		await storage.replaceCars([
+			{ ...car('car', 'Buggy'), archivedAt: 'today' },
+		]);
+		await expect(
+			storage.commitMaintenance(maintenanceCommand, userAFence),
+		).rejects.toThrow('active Car');
+	});
+	it.each(['sign-out', 'switch', 'invalidate'] as const)(
+		'clears maintenance commands on %s',
+		async (action) => {
+			await prepareMaintenance();
+			await storage.commitMaintenance(maintenanceCommand, userAFence);
+			if (action === 'sign-out') await storage.deactivate();
+			else if (action === 'switch')
+				await storage.activate('user-b', 'session-b');
+			else {
+				fenceFailure = 'set';
+				await expect(storage.activate('user-b', 'session-b')).rejects.toThrow();
+			}
+			const inspect = new Dexie(databaseName);
+			await inspect.open();
+			expect(await inspect.table('maintenanceOperations').count()).toBe(0);
+			inspect.close();
+		},
+	);
+	const prepareVoice = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'owner@example.com',
+				offlineUntil: '2026-08-12T00:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car', 'Voice buggy')],
+			},
+			'session-a',
+		);
+	};
+	it('keeps viewed Voice originals in the shared owner lifecycle and rejects removed or unknown media', async () => {
+		await prepareVoice();
+		const blob = new NodeBlob(['original'], {
+			type: 'audio/webm',
+		}) as unknown as Blob;
+		expect(
+			await storage.retainedVoiceOriginal('missing', userAFence),
+		).toBeNull();
+		await expect(
+			storage.retainVoiceOriginal('missing', blob, userAFence),
+		).rejects.toThrow('unavailable');
+		await storage.refreshVoice(
+			[{ ...voiceUpdateFixture, audioUrl: '/audio/capture' }],
+			userAFence,
+		);
+		expect(
+			await storage.retainedVoiceOriginal('capture', userAFence),
+		).toBeNull();
+		await storage.retainVoiceOriginal('capture', blob, userAFence);
+		await storage.retainVoiceOriginal('capture', blob, userAFence);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(
+			await (
+				await storage.retainedVoiceOriginal('capture', userAFence)
+			)?.arrayBuffer(),
+		).toEqual(await blob.arrayBuffer());
+		await storage.refreshVoice(
+			[
+				{
+					...voiceUpdateFixture,
+					audioUrl: '/audio/capture',
+					artifactDeletedAt: '2026-10-10',
+					updatedAt: '2026-10-10',
+				},
+			],
+			userAFence,
+		);
+		expect(
+			await storage.retainedVoiceOriginal('capture', userAFence),
+		).toBeNull();
+		await expect(
+			storage.retainVoiceOriginal('capture', blob, userAFence),
+		).rejects.toThrow('unavailable');
+		expect((await storage.requestSignOut('session-a', false)).kind).toBe(
+			'cleared',
+		);
+		await expect(
+			storage.retainedVoiceOriginal('capture', userAFence),
+		).rejects.toThrow('unavailable');
+	});
+
+	it('retains exact voice bytes and stable identity across restart, processing and metadata refresh', async () => {
+		await prepareVoice();
+		// Native Blob is structured-cloneable in fake-indexeddb; jsdom's wrapper is not.
+		const blob = new NodeBlob([new Uint8Array([1, 2, 3, 255])], {
+			type: 'audio/webm',
+		}) as unknown as Blob;
+		const capture = { ...voiceCaptureFixture, blob };
+		await storage.keepVoice(capture, userAFence);
+		expect(await storage.pendingWorkCount()).toBe(1);
+		expect(await storage.pendingWorkCount([capture.id])).toBe(0);
+		expect(await storage.requestSignOut('session-a', false)).toEqual({
+			kind: 'confirmation',
+			count: 1,
+		});
+		await storage.keepVoice(
+			{ ...capture, text: 'duplicate must not overwrite' },
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		let view = await storage.voiceView(userAFence);
+		expect(view.captures).toHaveLength(1);
+		expect(view.captures[0].text).toBe(voiceCaptureFixture.text);
+		expect(await view.captures[0].blob?.arrayBuffer()).toEqual(
+			await blob.arrayBuffer(),
+		);
+		expect(await storage.readyVoice(userAFence)).toHaveLength(1);
+		view = await storage.changeVoice(
+			capture.id,
+			{ phase: 'processing', remote: voiceUpdateFixture },
+			userAFence,
+		);
+		expect(view.updates).toEqual([voiceUpdateFixture]);
+		await storage.changeVoice(
+			capture.id,
+			{
+				phase: 'retained',
+				remote: { ...voiceUpdateFixture, status: 'needs-review' },
+			},
+			userAFence,
+		);
+		expect(await storage.readyVoice(userAFence)).toEqual([]);
+		view = await storage.refreshVoice(
+			[
+				{
+					...voiceUpdateFixture,
+					status: 'saved',
+					updatedAt: '2026-10-10T12:00:00Z',
+				},
+			],
+			userAFence,
+		);
+		expect(view.updates[0].status).toBe('saved');
+		expect(await view.captures[0].blob?.arrayBuffer()).toEqual(
+			await blob.arrayBuffer(),
+		);
+		await storage.refreshVoice([voiceUpdateFixture], userAFence);
+		expect((await storage.voiceView(userAFence)).updates[0].status).toBe(
+			'saved',
+		);
+		await storage.refreshVoice(
+			[
+				{
+					...voiceUpdateFixture,
+					id: 'unretained',
+					artifactDeletedAt: '2026-10-11T12:00:00Z',
+				},
+				{
+					...voiceUpdateFixture,
+					status: 'saved',
+					updatedAt: '2026-10-11T12:00:00Z',
+					artifactDeletedAt: '2026-10-11T12:00:00Z',
+				},
+			],
+			userAFence,
+		);
+		expect(
+			(await storage.voiceView(userAFence)).captures[0].blob,
+		).toBeUndefined();
+		await storage.changeVoice('missing', 'discard', userAFence);
+		await storage.changeVoice(capture.id, 'discard', userAFence);
+		expect((await storage.voiceView(userAFence)).captures).toEqual([]);
+	});
+	it('imports legacy captures once and never overwrites progress or another owner', async () => {
+		await prepareVoice();
+		const legacy = {
+			...voiceCaptureFixture,
+			ownerKey: 'owner@example.com',
+			blob: new Blob(['original']),
+		};
+		await storage.importVoice(
+			[legacy, { ...legacy, id: 'failed', status: 'failed' }],
+			userAFence,
+		);
+		await storage.changeVoice(legacy.id, { phase: 'processing' }, userAFence);
+		await storage.importVoice([legacy], userAFence);
+		const view = await storage.voiceView(userAFence);
+		expect(view.captures).toHaveLength(2);
+		expect(view.captures.find((c) => c.id === legacy.id)?.phase).toBe(
+			'processing',
+		);
+		expect(await storage.readyVoice(userAFence)).toHaveLength(1);
+		await expect(
+			storage.importVoice(
+				[{ ...legacy, ownerKey: 'someone-else' }],
+				userAFence,
+			),
+		).rejects.toThrow('another User');
+		const database = new Dexie(databaseName);
+		await database.open();
+		await database.table('voiceCaptures').put({
+			...legacy,
+			id: 'collision',
+			ownerKey: 'someone-else',
+			phase: 'upload',
+			dependencies: [],
+		});
+		database.close();
+		await expect(
+			storage.importVoice([{ ...legacy, id: 'collision' }], userAFence),
+		).rejects.toThrow('identity');
+		await expect(
+			storage.keepVoice({ ...legacy, id: 'collision' }, userAFence),
+		).rejects.toThrow('identity');
+	});
+	it('waits for locally-created Car and Drive dependencies before voice upload', async () => {
+		await prepareVoice();
+		const created = await storage.commitCar(
+			{ type: 'create', input: { name: 'Local Car' } },
+			userAFence,
+		);
+		const drive = await storage.commitDrive(
+			{
+				action: 'save',
+				carId: created.car.id,
+				sessionId: null,
+				input: {
+					startedAt: '2026-08-11T12:00:00Z',
+					durationMinutes: null,
+					conditions: 'Dry',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+		const capture = {
+			...voiceCaptureFixture,
+			carId: created.car.id,
+			driveSessionId: drive.collection.sessions[0].id,
+		};
+		await storage.keepVoice(capture, userAFence);
+		expect(await storage.readyVoice(userAFence)).toEqual([]);
+		await storage.recordCarOutcome({
+			operationId: created.operation.operationId,
+			outcome: 'applied',
+			car: { ...created.car, version: 1 },
+		});
+		expect(await storage.readyVoice(userAFence)).toEqual([]);
+		await storage.recordDriveOutcome({
+			operationId: drive.operation.operationId,
+			outcome: 'applied',
+			collection: { ...drive.collection, version: 2 },
+		});
+		expect(await storage.readyVoice(userAFence)).toHaveLength(1);
+		await expect(
+			storage.keepVoice(
+				{ ...capture, id: 'invalid-drive', driveSessionId: 'missing' },
+				userAFence,
+			),
+		).rejects.toThrow('matching Drive');
+		await expect(
+			storage.keepVoice(
+				{ ...capture, id: 'invalid-car', carId: 'missing' },
+				userAFence,
+			),
+		).rejects.toThrow('active Car');
+	});
+	it('fences every voice storage operation and includes original bytes in owner cleanup', async () => {
+		for (const call of [
+			() => storage.voiceView(userAFence),
+			() => storage.keepVoice(voiceCaptureFixture, userAFence),
+			() => storage.importVoice([], userAFence),
+			() => storage.changeVoice('capture', 'discard', userAFence),
+			() => storage.refreshVoice([], userAFence),
+		])
+			await expect(call()).rejects.toThrow('unavailable');
+		await prepareVoice();
+		await storage.keepVoice(voiceCaptureFixture, userAFence);
+		await storage.deactivate('signout');
+		const database = new Dexie(databaseName);
+		await database.open();
+		expect(await database.table('voiceCaptures').count()).toBe(0);
+		database.close();
+	});
+	it('retains Consumable identities and dependencies through restart, archive, restore, and duplicate acknowledgement', async () => {
+		await prepareMaintenance();
+		await storage.commitDrive(
+			{
+				action: 'save',
+				carId: 'car',
+				sessionId: null,
+				input: {
+					startedAt: '2026-08-11T12:00:00.000Z',
+					durationMinutes: null,
+					conditions: 'Unrelated pending Drive',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+
+		const committed = await storage.commitMaintenance(
+			{
+				kind: 'save',
+				mode: 'create',
+				carId: 'car',
+				id: null,
+				maintenance: {
+					kind: 'tires',
+					axle: 'front',
+					frontDetails: 'Pins',
+					frontCost: 12,
+					performedAt: '2026-08-11T12:00:00.000Z',
+				},
+			},
+			userAFence,
+		);
+		const record = committed.current.collections[0].consumables?.[0];
+		expect(record).toBeDefined();
+		if (!record) throw new Error('Missing retained fixture');
+		await storage.commitMaintenance(
+			{
+				kind: 'change',
+				action: 'archive',
+				entry: {
+					id: record.id,
+					carId: 'car',
+					kind: 'tires',
+					performedAt: record.performedAt,
+				},
+			},
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		const acknowledgement = {
+			operationId: committed.operations[0].operationId,
+			outcome: 'applied' as const,
+			collection: { ...committed.current.collections[0], version: 2 },
+		};
+		await storage.recordMaintenanceOutcome(acknowledgement, userAFence);
+		await storage.recordMaintenanceOutcome(acknowledgement, userAFence);
+		const archived = await storage.maintenanceSyncView(userAFence);
+		expect(archived.current.collections[0].consumables).toHaveLength(1);
+		expect(
+			archived.current.collections[0].consumables?.[0].archivedAt,
+		).not.toBeNull();
+		const pending = await storage.readyMaintenanceOperations(userAFence);
+		expect(pending).toHaveLength(1);
+		expect(pending[0].command.base).toMatchObject({ id: record.id });
+		await storage.commitMaintenance(
+			{
+				kind: 'change',
+				action: 'restore',
+				entry: {
+					id: record.id,
+					carId: 'car',
+					kind: 'tires',
+					performedAt: record.performedAt,
+				},
+			},
+			userAFence,
+		);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		const restored = await storage.maintenanceSyncView(userAFence);
+		expect(restored.current.collections[0].consumables?.[0]).toMatchObject({
+			id: record.id,
+			frontCost: 12,
+			archivedAt: null,
+		});
+	});
+	const reviewTableNames = {
+		photo: 'photoChanges',
+		car: 'operations',
+		setup: 'setupOperations',
+		build: 'buildOperations',
+		drive: 'driveOperations',
+		maintenance: 'maintenanceOperations',
+		settings: 'settingsOperations',
+	} as const;
+	it.each(
+		syncReviewFixtures.flatMap((review) =>
+			(['device', 'remote'] as const).map((decision) => ({ review, decision })),
+		),
+	)(
+		'resolves $review.family review atomically with the $decision choice and retains dependent intent',
+		async ({ review, decision }) => {
+			await prepareMaintenance();
+			const snapshot = await storage.read('user-a');
+			assert(snapshot);
+			await storage.save(
+				{
+					...snapshot,
+					settings: {
+						timezone: 'UTC',
+						invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+					},
+				},
+				'session-a',
+			);
+			const inspect = new Dexie(databaseName);
+			await inspect.open();
+			try {
+				const table = inspect.table(reviewTableNames[review.family]);
+				await table.put(review.operation);
+				const dependent = {
+					...syncReviewFixtures[0].operation,
+					operationId: 'dependent',
+					dependencies: ['review', 'other'],
+					status: 'pending',
+				};
+				await inspect.table('operations').put(dependent);
+				await inspect.table('settingsOperations').put({
+					...syncReviewFixtures[5].operation,
+					operationId: 'setting-dependent',
+					dependencies: ['review', 'other'],
+					status: 'pending',
+				});
+				await inspect.table('voiceCaptures').put({
+					...voiceCaptureFixture,
+					ownerKey: 'user-a',
+					id: 'voice-dependent',
+					dependencies: ['review', 'other'],
+				});
+				await storage.resolveSyncReview(review, decision, userAFence);
+				expect(await table.get('review')).toBeUndefined();
+				const child = await inspect.table('operations').get('dependent');
+				const voice = await inspect
+					.table('voiceCaptures')
+					.get('voice-dependent');
+				if (decision === 'device') {
+					const retried = (await table.toArray()).find(
+						(value) =>
+							value.operationId !== 'dependent' &&
+							value.operationId !== 'setting-dependent',
+					);
+					expect(retried.status).toBe('pending');
+					expect(retried.operationId).not.toBe('review');
+					expect(child.dependencies).toEqual([retried.operationId, 'other']);
+					expect(voice.dependencies).toEqual([retried.operationId, 'other']);
+				} else {
+					expect(child.status).toBe('needs-attention');
+					expect(child.feedback.code).toBe('PREREQUISITE_DISCARDED');
+					expect(voice.status).toBe('failed');
+					expect(
+						(await inspect.table('settingsOperations').get('setting-dependent'))
+							.feedback,
+					).toContain('prerequisite');
+				}
+			} finally {
+				inspect.close();
+			}
+		},
+	);
+	it('does not replace a newer local canonical collection while reviewing older remote evidence', async () => {
+		await prepareMaintenance();
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		const review = syncReviewFixtures[4];
+		assert(review.family === 'maintenance');
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			for (const maintenance of [
+				undefined,
+				{ ...maintenanceSnapshotFixture, collections: [] },
+				{
+					...maintenanceSnapshotFixture,
+					collections: [
+						{ ...maintenanceSnapshotFixture.collections[0], version: 9 },
+					],
+				},
+			]) {
+				await storage.save({ ...snapshot, maintenance }, 'session-a');
+				await inspect.table('maintenanceOperations').put(review.operation);
+				await storage.resolveSyncReview(review, 'remote', userAFence);
+				if (maintenance?.collections[0])
+					expect(
+						(await storage.read('user-a'))?.maintenance?.collections[0].version,
+					).toBe(9);
+			}
+		} finally {
+			inspect.close();
+		}
+	});
+	it('retries canonical rejections without invented remote data and refuses stale or foreign review decisions', async () => {
+		await prepareMaintenance();
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			for (const fixture of syncReviewFixtures) {
+				const review = {
+					...fixture,
+					operation: {
+						...fixture.operation,
+						remote: undefined,
+						status: 'needs-attention',
+					},
+				} as SyncReview;
+				const table = inspect.table(reviewTableNames[review.family]);
+				await table.clear();
+				await table.put(review.operation);
+				await storage.resolveSyncReview(review, 'device', userAFence);
+				expect((await table.toArray())[0].command).toEqual(
+					review.operation.command,
+				);
+				await expect(
+					storage.resolveSyncReview(review, 'remote', userAFence),
+				).rejects.toThrow('updated');
+			}
+			const review = syncReviewFixtures[0];
+			for (const override of [
+				{ ownerKey: 'other' },
+				{ status: 'pending' },
+				{ createdAt: 'changed' },
+			]) {
+				await inspect
+					.table('operations')
+					.put({ ...review.operation, ...override });
+				await expect(
+					storage.resolveSyncReview(review, 'remote', userAFence),
+				).rejects.toThrow('updated');
+			}
+			await expect(
+				storage.resolveSyncReview(review, 'remote', {
+					...userAFence,
+					sessionKey: 'other',
+				}),
+			).rejects.toThrow('unavailable');
+		} finally {
+			inspect.close();
+		}
+	});
+	it('rolls back a removed-Setup retry and can deliberately discard it without erasing dependent records', async () => {
+		await prepareMaintenance();
+		const fixture = syncReviewFixtures[1];
+		assert(fixture.family === 'setup');
+		assert(fixture.operation.remote);
+		const review = {
+			...fixture,
+			operation: {
+				...fixture.operation,
+				remote: { ...fixture.operation.remote, setup: null },
+			},
+		};
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('setupOperations').put(review.operation);
+			await expect(
+				storage.resolveSyncReview(review, 'device', userAFence),
+			).rejects.toThrow('no longer exists');
+			await expect(
+				inspect.table('setupOperations').get('review'),
+			).resolves.toEqual(review.operation);
+			await storage.resolveSyncReview(review, 'remote', userAFence);
+			await expect(
+				inspect.table('setupOperations').get('review'),
+			).resolves.toBeUndefined();
+			const settings = syncReviewFixtures[5];
+			await inspect.table('settingsOperations').put(settings.operation);
+			await storage.resolveSyncReview(settings, 'remote', userAFence);
+		} finally {
+			inspect.close();
+		}
+	});
+	it('upgrades the deployed structured queue schema without dropping pending intent while older readers leave the upgraded tables intact', async () => {
+		const old = new Dexie(databaseName);
+		old.version(4).stores({
+			snapshots: '&ownerKey,preparedAt',
+			metadata: '&key',
+			revokedSessions: '&sessionKey',
+			operations: '&operationId,ownerKey,carId,status,createdAt',
+			setupOperations: '&operationId,ownerKey,carId,setupId,status,createdAt',
+		});
+		await old.open();
+		const carReview = syncReviewFixtures[0];
+		const setupReview = syncReviewFixtures[1];
+		await old.table('operations').put(carReview.operation);
+		await old.table('setupOperations').put(setupReview.operation);
+		old.close();
+		await storage.read('user-a');
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			expect(await inspect.table('operations').get('review')).toEqual(
+				carReview.operation,
+			);
+			expect(await inspect.table('setupOperations').get('review')).toEqual(
+				setupReview.operation,
+			);
+			expect(inspect.tables.map((table) => table.name)).toEqual(
+				expect.arrayContaining([
+					'buildOperations',
+					'driveOperations',
+					'maintenanceOperations',
+					'settingsOperations',
+					'photoCaptures',
+					'photoMedia',
+					'voiceCaptures',
+				]),
+			);
+		} finally {
+			inspect.close();
+		}
+		await old.open();
+		expect(await old.table('operations').get('review')).toEqual(
+			carReview.operation,
+		);
+		old.close();
+	});
+	it('refuses future synchronization contracts without replacing or clearing their pending work', async () => {
+		await prepareMaintenance();
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect
+				.table('snapshots')
+				.put({ ...snapshot, contractVersion: 99 });
+			expect(await storage.restoreCurrent()).toBeNull();
+			expect(
+				await storage.save({ ...snapshot, contractVersion: 2 }, 'session-a'),
+			).toBe(false);
+			await expect(storage.requestSignOut('session-a', true)).rejects.toThrow(
+				'Reload',
+			);
+			expect(
+				(await inspect.table('snapshots').get('user-a')).contractVersion,
+			).toBe(99);
+			await inspect.table('snapshots').put({ ...snapshot, contractVersion: 2 });
+			expect(
+				await storage.save({ ...snapshot, contractVersion: 2 }, 'session-a'),
+			).toBe(true);
+			expect(await storage.restoreCurrent()).not.toBeNull();
+			expect((await storage.requestSignOut('session-a', true)).kind).toBe(
+				'cleared',
+			);
+		} finally {
+			inspect.close();
+		}
+	});
+	it('persists every photo edit and its original through restart, dependencies, conflict review, and cleanup', async () => {
+		await preparePhotos();
+		const a = {
+			id: 'photo-a',
+			carId: 'car-a',
+			revision: 1,
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+			sortOrder: 0,
+			isPrimary: true,
+		};
+		const b = { ...a, id: 'photo-b', sortOrder: 1, isPrimary: false };
+		await storage.refreshPhotos([a, b], undefined, userAFence);
+		await storage.retainPhoto(
+			b.id,
+			new NodeBlob(['retained b']) as unknown as Blob,
+			userAFence,
+			1,
+		);
+		const file = Object.assign(
+			new NodeBlob(['replacement'], { type: 'image/jpeg' }),
+			{ name: 'new.jpg' },
+		) as unknown as File;
+		const first = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'replace', photo: a, file },
+			userAFence,
+		);
+		expect(first.photos[0]).toMatchObject({ revision: 2, byteSize: 11 });
+		expect(await (await storage.retainedPhoto(a.id, userAFence))?.text()).toBe(
+			'replacement',
+		);
+		const replaced = first.photos[0];
+		const second = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: b },
+			userAFence,
+		);
+		expect(second.changes?.[1].dependencies).toEqual([
+			first.changes?.[0].operationId,
+		]);
+		await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [b, replaced] },
+			userAFence,
+		);
+		expect(await storage.pendingWorkCount()).toBe(3);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(
+			(await storage.readyPhotoChanges(userAFence)).map(
+				(value) => value.operationId,
+			),
+		).toEqual([first.changes?.[0].operationId]);
+		const operation = first.changes[0];
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: operation.operationId,
+				outcome: 'conflict',
+				error: { code: 'CONFLICT', message: 'Changed elsewhere' },
+				remote: [{ ...a, revision: 3 }, b],
+			},
+			userAFence,
+		);
+		expect(await storage.readyPhotoChanges(userAFence)).toEqual([]);
+		const review = (await storage.photoView(userAFence)).changes[0];
+		await storage.resolveSyncReview(
+			{ family: 'photo', operation: review },
+			'device',
+			userAFence,
+		);
+		const retried = (await storage.readyPhotoChanges(userAFence))[0];
+		expect(retried.command.base[0].revision).toBe(3);
+		const saved = { ...replaced, revision: 4 };
+		let view = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: retried.operationId,
+				outcome: 'applied',
+				photos: [saved, b],
+			},
+			userAFence,
+		);
+		expect(await (await storage.retainedPhoto(a.id, userAFence))?.text()).toBe(
+			'replacement',
+		);
+		const primary = (await storage.readyPhotoChanges(userAFence))[0];
+		expect(primary.command.base[0].revision).toBe(4);
+		view = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: primary.operationId,
+				outcome: 'applied',
+				photos: [
+					{ ...saved, isPrimary: false, revision: 5 },
+					{ ...b, isPrimary: true, revision: 2 },
+				],
+			},
+			userAFence,
+		);
+		const order = (await storage.readyPhotoChanges(userAFence))[0];
+		view = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: order.operationId,
+				outcome: 'applied',
+				photos: view.photos,
+			},
+			userAFence,
+		);
+		expect(view.changes).toEqual([]);
+		const removed = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'delete', photo: b },
+			userAFence,
+		);
+		expect(removed.photos.some((value) => value.id === b.id)).toBe(false);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: removed.changes[0].operationId,
+				outcome: 'applied',
+				photos: removed.photos,
+			},
+			userAFence,
+		);
+		expect(await storage.retainedPhoto(b.id, userAFence)).toBeNull();
+		await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: a },
+			userAFence,
+		);
+		expect(await storage.requestSignOut('session-a', false)).toMatchObject({
+			kind: 'confirmation',
+			count: 1,
+		});
+		await storage.requestSignOut('session-a', true);
+		expect(await storage.pendingWorkCount()).toBe(0);
+	});
+	it('retains rejected photo changes, fences stale writes, and validates local edits before acceptance', async () => {
+		const a = {
+			id: 'photo-a',
+			carId: 'car-a',
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+		};
+		await expect(
+			storage.commitPhotoChange(
+				'car-a',
+				{ kind: 'delete', photo: a },
+				userAFence,
+			),
+		).rejects.toThrow();
+		await expect(
+			storage.recordPhotoChangeOutcome(
+				{ operationId: 'missing', outcome: 'applied', photos: [] },
+				userAFence,
+			),
+		).rejects.toThrow();
+		await preparePhotos();
+		await storage.refreshPhotos([a], undefined, userAFence);
+		for (const file of [
+			new File(['x'], 'a.gif', { type: 'image/gif' }),
+			new File(['x'], ' ', { type: 'image/jpeg' }),
+			new File(['x'], 'x'.repeat(256), { type: 'image/jpeg' }),
+			new File([], 'a.jpg', { type: 'image/jpeg' }),
+			new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'a.jpg', {
+				type: 'image/jpeg',
+			}),
+		])
+			await expect(
+				storage.commitPhotoChange(
+					'car-a',
+					{ kind: 'replace', photo: a, file },
+					userAFence,
+				),
+			).rejects.toThrow();
+		await expect(
+			storage.commitPhotoChange(
+				'missing',
+				{ kind: 'delete', photo: a },
+				userAFence,
+			),
+		).rejects.toThrow();
+		await expect(
+			storage.commitPhotoChange(
+				'car-a',
+				{ kind: 'delete', photo: { ...a, id: 'missing' } },
+				userAFence,
+			),
+		).rejects.toThrow();
+		for (const photos of [[], [a, a], [{ ...a, id: 'missing' }]])
+			await expect(
+				storage.commitPhotoChange(
+					'car-a',
+					{ kind: 'reorder', photos },
+					userAFence,
+				),
+			).rejects.toThrow();
+		const view = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: a },
+			userAFence,
+		);
+		const id = view.changes[0].operationId;
+		const failure = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: id,
+				outcome: 'rejected',
+				error: { code: 'ARCHIVED', message: 'Restore the Car' },
+			},
+			userAFence,
+		);
+		expect(failure.changes[0].status).toBe('needs-attention');
+		await storage.resolveSyncReview(
+			{ family: 'photo', operation: failure.changes[0] },
+			'remote',
+			userAFence,
+		);
+		expect((await storage.photoView(userAFence)).changes).toEqual([]);
+		await storage.recordPhotoChangeOutcome(
+			{ operationId: 'missing', outcome: 'applied', photos: [] },
+			userAFence,
+		);
+	});
+	it('waits for capture and Car prerequisites while preserving independent gallery operations', async () => {
+		await preparePhotos();
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		await storage.save(
+			{ ...snapshot, cars: [...snapshot.cars, car('car-b', 'Second')] },
+			'session-a',
+		);
+		const capture = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		await storage.commitCar(
+			{ type: 'edit', carId: 'car-a', input: { name: 'Renamed' } },
+			userAFence,
+		);
+		const pending = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: capture.photo },
+			userAFence,
+		);
+		expect(pending.changes[0].dependencies).toHaveLength(2);
+		const independent = await storage.commitPhotoChange(
+			'car-b',
+			{ kind: 'reorder', photos: [] },
+			userAFence,
+		);
+		const ready = (await storage.readyPhotoChanges(userAFence))[0];
+		expect(ready.carId).toBe('car-b');
+		// Existing independent work is never rebased by a different gallery acknowledgement.
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('photoChanges').put({
+				...independent.changes[1],
+				operationId: 'separate',
+				dependencies: [],
+			});
+		} finally {
+			inspect.close();
+		}
+		await storage.recordPhotoChangeOutcome(
+			{ operationId: ready.operationId, outcome: 'applied', photos: [] },
+			userAFence,
+		);
+		expect(
+			(await storage.photoView(userAFence)).changes.map(
+				(value) => value.operationId,
+			),
+		).toContain('separate');
+	});
+	it('handles empty galleries from earlier snapshots and retains review intent across migration', async () => {
+		await preparePhotos();
+		const first = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [] },
+			userAFence,
+		);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: first.changes[0].operationId,
+				outcome: 'applied',
+				photos: [],
+			},
+			userAFence,
+		);
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		await storage.save({ ...snapshot, photos: undefined }, 'session-a');
+		const pending = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [] },
+			userAFence,
+		);
+		const conflicted = await storage.recordPhotoChangeOutcome(
+			{
+				operationId: pending.changes[0].operationId,
+				outcome: 'conflict',
+				error: { code: 'CONFLICT', message: 'Changed' },
+				remote: [],
+			},
+			userAFence,
+		);
+		await storage.resolveSyncReview(
+			{ family: 'photo', operation: conflicted.changes[0] },
+			'remote',
+			userAFence,
+		);
+		expect((await storage.photoView(userAFence)).changes).toEqual([]);
+	});
+	it('upgrades compatible photo queues without letting an older shell clear new photo edits', async () => {
+		storage.close();
+		const old = new Dexie(databaseName);
+		old
+			.version(10)
+			.stores({ snapshots: '&ownerKey,preparedAt', metadata: '&key' });
+		await old.open();
+		await old.table('snapshots').bulkPut([
+			{ ownerKey: 'user-a', contractVersion: 1 },
+			{ ownerKey: 'future', contractVersion: 99 },
+		]);
+		old.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		await storage.read('user-a');
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			expect(
+				(await inspect.table('snapshots').get('user-a')).contractVersion,
+			).toBe(2);
+			expect(
+				(await inspect.table('snapshots').get('future')).contractVersion,
+			).toBe(99);
+			expect(inspect.tables.map((table) => table.name)).toContain(
+				'photoChanges',
+			);
+		} finally {
+			inspect.close();
+		}
+	});
+	it('never replaces a newer retained original with a late response from an older photo revision', async () => {
+		await preparePhotos();
+		const photo = {
+			id: 'original',
+			carId: 'car-a',
+			revision: 1,
+			createdAt: 'today',
+			contentType: 'image/jpeg',
+		};
+		const blob = new NodeBlob(['original']) as unknown as Blob;
+		await storage.refreshPhotos([photo], undefined, userAFence);
+		await storage.retainPhoto(photo.id, blob, userAFence, 1);
+		await storage.refreshPhotos(
+			[{ ...photo, revision: 2 }],
+			undefined,
+			userAFence,
+		);
+		expect(await storage.retainedPhoto(photo.id, userAFence)).toBeNull();
+		await expect(
+			storage.retainPhoto(photo.id, blob, userAFence, 1),
+		).rejects.toThrow('earlier');
+		await storage.retainPhoto(photo.id, blob, userAFence, 2);
+		expect(
+			await (await storage.retainedPhoto(photo.id, userAFence))?.text(),
+		).toBe('original');
+	});
+	it('preserves compatible cached originals when gallery metadata changes and fences stale migrated media', async () => {
+		await preparePhotos();
+		const legacy = {
+			id: 'legacy',
+			carId: 'car-a',
+			createdAt: 'today',
+			contentType: 'image/jpeg',
+			isPrimary: false,
+		};
+		await storage.refreshPhotos([legacy], undefined, userAFence);
+		const blob = new NodeBlob(['legacy']) as unknown as Blob;
+		await storage.retainPhoto(legacy.id, blob, userAFence);
+		expect(await storage.retainedPhoto(legacy.id, userAFence)).not.toBeNull();
+		const capture = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		await storage.retainPhoto(capture.photo.id, blob, userAFence);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect
+				.table('photoMedia')
+				.put({ ownerKey: 'user-a', photoId: legacy.id, blob });
+		} finally {
+			inspect.close();
+		}
+		const primary = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'primary', photo: legacy },
+			userAFence,
+		);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: primary.changes[0].operationId,
+				outcome: 'applied',
+				photos: [legacy, capture.photo],
+			},
+			userAFence,
+		);
+		expect(await storage.retainedPhoto(legacy.id, userAFence)).not.toBeNull();
+		const replacement = await storage.commitPhotoChange(
+			'car-a',
+			{
+				kind: 'replace',
+				photo: legacy,
+				file: Object.assign(new NodeBlob(['new'], { type: 'image/jpeg' }), {
+					name: 'new.jpg',
+				}) as unknown as File,
+			},
+			userAFence,
+		);
+		await storage.recordPhotoChangeOutcome(
+			{
+				operationId: replacement.changes[0].operationId,
+				outcome: 'applied',
+				photos: [legacy, capture.photo],
+			},
+			userAFence,
+		);
+		expect(
+			await (await storage.retainedPhoto(legacy.id, userAFence))?.text(),
+		).toBe('new');
+	});
+	it('retries a rejected capture with new identity and atomically remaps all dependent photo intent', async () => {
+		await preparePhotos();
+		const original = {
+			id: 'saved',
+			carId: 'car-a',
+			revision: 1,
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+		};
+		await storage.refreshPhotos([original], undefined, userAFence);
+		const file = Object.assign(
+			new NodeBlob(['capture bytes'], { type: 'image/jpeg' }),
+			{ name: 'capture.jpg' },
+		) as unknown as File;
+		const captured = (await storage.commitPhoto('car-a', file, userAFence))
+			.captures[0];
+		const replaced = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'replace', photo: captured.photo, file },
+			userAFence,
+		);
+		await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [original, captured.photo] },
+			userAFence,
+		);
+		const rejected = await storage.recordPhotoOutcome(
+			{
+				operationId: captured.operationId,
+				outcome: 'rejected',
+				error: 'Car is archived',
+			},
+			[],
+			userAFence,
+		);
+		const recoverable = rejected.captures[0];
+		await expect(
+			storage.resolvePhotoCapture(
+				{ ...recoverable, feedback: 'stale' },
+				'retry',
+				userAFence,
+			),
+		).rejects.toThrow('changed');
+		const retried = await storage.resolvePhotoCapture(
+			recoverable,
+			'retry',
+			userAFence,
+		);
+		const next = retried.captures[0];
+		expect(next.operationId).not.toBe(captured.operationId);
+		expect(next.status).toBe('pending');
+		expect(
+			await (await storage.retainedPhoto(next.photo.id, userAFence))?.text(),
+		).toBe('capture bytes');
+		expect(
+			await storage.retainedPhoto(captured.photo.id, userAFence),
+		).toBeNull();
+		expect(retried.changes[0].command.photoId).toBe(next.photo.id);
+		expect(retried.changes[0].dependencies).toContain(next.operationId);
+		expect(retried.changes[1].dependencies).toContain(
+			replaced.changes[0].operationId,
+		);
+		expect(retried.changes[1].command.order).toEqual([
+			original.id,
+			next.photo.id,
+		]);
+		expect(retried.changes[1].command.base.map((value) => value.id)).toContain(
+			next.photo.id,
+		);
+		expect(await storage.readyPhotoChanges(userAFence)).toEqual([]);
+		await expect(
+			storage.resolvePhotoCapture(next, 'discard', userAFence),
+		).rejects.toThrow('changed');
+		const rejectedAgain = await storage.recordPhotoOutcome(
+			{
+				operationId: next.operationId,
+				outcome: 'rejected',
+				error: 'Unavailable',
+			},
+			[],
+			userAFence,
+		);
+		const discarded = await storage.resolvePhotoCapture(
+			rejectedAgain.captures[0],
+			'discard',
+			userAFence,
+		);
+		expect(discarded.captures).toEqual([]);
+		expect(
+			discarded.changes.every((value) => value.status === 'needs-attention'),
+		).toBe(true);
+		expect(await storage.retainedPhoto(next.photo.id, userAFence)).toBeNull();
+		await expect(
+			storage.resolvePhotoCapture(recoverable, 'discard', userAFence),
+		).rejects.toThrow('changed');
+	});
+	it('fences capture recovery and does not modify unrelated work', async () => {
+		await preparePhotos();
+		const captured = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		const rejected = await storage.recordPhotoOutcome(
+			{ operationId: captured.operationId, outcome: 'rejected', error: 'No' },
+			[],
+			userAFence,
+		);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('photoChanges').put({
+				ownerKey: 'user-a',
+				operationId: 'unrelated',
+				carId: 'car-b',
+				status: 'pending',
+				dependencies: [],
+				createdAt: 1,
+				command: {
+					type: 'photo.change',
+					carId: 'car-b',
+					action: 'reorder',
+					photoId: null,
+					order: [],
+					base: [],
+					replacement: null,
+				},
+			});
+			await inspect
+				.table('photoCaptures')
+				.put({ ...rejected.captures[0], ownerKey: 'user-b' });
+			await expect(
+				storage.resolvePhotoCapture(
+					rejected.captures[0],
+					'discard',
+					userAFence,
+				),
+			).rejects.toThrow('changed');
+			await inspect.table('photoCaptures').put(rejected.captures[0]);
+		} finally {
+			inspect.close();
+		}
+		expect(
+			(
+				await storage.resolvePhotoCapture(
+					rejected.captures[0],
+					'discard',
+					userAFence,
+				)
+			).changes[0].operationId,
+		).toBe('unrelated');
+		await storage.deactivate();
+		await expect(
+			storage.resolvePhotoCapture(rejected.captures[0], 'discard', userAFence),
+		).rejects.toThrow('unavailable');
+	});
+	it('keeps legacy capture ordering stable and lets an unrelated replacement pass a rejected capture', async () => {
+		await preparePhotos();
+		const original = {
+			id: 'saved',
+			carId: 'car-a',
+			revision: 1,
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+		};
+		await storage.refreshPhotos([original], undefined, userAFence);
+		const capture = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		await storage.recordPhotoOutcome(
+			{
+				operationId: capture.operationId,
+				outcome: 'rejected',
+				error: 'Rejected',
+			},
+			[],
+			userAFence,
+		);
+		const independent = await storage.commitPhotoChange(
+			'car-a',
+			{
+				kind: 'replace',
+				photo: original,
+				file: Object.assign(new NodeBlob(['new'], { type: 'image/jpeg' }), {
+					name: 'new.jpg',
+				}) as unknown as File,
+			},
+			userAFence,
+		);
+		expect(independent.changes[0].dependencies).toEqual([]);
+		expect((await storage.readyPhotoChanges(userAFence))[0].operationId).toBe(
+			independent.changes[0].operationId,
+		);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('photoCaptures').put({
+				...capture,
+				operationId: 'same-time',
+				photo: { ...capture.photo, id: 'same-time' },
+			});
+		} finally {
+			inspect.close();
+		}
+		expect(
+			(await storage.photoView(userAFence)).captures.map(
+				(value) => value.operationId,
+			),
+		).toEqual([capture.operationId, 'same-time']);
 	});
 });

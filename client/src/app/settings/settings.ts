@@ -35,8 +35,14 @@ import { FeatureFlags } from './feature-flags/feature-flags';
 import { InviteStore } from './invite-store';
 import { PasskeyStore } from './passkey-store';
 import { isValidTimezone, type Passkey } from './settings.models';
+import { SettingsWorkspaceStore } from './settings-workspace-store';
 import { TimezoneStore } from './timezone-store';
 
+/**
+ * Composes timezone, invite, passkey, and appearance controls. Owns form validation
+ * and presentation while the feature stores handle commands; offline availability
+ * is shown at the control boundary rather than hidden behind failed HTTP calls.
+ */
 @Component({
 	selector: 'app-settings',
 	host: { class: 'block min-w-0' },
@@ -59,6 +65,7 @@ import { TimezoneStore } from './timezone-store';
 	templateUrl: './settings.html',
 })
 export class Settings {
+	protected readonly settingsWorkspace = inject(SettingsWorkspaceStore);
 	private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 	private readonly injector = inject(Injector);
 	protected readonly invites = inject(InviteStore);

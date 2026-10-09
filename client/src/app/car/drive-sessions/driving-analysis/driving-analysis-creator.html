@@ -1,7 +1,7 @@
 <section class="grid gap-4 rounded border border-alloy-separator bg-alloy-surface-subtle p-3" [attr.aria-labelledby]="'analysis-title-' + driveSessionId()">
 	<div>
 		<h5 class="m-0 text-base font-semibold" [id]="'analysis-title-' + driveSessionId()">Start Driving analysis</h5>
-		<p class="m-0 mt-1 text-sm text-alloy-text-secondary">Mark the Race window with absolute timestamps, pause on the selected Car, then box it in the fixed Track view.</p>
+		<p class="m-0 mt-1 text-sm text-alloy-text-secondary">Set the Race start and end, pause when your car is clearly visible, then select that frame and drag a box around the car.</p>
 		<p class="alloy-technical m-0 mt-1 text-xs text-alloy-text-secondary">Private recording · {{ recording().media?.width }} × {{ recording().media?.height }} · {{ recording().media?.durationMs }} ms</p>
 	</div>
 	<form class="grid gap-4" (submit)="submit($event)">
@@ -13,6 +13,7 @@
 					<option [value]="map.id">{{ map.layoutName }} · version {{ map.version }}</option>
 				}
 			</select>
+			<p class="m-0 text-xs text-alloy-text-secondary">Corner entry and exit lines are saved in the Track map. <a class="alloy-link" routerLink="/track-maps">Open Track maps to mark corners</a>, then choose an approved version here.</p>
 			@if (selectedMap(); as map) {
 				<p class="m-0 text-xs text-alloy-text-secondary">Immutable approved version {{ map.version }} for {{ map.layoutName }}. Approved {{ map.approvedAt ?? 'previously' }}.</p>
 				@if (store.selectedTrackMap(); as version) {
@@ -35,17 +36,36 @@
 		</div>
 
 			<video
-				#player
+				[privateVideoPlayer]="playback"
+				[durationMs]="durationMs()"
+				[sourceIdentity]="playbackSource()"
 				class="aspect-video w-full bg-black"
 				preload="metadata"
 				[src]="recording().playbackUrl"
 				[attr.aria-label]="'Private analysis playback of ' + recording().fileName"
-				(timeupdate)="updateCurrentTime(player.currentTime)"
-				(play)="playing.set(true)"
-				(pause)="playing.set(false)"
 			>
 				<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
 			</video>
+		@if (playback.failure()) {<p role="alert">Private playback is unavailable. Retry playback or choose another timestamp.</p>}
+
+		<div class="grid gap-2">
+			<p class="m-0 text-sm text-alloy-text-secondary">Use the slider to find the moment you want. Mark Race start and Race end first; changing the window means selecting the car again.</p>
+			<button data-toggle-playback class="alloy-control alloy-control-secondary w-fit" type="button" (click)="playback.toggle()" [attr.aria-label]="playing() ? 'Pause private Race recording' : 'Play private Race recording'">{{ playing() ? 'Pause recording' : 'Play recording' }}</button>
+			<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+				<label class="font-semibold" [for]="'analysis-seek-' + driveSessionId()">Absolute recording timestamp</label>
+				<output class="alloy-technical" [for]="'analysis-seek-' + driveSessionId()">{{ currentTimestampMs() }} ms</output>
+			</div>
+			<input data-race-seek class="w-full accent-alloy-accent" [id]="'analysis-seek-' + driveSessionId()" type="range" min="0" [max]="durationMs()" step="1" [value]="currentTimestampMs()" (input)="seek($event)" />
+			<div class="flex flex-wrap gap-2" role="group" aria-label="Race-window timestamp markers">
+				<button data-mark-start class="alloy-control alloy-control-secondary" type="button" (click)="mark('startTimestampMs')">Mark Race start</button>
+				<button data-mark-end class="alloy-control alloy-control-secondary" type="button" (click)="mark('endTimestampMs')">Mark Race end</button>
+			</div>
+		</div>
+
+		<div data-car-selection class="grid gap-3 rounded border border-alloy-separator p-3">
+			<h6 class="m-0 text-sm font-semibold">Select the car to follow</h6>
+			<p class="m-0 text-sm text-alloy-text-secondary">Pause on a clear view of your car, select this frame, then drag a box around it on the frozen image below. The box is drawn in the outlined lower Track view.</p>
+			<button data-mark-seed class="alloy-control alloy-control-primary w-fit" type="button" (click)="selectFrame()" [attr.aria-busy]="store.subjectFrameLoading()">{{ store.subjectFrameLoading() ? 'Loading car-selection frame.' : 'Select car in this frame' }}</button>
 		@if(store.subjectFrameLoading()){<p role="status">Finding the exact source frame…</p>}
 		@if(store.subjectFrameError();as error){<p role="alert">{{error}}</p>}
 		@if(selectedFrame();as frame){
@@ -53,24 +73,17 @@
 			<fieldset data-frame-editor class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
 				<legend class="sr-only">Verified Subject frame</legend>
 				<app-subject-box-editor [editorId]="'analysis-' + driveSessionId()" [(box)]="box" [(valid)]="boxValid">
-					<img data-subject-frame class="block h-auto w-full" [src]="frame.contentUrl" alt="Verified source frame for selecting the Subject car" (load)="loadedFrameUrl.set(frame.contentUrl)" (error)="failedFrameUrl.set(frame.contentUrl)" />
+					@for (image of frameImage.images(); track image) {
+						<img data-subject-frame class="block h-auto w-full" [src]="image.source.contentUrl" alt="Verified source frame for selecting the Subject car" (load)="frameImage.loaded(image)" (error)="frameImage.error(image)" />
+					}
 				</app-subject-box-editor>
 			</fieldset>
-			@if(failedFrameUrl()===frame.contentUrl){<p role="alert">The verified image could not be loaded. Choose the frame again.</p>}
+			@if(frameImage.failed()){<p role="alert">The verified image could not be loaded. Choose the frame again.</p>}
 		}
 
-		<div class="grid gap-2">
-			<button data-toggle-playback class="alloy-control alloy-control-secondary w-fit" type="button" (click)="togglePlayback(player)" [attr.aria-label]="playing() ? 'Pause private Race recording' : 'Play private Race recording'">{{ playing() ? 'Pause recording' : 'Play recording' }}</button>
-			<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-				<label class="font-semibold" [for]="'analysis-seek-' + driveSessionId()">Absolute recording timestamp</label>
-				<output class="alloy-technical" [for]="'analysis-seek-' + driveSessionId()">{{ currentTimestampMs() }} ms</output>
-			</div>
-			<input data-race-seek class="w-full accent-alloy-accent" [id]="'analysis-seek-' + driveSessionId()" type="range" min="0" [max]="durationMs()" step="1" [value]="currentTimestampMs()" (input)="seek($event, player)" />
-			<div class="flex flex-wrap gap-2" role="group" aria-label="Race-window timestamp markers">
-				<button data-mark-start class="alloy-control alloy-control-secondary" type="button" (click)="mark('startTimestampMs')">Mark Race start</button>
-				<button data-mark-end class="alloy-control alloy-control-secondary" type="button" (click)="mark('endTimestampMs')">Mark Race end</button>
-				<button data-mark-seed class="alloy-control alloy-control-secondary" type="button" (click)="selectFrame(player)">Mark Subject frame</button>
-			</div>
+			@if (!selectedFrame() && !store.subjectFrameLoading() && !store.subjectFrameError()) {
+				<p class="m-0 text-xs text-alloy-text-secondary">Select a frame to reveal the car-selection box. If you change the Race window, select a frame again.</p>
+			}
 		</div>
 
 		<fieldset class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">

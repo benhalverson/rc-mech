@@ -44,6 +44,13 @@ const loadWorkspaceShell = () =>
 
 export const workspaceRoutes: Routes = [
 	{
+		path: 'offline-unavailable',
+		loadComponent: () =>
+			import('../offline/offline-unavailable').then(
+				({ OfflineUnavailable }) => OfflineUnavailable,
+			),
+	},
+	{
 		path: 'garage',
 		pathMatch: 'full',
 		loadChildren: loadGarageRoutes,

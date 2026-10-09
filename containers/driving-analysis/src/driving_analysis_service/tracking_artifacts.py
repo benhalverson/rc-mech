@@ -253,10 +253,6 @@ def artifact_path(settings: ServiceSettings, artifact_id: str, suffix: str) -> P
     return settings.artifact_root / f"{artifact_id}{suffix}"
 
 
-def bundle_path(settings: ServiceSettings, artifact_id: str, suffix: str) -> Path:
-    return artifact_path(settings, artifact_id, suffix)
-
-
 def bundle_member_path(
     settings: ServiceSettings,
     artifact_id: str,
@@ -379,15 +375,6 @@ def read_compressed_contract[ContractT: BaseModel](  # noqa: PLR0913
         return contract_type.model_validate_json(decompressed)
     except ValidationError as error:
         raise InvalidArtifactError from error
-
-
-def remove_published(artifact: PublishedArtifact) -> None:
-    try:
-        identity = artifact.path.stat(follow_symlinks=False)
-    except FileNotFoundError:
-        return
-    if stat.S_ISREG(identity.st_mode):
-        artifact.path.unlink()
 
 
 def read_artifact(

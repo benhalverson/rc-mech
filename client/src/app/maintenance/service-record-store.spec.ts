@@ -12,6 +12,8 @@ import type {
 	ServiceRecordDraft,
 } from './maintenance.models';
 import { MaintenanceGateway } from './maintenance-gateway';
+import { FakeMaintenanceWorkspace } from './maintenance-sync.testing';
+import { MaintenanceWorkspaceStore } from './maintenance-workspace-store';
 import { ServiceRecordStore } from './service-record-store';
 
 class FakeResource<T> {
@@ -81,10 +83,13 @@ describe('ServiceRecordStore', () => {
 	let gateway: FakeServiceGateway;
 	let store: InstanceType<typeof ServiceRecordStore>;
 
+	let workspace: FakeMaintenanceWorkspace;
 	beforeEach(() => {
+		workspace = new FakeMaintenanceWorkspace();
 		gateway = new FakeServiceGateway();
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: MaintenanceWorkspaceStore, useValue: workspace },
 				ServiceRecordStore,
 				{ provide: MaintenanceGateway, useValue: gateway },
 			],
@@ -279,5 +284,81 @@ describe('ServiceRecordStore', () => {
 		expect(store.components()).toEqual([]);
 		store.loadComponents('car-3');
 		expect(store.components()).toEqual([]);
+	});
+	it('projects prepared records and publishes success only after durable local retention', () => {
+		TestBed.tick();
+		workspace.available.set(true);
+		workspace.cars.set([car]);
+		workspace.records.set([record]);
+		workspace.components.set([
+			component,
+			{ ...component, id: 'other', carId: 'other' },
+		]);
+		workspace.timezone.set('America/Los_Angeles');
+		gateway.services.isLoading.set(true);
+		gateway.services.error.set({ kind: 'unavailable' });
+		expect(store.cars()).toEqual([car]);
+		expect(store.records()).toEqual([record]);
+		expect(store.timezone()).toBe('America/Los_Angeles');
+		expect(store.loading()).toBe(false);
+		expect(store.error()).toBe('');
+		expect(store.action()).toBeNull();
+		store.loadComponents('car-1');
+		expect(store.components()).toEqual([component]);
+		expect(gateway.components).not.toHaveBeenCalled();
+		store.mutate({
+			kind: 'save-service',
+			mode: 'create',
+			carId: 'car-1',
+			id: null,
+			service: draft,
+		});
+		const requestId = workspace.mutate.mock.calls[0][0].requestId;
+		workspace.outcome.set({ status: 'pending', requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+		workspace.outcome.set({ status: 'succeeded', requestId: 'unrelated' });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+		workspace.outcome.set({ status: 'succeeded', requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('succeeded');
+		store.retry();
+		store.refresh();
+		expect(workspace.refresh).toHaveBeenCalledTimes(2);
+		store.clearOutcome();
+		expect(store.outcome().status).toBe('idle');
+	});
+	it('retains local storage failure feedback without claiming a remote write', () => {
+		TestBed.tick();
+		workspace.available.set(true);
+		store.mutate({
+			kind: 'save-service',
+			mode: 'create',
+			carId: 'car-1',
+			id: null,
+			service: draft,
+		});
+		const requestId = workspace.mutate.mock.calls[0][0].requestId;
+		workspace.outcome.set({
+			status: 'failed',
+			requestId,
+			message: 'Storage full. Not retained.',
+		});
+		TestBed.tick();
+		expect(store.error()).toBe('Storage full. Not retained.');
+		expect(store.outcome()).toMatchObject({
+			status: 'failed',
+			failure: 'save-failed',
+		});
+		store.clearOutcome();
+		expect(store.error()).toBe('');
+	});
+
+	it('derives local activity instead of stale server activity', () => {
+		workspace.available.set(true);
+		workspace.records.set([record]);
+		gateway.plans.set({ plans: [], activity: [activity] });
+		expect(store.activity()[0].id).toBe(record.id);
 	});
 });

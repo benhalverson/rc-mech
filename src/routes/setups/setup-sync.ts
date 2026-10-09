@@ -1,4 +1,4 @@
-import { and, eq, exists } from 'drizzle-orm';
+import { and, eq, exists, isNull } from 'drizzle-orm';
 import { db } from '../../db';
 import { car, setup, syncOperation } from '../../schema';
 import { canWriteSetup } from '../../setup-policy';
@@ -11,6 +11,7 @@ import {
 } from '../../types';
 import { ownedCar } from '../cars/car-records';
 import { jsonText } from '../json-values';
+import { pendingSyncReceipt } from '../pending-sync-receipt';
 import { setupSelectionWitness } from './setup-concurrency';
 import {
 	publicSetup,
@@ -124,6 +125,12 @@ const setupUpdateValues = (
 	lastOperationId: operationId,
 });
 
+/**
+ * Setup command branch of Car synchronization. Separates snapshot correction from
+ * current-Setup selection and atomically records their outcomes under the caller
+ * receipt. Version/selection witnesses and pending-receipt checks fence concurrent
+ * edits and retries before they can mutate saved Setup state.
+ */
 export const applySetupSyncOperation = async (
 	c: AppContext,
 	context: SetupSyncContext,
@@ -132,6 +139,12 @@ export const applySetupSyncOperation = async (
 		context;
 	const database = db(c.env);
 	const ownerId = c.get('userId');
+	const receiptPending = pendingSyncReceipt(
+		database,
+		ownerId,
+		operationId,
+		requestHash,
+	);
 	const complete = async (
 		response: Readonly<Record<string, unknown>>,
 		status: 200 | 404 | 409 | 422,
@@ -333,26 +346,33 @@ export const applySetupSyncOperation = async (
 							and(
 								eq(car.id, create.carId),
 								eq(car.ownerId, ownerId),
+								receiptPending,
 								eq(car.currentSetupOperationId, operationId),
 							),
 						),
 				)
 			: undefined;
-		const setupInsert = create.makeCurrent
-			? database.insert(setup).select(
-					database
-						.select(setupInsertSelection(inserted))
-						.from(car)
-						.where(
-							currentSelectionWhere(
-								ownerId,
-								create.carId,
-								/* c8 ignore next -- validation above requires this base for current setup creation. */
-								create.baseCurrent ?? { version: -1 },
-							),
-						),
-				)
-			: database.insert(setup).values(inserted);
+		const setupInsert = database.insert(setup).select(
+			database
+				.select(setupInsertSelection(inserted))
+				.from(car)
+				.where(
+					and(
+						eq(car.id, create.carId),
+						eq(car.ownerId, ownerId),
+						isNull(car.archivedAt),
+						receiptPending,
+						create.makeCurrent
+							? currentSelectionWhere(
+									ownerId,
+									create.carId,
+									create.baseCurrent as NonNullable<typeof create.baseCurrent>,
+								)
+							: undefined,
+					),
+				),
+		);
+
 		const batch = await database.batch([
 			setupInsert,
 			...(create.makeCurrent && create.baseCurrent
@@ -368,6 +388,7 @@ export const applySetupSyncOperation = async (
 								and(
 									eq(car.id, create.carId),
 									eq(car.ownerId, ownerId),
+									receiptPending,
 									currentSelectionWhere(
 										ownerId,
 										create.carId,
@@ -474,6 +495,7 @@ export const applySetupSyncOperation = async (
 						eq(setup.id, existing.id),
 						eq(setup.carId, parentCar.id),
 						eq(setup.version, existing.version),
+						receiptPending,
 					),
 				),
 			database
@@ -568,6 +590,7 @@ export const applySetupSyncOperation = async (
 				and(
 					eq(car.id, parentCar.id),
 					eq(car.ownerId, ownerId),
+					receiptPending,
 					currentSelectionWhere(
 						ownerId,
 						selection.carId,
@@ -597,6 +620,7 @@ export const applySetupSyncOperation = async (
 								and(
 									eq(car.id, parentCar.id),
 									eq(car.ownerId, ownerId),
+									receiptPending,
 									eq(car.currentSetupOperationId, operationId),
 								),
 							),

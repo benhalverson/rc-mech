@@ -191,6 +191,11 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 			(command) => command.properties.type.const,
 		),
 	).toEqual([
+		'build.change',
+		'drive.change',
+		'maintenance.change',
+		'maintenance.change',
+		'maintenance.change',
 		'car.create',
 		'car.edit',
 		'car.archive',
@@ -199,6 +204,8 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 		'setup.correct',
 		'setup.select-current',
 	]);
+	expect(document.paths['/api/v1/components']).toBeDefined();
+	expect(document.paths['/api/v1/drives']).toBeDefined();
 	expect(document.paths['/api/v1/cars/{carId}/voice-updates']).toBeDefined();
 	expect(
 		document.paths['/api/v1/voice-updates/{voiceUpdateId}/confirm'],

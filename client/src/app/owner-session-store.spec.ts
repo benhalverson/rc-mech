@@ -61,6 +61,8 @@ describe('OwnerSessionStore', () => {
 
 		expect(await resolved).toBeNull();
 		expect(store.resolutionFailed()).toBe(true);
+		// Redirects and later offline navigations resolve the same failed resource.
+		expect(await store.resolved()).toBeNull();
 		expect(store.authenticated()).toBe(false);
 		expect(store.ownerEmail()).toBe('Owner');
 	});
@@ -124,5 +126,18 @@ describe('OwnerSessionStore', () => {
 		expect(store.session.value()).toBeNull();
 		expect(store.hasResolvedSession).toBe(true);
 		expect(refresh).toHaveBeenCalledOnce();
+	});
+	it('keeps explicit local sign-out closed even if an old request supplies a server session', async () => {
+		store.signOutLocally();
+		store.session.set({
+			session: { id: 'old' },
+			user: { email: 'owner@test' },
+		});
+		expect(store.authenticated()).toBe(false);
+		expect(store.hasResolvedSession).toBe(true);
+		expect(await store.resolved()).toBeNull();
+		expect(await store.refresh()).toBeNull();
+		expect(store.ownerEmail()).toBe('Owner');
+		expect(store.sessionKey()).toBeNull();
 	});
 });

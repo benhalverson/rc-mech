@@ -1,0 +1,19 @@
+@if (store.reviews().length) {
+ <section aria-label="Review device changes" class="border-b border-alloy-separator px-4 py-3">
+  <h2 class="text-base font-semibold">Review device changes</h2>
+  <p>Your changes remain saved on this device. Keeping your version retries it against the saved version shown here; another remote edit will require another review.</p>
+  @if (store.error()) { <p role="alert">{{ store.error() }}</p> }
+  @for (review of store.reviews(); track review.operation.operationId) {
+   <details class="border-t border-alloy-separator py-3">
+    <summary class="alloy-focus-ring cursor-pointer">{{ review.family | titlecase }} · {{ review.operation.status === 'conflict' ? 'Sync conflict' : 'Needs attention' }}</summary>
+    <p>{{ feedback(review) }}</p>
+    <h3>Device version</h3><dl>@for (field of fields(device(review), store.names()); track $index) { <div class="grid gap-1 py-1 sm:grid-cols-2"><dt class="font-semibold">{{ field.label }}</dt><dd class="m-0 whitespace-pre-wrap break-words">{{ field.value }}</dd></div> }</dl>
+    <h3>Saved version</h3><dl>@for (field of fields(remote(review), store.names()); track $index) { <div class="grid gap-1 py-1 sm:grid-cols-2"><dt class="font-semibold">{{ field.label }}</dt><dd class="m-0 whitespace-pre-wrap break-words">{{ field.value }}</dd></div> }</dl>
+    <div class="flex flex-wrap gap-3">
+     <button type="button" class="alloy-control alloy-focus-ring" [disabled]="store.pending()" (click)="store.resolve(review, 'device')">Keep device version and retry</button>
+     <button type="button" class="alloy-control alloy-control-secondary alloy-focus-ring" [disabled]="store.pending()" (click)="store.resolve(review, 'remote')">Discard this device change</button>
+    </div>
+   </details>
+  }
+ </section>
+}

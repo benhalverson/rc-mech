@@ -24,6 +24,7 @@ from driving_analysis_service.processing_deadline import (
     start_deadline,
 )
 from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.stage_admission import processing_slot
 from driving_analysis_service.tracking_contracts import RaceWindow
 
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
@@ -103,6 +104,13 @@ def frame_error(code: FrameErrorCode, status: int) -> JSONResponse:
 
 
 class SourceFrameService:
+    """Extracts the exact requested source frame for authenticated frame review.
+
+    The internal API delegates staged-media validation, bounded process execution,
+    and response provenance here. A shared admission slot limits concurrent media
+    work and is released even when decoding or request validation fails.
+    """
+
     def __init__(
         self, settings: ServiceSettings, admission: threading.BoundedSemaphore
     ) -> None:
@@ -110,18 +118,17 @@ class SourceFrameService:
         self.admission = admission
 
     def select(self, request: SourceFrameRequest) -> JSONResponse:
-        if not self.admission.acquire(blocking=False):
-            return frame_error("SERVICE_BUSY", 503)
-        try:
-            return self._select(request)
-        except ProcessTimeoutError:
-            return frame_error("PROCESS_TIMEOUT", 503)
-        except ProcessOutputLimitError:
-            return frame_error("RESOURCE_LIMIT", 422)
-        except (MediaValidationError, OSError, ValueError):
-            return frame_error("FRAME_UNAVAILABLE", 422)
-        finally:
-            self.admission.release()
+        with processing_slot(self.admission) as admitted:
+            if not admitted:
+                return frame_error("SERVICE_BUSY", 503)
+            try:
+                return self._select(request)
+            except ProcessTimeoutError:
+                return frame_error("PROCESS_TIMEOUT", 503)
+            except ProcessOutputLimitError:
+                return frame_error("RESOURCE_LIMIT", 422)
+            except (MediaValidationError, OSError, ValueError):
+                return frame_error("FRAME_UNAVAILABLE", 422)
 
     def _select(self, request: SourceFrameRequest) -> JSONResponse:
         settings = self.settings
