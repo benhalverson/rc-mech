@@ -5,17 +5,16 @@ import math
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from driving_analysis_service.contracts import (
-    DirectedGate,
-    NormalizedPoint,
-)
 from driving_analysis_service.errors import MediaValidationError
+from driving_analysis_service.ffmpeg_tools import (
+    FfmpegVersionError,
+    probe_ffmpeg_version,
+)
 from driving_analysis_service.local_storage import reserve_file_capacity
 from driving_analysis_service.media import (
     ProbeMetadata,
@@ -32,6 +31,12 @@ from driving_analysis_service.processes import (
 from driving_analysis_service.processing_deadline import (
     remaining_seconds,
     start_deadline,
+)
+from driving_analysis_service.render_geometry import (
+    PixelCrop,
+    pixel_crop,
+    pixel_gate,
+    pixel_point,
 )
 from driving_analysis_service.rendering_contracts import (
     CORNER_CLIP_MEDIA_TYPE,
@@ -65,18 +70,12 @@ from driving_analysis_service.tracking_artifacts import (
     read_completion,
     reserve_bundle,
 )
-from driving_analysis_service.tracking_contracts import (
-    TRACK_VIEW_HEIGHT,
-    TRACK_VIEW_Y,
-)
 
 RENDER_BUNDLE_SUFFIX = ".corner"
 RENDER_MEDIA_SUFFIX = ".corner.mp4"
 RENDER_COMPLETION_SUFFIX = ".corner.json"
-MAX_FFMPEG_VERSION_BYTES = 16 * 1024
 MAX_FFMPEG_ERROR_LINE_BYTES = 16 * 1024
 MAX_FFMPEG_ALLOCATION_BYTES = 64 * 1024 * 1024
-MIN_OUTPUT_DIMENSION = 2
 MAX_COMPLETION_BYTES = 64 * 1024
 
 
@@ -86,14 +85,6 @@ class RenderInvalidMediaError(ValueError):
 
 class RenderProcessError(RuntimeError):
     """FFmpeg could not produce the requested clip."""
-
-
-@dataclass(frozen=True)
-class _PixelCrop:
-    width: int
-    height: int
-    x: int
-    y: int
 
 
 class CornerRenderService:
@@ -131,7 +122,7 @@ class CornerRenderService:
                 if error.code == "PROCESS_TIMEOUT":
                     return _rejected(request, "PROCESS_TIMEOUT")
                 return _rejected(request, "MEDIA_UNAVAILABLE")
-            except RenderInvalidMediaError:
+            except (RenderInvalidMediaError, FfmpegVersionError):
                 return _rejected(request, "MEDIA_UNAVAILABLE")
             except RenderProcessError:
                 return _rejected(request, "RENDER_FAILED")
@@ -196,7 +187,7 @@ class CornerRenderService:
             if source_checksum != specification.source_checksum_sha256:
                 raise RenderInvalidMediaError
             _validate_specification(specification, source_bytes, metadata)
-            ffmpeg_version = _ffmpeg_version(self.settings, deadline)
+            ffmpeg_version = probe_ffmpeg_version(self.settings, deadline)
             render_input_digest = _render_input_digest(request, ffmpeg_version)
             with tempfile.TemporaryDirectory(
                 prefix="render-", dir=self.settings.work_root
@@ -344,15 +335,9 @@ def _validate_specification(
 ) -> None:
     if source_bytes <= 0 or specification.exit_timestamp_ms > metadata.duration_ms:
         raise RenderInvalidMediaError
-    crop = _pixel_crop(specification, metadata)
-    _pixel_gate(specification.overlay.entry_gate, metadata, crop)
-    _pixel_gate(specification.overlay.exit_gate, metadata, crop)
-    padded_start = specification.entry_timestamp_ms - specification.padding.before_ms
-    padded_end = specification.exit_timestamp_ms + specification.padding.after_ms
-    if padded_start < 0 or padded_end > metadata.duration_ms:
-        # The clip is clamped at the source boundary, preserving the requested
-        # gate-to-gate interval while avoiding synthetic frames.
-        return
+    crop = pixel_crop(specification, metadata)
+    pixel_gate(specification.overlay.entry_gate, metadata, crop)
+    pixel_gate(specification.overlay.exit_gate, metadata, crop)
 
 
 def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded inputs
@@ -370,7 +355,7 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
     end_ms = min(
         duration_ms, specification.exit_timestamp_ms + specification.padding.after_ms
     )
-    crop = _pixel_crop(specification, metadata)
+    crop = pixel_crop(specification, metadata)
     overlay = specification.overlay
     overlay_path = destination.with_suffix(".ass")
     try:
@@ -466,38 +451,6 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
         overlay_path.unlink(missing_ok=True)
 
 
-def _pixel_crop(
-    specification: RenderSpecification, metadata: ProbeMetadata
-) -> _PixelCrop:
-    view = specification.corner_view
-    # Enclose the immutable normalized view on the codec's even-pixel grid.
-    # At a source boundary, keep the minimum two-pixel cell inside the frame.
-    right = min(
-        metadata.width // 2 * 2,
-        math.ceil(metadata.width * (view.x + view.width) / 2) * 2,
-    )
-    bottom = min(
-        metadata.height // 2 * 2,
-        math.ceil(
-            metadata.height
-            * (TRACK_VIEW_Y + (view.y + view.height) * TRACK_VIEW_HEIGHT)
-            / 2
-        )
-        * 2,
-    )
-    left = min(int(metadata.width * view.x) // 2 * 2, right - MIN_OUTPUT_DIMENSION)
-    top = min(
-        int(metadata.height * (TRACK_VIEW_Y + view.y * TRACK_VIEW_HEIGHT)) // 2 * 2,
-        bottom - MIN_OUTPUT_DIMENSION,
-    )
-    return _PixelCrop(
-        width=right - left,
-        height=bottom - top,
-        x=left,
-        y=top,
-    )
-
-
 def _validate_render_output(
     return_code: int, destination: Path, max_output_bytes: int
 ) -> None:
@@ -557,11 +510,11 @@ def _write_overlay_script(
     destination: Path,
     overlay: RenderOverlay,
     metadata: ProbeMetadata,
-    crop: _PixelCrop,
+    crop: PixelCrop,
 ) -> None:
-    subject = _pixel_point(overlay.subject_center, metadata, crop)
-    entry = _pixel_gate(overlay.entry_gate, metadata, crop)
-    exit_gate = _pixel_gate(overlay.exit_gate, metadata, crop)
+    subject = pixel_point(overlay.subject_center, metadata, crop)
+    entry = pixel_gate(overlay.entry_gate, metadata, crop)
+    exit_gate = pixel_gate(overlay.exit_gate, metadata, crop)
     subject_x, subject_y = subject
     lines = (
         _ass_line(entry, "&H00FFFF&"),
@@ -600,25 +553,6 @@ def _write_overlay_script(
     )
 
 
-def _pixel_point(
-    point: NormalizedPoint, metadata: ProbeMetadata, crop: _PixelCrop
-) -> tuple[int, int]:
-    frame_y = TRACK_VIEW_Y + point.y * TRACK_VIEW_HEIGHT
-    return (
-        round(point.x * metadata.width) - crop.x,
-        round(frame_y * metadata.height) - crop.y,
-    )
-
-
-def _pixel_gate(
-    gate: DirectedGate, metadata: ProbeMetadata, crop: _PixelCrop
-) -> tuple[tuple[int, int], tuple[int, int]]:
-    return (
-        _pixel_point(gate.entry, metadata, crop),
-        _pixel_point(gate.exit, metadata, crop),
-    )
-
-
 def _escape_filter_value(value: str) -> str:
     # FFmpeg parses an option value and then its enclosing filtergraph. Escape
     # once for the option layer, then escape the resulting string for the
@@ -638,25 +572,6 @@ def _ass_line(line: tuple[tuple[int, int], tuple[int, int]], color: str) -> str:
         "{\\p1\\bord2\\3c"
         f"{color}}}m {line[0][0]} {line[0][1]} l {line[1][0]} {line[1][1]}{{\\p0}}"
     )
-
-
-def _ffmpeg_version(settings: ServiceSettings, deadline: float) -> str:
-    result = run_bounded_process(
-        settings.ffmpeg_executable,
-        ("-version",),
-        timeout_seconds=remaining_seconds(deadline),
-        max_output_bytes=MAX_FFMPEG_VERSION_BYTES,
-    )
-    if result.return_code != 0:
-        raise RenderInvalidMediaError
-    try:
-        first_line = result.stdout.decode("utf-8", errors="strict").splitlines()[0]
-        prefix, version, value, *_ = first_line.split()
-    except (IndexError, UnicodeDecodeError, ValueError) as error:
-        raise RenderInvalidMediaError from error
-    if prefix != "ffmpeg" or version != "version":
-        raise RenderInvalidMediaError
-    return value
 
 
 def _output_duration(path: Path, settings: ServiceSettings, deadline: float) -> int:
