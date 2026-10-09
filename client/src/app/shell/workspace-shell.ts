@@ -1,5 +1,6 @@
 import {
 	afterNextRender,
+	afterRenderEffect,
 	Component,
 	computed,
 	ElementRef,
@@ -13,6 +14,7 @@ import { VisibilityStore } from '../driving-analysis-visibility/visibility-store
 import { OfflineStatus } from '../offline/offline-status';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
+import { SettingsWorkspaceStore } from '../settings/settings-workspace-store';
 import { ResponsiveViewport } from './responsive-viewport';
 import { ShellCarStore } from './shell-car-store';
 import {
@@ -28,6 +30,7 @@ import { SignOutStore } from './sign-out-store';
 	styleUrl: './workspace-shell.css',
 })
 export class WorkspaceShell {
+	protected readonly settingsWorkspace = inject(SettingsWorkspaceStore);
 	protected readonly analysisVisibility = inject(VisibilityStore);
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly responsiveViewport = inject(ResponsiveViewport);
@@ -39,6 +42,10 @@ export class WorkspaceShell {
 		viewChild<ElementRef<HTMLButtonElement>>('navClose');
 	private readonly pickerClose =
 		viewChild<ElementRef<HTMLButtonElement>>('pickerClose');
+	private readonly keepWorking =
+		viewChild<ElementRef<HTMLButtonElement>>('keepWorking');
+
+	private signOutTrigger?: HTMLElement;
 	private navToggle?: HTMLButtonElement;
 	private pickerToggle?: HTMLButtonElement;
 	protected readonly mobileNav = this.responsiveViewport.mobile;
@@ -63,6 +70,13 @@ export class WorkspaceShell {
 		if (this.cars.error()) return 'Current car unavailable';
 		return 'Current car';
 	});
+
+	constructor() {
+		afterRenderEffect(() => {
+			if (this.signOutStore.outcome().status === 'confirmation')
+				this.keepWorking()?.nativeElement.focus();
+		});
+	}
 
 	protected openNav(navToggle: HTMLButtonElement): void {
 		this.pickerOpen.set(false);
@@ -131,7 +145,12 @@ export class WorkspaceShell {
 		return ['/garage', carId, section ?? 'overview'];
 	}
 
-	protected signOut(): void {
+	protected cancelSignOut(): void {
+		this.signOutStore.cancelSignOut();
+		this.focusAfterRender(() => this.signOutTrigger);
+	}
+	protected signOut(event: Event): void {
+		this.signOutTrigger = event.currentTarget as HTMLElement;
 		this.navOpen.set(false);
 		this.pickerOpen.set(false);
 		this.signOutStore.signOut({ operation: 'sign-out' });

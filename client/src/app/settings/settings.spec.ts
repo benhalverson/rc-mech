@@ -8,6 +8,7 @@ import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppearanceService } from '../appearance.service';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { ClipboardCapability } from './clipboard-capability';
 import { FeatureFlagStore } from './feature-flags/feature-flag-store';
 import { InviteStore } from './invite-store';
@@ -15,6 +16,8 @@ import { PasskeyRegistrationCapability } from './passkey-registration-capability
 import { PasskeyStore } from './passkey-store';
 import { Settings } from './settings';
 import { SettingsGateway } from './settings-gateway';
+import { FakeSettingsWorkspace } from './settings-sync.testing';
+import { SettingsWorkspaceStore } from './settings-workspace-store';
 import { TimezoneStore } from './timezone-store';
 
 class FakeTimezoneStore {
@@ -89,6 +92,11 @@ describe('Settings workspace', () => {
 		await TestBed.configureTestingModule({
 			imports: [Settings],
 			providers: [
+				{
+					provide: OfflineWorkspaceStore,
+					useValue: { networkUnavailable: signal(false) },
+				},
+				{ provide: SettingsWorkspaceStore, useClass: FakeSettingsWorkspace },
 				{ provide: FeatureFlagStore, useValue: { isOwner: signal(false) } },
 				provideHttpClient(),
 				provideHttpClientTesting(),
@@ -210,10 +218,16 @@ describe('Settings workspace', () => {
 			retry: vi.fn(),
 			revoke: vi.fn(),
 			webAuthnAvailable: signal(false),
+			administrationAvailable: signal(true),
 		};
 		await TestBed.configureTestingModule({
 			imports: [Settings],
 			providers: [
+				{
+					provide: OfflineWorkspaceStore,
+					useValue: { networkUnavailable: signal(false) },
+				},
+				{ provide: SettingsWorkspaceStore, useClass: FakeSettingsWorkspace },
 				{ provide: FeatureFlagStore, useValue: { isOwner: signal(false) } },
 				{ provide: AppearanceService, useValue: appearanceService },
 				{ provide: InviteStore, useValue: unavailableInvites },
@@ -895,5 +909,60 @@ describe('Settings workspace', () => {
 		) as HTMLButtonElement;
 		retry.click();
 		expect(timezoneStore.retry).toHaveBeenCalledOnce();
+	});
+	it('renders offline passkey limitations and each durable Settings state', () => {
+		flushInitialReads();
+		const workspace = TestBed.inject(
+			SettingsWorkspaceStore,
+		) as unknown as FakeSettingsWorkspace;
+		workspace.current.set({
+			timezone: 'UTC',
+			invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+		});
+		const offline = TestBed.inject(OfflineWorkspaceStore);
+		(
+			offline.networkUnavailable as unknown as ReturnType<
+				typeof signal<boolean>
+			>
+		).set(true);
+		fixture.detectChanges();
+		const root = fixture.nativeElement as HTMLElement;
+		expect(root.textContent).toContain('Settings synchronized.');
+		expect(root.textContent).toContain(
+			'Passkey registration, rename, and revocation are unavailable offline',
+		);
+		const operation = {
+			operationId: 'one',
+			ownerKey: 'owner',
+			createdAt: 'today',
+			command: {
+				type: 'timezone' as const,
+				base: 'UTC',
+				timezone: 'Europe/London',
+			},
+			status: 'pending' as const,
+			dependencies: [],
+		};
+		workspace.operations.set([
+			operation,
+			{
+				...operation,
+				operationId: 'two',
+				status: 'conflict',
+				feedback: 'Changed elsewhere',
+				remote: 'Asia/Tokyo',
+			},
+			{
+				...operation,
+				operationId: 'three',
+				command: { type: 'invite-create', code: 'RESERVED' },
+				status: 'needs-attention',
+				feedback: 'Reserved code',
+			},
+		]);
+		fixture.detectChanges();
+		expect(root.textContent).toContain('Pending sync');
+		expect(root.textContent).toContain('Remote timezone: Asia/Tokyo');
+		expect(root.textContent).toContain('Reserved code');
 	});
 });

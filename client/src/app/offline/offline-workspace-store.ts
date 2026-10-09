@@ -119,6 +119,16 @@ export const OfflineWorkspaceStore = signalStore(
 		);
 
 		return {
+			clear(): void {
+				patchState(store, {
+					status: 'idle',
+					onlineOnlyReason: null,
+					ownerKey: '',
+					ownerEmail: '',
+					sessionKey: '',
+					cars: [],
+				});
+			},
 			hasSnapshotFor(owner: OfflineOwner): boolean {
 				return (
 					untracked(store.hasSnapshot) &&
@@ -161,7 +171,7 @@ export const OfflineWorkspaceStore = signalStore(
 					networkUnavailable: true,
 					ownerKey: snapshot.ownerKey,
 					ownerEmail: snapshot.ownerEmail,
-					sessionKey: '',
+					sessionKey: snapshot.sessionKey ?? '',
 					cars: snapshot.cars,
 				});
 			},

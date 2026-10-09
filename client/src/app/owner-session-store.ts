@@ -1,5 +1,5 @@
 import { httpResource } from '@angular/common/http';
-import { computed, Service } from '@angular/core';
+import { computed, Service, signal } from '@angular/core';
 import { toObservable } from '@angular/core/rxjs-interop';
 import { filter, firstValueFrom, take } from 'rxjs';
 
@@ -21,27 +21,35 @@ export const ownerSessionKey = (
 @Service()
 export class OwnerSessionStore {
 	private resolvedOnce = false;
+	private readonly locallySignedOut = signal(false);
 	readonly session = httpResource<OwnerSessionResponse>(() => ({
 		url: '/api/auth/get-session',
 		withCredentials: true,
 	}));
 	private readonly sessionStatuses = toObservable(this.session.status);
 	readonly authenticated = computed(
-		() => this.session.hasValue() && Boolean(this.session.value()?.session),
+		() =>
+			!this.locallySignedOut() &&
+			this.session.hasValue() &&
+			Boolean(this.session.value()?.session),
 	);
 	readonly resolutionFailed = computed(() => this.session.status() === 'error');
 	readonly ownerEmail = computed(
 		() =>
-			(this.session.hasValue() ? this.session.value()?.user?.email : null) ??
-			'Owner',
+			(!this.locallySignedOut() && this.session.hasValue()
+				? this.session.value()?.user?.email
+				: null) ?? 'Owner',
 	);
 	readonly sessionKey = computed(() =>
-		ownerSessionKey(
-			this.session.hasValue() ? (this.session.value() ?? null) : null,
-		),
+		this.locallySignedOut()
+			? null
+			: ownerSessionKey(
+					this.session.hasValue() ? (this.session.value() ?? null) : null,
+				),
 	);
 
 	async resolved(): Promise<OwnerSessionResponse> {
+		if (this.locallySignedOut()) return null;
 		// Reading the resource starts its first request in zoneless test and browser runtimes.
 		this.session.value();
 		await firstValueFrom(
@@ -59,6 +67,7 @@ export class OwnerSessionStore {
 	}
 
 	async refresh(): Promise<OwnerSessionResponse> {
+		if (this.locallySignedOut()) return null;
 		const previousStatus = this.session.status();
 		if (!this.session.reload()) return this.resolved();
 		await firstValueFrom(
@@ -70,6 +79,11 @@ export class OwnerSessionStore {
 		return this.resolved();
 	}
 
+	signOutLocally(): void {
+		this.locallySignedOut.set(true);
+		this.resolvedOnce = true;
+		this.session.set(null);
+	}
 	expire(): void {
 		this.resolvedOnce = true;
 		this.session.set(null);

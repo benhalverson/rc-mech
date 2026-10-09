@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { settingsSyncEnvelope } from './settings-sync-contract';
 import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 
 const carProperties = {
@@ -797,6 +799,37 @@ export const openApi = {
 					400: { description: 'Invalid component or slot' },
 					404: { description: 'Component not found' },
 					409: { description: 'Component is not current or car is archived' },
+				},
+			},
+		},
+		'/api/v1/settings/sync/operations/{operationId}': {
+			put: {
+				summary: 'Apply an owner-scoped Settings operation idempotently',
+				parameters: [
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'application/json': {
+							schema: z.toJSONSchema(settingsSyncEnvelope),
+						},
+					},
+				},
+				responses: {
+					200: { description: 'Applied or replayed Settings receipt' },
+					400: { description: 'Malformed operation' },
+					401: { description: 'Authentication required' },
+					409: {
+						description:
+							'Retained canonical rejection, timezone conflict, or reused operation identity',
+					},
+					503: { description: 'Retry the same stable operation later' },
 				},
 			},
 		},

@@ -1,19 +1,22 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { catchError, exhaustMap, of, tap } from 'rxjs';
+import { catchError, EMPTY, exhaustMap, of, tap } from 'rxjs';
+import { OFFLINE_OPERATION_ID } from '../offline/offline-garage-storage';
 import {
 	defaultTimezone,
 	isValidTimezone,
 	type TimezonePreference,
 } from './settings.models';
+import { SettingsWorkspaceStore } from './settings-workspace-store';
 import {
 	TimezoneGateway,
 	type TimezoneGatewayFailure,
@@ -37,11 +40,13 @@ export type TimezoneSaveOutcome =
 	  };
 
 type TimezoneState = {
+	localRequestId: string | null;
 	message: string;
 	outcome: TimezoneSaveOutcome;
 };
 
 const initialState: TimezoneState = {
+	localRequestId: null,
 	message: '',
 	outcome: { status: 'idle', operation: 'save-timezone', operationId: null },
 };
@@ -54,9 +59,13 @@ export const TimezoneStore = signalStore(
 	withProps(() => ({
 		gateway: inject(TimezoneGateway),
 		nextOperationId: { value: 0 },
+		workspace: inject(SettingsWorkspaceStore),
+		nextLocalId: inject(OFFLINE_OPERATION_ID),
 	})),
 	withComputed((store) => ({
 		timezone: computed(() => {
+			const local = store.workspace.current();
+			if (local) return local.timezone;
 			const preference: TimezonePreference | undefined =
 				store.gateway.preference.hasValue()
 					? store.gateway.preference.value()
@@ -65,12 +74,23 @@ export const TimezoneStore = signalStore(
 				? preference.timezone
 				: defaultTimezone();
 		}),
-		loading: computed(() => store.gateway.preference.isLoading()),
+		loading: computed(
+			() => !store.workspace.current() && store.gateway.preference.isLoading(),
+		),
 		error: computed(() => {
+			const syncError = store.workspace
+				.operations()
+				.find(
+					(operation) =>
+						operation.command.type === 'timezone' &&
+						operation.status !== 'pending',
+				);
+			if (syncError)
+				return `${syncError.status === 'conflict' ? 'Sync conflict' : 'Needs attention'}: ${syncError.feedback} ${syncError.remote ? 'Remote timezone: ' + syncError.remote : ''}`;
 			const outcome = store.outcome();
 			return outcome.status === 'failed'
 				? outcome.error.message
-				: store.gateway.preference.error()
+				: !store.workspace.current() && store.gateway.preference.error()
 					? readFailure()
 					: '';
 		}),
@@ -105,6 +125,15 @@ export const TimezoneStore = signalStore(
 							operationId,
 						},
 					});
+					if (store.workspace.available()) {
+						const requestId = store.nextLocalId();
+						patchState(store, { localRequestId: requestId });
+						store.workspace.mutate({
+							requestId,
+							change: { type: 'timezone', base: store.timezone(), timezone },
+						});
+						return EMPTY;
+					}
 					return store.gateway.saveTimezone({ timezone }).pipe(
 						tap(() => store.gateway.refresh()),
 						tap(() =>
@@ -152,4 +181,38 @@ export const TimezoneStore = signalStore(
 			},
 		};
 	}),
+	withHooks((store) => ({
+		onInit() {
+			effect(() => {
+				const result = store.workspace.outcome();
+				const current = store.outcome();
+				if (
+					result.requestId !== store.localRequestId() ||
+					current.status !== 'pending'
+				)
+					return;
+				if (result.status === 'succeeded')
+					patchState(store, {
+						localRequestId: null,
+						message: 'Saved on this device.',
+						outcome: {
+							status: 'succeeded',
+							operation: 'save-timezone',
+							operationId: current.operationId,
+							timezone: store.timezone(),
+						},
+					});
+				else if (result.status === 'failed')
+					patchState(store, {
+						localRequestId: null,
+						outcome: {
+							status: 'failed',
+							operation: 'save-timezone',
+							operationId: current.operationId,
+							error: { kind: 'unavailable', message: result.message },
+						},
+					});
+			});
+		},
+	})),
 );

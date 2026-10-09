@@ -37,7 +37,7 @@ describe('ownerSessionCanMatch', () => {
 	let router: Router;
 	let loadPrivateFeature: ReturnType<typeof privateFeatureLoader>;
 	const sessionStore = { resolved: vi.fn(), resolutionFailed: vi.fn() };
-	const offlineAccess = { restore: vi.fn() };
+	const offlineAccess = { restore: vi.fn(), isSessionRevoked: vi.fn() };
 	const offlineWorkspace = {
 		hasSnapshotFor: vi.fn(() => false),
 		prepare: vi.fn(),
@@ -49,6 +49,7 @@ describe('ownerSessionCanMatch', () => {
 		sessionStore.resolved.mockReset();
 		sessionStore.resolutionFailed.mockReset().mockReturnValue(false);
 		offlineAccess.restore.mockReset();
+		offlineAccess.isSessionRevoked.mockReset().mockResolvedValue(false);
 		offlineWorkspace.prepare.mockReset();
 		offlineWorkspace.openOffline.mockReset();
 		offlineWorkspace.hasSnapshotFor.mockReset().mockReturnValue(false);
@@ -213,5 +214,39 @@ describe('ownerSessionCanMatch', () => {
 				queryParams: { returnTo: '/maintenance' },
 			}),
 		);
+	});
+	it('rejects a signed-out cookie while keeping valid server access usable when device storage fails', async () => {
+		sessionStore.resolved.mockResolvedValue({
+			session: { id: 'old-session' },
+			user: { email: 'owner@example.test' },
+		});
+		offlineAccess.isSessionRevoked.mockResolvedValueOnce(true);
+		await router.navigateByUrl('/garage/car-1/photos');
+		expect(router.url).toContain('reason=signed-out');
+		expect(loadPrivateFeature).not.toHaveBeenCalled();
+		offlineAccess.isSessionRevoked.mockRejectedValueOnce(new Error('storage'));
+		await router.navigateByUrl('/garage/car-2/photos');
+		expect(router.url).toBe('/garage/car-2/photos');
+		expect(loadPrivateFeature).toHaveBeenCalledOnce();
+	});
+	it('admits a current authenticated session whose durable revocation fence is clear', async () => {
+		sessionStore.resolved.mockResolvedValue({
+			session: { id: 'current-session' },
+			user: { email: 'owner@example.test' },
+		});
+		await router.navigateByUrl('/garage/car-1/photos');
+		expect(offlineAccess.isSessionRevoked).toHaveBeenCalledWith(
+			'current-session',
+		);
+		expect(loadPrivateFeature).toHaveBeenCalledOnce();
+	});
+	it('keeps online-only sessions usable when they lack an offline session identity', async () => {
+		sessionStore.resolved.mockResolvedValue({
+			session: {},
+			user: { email: 'owner@example.test' },
+		});
+		await router.navigateByUrl('/garage/car-1/photos');
+		expect(offlineAccess.isSessionRevoked).not.toHaveBeenCalled();
+		expect(loadPrivateFeature).toHaveBeenCalledOnce();
 	});
 });
