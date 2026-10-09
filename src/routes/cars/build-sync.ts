@@ -23,6 +23,19 @@ export const applyBuildSyncOperation = async (
 		context;
 	const database = db(c.env);
 	const ownerId = c.get('userId');
+	const receiptPending = exists(
+		database
+			.select({ operationId: syncOperation.operationId })
+			.from(syncOperation)
+			.where(
+				and(
+					eq(syncOperation.ownerId, ownerId),
+					eq(syncOperation.operationId, operationId),
+					eq(syncOperation.requestHash, requestHash),
+					eq(syncOperation.outcome, 'pending'),
+				),
+			),
+	);
 	const receiptWhere = and(
 		eq(syncOperation.ownerId, ownerId),
 		eq(syncOperation.operationId, operationId),
@@ -180,19 +193,22 @@ export const applyBuildSyncOperation = async (
 			components: nextComponents.map(publicComponent),
 		},
 	};
-	const witness = exists(
-		database
-			.select({ id: car.id })
-			.from(car)
-			.where(
-				and(
-					eq(car.id, parent.id),
-					eq(car.ownerId, ownerId),
-					eq(car.version, version),
-					eq(car.lastOperationId, operationId),
-					isNull(car.archivedAt),
+	const witness = and(
+		receiptPending,
+		exists(
+			database
+				.select({ id: car.id })
+				.from(car)
+				.where(
+					and(
+						eq(car.id, parent.id),
+						eq(car.ownerId, ownerId),
+						eq(car.version, version),
+						eq(car.lastOperationId, operationId),
+						isNull(car.archivedAt),
+					),
 				),
-			),
+		),
 	);
 	const sessionCount =
 		inserts && current ? await planSessionCount(c, parent.id) : 0;
@@ -205,6 +221,7 @@ export const applyBuildSyncOperation = async (
 					eq(car.id, parent.id),
 					eq(car.ownerId, ownerId),
 					eq(car.version, parent.version),
+					receiptPending,
 					isNull(car.archivedAt),
 				),
 			),
