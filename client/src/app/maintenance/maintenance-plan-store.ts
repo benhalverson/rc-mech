@@ -96,6 +96,11 @@ const resourceMessage = (
 		: '';
 };
 
+/**
+ * Projects plans and due state for the Maintenance editor and dispatches plan
+ * intents to the shared workspace when prepared. Keeps editor outcomes local to
+ * the route while durable replay and usage baselines remain in the coordinator.
+ */
 export const MaintenancePlanStore = signalStore(
 	withState<{
 		outcome: MaintenancePlanOutcome;

@@ -93,6 +93,12 @@ const mutationFailure = (
 	return 'save-failed';
 };
 
+/**
+ * Projects tire/fluid history and reports for the Consumable editor. Prepared
+ * changes enter MaintenanceWorkspaceStore with stable identities before success;
+ * the route keeps editor outcomes and the existing online fallback, not a second
+ * durable queue or independent service-association model.
+ */
 export const ConsumableStore = signalStore(
 	withState<{
 		outcome: ConsumableOutcome;

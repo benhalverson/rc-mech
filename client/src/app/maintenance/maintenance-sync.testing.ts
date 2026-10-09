@@ -7,6 +7,11 @@ import type {
 	ServiceRecord,
 } from './maintenance.models';
 import type { MaintenanceMutationOutcome } from './maintenance-workspace-store';
+/**
+ * In-memory Maintenance coordinator double for route/component specs. Exposes the
+ * signals and command spies those consumers use without opening IndexedDB or
+ * calling HTTP; durable behavior is tested at the storage/coordinator boundary.
+ */
 export class FakeMaintenanceWorkspace {
 	readonly available = signal(false);
 	readonly consumables = signal<

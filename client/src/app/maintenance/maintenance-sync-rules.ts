@@ -13,6 +13,11 @@ import type {
 	MaintenanceView,
 } from './maintenance-sync.models';
 
+/**
+ * Replays durable Maintenance operations in sequence over canonical collections
+ * for route reads. Retained unsuccessful work stays visible; this projection
+ * does not claim that its records have been accepted by the server.
+ */
 export const maintenanceView = (
 	canonical: MaintenanceSnapshot,
 	operations: readonly MaintenanceOperation[],
@@ -45,6 +50,11 @@ export const maintenanceView = (
 		operations,
 	};
 };
+/**
+ * Captures a plan/service intent against the materialized Maintenance view,
+ * including the service-time usage baseline and necessary record/Car dependencies.
+ * Stable IDs and sequence are assigned before storage commits the command.
+ */
 export const buildMaintenanceOperation = (
 	intent: MaintenanceCommand,
 	view: MaintenanceView,
@@ -255,6 +265,11 @@ export const buildMaintenanceOperation = (
 		],
 	};
 };
+/**
+ * Rebases a pending dependent command onto an acknowledged Maintenance collection
+ * without replacing its intended edit. Called during acknowledgement so replay
+ * compares against the saved prerequisite rather than its temporary local version.
+ */
 export const rebaseMaintenanceOperation = (
 	operation: MaintenanceOperation,
 	acknowledgedId: string,

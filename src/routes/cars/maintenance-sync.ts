@@ -25,6 +25,12 @@ export type SyncContext = Readonly<{
 	now: string;
 	requireTerminalReceipt: () => Promise<Response>;
 }>;
+/**
+ * Applies an owner's durable Maintenance command inside Car sync admission. Compares
+ * the saved base and uses one conditional database batch for record changes and
+ * the operation receipt. Car-version and pending-receipt witnesses prevent a
+ * concurrent edit or in-flight duplicate from repeating child writes.
+ */
 export const applyMaintenanceSyncOperation = async (
 	c: AppContext,
 	context: SyncContext,

@@ -105,6 +105,12 @@ const resourceMessage = (failure: MaintenanceGatewayFailure | null): string => {
 	return failure ? 'The maintenance ledger could not be loaded.' : '';
 };
 
+/**
+ * Route workflow for recording service and editing its history. Uses the shared
+ * Maintenance workspace to retain intent and captured usage baselines, keeping
+ * local success distinct from remote acknowledgement; falls back to HTTP before
+ * preparation rather than owning a second queue.
+ */
 export const ServiceRecordStore = signalStore(
 	withState<{
 		outcome: ServiceRecordOutcome;

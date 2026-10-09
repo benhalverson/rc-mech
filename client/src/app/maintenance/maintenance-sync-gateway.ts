@@ -51,6 +51,10 @@ const maintenanceSyncRemoteOutcomeSchema = union([
 	}),
 ]);
 
+/**
+ * Marks schema/identity rejection separately from an HTTP outage, so malformed
+ * acknowledgements cannot be accepted or mistaken for an offline retry signal.
+ */
 class InvalidMaintenanceSyncResponse extends Error {}
 
 export type MaintenanceSyncGatewayFailure =
@@ -92,6 +96,11 @@ const recoverTerminalOutcome = (
 	return throwError(() => maintenanceSyncGatewayFailure(error));
 };
 
+/**
+ * HTTP boundary for the root Maintenance workspace's snapshots and durable
+ * operations. Validates operation/Car identity and canonical conflict evidence
+ * before acknowledgement; it owns neither local baselines nor replay ordering.
+ */
 @Service()
 export class MaintenanceSyncGateway {
 	private readonly http = inject(HttpClient);

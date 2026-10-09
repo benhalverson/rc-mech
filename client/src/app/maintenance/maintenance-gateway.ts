@@ -173,6 +173,11 @@ const parseReport = (value: unknown): MaintenanceReport =>
 const mapFailure = (error: unknown): Observable<never> =>
 	throwError(() => maintenanceGatewayFailure(error));
 
+/**
+ * Route-scoped Maintenance HTTP resources and legacy mutations used before the
+ * shared workspace is prepared. Owns transport parsing and timezone normalization;
+ * prepared local-first replay uses MaintenanceSyncGateway and the root coordinator.
+ */
 @Injectable()
 export class MaintenanceGateway {
 	private readonly http = inject(HttpClient);

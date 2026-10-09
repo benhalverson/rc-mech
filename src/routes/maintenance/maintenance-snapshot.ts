@@ -10,6 +10,11 @@ import {
 } from '../../schema';
 import type { AppEnv } from '../../types';
 import { ownerTimezone } from './drive-records';
+/**
+ * Loads the owner-scoped Maintenance preparation snapshot, including Component
+ * references and Drive usage needed by local due calculations. Keeps preparation
+ * reads together so the client does not infer missing collections from one screen.
+ */
 export const createMaintenanceSnapshotRoutes = () => {
 	const routes = new Hono<AppEnv>();
 	routes.get('/maintenance/sync/snapshot', async (c) => {
