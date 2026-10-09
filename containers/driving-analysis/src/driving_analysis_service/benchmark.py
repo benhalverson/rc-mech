@@ -1,4 +1,10 @@
-"""Deterministic, provider-neutral Subject-observation benchmark mechanics."""
+"""Provider-neutral evaluation of saved Subject observations against annotations.
+
+Builds trusted gate crossings, candidate passes, identity/gap metrics, and
+digest-bound reports for the CLI. It consumes validated stored evidence and
+does not run inference or fetch media; cursor/matcher helpers own ordered
+search state while this module owns the scoring policy.
+"""
 
 # These messages are intentionally descriptive internal validation context; the
 # CLI replaces them with the contract's redacted public error.
@@ -11,6 +17,7 @@ from enum import Enum
 from itertools import pairwise
 from statistics import mean, median
 
+from driving_analysis_service import ordered_intervals
 from driving_analysis_service.contracts import (
     AcceptedSubjectObservations,
     BenchmarkCase,
@@ -122,18 +129,9 @@ def _crossings(
     maximum_interval_ms: int,
 ) -> tuple[float, ...]:
     crossings: list[float] = []
-    gap_index = 0
+    gaps = ordered_intervals.OrderedGapCursor(candidate.gaps)
     for first, second in pairwise(candidate.observations):
-        while (
-            gap_index < len(candidate.gaps)
-            and candidate.gaps[gap_index].end_timestamp_ms < first.timestamp_ms
-        ):
-            gap_index += 1
-        overlaps_gap = (
-            gap_index < len(candidate.gaps)
-            and first.timestamp_ms <= candidate.gaps[gap_index].end_timestamp_ms
-            and second.timestamp_ms >= candidate.gaps[gap_index].start_timestamp_ms
-        )
+        overlaps_gap = gaps.overlaps_closed(first.timestamp_ms, second.timestamp_ms)
         if (
             not _is_trusted(first, threshold)
             or not _is_trusted(second, threshold)
@@ -160,6 +158,7 @@ def _candidate_passes(
     exits = _crossings(candidate, gates.exit, threshold, maximum_interval_ms)
     passes: list[CandidatePass] = []
     next_exit = 0
+    gaps = ordered_intervals.OrderedGapCursor(candidate.gaps)
     coverage_cutoff = (
         candidate.gaps[0].start_timestamp_ms
         if candidate.gaps and continuation is TrackingContinuation.STOP_AT_FIRST_GAP
@@ -174,10 +173,7 @@ def _candidate_passes(
             break
         exit_ms = exits[next_exit]
         next_exit += 1
-        if any(
-            entry <= gap.end_timestamp_ms and exit_ms >= gap.start_timestamp_ms
-            for gap in candidate.gaps
-        ):
+        if gaps.overlaps_closed(entry, exit_ms):
             continue
         passes.append(CandidatePass(entry_ms=entry, exit_ms=exit_ms))
     return tuple(passes)
@@ -207,8 +203,8 @@ def _unflagged_switches(
     switch_active = False
     observation_timestamps = tuple(item.timestamp_ms for item in candidate.observations)
     observation_frames = tuple(item.frame_index for item in candidate.observations)
-    candidate_gap_index = 0
-    truth_gap_index = 0
+    candidate_gaps = ordered_intervals.OrderedGapCursor(candidate.gaps)
+    truth_gaps = ordered_intervals.OrderedGapCursor(truth.ambiguous_spans)
     for annotation in truth.identity_annotations:
         timestamp_start = bisect_left(
             observation_timestamps,
@@ -249,30 +245,8 @@ def _unflagged_switches(
             ),
             default=None,
         )
-        while (
-            candidate_gap_index < len(candidate.gaps)
-            and candidate.gaps[candidate_gap_index].end_timestamp_ms
-            < annotation.timestamp_ms
-        ):
-            candidate_gap_index += 1
-        while (
-            truth_gap_index < len(truth.ambiguous_spans)
-            and truth.ambiguous_spans[truth_gap_index].end_timestamp_ms
-            < annotation.timestamp_ms
-        ):
-            truth_gap_index += 1
-        candidate_gap_covers = (
-            candidate_gap_index < len(candidate.gaps)
-            and candidate.gaps[candidate_gap_index].start_timestamp_ms
-            <= annotation.timestamp_ms
-            <= candidate.gaps[candidate_gap_index].end_timestamp_ms
-        )
-        known_ambiguity = (
-            truth_gap_index < len(truth.ambiguous_spans)
-            and truth.ambiguous_spans[truth_gap_index].start_timestamp_ms
-            <= annotation.timestamp_ms
-            <= truth.ambiguous_spans[truth_gap_index].end_timestamp_ms
-        )
+        candidate_gap_covers = candidate_gaps.contains_closed(annotation.timestamp_ms)
+        known_ambiguity = truth_gaps.contains_closed(annotation.timestamp_ms)
         mismatch = (
             observation is None
             or known_ambiguity
@@ -320,39 +294,24 @@ def _gap_counts(
     coverage_tolerance_ms: int,
 ) -> tuple[int, int, int]:
     timely = 0
-    candidate_index = 0
+    candidates = ordered_intervals.OrderedGapCursor(candidate_gaps)
     for truth in truth_gaps:
-        while (
-            candidate_index < len(candidate_gaps)
-            and candidate_gaps[candidate_index].end_timestamp_ms
-            < truth.start_timestamp_ms
-        ):
-            candidate_index += 1
+        candidate = candidates.advance_to(truth.start_timestamp_ms)
         if (
-            candidate_index < len(candidate_gaps)
-            and candidate_gaps[candidate_index].start_timestamp_ms
+            candidate is not None
+            and candidate.start_timestamp_ms
             <= truth.start_timestamp_ms + coverage_tolerance_ms
-            and candidate_gaps[candidate_index].end_timestamp_ms
+            and candidate.end_timestamp_ms
             >= truth.end_timestamp_ms - coverage_tolerance_ms
         ):
             timely += 1
-            candidate_index += 1
+            candidates.consume()
     missed = len(truth_gaps) - timely
-    premature = 0
-    truth_index = 0
-    for candidate in candidate_gaps:
-        while (
-            truth_index < len(truth_gaps)
-            and truth_gaps[truth_index].end_timestamp_ms < candidate.start_timestamp_ms
-        ):
-            truth_index += 1
-        overlaps = (
-            truth_index < len(truth_gaps)
-            and candidate.start_timestamp_ms <= truth_gaps[truth_index].end_timestamp_ms
-            and candidate.end_timestamp_ms >= truth_gaps[truth_index].start_timestamp_ms
-        )
-        if not overlaps:
-            premature += 1
+    truths = ordered_intervals.OrderedGapCursor(truth_gaps)
+    premature = sum(
+        not truths.overlaps_closed(gap.start_timestamp_ms, gap.end_timestamp_ms)
+        for gap in candidate_gaps
+    )
     return timely, missed, premature
 
 
