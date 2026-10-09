@@ -97,6 +97,13 @@ class _PixelCrop:
 
 
 class CornerRenderService:
+    """Runs a bounded Corner-clip request for the internal media API.
+
+    Owns admission, input/specification checks, FFmpeg execution, and immutable
+    artifact recovery/publication. Geometry conversion and runtime probing are
+    helpers; the service keeps cleanup and request deadline ownership together.
+    """
+
     def __init__(
         self,
         settings: ServiceSettings,

@@ -79,6 +79,14 @@ MAX_COMPLETION_BYTES = 64 * 1024
 
 
 class SubjectTrackingService:
+    """Executes one bounded Subject-tracking segment from prepared media.
+
+    Coordinates frame extraction, the injected inference provider, first-gap
+    termination, and immutable observation publication for the media-stage API.
+    Admission and deadlines belong to this request; application lifecycle and
+    GPU scheduling remain outside the media service.
+    """
+
     def __init__(
         self,
         settings: ServiceSettings,

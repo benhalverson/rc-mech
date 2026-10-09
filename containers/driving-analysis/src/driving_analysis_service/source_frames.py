@@ -104,6 +104,13 @@ def frame_error(code: FrameErrorCode, status: int) -> JSONResponse:
 
 
 class SourceFrameService:
+    """Extracts the exact requested source frame for authenticated frame review.
+
+    The internal API delegates staged-media validation, bounded process execution,
+    and response provenance here. A shared admission slot limits concurrent media
+    work and is released even when decoding or request validation fails.
+    """
+
     def __init__(
         self, settings: ServiceSettings, admission: threading.BoundedSemaphore
     ) -> None:

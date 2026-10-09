@@ -107,6 +107,13 @@ class _CancellableProvider:
 
 
 class Sam31TrackingExecutor:
+    """Adapter from JobManager submissions to local SAM segment execution.
+
+    Binds the installed profile and verified transferred inputs to the shared
+    tracking service, observes cancellation, and returns an artifact for the
+    manager to publish. It does not own the Cloudflare lease or a durable queue.
+    """
+
     def __init__(
         self,
         profile: InferenceProfile,

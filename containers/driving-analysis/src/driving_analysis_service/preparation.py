@@ -83,6 +83,13 @@ class _PreparedMemberNames:
 
 
 class RaceWindowPreparationService:
+    """Owns one bounded Race-window preparation request from admission to publication.
+
+    Called by the internal media API, it validates the staged source, builds the
+    Track-view artifact/frame manifest, and recovers matching immutable output on
+    replay. Capacity is borrowed only for the request and released on every exit.
+    """
+
     def __init__(
         self,
         settings: ServiceSettings,
