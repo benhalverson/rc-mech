@@ -1,3 +1,4 @@
+import { preparedObjectKeys } from './prepared-object-keys';
 import {
 	type AcceptedPreparedTrackView,
 	PreparedTrackViewAuthority,
@@ -80,6 +81,21 @@ const publicResult = (
 	accepted: AcceptedPreparedTrackView,
 ): PreparedTrackViewResult => ({ runId, prepared: accepted.descriptor });
 
+const preparationErrorDetails = (
+	error: unknown,
+): Readonly<Record<string, string>> =>
+	error instanceof Error
+		? {
+				errorName: error.name,
+				errorMessage: error.message,
+				...(error.stack ? { errorStack: error.stack } : {}),
+			}
+		: {
+				errorName: 'unknown',
+				errorMessage:
+					error === null || error === undefined ? 'unknown' : error.toString(),
+			};
+
 export class TrackViewPreparation {
 	private readonly authority;
 	private readonly media;
@@ -107,10 +123,8 @@ export class TrackViewPreparation {
 
 		const preparedMediaId = this.id();
 		const correlationId = this.id();
-		const prefix = `prepared/${preparedMediaId}`;
-		const mediaObjectKey = `${prefix}/track-view.mp4`;
-		const frameManifestObjectKey = `${prefix}/frame-manifest.json.gz`;
-		const candidateKeys = [mediaObjectKey, frameManifestObjectKey] as const;
+		const candidateKeys = preparedObjectKeys(preparedMediaId);
+		const [mediaObjectKey, frameManifestObjectKey] = candidateKeys;
 		const request = prepareStageRequestSchema.parse({
 			contractVersion: 'subject-tracking.v1',
 			correlationId,
@@ -128,6 +142,12 @@ export class TrackViewPreparation {
 		});
 
 		let rawResponse: unknown;
+		await this.authority.recordPreparationIntent(
+			ownerId,
+			runId,
+			preparedMediaId,
+			new Date(this.now().getTime() + RETENTION_MS).toISOString(),
+		);
 		try {
 			rawResponse = await this.media.prepare({
 				request,
@@ -138,7 +158,20 @@ export class TrackViewPreparation {
 				},
 				output: { mediaObjectKey, frameManifestObjectKey },
 			});
-		} catch {
+		} catch (error) {
+			console.log(
+				JSON.stringify({
+					event: 'track_view_preparation',
+					outcome: 'failed',
+					phase: 'prepare',
+					ownerId,
+					correlationId,
+					caseId: runId,
+					stagedMediaId: request.input.stagedMediaId,
+					preparedMediaId,
+					...preparationErrorDetails(error),
+				}),
+			);
 			await this.cleanup(candidateKeys);
 			throw new TrackViewPreparationError(
 				'PREPARATION_REJECTED',
@@ -237,23 +270,7 @@ export class TrackViewPreparation {
 	}
 
 	async cleanupDue(now = this.now()): Promise<number> {
-		const candidates = await this.authority.cleanupCandidates(
-			now.toISOString(),
-			new Date(now.getTime() - RETENTION_MS).toISOString(),
-		);
-		for (const candidate of candidates) {
-			await this.store.delete(
-				candidate.objects.map((object) => object.objectKey),
-			);
-			await this.authority.markDeleted({
-				ownerId: candidate.ownerId,
-				runId: candidate.runId,
-				preparedMediaId: candidate.preparedMediaId,
-				expectedVersion: candidate.version,
-				deletedAt: now.toISOString(),
-			});
-		}
-		return candidates.length;
+		return cleanupPreparedTrackViews(this.authority, this.store, now);
 	}
 
 	private async verifyAccepted(
@@ -298,4 +315,50 @@ export class TrackViewPreparation {
 			);
 		}
 	}
+}
+
+export async function cleanupPreparedTrackViews(
+	authority: PreparedTrackViewAuthority,
+	store: PreparedTrackViewStore,
+	now: Date,
+): Promise<number> {
+	const results = await Promise.allSettled([
+		(async () => {
+			const candidates = await authority.cleanupCandidates(
+				now.toISOString(),
+				new Date(now.getTime() - RETENTION_MS).toISOString(),
+			);
+			const cleaned = await Promise.allSettled(
+				candidates.map(async (candidate) => {
+					await store.delete(
+						candidate.objects.map((object) => object.objectKey),
+					);
+					await authority.markDeleted({
+						ownerId: candidate.ownerId,
+						runId: candidate.runId,
+						preparedMediaId: candidate.preparedMediaId,
+						expectedVersion: candidate.version,
+						deletedAt: now.toISOString(),
+					});
+				}),
+			);
+			return cleaned.filter((result) => result.status === 'fulfilled').length;
+		})(),
+		(async () => {
+			const abandoned = await authority.claimAbandonedPreparation(
+				now.toISOString(),
+			);
+			const cleaned = await Promise.allSettled(
+				abandoned.map((candidate) =>
+					store.delete(preparedObjectKeys(candidate.preparedMediaId)),
+				),
+			);
+			return cleaned.filter((result) => result.status === 'fulfilled').length;
+		})(),
+	]);
+	return results.reduce(
+		(count, result) =>
+			count + (result.status === 'fulfilled' ? result.value : 0),
+		0,
+	);
 }

@@ -1,5 +1,6 @@
 import {
 	afterNextRender,
+	afterRenderEffect,
 	Component,
 	computed,
 	ElementRef,
@@ -9,9 +10,14 @@ import {
 	viewChild,
 } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
+import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
+import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
 import { OfflineStatus } from '../offline/offline-status';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
+import { SettingsWorkspaceStore } from '../settings/settings-workspace-store';
+import { VoiceWorkspaceStore } from '../voice/voice-workspace-store';
 import { ResponsiveViewport } from './responsive-viewport';
 import { ShellCarStore } from './shell-car-store';
 import {
@@ -20,6 +26,11 @@ import {
 } from './shell-route-context';
 import { SignOutStore } from './sign-out-store';
 
+/**
+ * Authenticated shell composition point. Starts shared workspace coordinators and
+ * renders navigation, offline status, and sign-out confirmation across lazy routes;
+ * feature stores retain their own commands and the shell does not sequence HTTP.
+ */
 @Component({
 	selector: 'app-workspace-shell',
 	imports: [OfflineStatus, RouterLink, RouterLinkActive, RouterOutlet],
@@ -27,6 +38,11 @@ import { SignOutStore } from './sign-out-store';
 	styleUrl: './workspace-shell.css',
 })
 export class WorkspaceShell {
+	protected readonly settingsWorkspace = inject(SettingsWorkspaceStore);
+	protected readonly photoWorkspace = inject(PhotoWorkspaceStore);
+	protected readonly maintenanceWorkspace = inject(MaintenanceWorkspaceStore);
+	protected readonly voiceWorkspace = inject(VoiceWorkspaceStore);
+	protected readonly analysisVisibility = inject(VisibilityStore);
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly responsiveViewport = inject(ResponsiveViewport);
 	private readonly injector = inject(Injector);
@@ -37,6 +53,10 @@ export class WorkspaceShell {
 		viewChild<ElementRef<HTMLButtonElement>>('navClose');
 	private readonly pickerClose =
 		viewChild<ElementRef<HTMLButtonElement>>('pickerClose');
+	private readonly keepWorking =
+		viewChild<ElementRef<HTMLButtonElement>>('keepWorking');
+
+	private signOutTrigger?: HTMLElement;
 	private navToggle?: HTMLButtonElement;
 	private pickerToggle?: HTMLButtonElement;
 	protected readonly mobileNav = this.responsiveViewport.mobile;
@@ -61,6 +81,13 @@ export class WorkspaceShell {
 		if (this.cars.error()) return 'Current car unavailable';
 		return 'Current car';
 	});
+
+	constructor() {
+		afterRenderEffect(() => {
+			if (this.signOutStore.outcome().status === 'confirmation')
+				this.keepWorking()?.nativeElement.focus();
+		});
+	}
 
 	protected openNav(navToggle: HTMLButtonElement): void {
 		this.pickerOpen.set(false);
@@ -129,7 +156,12 @@ export class WorkspaceShell {
 		return ['/garage', carId, section ?? 'overview'];
 	}
 
-	protected signOut(): void {
+	protected cancelSignOut(): void {
+		this.signOutStore.cancelSignOut();
+		this.focusAfterRender(() => this.signOutTrigger);
+	}
+	protected signOut(event: Event): void {
+		this.signOutTrigger = event.currentTarget as HTMLElement;
 		this.navOpen.set(false);
 		this.pickerOpen.set(false);
 		this.signOutStore.signOut({ operation: 'sign-out' });

@@ -26,6 +26,7 @@ import {
 	LucideSave,
 	LucideTriangleAlert,
 } from '@lucide/angular';
+import { VisibilityStore } from '../../driving-analysis-visibility/visibility-store';
 import { CarSectionShell } from '../car-section-shell';
 import { CarStore } from '../car-store';
 import type { DriveSession } from './drive-session.models';
@@ -68,6 +69,7 @@ const emptyForm = (): DriveSessionForm => ({
 	host: { class: 'block' },
 })
 export class DriveSessions {
+	protected readonly analysisVisibility = inject(VisibilityStore);
 	readonly carId = input('');
 	protected readonly carStore = inject(CarStore);
 	protected readonly driveSessionStore = inject(DriveSessionStore);

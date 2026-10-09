@@ -1,0 +1,10 @@
+{
+	"contractVersion": "race-video-validation.v1",
+	"correlationId": "22222222-2222-4222-8222-222222222222",
+	"outcome": "rejected",
+	"error": {
+		"code": "CORRUPT_MEDIA",
+		"stage": "probe",
+		"message": "The recording is corrupt."
+	}
+}

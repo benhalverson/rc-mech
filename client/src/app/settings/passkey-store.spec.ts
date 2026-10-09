@@ -2,6 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import type { WebAuthnOptions } from './passkey-credentials';
 import { PasskeyRegistrationCapability } from './passkey-registration-capability';
 import { PasskeyStore } from './passkey-store';
@@ -144,6 +145,10 @@ describe('PasskeyStore', () => {
 		registration = new FakePasskeyRegistrationCapability();
 		TestBed.configureTestingModule({
 			providers: [
+				{
+					provide: OfflineWorkspaceStore,
+					useValue: { networkUnavailable: signal(false) },
+				},
 				PasskeyStore,
 				{ provide: SettingsGateway, useValue: gateway },
 				{
@@ -263,5 +268,23 @@ describe('PasskeyStore', () => {
 		store.revoke(passkey());
 		gateway.failRevoke({ kind: 'unavailable' });
 		expect(store.actionError()).toContain('could not be completed');
+	});
+	it('does not register, rename, revoke, or retry while offline', () => {
+		const offline = TestBed.inject(OfflineWorkspaceStore);
+		(
+			offline.networkUnavailable as unknown as ReturnType<
+				typeof signal<boolean>
+			>
+		).set(true);
+		expect(store.administrationAvailable()).toBe(false);
+		expect(store.webAuthnAvailable()).toBe(false);
+		const passkey = { id: 'passkey', name: 'Laptop' };
+		store.register('Phone');
+		store.rename(passkey, 'New name');
+		store.revoke(passkey);
+		store.retry();
+		expect(gateway.registrationOptions).not.toHaveBeenCalled();
+		expect(gateway.renamePasskey).not.toHaveBeenCalled();
+		expect(gateway.revokePasskey).not.toHaveBeenCalled();
 	});
 });

@@ -16,6 +16,7 @@ from driving_analysis_service.media import MediaValidationService
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessResult,
+    ProcessStreams,
     ProcessTimeoutError,
 )
 from driving_analysis_service.settings import ServiceSettings
@@ -332,6 +333,42 @@ def test_decode_maps_bounded_process_outcomes(
             settings,
         ),
         expected_code,
+    )
+
+
+def test_decode_discards_showinfo_beyond_captured_output_limit(
+    settings: ServiceSettings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limited_settings = replace(
+        settings,
+        limits=replace(
+            settings.limits,
+            max_process_output_bytes=32,
+            max_decode_diagnostic_bytes=128,
+        ),
+    )
+    frame_line = b"[Parsed_showinfo_0 @ 0x1] n: 0 sar:1/1 s:160x90 " + b"x" * 24
+
+    def fake_run(*_args: object, **kwargs: object) -> ProcessResult:
+        streams = cast("ProcessStreams", kwargs["streams"])
+        observer = streams.standard_error_observer
+        assert observer is not None
+        assert observer.consume(frame_line)
+        assert observer.consume(frame_line.replace(b"n: 0", b"n: 1"))
+        return ProcessResult(0, b"frame=2\n", b"", 1)
+
+    monkeypatch.setattr(media_module, "run_bounded_process", fake_run)
+    metadata = media_module._parse_probe(_valid_probe(), limited_settings)
+
+    assert (
+        media_module._decode_media(
+            tmp_path / "input.media",
+            metadata,
+            limited_settings,
+        )
+        == 2
     )
 
 

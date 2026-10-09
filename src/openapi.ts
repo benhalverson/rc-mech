@@ -1,3 +1,8 @@
+import { z } from 'zod';
+import { buildSyncCommandInput } from './build-sync-contract';
+import { driveSyncCommandInput } from './drive-sync-contract';
+import { maintenanceSyncCommandInput } from './maintenance-sync-contract';
+import { settingsSyncEnvelope } from './settings-sync-contract';
 import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 
 const carProperties = {
@@ -115,6 +120,49 @@ export const openApi = {
 	openapi: '3.1.0',
 	info: { title: 'Chassis Notes API', version: '0.1.0' },
 	paths: {
+		'/api/v1/feature-flags/owner': {
+			get: {
+				summary: 'Read configured Owner identity independently of flag storage',
+				responses: {
+					200: {
+						description: 'Authenticated identity with an isOwner boolean',
+					},
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
+		'/api/v1/feature-flags/driving-analysis': {
+			get: {
+				summary:
+					'Read the global Driving analysis UI flag; missing configuration is off',
+				responses: {
+					200: { description: 'Flag with an enabled boolean' },
+					401: { description: 'Authentication required' },
+				},
+			},
+			put: {
+				summary: 'Set the Driving analysis UI flag as the configured Owner',
+				requestBody: {
+					required: true,
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								required: ['enabled'],
+								additionalProperties: false,
+								properties: { enabled: { type: 'boolean' } },
+							},
+						},
+					},
+				},
+				responses: {
+					200: { description: 'Persisted enabled value' },
+					400: { description: 'Invalid boolean payload' },
+					401: { description: 'Authentication required' },
+					403: { description: 'Owner access required' },
+				},
+			},
+		},
 		'/api/v1/cars': {
 			get: {
 				summary: "List the authenticated owner's cars",
@@ -217,7 +265,7 @@ export const openApi = {
 			],
 			put: {
 				summary:
-					'Idempotently apply one owner-scoped, version-aware Car or Setup operation',
+					'Idempotently apply one owner-scoped, version-aware Car, Setup, Component, or Drive-session operation',
 				requestBody: {
 					required: true,
 					content: {
@@ -229,6 +277,11 @@ export const openApi = {
 									contractVersion: { type: 'integer', enum: [1] },
 									command: {
 										oneOf: [
+											z.toJSONSchema(buildSyncCommandInput, { io: 'input' }),
+											z.toJSONSchema(driveSyncCommandInput, { io: 'input' }),
+											...maintenanceSyncCommandInput.options.map((command) =>
+												z.toJSONSchema(command, { io: 'input' }),
+											),
 											{
 												type: 'object',
 												required: ['type', 'carId', 'car'],
@@ -365,7 +418,10 @@ export const openApi = {
 					},
 				},
 				responses: {
-					200: { description: 'Applied or exact terminal replay' },
+					200: {
+						description:
+							'Applied or exact terminal replay. Build and Drive outcomes include versioned collections with complete records.',
+					},
 					400: { description: 'Malformed operation envelope or identifier' },
 					401: { description: 'Authentication required' },
 					404: { description: 'Owned Car or Setup is unavailable' },
@@ -376,6 +432,133 @@ export const openApi = {
 					422: { description: 'Stable Needs-attention validation rejection' },
 					503: {
 						description: 'Transient synchronization infrastructure failure',
+					},
+				},
+			},
+		},
+
+		'/api/v1/photos': {
+			get: {
+				summary: 'List owner-scoped photo metadata for offline preparation',
+				responses: {
+					200: {
+						description:
+							'Private photo metadata; original bytes are not downloaded',
+					},
+				},
+			},
+		},
+		'/api/v1/cars/{carId}/photos/operations/{operationId}': {
+			put: {
+				summary:
+					'Idempotently replace, delete, designate, or reorder private photos against reviewed revisions',
+				parameters: [
+					{
+						name: 'carId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'multipart/form-data': {
+							schema: {
+								type: 'object',
+								required: ['command'],
+								properties: {
+									command: {
+										type: 'string',
+										description:
+											'Strict photo.change JSON with carId, action, photoId, order, base photo revisions, and replacement metadata (null unless replacing).',
+									},
+									file: {
+										type: 'string',
+										format: 'binary',
+										description:
+											'Required only for replace; bytes and metadata must match the immutable command.',
+									},
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					200: {
+						description:
+							'Applied gallery; repeated identities replay the same result after durable byte cleanup',
+					},
+					409: {
+						description:
+							'Canonical rejection or conflict with current gallery metadata; device intent remains retained',
+					},
+					422: { description: 'Invalid command or replacement metadata' },
+					503: {
+						description: 'Retry the same operation identity and retained bytes',
+					},
+				},
+			},
+		},
+		'/api/v1/cars/{carId}/photos/captures/{operationId}': {
+			put: {
+				summary: 'Idempotently upload a locally retained photo capture',
+				parameters: [
+					{
+						name: 'carId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'multipart/form-data': {
+							schema: {
+								type: 'object',
+								required: ['file'],
+								properties: { file: { type: 'string', format: 'binary' } },
+							},
+						},
+					},
+				},
+				responses: {
+					200: {
+						description:
+							'Applied or replayed receipt with stable photo identity',
+					},
+					400: { description: 'Invalid capture identity' },
+					409: {
+						description: 'Canonical rejection or operation identity reuse',
+					},
+					422: { description: 'Invalid image metadata or multipart request' },
+					503: {
+						description:
+							'Retryable infrastructure failure; retain the local capture',
+					},
+				},
+			},
+		},
+		'/api/v1/maintenance/sync/snapshot': {
+			get: {
+				summary: 'Read the owner-scoped maintenance working copy',
+				responses: {
+					200: {
+						description:
+							'Raw versioned plans and service history, component metadata, and timezone',
 					},
 				},
 			},
@@ -627,6 +810,32 @@ export const openApi = {
 				},
 			},
 		},
+		'/api/v1/components': {
+			get: {
+				summary:
+					'Prepare the authenticated owner’s complete Component history for offline use',
+				responses: {
+					200: {
+						description:
+							'Build collections with carId, version, and complete Component metadata; empty builds are included',
+					},
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
+		'/api/v1/drives': {
+			get: {
+				summary:
+					'Prepare the authenticated owner’s complete Drive-session history for offline use',
+				responses: {
+					200: {
+						description:
+							'Drive-session collections with carId, version, and complete Drive-session metadata; empty histories are included',
+					},
+					401: { description: 'Authentication required' },
+				},
+			},
+		},
 		'/api/v1/component-slots': {
 			get: {
 				summary: 'List standard component slots',
@@ -754,6 +963,37 @@ export const openApi = {
 					400: { description: 'Invalid component or slot' },
 					404: { description: 'Component not found' },
 					409: { description: 'Component is not current or car is archived' },
+				},
+			},
+		},
+		'/api/v1/settings/sync/operations/{operationId}': {
+			put: {
+				summary: 'Apply an owner-scoped Settings operation idempotently',
+				parameters: [
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'application/json': {
+							schema: z.toJSONSchema(settingsSyncEnvelope),
+						},
+					},
+				},
+				responses: {
+					200: { description: 'Applied or replayed Settings receipt' },
+					400: { description: 'Malformed operation' },
+					401: { description: 'Authentication required' },
+					409: {
+						description:
+							'Retained canonical rejection, timezone conflict, or reused operation identity',
+					},
+					503: { description: 'Retry the same stable operation later' },
 				},
 			},
 		},
@@ -1033,6 +1273,93 @@ export const openApi = {
 };
 
 const raceRecordingPaths = openApi.paths as Record<string, unknown>;
+const raceVideoRationalSchema = {
+	type: 'object',
+	required: ['numerator', 'denominator'],
+	properties: {
+		numerator: { type: 'integer' },
+		denominator: { type: 'integer', minimum: 1 },
+	},
+};
+const raceVideoMediaSchema = {
+	type: ['object', 'null'],
+	required: [
+		'byteCount',
+		'durationMs',
+		'width',
+		'height',
+		'videoCodec',
+		'audioCodecs',
+		'containerFormats',
+		'decodedFrameCount',
+		'averageFrameRate',
+		'timeBase',
+		'sampleAspectRatio',
+		'displayAspectRatio',
+		'startTimeMs',
+		'checksumSha256',
+	],
+	properties: {
+		byteCount: { type: 'integer', minimum: 1 },
+		durationMs: { type: 'integer', minimum: 1 },
+		width: { type: 'integer', minimum: 1 },
+		height: { type: 'integer', minimum: 1 },
+		videoCodec: { type: 'string', minLength: 1, maxLength: 32 },
+		audioCodecs: {
+			type: 'array',
+			maxItems: 8,
+			items: { type: 'string', minLength: 1, maxLength: 32 },
+		},
+		containerFormats: {
+			type: 'array',
+			minItems: 1,
+			maxItems: 8,
+			items: { type: 'string', minLength: 1, maxLength: 32 },
+		},
+		decodedFrameCount: { type: 'integer', minimum: 1 },
+		averageFrameRate: raceVideoRationalSchema,
+		timeBase: raceVideoRationalSchema,
+		sampleAspectRatio: raceVideoRationalSchema,
+		displayAspectRatio: raceVideoRationalSchema,
+		startTimeMs: { type: 'integer' },
+		checksumSha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+	},
+};
+const raceVideoValidationErrorSchema = {
+	type: ['object', 'null'],
+	required: ['code', 'stage', 'message'],
+	properties: {
+		code: {
+			type: 'string',
+			enum: [
+				'INVALID_REQUEST',
+				'SERVICE_UNAVAILABLE',
+				'STAGED_MEDIA_NOT_FOUND',
+				'STAGED_MEDIA_MISMATCH',
+				'CORRUPT_MEDIA',
+				'UNSUPPORTED_MEDIA',
+				'MEDIA_OVER_LIMIT',
+				'PROCESS_TIMEOUT',
+				'INCOMPATIBLE_LAYOUT',
+				'INTERNAL_ERROR',
+				'SERVICE_BUSY',
+			],
+		},
+		stage: {
+			type: 'string',
+			enum: [
+				'request',
+				'claim',
+				'inspect',
+				'probe',
+				'decode',
+				'cleanup',
+				'admission',
+			],
+		},
+		message: { type: 'string', minLength: 1, maxLength: 160 },
+	},
+};
 const raceRecordingSchema = {
 	type: 'object',
 	required: [
@@ -1046,6 +1373,11 @@ const raceRecordingSchema = {
 		'status',
 		'uploadedBytes',
 		'uploadedPartNumbers',
+		'validationStateVersion',
+		'media',
+		'validationError',
+		'validatedAt',
+		'playbackUrl',
 		'createdAt',
 		'updatedAt',
 		'expiresAt',
@@ -1062,12 +1394,20 @@ const raceRecordingSchema = {
 		},
 		sizeBytes: { type: 'integer', minimum: 1, maximum: 10_737_418_240 },
 		partSizeBytes: { type: 'integer', enum: [10_485_760] },
-		status: { type: 'string', enum: ['uploading', 'validating'] },
+		status: {
+			type: 'string',
+			enum: ['uploading', 'validating', 'ready', 'invalid'],
+		},
 		uploadedBytes: { type: 'integer', minimum: 0 },
 		uploadedPartNumbers: {
 			type: 'array',
 			items: { type: 'integer', minimum: 1, maximum: 1024 },
 		},
+		validationStateVersion: { type: ['integer', 'null'], minimum: 1 },
+		media: raceVideoMediaSchema,
+		validationError: raceVideoValidationErrorSchema,
+		validatedAt: { type: ['string', 'null'], format: 'date-time' },
+		playbackUrl: { type: ['string', 'null'] },
 		createdAt: { type: 'string', format: 'date-time' },
 		updatedAt: { type: 'string', format: 'date-time' },
 		expiresAt: { type: 'string', format: 'date-time' },
@@ -1248,7 +1588,376 @@ Object.assign(raceRecordingPaths, {
 			},
 		},
 	},
+	'/api/v1/race-videos/{raceVideoId}/content': {
+		parameters: [raceVideoIdParameter],
+		get: {
+			summary: 'Stream an owner-authorized ready Race recording',
+			parameters: [
+				{
+					name: 'Range',
+					in: 'header',
+					required: false,
+					schema: { type: 'string', example: 'bytes=0-1048575' },
+				},
+			],
+			responses: {
+				200: {
+					description: 'Complete private Race recording stream',
+					content: {
+						'video/*': { schema: { type: 'string', format: 'binary' } },
+					},
+				},
+				206: { description: 'Requested single byte range' },
+				304: { description: 'Recording has not changed' },
+				404: { description: 'Race recording not found' },
+				409: { description: 'Race recording is not ready' },
+				412: { description: 'Request precondition failed' },
+				416: { description: 'Byte range is unsatisfiable' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+		head: {
+			summary: 'Read owner-authorized Race recording content metadata',
+			responses: {
+				200: { description: 'Private recording metadata' },
+				206: { description: 'Requested range metadata' },
+				304: { description: 'Recording has not changed' },
+				404: { description: 'Race recording not found' },
+				409: { description: 'Race recording is not ready' },
+				412: { description: 'Request precondition failed' },
+				416: { description: 'Byte range is unsatisfiable' },
+				503: { description: 'Private storage unavailable' },
+			},
+		},
+	},
 });
+
+const drivingAnalysisBoxSchema = {
+	type: 'object',
+	additionalProperties: false,
+	description:
+		'A finite, nondegenerate normalized rectangle fully contained in the fixed Track-view crop; x + width and y + height must each be at most 1, and area must be at least 1e-12',
+	required: ['x', 'y', 'width', 'height'],
+	properties: {
+		x: {
+			type: 'number',
+			minimum: 0,
+			exclusiveMaximum: 1,
+			description: 'Normalized left edge in bottom-two-thirds Track-view space',
+		},
+		y: {
+			type: 'number',
+			minimum: 0,
+			exclusiveMaximum: 1,
+			description: 'Normalized top edge in bottom-two-thirds Track-view space',
+		},
+		width: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+		height: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+	},
+};
+const drivingAnalysisWindowSchema = {
+	type: 'object',
+	additionalProperties: false,
+	description:
+		'An absolute half-open recording interval where endTimestampMs is after startTimestampMs and duration is at most 900000 ms',
+	required: ['startTimestampMs', 'endTimestampMs'],
+	properties: {
+		startTimestampMs: {
+			type: 'integer',
+			minimum: 0,
+			description: 'Absolute start timestamp on the uploaded recording',
+		},
+		endTimestampMs: {
+			type: 'integer',
+			minimum: 1,
+			description:
+				'Absolute exclusive end timestamp; it must be after start and the window must be at most 15 minutes',
+		},
+	},
+};
+const drivingAnalysisSchema = {
+	type: 'object',
+	additionalProperties: false,
+	required: [
+		'id',
+		'requestId',
+		'carId',
+		'driveSessionId',
+		'raceVideoId',
+		'raceWindow',
+		'approvedTrackMapVersionId',
+		'subjectSeed',
+		'sourceLayout',
+		'lifecycle',
+		'status',
+		'stage',
+		'progress',
+		'stateVersion',
+		'createdAt',
+		'updatedAt',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		requestId: { type: 'string', format: 'uuid' },
+		carId: { type: 'string' },
+		driveSessionId: { type: 'string' },
+		raceVideoId: { type: 'string', format: 'uuid' },
+		raceWindow: drivingAnalysisWindowSchema,
+		approvedTrackMapVersionId: { type: 'string', format: 'uuid' },
+		subjectSeed: {
+			type: 'object',
+			additionalProperties: false,
+			description:
+				'The initial Subject observation; timestampMs must fall inside the half-open Race window',
+			required: ['timestampMs', 'frameIndex', 'identity', 'box'],
+			properties: {
+				timestampMs: {
+					type: 'integer',
+					minimum: 0,
+					description:
+						'Absolute recording timestamp at or after the Race-window start and before its end',
+				},
+				frameIndex: { type: 'integer', minimum: 0 },
+				identity: { type: 'string', minLength: 1, maxLength: 128 },
+				box: drivingAnalysisBoxSchema,
+			},
+		},
+		sourceLayout: {
+			type: 'object',
+			additionalProperties: false,
+			required: ['version', 'digest', 'width', 'height', 'trackView'],
+			properties: {
+				version: { type: 'string', const: 'fixed-track-view.v1' },
+				digest: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+				width: { type: 'integer', minimum: 1 },
+				height: { type: 'integer', minimum: 1 },
+				trackView: {
+					type: 'object',
+					additionalProperties: false,
+					required: ['x', 'y', 'width', 'height'],
+					properties: {
+						x: { type: 'number', const: 0 },
+						y: { type: 'number', const: 1 / 3 },
+						width: { type: 'number', const: 1 },
+						height: { type: 'number', const: 2 / 3 },
+					},
+				},
+			},
+		},
+		lifecycle: {
+			type: 'string',
+			enum: [
+				'preparation',
+				'tracking',
+				'awaiting-reidentification',
+				'tracking-complete',
+				'failed',
+				'completed',
+				'cancelled',
+			],
+			description:
+				'Analysis-level lifecycle. tracking-complete means initial Tracking evidence is accepted; it is not full Driving-analysis completion.',
+		},
+		status: {
+			type: 'string',
+			enum: [
+				'queued',
+				'running',
+				'awaiting-reidentification',
+				'completed',
+				'failed',
+				'cancelled',
+				'deleting',
+				'deleted',
+			],
+		},
+		stage: {
+			type: 'string',
+			enum: [
+				'preparation',
+				'tracking',
+				'measurement',
+				'clip-rendering',
+				'finalization',
+			],
+		},
+		progress: { type: 'integer', minimum: 0, maximum: 100 },
+		stateVersion: { type: 'integer', minimum: 1 },
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+	},
+};
+const drivingAnalysisResponse = {
+	type: 'object',
+	required: ['drivingAnalysis'],
+	properties: { drivingAnalysis: drivingAnalysisSchema },
+};
+const drivingAnalysisPaths = openApi.paths as Record<string, unknown>;
+drivingAnalysisPaths['/api/v1/cars/{carId}/drives/{driveId}/driving-analyses'] =
+	{
+		parameters: [
+			{
+				name: 'carId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+			{
+				name: 'driveId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+			},
+		],
+		post: {
+			summary:
+				'Create or replay a Driving analysis from a ready Race recording',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							additionalProperties: false,
+							required: [
+								'requestId',
+								'raceVideoId',
+								'approvedTrackMapVersionId',
+								'raceWindow',
+								'subjectSeed',
+							],
+							properties: {
+								requestId: { type: 'string', format: 'uuid' },
+								raceVideoId: { type: 'string', format: 'uuid' },
+								approvedTrackMapVersionId: {
+									type: 'string',
+									format: 'uuid',
+								},
+								raceWindow: drivingAnalysisWindowSchema,
+								subjectSeed: drivingAnalysisSchema.properties.subjectSeed,
+							},
+						},
+					},
+				},
+			},
+			responses: {
+				202: {
+					description:
+						'Stable queued or running analysis accepted without waiting for processing',
+					content: {
+						'application/json': { schema: drivingAnalysisResponse },
+					},
+				},
+				400: { description: 'Invalid Race window or Subject seed' },
+				404: {
+					description: 'Owned Car, Drive session, or Race video not found',
+				},
+				409: {
+					description:
+						'Request identity reuse with different input, source readiness, Track-map, or active-analysis quota conflict',
+				},
+				429: { description: 'Driving-analysis creation rate limit reached' },
+				503: { description: 'Durable processing Workflow unavailable' },
+			},
+		},
+	};
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}'] = {
+	parameters: [
+		{
+			name: 'analysisId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	get: {
+		summary: 'Read owner-authorized authoritative Driving-analysis progress',
+		responses: {
+			200: {
+				description: 'Current immutable input and monotonic D1 lifecycle',
+				content: {
+					'application/json': { schema: drivingAnalysisResponse },
+				},
+			},
+			404: { description: 'Driving analysis not found' },
+		},
+	},
+};
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/evidence'] = {
+	parameters: [
+		{
+			name: 'analysisId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	get: {
+		summary:
+			'Review owner-authorized Corner passes from the current analysis run',
+		description:
+			'Returns one D1 snapshot with analysisId, carId, driveSessionId, stateVersion, status, runId, trackMapVersionId, tieToleranceMs and ordered corners. Each corner contains every accepted eligible or excluded pass, unrounded gate-to-gate duration, crossing timestamps and bracketing frame indexes, run-wide rank and tie group, and safe segment, inference-profile, observation, manifest and measurement provenance. No attempts, leases, object keys or transfer capabilities are exposed. Before evidence is accepted, corners have empty pass lists. Responses are private and never cached.',
+		responses: {
+			200: {
+				description:
+					'Current-run accepted Corner evidence, wrapped in evidence',
+			},
+			401: { description: 'Authentication required' },
+			404: { description: 'Driving analysis not found or deleted' },
+		},
+	},
+};
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/retry'] = {
+	parameters: [
+		{
+			name: 'analysisId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	post: {
+		summary: 'Owner-only retry with a fresh Workflow identity',
+		description:
+			'Preserves the recording, request identity, Race window, Subject seed, and approved Track map while fencing prior Tracking work. Exact command replay returns the current analysis while the receipt matches its current Workflow and the analysis is not deleting/deleted; reuse for a different analysis or revision conflicts.',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						additionalProperties: false,
+						required: ['expectedStateVersion'],
+						properties: {
+							expectedStateVersion: { type: 'integer', minimum: 1 },
+							commandId: {
+								type: 'string',
+								format: 'uuid',
+								description:
+									'Optional lowercase UUID v4 replay identity. Omission uses analysisId:expectedStateVersion.',
+							},
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			202: {
+				description: 'Retry accepted or replayed, wrapped in drivingAnalysis',
+				content: {
+					'application/json': { schema: drivingAnalysisResponse },
+				},
+			},
+			400: {
+				description: 'Invalid observed state revision or optional command ID',
+			},
+			401: { description: 'Authentication required' },
+			404: { description: 'Driving analysis not found' },
+			409: { description: 'Analysis is ineligible or changed concurrently' },
+			503: { description: 'Durable processing Workflow unavailable' },
+		},
+	},
+};
 
 const setupPaths = openApi.paths as Record<string, unknown>;
 const setupSchema = {
@@ -2093,4 +2802,752 @@ voicePaths['/api/v1/voice-updates/{voiceUpdateId}/results'] = {
 			404: { description: 'Voice update not found' },
 		},
 	},
+};
+
+const trackMapPaths = openApi.paths as Record<string, unknown>;
+const trackLayoutIdParameter = {
+	in: 'path',
+	name: 'layoutId',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+} as const;
+const trackMapVersionIdParameter = {
+	in: 'path',
+	name: 'versionId',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+} as const;
+const trackPointSchema = {
+	type: 'object',
+	required: ['x', 'y'],
+	properties: {
+		x: { type: 'number', minimum: 0, maximum: 1 },
+		y: { type: 'number', minimum: 0, maximum: 1 },
+	},
+} as const;
+const trackGateSchema = {
+	type: 'object',
+	required: ['start', 'end', 'direction'],
+	properties: {
+		start: trackPointSchema,
+		end: trackPointSchema,
+		direction: { type: 'string', enum: ['forward', 'reverse'] },
+	},
+} as const;
+const trackCornerSchema = {
+	type: 'object',
+	description:
+		'One ordered Corner expressed in normalized 0–1 coordinates relative to the fixed Track view.',
+	required: ['key', 'name', 'order', 'entryGate', 'exitGate', 'cornerView'],
+	properties: {
+		key: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 80,
+			pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
+		},
+		name: { type: 'string', minLength: 1, maxLength: 120 },
+		order: { type: 'integer', minimum: 1 },
+		entryGate: trackGateSchema,
+		exitGate: trackGateSchema,
+		cornerView: {
+			type: 'object',
+			required: ['x', 'y', 'width', 'height'],
+			properties: {
+				x: { type: 'number', minimum: 0, maximum: 1 },
+				y: { type: 'number', minimum: 0, maximum: 1 },
+				width: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+				height: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+			},
+		},
+	},
+} as const;
+const trackMapStatusSchema = {
+	type: 'string',
+	enum: ['draft', 'approved', 'retired'],
+	description:
+		'Drafts are Owner-editable, approved versions are immutable and selectable, and retired versions remain historical but cannot be newly selected.',
+} as const;
+const trackMapVersionSchema = {
+	type: 'object',
+	required: [
+		'id',
+		'layoutId',
+		'version',
+		'stateVersion',
+		'status',
+		'sourceVersionId',
+		'createdBy',
+		'createdAt',
+		'updatedAt',
+		'approvedBy',
+		'approvedAt',
+		'retiredAt',
+		'corners',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		layoutId: { type: 'string', format: 'uuid' },
+		version: {
+			type: 'integer',
+			minimum: 1,
+			description:
+				'Immutable, monotonically increasing version within a layout.',
+		},
+		stateVersion: {
+			type: 'integer',
+			minimum: 1,
+			description:
+				'Observed revision required for conflict-safe save, approval, and retirement decisions.',
+		},
+		status: trackMapStatusSchema,
+		sourceVersionId: { type: 'string', format: 'uuid', nullable: true },
+		createdBy: { type: 'string' },
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+		approvedBy: { type: 'string', nullable: true },
+		approvedAt: { type: 'string', format: 'date-time', nullable: true },
+		retiredAt: { type: 'string', format: 'date-time', nullable: true },
+		corners: { type: 'array', maxItems: 100, items: trackCornerSchema },
+		referenceFrame: {
+			oneOf: [
+				{
+					type: 'object',
+					required: [
+						'raceVideoId',
+						'timestampMs',
+						'byteCount',
+						'checksumSha256',
+						'contentType',
+					],
+					properties: {
+						raceVideoId: { type: 'string', format: 'uuid' },
+						timestampMs: { type: 'integer', minimum: 0 },
+						byteCount: { type: 'integer', minimum: 1 },
+						checksumSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+						contentType: { type: 'string', enum: ['image/jpeg'] },
+					},
+				},
+				{ type: 'null' },
+			],
+		},
+	},
+} as const;
+const trackMapVersionResponse = {
+	description: 'Track-map version, provenance, lifecycle state, and geometry',
+	content: {
+		'application/json': {
+			schema: {
+				type: 'object',
+				required: ['trackMapVersion'],
+				properties: { trackMapVersion: trackMapVersionSchema },
+			},
+		},
+	},
+} as const;
+const trackMapDecisionBody = {
+	required: true,
+	content: {
+		'application/json': {
+			schema: {
+				type: 'object',
+				required: ['expectedStateVersion'],
+				properties: {
+					expectedStateVersion: { type: 'integer', minimum: 1 },
+				},
+			},
+		},
+	},
+} as const;
+const trackMapVersionSummarySchema = {
+	type: 'object',
+	required: [
+		'id',
+		'version',
+		'stateVersion',
+		'status',
+		'createdAt',
+		'updatedAt',
+		'approvedAt',
+		'retiredAt',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		version: { type: 'integer', minimum: 1 },
+		stateVersion: { type: 'integer', minimum: 1 },
+		status: trackMapStatusSchema,
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+		approvedAt: { type: 'string', format: 'date-time', nullable: true },
+		retiredAt: { type: 'string', format: 'date-time', nullable: true },
+	},
+} as const;
+const trackLayoutSummarySchema = {
+	type: 'object',
+	required: [
+		'id',
+		'name',
+		'status',
+		'createdBy',
+		'createdAt',
+		'updatedAt',
+		'retiredAt',
+		'mapVersions',
+	],
+	properties: {
+		id: { type: 'string', format: 'uuid' },
+		name: { type: 'string' },
+		status: { type: 'string', enum: ['active', 'retired'] },
+		createdBy: { type: 'string' },
+		createdAt: { type: 'string', format: 'date-time' },
+		updatedAt: { type: 'string', format: 'date-time' },
+		retiredAt: { type: 'string', format: 'date-time', nullable: true },
+		mapVersions: { type: 'array', items: trackMapVersionSummarySchema },
+	},
+} as const;
+trackMapPaths['/api/v1/track-layouts'] = {
+	get: {
+		summary: 'List Track layouts visible to the authenticated user',
+		description:
+			'Owners receive all states. Ordinary authenticated users receive active layouts with approved, non-retired versions only.',
+		responses: {
+			200: {
+				description: 'Track layouts and version summaries',
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							required: ['canManage', 'trackLayouts'],
+							properties: {
+								canManage: { type: 'boolean' },
+								trackLayouts: {
+									type: 'array',
+									items: trackLayoutSummarySchema,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	},
+	post: {
+		summary: 'Owner-only create a Track layout',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['name'],
+						properties: {
+							name: { type: 'string', minLength: 1, maxLength: 160 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Track layout created' },
+			400: { description: 'Invalid name' },
+			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-recordings'] = {
+	get: {
+		summary: 'Owner-only list validated Race recordings for Track-map frames',
+		description:
+			'Lists recording metadata without exposing private object keys or source URLs.',
+		responses: {
+			200: {
+				description: 'Validated private Race recordings',
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							required: ['raceVideos'],
+							properties: {
+								raceVideos: {
+									type: 'array',
+									items: {
+										type: 'object',
+										required: [
+											'id',
+											'fileName',
+											'byteCount',
+											'durationMs',
+											'width',
+											'height',
+										],
+										properties: {
+											id: { type: 'string', format: 'uuid' },
+											fileName: { type: 'string' },
+											byteCount: { type: 'integer', minimum: 1 },
+											durationMs: { type: 'integer', minimum: 1 },
+											width: { type: 'integer', minimum: 1 },
+											height: { type: 'integer', minimum: 1 },
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			404: { description: 'Track-map management is owner-only' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}'] = {
+	parameters: [trackLayoutIdParameter],
+	patch: {
+		summary: 'Owner-only rename a Track layout',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['name'],
+						properties: {
+							name: { type: 'string', minLength: 1, maxLength: 160 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			200: { description: 'Track layout renamed' },
+			404: { description: 'Track layout not found' },
+			409: { description: 'Duplicate name' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/retire'] = {
+	parameters: [trackLayoutIdParameter],
+	post: {
+		summary: 'Owner-only retire a Track layout',
+		responses: {
+			200: { description: 'Track layout retired' },
+			404: { description: 'Track layout not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions'] = {
+	parameters: [trackLayoutIdParameter],
+	post: {
+		summary: 'Owner-only create or clone a draft Track map version',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						properties: {
+							sourceVersionId: { type: 'string', format: 'uuid' },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: trackMapVersionResponse,
+			404: { description: 'Layout or source map not found' },
+			409: { description: 'Concurrent version creation conflict' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-layouts/{layoutId}/map-versions/{versionId}'] = {
+	parameters: [trackLayoutIdParameter, trackMapVersionIdParameter],
+	get: {
+		summary: 'Read a visible Track map version and normalized geometry',
+		description:
+			'Owners may inspect every state. Ordinary authenticated users may inspect approved versions on active layouts only.',
+		responses: {
+			200: trackMapVersionResponse,
+			404: { description: 'Track map not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}'] = {
+	parameters: [trackMapVersionIdParameter],
+	get: {
+		summary: 'Read a visible Track map version and normalized geometry',
+		description:
+			'Owners may inspect every state. Ordinary authenticated users may inspect approved versions on active layouts only.',
+		responses: {
+			200: trackMapVersionResponse,
+			404: { description: 'Track map not found' },
+		},
+	},
+	patch: {
+		summary: 'Owner-only replace draft Track map corners',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['expectedStateVersion', 'corners'],
+						properties: {
+							expectedStateVersion: { type: 'integer', minimum: 1 },
+							corners: {
+								type: 'array',
+								maxItems: 100,
+								items: trackCornerSchema,
+							},
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			200: trackMapVersionResponse,
+			400: { description: 'Invalid or degenerate geometry' },
+			409: {
+				description: 'Only drafts are editable or the observed state is stale',
+			},
+			404: { description: 'Track map not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}/approve'] = {
+	parameters: [trackMapVersionIdParameter],
+	post: {
+		summary: 'Owner-only approve complete draft geometry as immutable',
+		requestBody: trackMapDecisionBody,
+		responses: {
+			200: trackMapVersionResponse,
+			400: { description: 'Invalid observed state revision' },
+			404: { description: 'Track map not found' },
+			409: {
+				description: 'Draft geometry is invalid or the observed state is stale',
+			},
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}/reference-frame'] = {
+	parameters: [trackMapVersionIdParameter],
+	post: {
+		summary: 'Owner-only extract and attach a still frame to a draft Track map',
+		requestBody: {
+			required: true,
+			content: {
+				'application/json': {
+					schema: {
+						type: 'object',
+						required: ['raceVideoId', 'timestampMs'],
+						properties: {
+							raceVideoId: { type: 'string', format: 'uuid' },
+							timestampMs: { type: 'integer', minimum: 0 },
+						},
+					},
+				},
+			},
+		},
+		responses: {
+			201: { description: 'Reference frame extracted and attached' },
+			400: { description: 'Invalid recording or timestamp input' },
+			404: { description: 'Track map or validated recording not found' },
+			409: { description: 'Only a new draft may receive a reference frame' },
+		},
+	},
+};
+trackMapPaths[
+	'/api/v1/track-map-versions/{versionId}/reference-frame/content'
+] = {
+	parameters: [trackMapVersionIdParameter],
+	get: {
+		summary: 'Owner-only read the private Track-map reference frame',
+		responses: {
+			200: { description: 'Private JPEG reference frame' },
+			404: { description: 'Reference frame not found' },
+		},
+	},
+};
+trackMapPaths['/api/v1/track-map-versions/{versionId}/retire'] = {
+	parameters: [trackMapVersionIdParameter],
+	post: {
+		summary: 'Owner-only retire an approved Track-map version',
+		description:
+			'Retirement prevents future selection without changing historical references or immutable geometry.',
+		requestBody: trackMapDecisionBody,
+		responses: {
+			200: trackMapVersionResponse,
+			400: { description: 'Invalid observed state revision' },
+			404: { description: 'Track map not found' },
+			409: {
+				description:
+					'Only approved versions can retire or the observed state is stale',
+			},
+		},
+	},
+};
+
+const analysisIdParameter = {
+	name: 'analysisId',
+	in: 'path',
+	required: true,
+	schema: { type: 'string', format: 'uuid' },
+} as const;
+const analysisRevisionBody = {
+	required: true,
+	content: {
+		'application/json': {
+			schema: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['expectedStateVersion'],
+				properties: { expectedStateVersion: { type: 'integer', minimum: 1 } },
+			},
+		},
+	},
+} as const;
+const analysisMutationErrors = {
+	400: {
+		description:
+			'Malformed JSON or invalid strict revision payload; error contains flattened validation details',
+	},
+	401: { description: 'Authentication required' },
+	404: { description: 'Owned analysis not found' },
+	409: { description: 'State conflict; error, code and retryable false' },
+	503: {
+		description:
+			'Workflow unavailable; error, code and retryable true. Saved state may require replay.',
+	},
+} as const;
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/lifecycle'] = {
+	parameters: [analysisIdParameter],
+	get: {
+		summary: 'Read owned lifecycle and deletion tombstone',
+		description:
+			'Returns lifecycle with analysisId, status, stateVersion, permanent, canCancel, canRetry and nullable failure {code, retryable}. Deleted records remain readable here. Retry eligibility checks retained ready source and excludes TRACKING_ARTIFACT_INVALID; it is not a guarantee that a later retry will succeed.',
+		responses: {
+			200: { description: 'Owner-scoped lifecycle, wrapped in lifecycle' },
+			401: { description: 'Authentication required' },
+			404: { description: 'Owned analysis not found' },
+		},
+	},
+};
+Object.assign(
+	drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}'] as object,
+	{
+		delete: {
+			summary: 'Request asynchronous deletion of owned analysis media',
+			description:
+				'Requires observed revision when first entering deleting. Replays of deleting or deleted ignore stale revisions. Returns lifecycle; deleted is permanent. Cancellation scheduling failure can return 503 after deleting is saved. Cleanup retains a lifecycle tombstone.',
+			requestBody: analysisRevisionBody,
+			responses: {
+				...analysisMutationErrors,
+				202: {
+					description: 'Deletion accepted or replayed, wrapped in lifecycle',
+				},
+			},
+		},
+	},
+);
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/cancel'] = {
+	parameters: [analysisIdParameter],
+	post: {
+		summary: 'Cancel queued, running or awaiting-reidentification analysis',
+		description:
+			'Requires observed revision unless already cancelled. Replays signal cancellation again. Completed, failed, deleting and deleted states conflict. Workflow failure may return 503 after cancellation is saved.',
+		requestBody: analysisRevisionBody,
+		responses: {
+			...analysisMutationErrors,
+			202: { description: 'Cancellation accepted, wrapped in drivingAnalysis' },
+		},
+	},
+};
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/reidentification'] =
+	{
+		parameters: [analysisIdParameter],
+		get: {
+			summary:
+				'Read correction context for the owned current active Tracking run',
+			description:
+				'Returns context null without an accepted latest gap, otherwise runId, segmentId, acceptedDigest, gap and later prepared frame metadata. A saved pending correction adds pendingCorrection {correctionId, subjectSeed}. No object keys or transfer URLs are returned.',
+			responses: {
+				200: { description: 'Nullable context wrapped in context' },
+				401: { description: 'Authentication required' },
+				404: { description: 'Owned current active Tracking run not found' },
+				409: { description: 'Tracking authority conflict; error string' },
+			},
+		},
+		post: {
+			summary: 'Save an append-only Subject correction and resume Tracking',
+			description:
+				'Strict payload binds current run, predecessor segment and accepted digest. Seed must use an authoritative later prepared frame inside the gap. Exact correction replay is supported; changed correction content or stale run conflicts. A 503 means the correction is saved: replay the same correction to signal the Workflow again.',
+			requestBody: {
+				required: true,
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							additionalProperties: false,
+							required: [
+								'runId',
+								'segmentId',
+								'correctionId',
+								'acceptedDigest',
+								'subjectSeed',
+							],
+							properties: {
+								runId: {
+									type: 'string',
+									format: 'uuid',
+									description: 'Lowercase UUID v4',
+								},
+								segmentId: {
+									type: 'string',
+									format: 'uuid',
+									description: 'Lowercase UUID v4',
+								},
+								correctionId: {
+									type: 'string',
+									format: 'uuid',
+									description: 'Lowercase UUID v4 replay identity',
+								},
+								acceptedDigest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+								subjectSeed: {
+									type: 'object',
+									additionalProperties: false,
+									required: ['timestampMs', 'frameIndex', 'identity', 'box'],
+									properties: {
+										timestampMs: {
+											type: 'integer',
+											minimum: 0,
+											maximum: 86400000,
+										},
+										frameIndex: {
+											type: 'integer',
+											minimum: 0,
+											maximum: 9999999,
+										},
+										identity: {
+											type: 'string',
+											minLength: 1,
+											maxLength: 128,
+											description:
+												'No control characters, slashes, backslashes or URL-like text',
+										},
+										box: {
+											type: 'object',
+											additionalProperties: false,
+											required: ['x', 'y', 'width', 'height'],
+											description:
+												'Normalized Track-view box entirely inside the view, area at least 1e-12',
+											properties: {
+												x: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+												y: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+												width: {
+													type: 'number',
+													exclusiveMinimum: 0,
+													maximum: 1,
+												},
+												height: {
+													type: 'number',
+													exclusiveMinimum: 0,
+													maximum: 1,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			responses: {
+				202: {
+					description:
+						'Correction signalled; correctionId, runId and segmentId',
+				},
+				400: { description: 'Invalid strict correction payload; error string' },
+				401: { description: 'Authentication required' },
+				404: {
+					description:
+						'Owned active run or correction authority not found; error string',
+				},
+				409: {
+					description:
+						'Stale run, digest, frame or correction conflict; error string',
+				},
+				503: {
+					description:
+						'Correction saved but Workflow signal unavailable; error string',
+				},
+			},
+		},
+	};
+const clipErrors = {
+	401: { description: 'Authentication required' },
+	404: {
+		description:
+			'Owned analysis or current Workflow clip not found; error NOT_FOUND',
+	},
+	409: {
+		description:
+			'Publication or object integrity unavailable; error NOT_READY or STALE_AUTHORITY',
+	},
+	410: { description: 'Owned analysis deleting or deleted; error DELETED' },
+	503: {
+		description:
+			'Unexpected clip infrastructure failure; error CLIP_UNAVAILABLE',
+	},
+} as const;
+drivingAnalysisPaths['/api/v1/driving-analyses/{analysisId}/clips'] = {
+	parameters: [analysisIdParameter],
+	get: {
+		summary: 'List owned current Workflow Corner clips',
+		description:
+			'Private, no-store. Returns clips with id, cornerId, ordinal, segmentId, ready or not-ready status, inputDigest, nullable checksum and durationMs, and pipelineVersion corner-render.v1. No object keys or source URLs. Empty list is valid before clips are planned.',
+		responses: {
+			...clipErrors,
+			200: { description: 'Safe metadata wrapped in clips' },
+		},
+	},
+};
+const clipContentOperation = {
+	summary: 'Read owned retained Corner clip content',
+	description:
+		'Private, no-store video/mp4 with nosniff, ETag, Last-Modified and Accept-Ranges bytes. Checks current Workflow ownership and R2 size/checksum before playback. Supports one bounded, open-ended or suffix range and If-Range; stale If-Range returns full content. GET rechecks ownership before object read. HEAD has identical status and headers without a body.',
+	parameters: [
+		'Range',
+		'If-Range',
+		'If-Match',
+		'If-None-Match',
+		'If-Modified-Since',
+		'If-Unmodified-Since',
+	].map((name) => ({ name, in: 'header', schema: { type: 'string' } })),
+	responses: {
+		...clipErrors,
+		200: { description: 'Full clip or HEAD metadata' },
+		206: {
+			description: 'Single byte range with Content-Range and Content-Length',
+		},
+		304: { description: 'Conditional request unchanged, no body' },
+		412: { description: 'Playback precondition failed, no body' },
+		416: {
+			description:
+				'Malformed, multiple or unsatisfiable range; Content-Range bytes */size, no body',
+		},
+	},
+};
+drivingAnalysisPaths[
+	'/api/v1/driving-analyses/{analysisId}/clips/{clipId}/content'
+] = {
+	parameters: [
+		analysisIdParameter,
+		{
+			name: 'clipId',
+			in: 'path',
+			required: true,
+			schema: { type: 'string', format: 'uuid' },
+		},
+	],
+	get: clipContentOperation,
+	head: clipContentOperation,
 };

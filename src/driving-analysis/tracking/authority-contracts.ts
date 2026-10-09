@@ -124,6 +124,17 @@ export const transitionTrackingAttemptCommandSchema = z.strictObject({
 	updatedAt: isoTimestampSchema,
 });
 
+export const retireTrackingAttemptCommandSchema = z.strictObject({
+	ownerId: authorityIdentifierSchema,
+	runId: uuidV4Schema,
+	segmentId: uuidV4Schema,
+	attemptId: uuidV4Schema,
+	leaseId: uuidV4Schema,
+	fence: positiveIntSchema,
+	nextState: z.enum(['expired', 'replaced']),
+	updatedAt: isoTimestampSchema,
+});
+
 export const recordTrackingTransferRequestCommandSchema = z
 	.strictObject({
 		ownerId: authorityIdentifierSchema,
@@ -337,6 +348,9 @@ export type ActivateTrackingAttemptCommand = z.infer<
 export type TransitionTrackingAttemptCommand = z.infer<
 	typeof transitionTrackingAttemptCommandSchema
 >;
+export type RetireTrackingAttemptCommand = z.infer<
+	typeof retireTrackingAttemptCommandSchema
+>;
 export type RecordTrackingTransferRequestCommand = z.infer<
 	typeof recordTrackingTransferRequestCommandSchema
 >;
@@ -368,3 +382,30 @@ export type PublicTrackingProvenance = z.infer<
 	typeof publicTrackingProvenanceSchema
 >;
 export type PublicTrackingState = z.infer<typeof publicTrackingStateSchema>;
+
+export const setTrackingWaitReasonCommandSchema =
+	trackingWorkflowIdentitySchema.extend({
+		expectedCurrentAttemptId: uuidV4Schema.nullable(),
+		waitReason: publicTrackingStateSchema.shape.waitReason,
+	});
+export type SetTrackingWaitReasonCommand = z.infer<
+	typeof setTrackingWaitReasonCommandSchema
+>;
+
+export const expireTrackingAvailabilityCommandSchema =
+	trackingWorkflowIdentitySchema.extend({
+		expectedCurrentAttemptId: uuidV4Schema.nullable(),
+		expiredAt: positiveIntSchema,
+	});
+export type ExpireTrackingAvailabilityCommand = z.infer<
+	typeof expireTrackingAvailabilityCommandSchema
+>;
+
+export const failUnavailableTrackingOutputCommandSchema =
+	trackingWorkflowIdentitySchema.extend({
+		expectedCurrentAttemptId: uuidV4Schema,
+		failedAt: positiveIntSchema,
+	});
+export type FailUnavailableTrackingOutputCommand = z.infer<
+	typeof failUnavailableTrackingOutputCommandSchema
+>;

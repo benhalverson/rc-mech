@@ -20,6 +20,30 @@ describe('consumable rules', () => {
 		expect(mergeTireReport(report, undefined)).toBe(report);
 	});
 
+	it('uses stable identities for same-time history and exact cent totals regardless of acknowledgement order', () => {
+		const front = {
+			id: 'a',
+			carId: 'car',
+			kind: 'tires' as const,
+			performedAt: '2026-10-09T12:00:00.000Z',
+			axle: 'front' as const,
+			frontDetails: 'Pins',
+			frontCost: 0.1,
+		};
+		const rear = { ...front, id: 'b', frontCost: 0.2 };
+		const fluid = {
+			id: 'fluid-a',
+			carId: 'car',
+			kind: 'shock-fluid' as const,
+			performedAt: front.performedAt,
+		};
+		const records = [front, rear, fluid, { ...fluid, id: 'fluid-b' }];
+		expect(buildTireReport(records)).toEqual(
+			buildTireReport([...records].reverse()),
+		);
+		expect(buildTireReport(records).spend.front).toBe(0.3);
+	});
+
 	it('merges canonical frequency and multi-currency spend from the server', () => {
 		const server: MaintenanceReport = {
 			tires: {

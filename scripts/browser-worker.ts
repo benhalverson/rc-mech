@@ -7,8 +7,10 @@ import { createTestHarness } from 'wrangler';
 import { forwardedHeaderPairs } from './browser-http';
 
 const hostname = '127.0.0.1';
-const port = 8787;
+const port = Number(process.env['RC_MECH_BROWSER_WORKER_PORT'] ?? 8787);
 const origin = `http://${hostname}:${port}`;
+const clientPort = Number(process.env['RC_MECH_BROWSER_CLIENT_PORT'] ?? 4201);
+const appOrigin = `http://${hostname}:${clientPort}`;
 
 const harness = createTestHarness({
 	root: process.cwd(),
@@ -16,7 +18,7 @@ const harness = createTestHarness({
 		{
 			configPath: './wrangler.browser.jsonc',
 			vars: {
-				APP_URL: origin,
+				APP_URL: appOrigin,
 				MAGIC_LINK_TEST_TOKEN: 'local-test-token',
 				OWNER_EMAIL: 'owner@example.com',
 			},

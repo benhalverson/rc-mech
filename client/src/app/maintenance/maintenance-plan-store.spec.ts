@@ -11,6 +11,8 @@ import type {
 } from './maintenance.models';
 import { MaintenanceGateway } from './maintenance-gateway';
 import { MaintenancePlanStore } from './maintenance-plan-store';
+import { FakeMaintenanceWorkspace } from './maintenance-sync.testing';
+import { MaintenanceWorkspaceStore } from './maintenance-workspace-store';
 
 class FakeResource<T> {
 	private readonly current = signal<T | undefined>(undefined);
@@ -76,10 +78,13 @@ describe('MaintenancePlanStore', () => {
 	let gateway: FakePlanGateway;
 	let store: InstanceType<typeof MaintenancePlanStore>;
 
+	let workspace: FakeMaintenanceWorkspace;
 	beforeEach(() => {
+		workspace = new FakeMaintenanceWorkspace();
 		gateway = new FakePlanGateway();
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: MaintenanceWorkspaceStore, useValue: workspace },
 				MaintenancePlanStore,
 				{ provide: MaintenanceGateway, useValue: gateway },
 			],
@@ -237,5 +242,67 @@ describe('MaintenancePlanStore', () => {
 		expect(store.components()).toEqual([]);
 		store.loadComponents('car-3');
 		expect(store.components()).toEqual([]);
+	});
+	it('projects prepared records and publishes success only after durable local retention', () => {
+		TestBed.tick();
+		workspace.available.set(true);
+		workspace.cars.set([car]);
+		workspace.plans.set([plan]);
+		workspace.components.set([
+			component,
+			{ ...component, id: 'other', carId: 'other' },
+		]);
+		workspace.timezone.set('America/Los_Angeles');
+		gateway.plans.isLoading.set(true);
+		gateway.plans.error.set({ kind: 'unavailable' });
+		expect(store.cars()).toEqual([car]);
+		expect(store.plans()).toEqual([plan]);
+		expect(store.timezone()).toBe('America/Los_Angeles');
+		expect(store.loading()).toBe(false);
+		expect(store.error()).toBe('');
+		expect(store.action()).toBeNull();
+		store.loadComponents('car-1');
+		expect(store.components()).toEqual([component]);
+		expect(gateway.components).not.toHaveBeenCalled();
+		store.mutate({ kind: 'save-plan', mode: 'create', id: null, plan: draft });
+		const requestId = workspace.mutate.mock.calls[0][0].requestId;
+		workspace.outcome.set({ status: 'pending', requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+		workspace.outcome.set({ status: 'succeeded', requestId: 'unrelated' });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+		workspace.outcome.set({ status: 'succeeded', requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('succeeded');
+		store.retry();
+		store.refresh();
+		expect(workspace.refresh).toHaveBeenCalledTimes(2);
+		store.clearOutcome();
+		expect(store.outcome().status).toBe('idle');
+	});
+	it('retains local storage failure feedback without claiming a remote write', () => {
+		TestBed.tick();
+		workspace.available.set(true);
+		store.mutate({ kind: 'save-plan', mode: 'create', id: null, plan: draft });
+		const requestId = workspace.mutate.mock.calls[0][0].requestId;
+		workspace.outcome.set({
+			status: 'failed',
+			requestId,
+			message: 'Storage full. Not retained.',
+		});
+		TestBed.tick();
+		expect(store.error()).toBe('Storage full. Not retained.');
+		expect(store.outcome()).toMatchObject({
+			status: 'failed',
+			failure: 'save-failed',
+		});
+		store.clearOutcome();
+		expect(store.error()).toBe('');
+	});
+
+	it('announces synchronization feedback from the shared working copy', () => {
+		workspace.syncMessage.set('Pending sync');
+		expect(store.syncMessage()).toBe('Pending sync');
 	});
 });

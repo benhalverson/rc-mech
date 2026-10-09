@@ -19,6 +19,11 @@ import { ConsumableStore } from './consumable-store';
 
 export type { ConsumableEntry } from '../maintenance.models';
 
+/**
+ * Owns tire/fluid forms, filtering, and report presentation. Passes validated
+ * entry intents to ConsumableStore so display choices and form state stay out of
+ * the durable Maintenance history.
+ */
 @Component({
 	selector: 'app-consumable-maintenance',
 	imports: [
@@ -41,6 +46,7 @@ export class ConsumableMaintenance {
 		this.store.loading() ? 'loading' : this.store.error() ? 'error' : 'ready',
 	);
 	protected readonly error = this.store.error;
+	protected readonly syncMessage = this.store.syncMessage;
 	protected readonly action = this.store.action;
 	protected readonly hasActiveCars = computed(() =>
 		this.store.cars().some((car) => !car.archivedAt),

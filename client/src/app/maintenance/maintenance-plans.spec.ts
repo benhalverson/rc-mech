@@ -34,6 +34,7 @@ const plan: MaintenancePlan = {
 const store = {
 	cars: signal<MaintenanceCar[]>([car]),
 	plans: signal<MaintenancePlan[]>([plan]),
+	syncMessage: signal(''),
 	timezone: signal('UTC'),
 	components: signal([component]),
 	action: signal<string | null>(null),
@@ -49,7 +50,7 @@ type PlanHarness = {
 	visiblePlans(): MaintenancePlan[];
 	transition(
 		plan: MaintenancePlan,
-		action: 'pause' | 'resume' | 'archive',
+		action: 'pause' | 'resume' | 'archive' | 'restore',
 	): void;
 	carName(carId: string): string;
 	componentName(componentId?: string | null): string;
@@ -59,6 +60,13 @@ type PlanHarness = {
 	dueText(plan: MaintenancePlan): string;
 };
 
+const button = (container: ParentNode, label: string): HTMLButtonElement => {
+	const found = [...container.querySelectorAll('button')].find(
+		(candidate) => candidate.textContent?.trim() === label,
+	);
+	expect(found).toBeTruthy();
+	return found as HTMLButtonElement;
+};
 describe('MaintenancePlans', () => {
 	let fixture: ComponentFixture<MaintenancePlans>;
 	let app: PlanHarness;
@@ -163,16 +171,6 @@ describe('MaintenancePlans', () => {
 			{ ...plan, id: 'archived', status: 'archived', dueStatus: 'archived' },
 		]);
 		fixture.detectChanges();
-		const button = (
-			container: ParentNode,
-			label: string,
-		): HTMLButtonElement => {
-			const found = [...container.querySelectorAll('button')].find(
-				(candidate) => candidate.textContent?.trim() === label,
-			);
-			expect(found).toBeTruthy();
-			return found as HTMLButtonElement;
-		};
 
 		for (const label of [
 			'Overdue',
@@ -230,5 +228,22 @@ describe('MaintenancePlans', () => {
 		app.transition(plan, 'pause');
 		expect(store.mutate).not.toHaveBeenCalled();
 		expect(app.isReadOnly({ ...plan, status: 'archived' })).toBe(true);
+	});
+	it('restores archived plans only for an active Car and announces queued changes', () => {
+		store.plans.set([{ ...plan, status: 'archived' }]);
+		store.syncMessage.set('Pending sync');
+		app.filter.set('all');
+		fixture.detectChanges();
+		expect(fixture.nativeElement.textContent).toContain('Pending sync');
+		button(fixture.nativeElement, 'Restore plan').click();
+		expect(store.mutate).toHaveBeenCalledWith({
+			kind: 'transition-plan',
+			planId: plan.id,
+			action: 'restore',
+		});
+		store.mutate.mockClear();
+		store.cars.set([{ ...car, archivedAt: '2026-08-01' }]);
+		app.transition({ ...plan, status: 'archived' }, 'restore');
+		expect(store.mutate).not.toHaveBeenCalled();
 	});
 });

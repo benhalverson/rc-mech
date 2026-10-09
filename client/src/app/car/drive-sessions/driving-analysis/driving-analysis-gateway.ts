@@ -1,0 +1,173 @@
+import {
+	HttpClient,
+	HttpErrorResponse,
+	httpResource,
+} from '@angular/common/http';
+import { computed, inject, Service, type Signal, signal } from '@angular/core';
+import { catchError, map, type Observable, throwError } from 'rxjs';
+import type * as z from 'zod/mini';
+import {
+	boolean,
+	minLength,
+	optional,
+	safeParse,
+	strictObject,
+	string,
+	trim,
+} from 'zod/mini';
+import {
+	type CreateDrivingAnalysisCommand,
+	type DrivingAnalysis,
+	type DrivingAnalysisGatewayFailure,
+	drivingAnalysisResponseSchema,
+} from './driving-analysis.models';
+import {
+	type SubjectFrameRequest,
+	subjectFrameResponseSchema,
+} from './subject-frame.models';
+
+export const subjectFrameContentUrl = (
+	recordingId: string,
+	frameIndex: number,
+	checksum: string,
+): string =>
+	`/api/v1/race-videos/${encodeURIComponent(recordingId)}/subject-frames/${frameIndex}/content?checksum=${encodeURIComponent(checksum)}`;
+
+const apiErrorSchema = strictObject({
+	error: string().check(trim(), minLength(1)),
+	code: optional(string()),
+	retryable: optional(boolean()),
+});
+
+class InvalidDrivingAnalysisResponse extends Error {}
+
+const parse = <T>(schema: z.core.$ZodType<T>, value: unknown): T => {
+	const result = safeParse(schema, value);
+	if (!result.success)
+		throw new InvalidDrivingAnalysisResponse(
+			'The Driving-analysis response was invalid.',
+		);
+	return result.data;
+};
+
+export const parseDrivingAnalysis = (value: unknown): DrivingAnalysis =>
+	parse(drivingAnalysisResponseSchema, value);
+
+export const drivingAnalysisGatewayFailure = (
+	error: unknown,
+): DrivingAnalysisGatewayFailure => {
+	if (error instanceof HttpErrorResponse) {
+		if (error.status === 0) return { kind: 'unavailable' };
+		const apiError = apiErrorSchema.safeParse(error.error);
+		return apiError.success
+			? {
+					kind: 'rejected-response',
+					status: error.status,
+					message: apiError.data.error,
+				}
+			: { kind: 'http', status: error.status };
+	}
+	return error instanceof InvalidDrivingAnalysisResponse
+		? { kind: 'invalid-response' }
+		: { kind: 'unavailable' };
+};
+
+const createUrl = (carId: string, driveSessionId: string): string =>
+	`/api/v1/cars/${encodeURIComponent(carId)}/drives/${encodeURIComponent(driveSessionId)}/driving-analyses`;
+
+@Service()
+export class DrivingAnalysisGateway {
+	readSubjectFrame(selection: Signal<SubjectFrameRequest | null>) {
+		return httpResource(
+			() => {
+				const selected = selection();
+				return selected
+					? {
+							url: `/api/v1/race-videos/${encodeURIComponent(selected.recordingId)}/subject-frame?timestampMs=${selected.timestampMs}`,
+							withCredentials: true,
+						}
+					: undefined;
+			},
+			{
+				parse: (value: unknown) => {
+					const frame = subjectFrameResponseSchema.parse(value).frame;
+					return {
+						...frame,
+						contentUrl: subjectFrameContentUrl(
+							frame.recordingId,
+							frame.frameIndex,
+							frame.sourceChecksumSha256,
+						),
+					};
+				},
+			},
+		);
+	}
+	private readonly http = inject(HttpClient);
+	private readonly analysisId = signal('');
+	readonly analysis = httpResource<DrivingAnalysis>(
+		() => {
+			const analysisId = this.analysisId();
+			return analysisId
+				? {
+						url: `/api/v1/driving-analyses/${encodeURIComponent(analysisId)}`,
+						withCredentials: true,
+					}
+				: undefined;
+		},
+		{ parse: parseDrivingAnalysis },
+	);
+	readonly analysisFailure = computed(() => {
+		const error = this.analysis.error();
+		return error ? drivingAnalysisGatewayFailure(error) : null;
+	});
+
+	create(command: CreateDrivingAnalysisCommand): Observable<DrivingAnalysis> {
+		return this.parseRequest(
+			this.http.post<unknown>(
+				createUrl(command.carId, command.driveSessionId),
+				{
+					requestId: command.requestId,
+					raceVideoId: command.raceVideoId,
+					approvedTrackMapVersionId: command.approvedTrackMapVersionId,
+					raceWindow: command.raceWindow,
+					subjectSeed: command.subjectSeed,
+				},
+				{ withCredentials: true },
+			),
+		);
+	}
+
+	retry(
+		analysisId: string,
+		expectedStateVersion: number,
+		commandId?: string,
+	): Observable<DrivingAnalysis> {
+		return this.parseRequest(
+			this.http.post<unknown>(
+				`/api/v1/driving-analyses/${encodeURIComponent(analysisId)}/retry`,
+				{ expectedStateVersion, ...(commandId ? { commandId } : {}) },
+				{ withCredentials: true },
+			),
+		);
+	}
+
+	selectAnalysis(analysisId: string | null): void {
+		this.analysisId.set(analysisId ?? '');
+	}
+
+	refresh(): void {
+		this.analysis.reload();
+	}
+
+	private parseRequest(
+		request: Observable<unknown>,
+	): Observable<DrivingAnalysis> {
+		return request.pipe(
+			map(parseDrivingAnalysis),
+			catchError((error: unknown) =>
+				throwError(() => drivingAnalysisGatewayFailure(error)),
+			),
+		);
+	}
+}

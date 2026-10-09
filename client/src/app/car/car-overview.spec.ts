@@ -80,6 +80,7 @@ const emptyCurrentSetupStore = {
 };
 
 const emptyVoiceStore = {
+	remoteAvailable: signal(true),
 	localCaptures: signal([]),
 	updates: signal([]),
 	cars: signal([]),

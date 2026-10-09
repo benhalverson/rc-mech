@@ -11,6 +11,8 @@ import {
 	sql,
 } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { analysisMediaScan } from '../analysis/lifecycle-schema';
+import { GPU_MAX_DEADLINE_MS } from '../gpu-lease-coordinator';
 import {
 	type AcceptTrackingArtifactCommand,
 	type ActivateTrackingAttemptCommand,
@@ -22,7 +24,11 @@ import {
 	createFirstTrackingSegmentCommandSchema,
 	createTrackingRunCommandSchema,
 	createTrackingSegmentCommandSchema,
+	type ExpireTrackingAvailabilityCommand,
+	expireTrackingAvailabilityCommandSchema,
+	type FailUnavailableTrackingOutputCommand,
 	type FenceTrackingRunCommand,
+	failUnavailableTrackingOutputCommandSchema,
 	fenceTrackingRunCommandSchema,
 	type MarkTrackingArtifactPromotionDeletedCommand,
 	type MarkTrackingArtifactPromotionReadyCommand,
@@ -38,8 +44,12 @@ import {
 	publicTrackingStateSchema,
 	type RecordTrackingArtifactPromotionCommand,
 	type RecordTrackingTransferRequestCommand,
+	type RetireTrackingAttemptCommand,
 	recordTrackingArtifactPromotionCommandSchema,
 	recordTrackingTransferRequestCommandSchema,
+	retireTrackingAttemptCommandSchema,
+	type SetTrackingWaitReasonCommand,
+	setTrackingWaitReasonCommandSchema,
 	type TrackingWorkflowIdentity,
 	type TransitionTrackingAttemptCommand,
 	type TransitionTrackingTransferRequestCommand,
@@ -64,6 +74,7 @@ import {
 	trackingTransferRequest,
 } from './authority-schema';
 import {
+	type ExecutionIdentity,
 	type PreparedMediaArtifact,
 	preparedMediaArtifactSchema,
 	type SubjectSeed,
@@ -74,10 +85,13 @@ import {
 	type InferenceProfile,
 	inferenceProfileSchema,
 } from './inference-profile';
+import type { TrackingArtifactStore } from './r2-tracking-artifact-store';
+import { readReidentificationFrames } from './reidentification-frames';
 import {
 	FRAME_MANIFEST_CONTENT_TYPE,
 	PREPARED_MEDIA_CONTENT_TYPE,
 } from './track-view-contracts';
+import { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 import { buildTrackingSegmentSpecification } from './tracking-segment-specification';
 
 export type TrackingAuthorityErrorCode =
@@ -135,6 +149,7 @@ export type TrackingWorkflowContext = {
 	workflowId: string;
 	profileDigest: string;
 	segmentId: string;
+	seedKind: 'initial' | 'reidentification';
 	preparedMediaId: string;
 	specificationDigest: string;
 	availabilityDeadlineAt: number;
@@ -262,6 +277,7 @@ export class TrackingAuthority {
 
 	async createSegment(
 		commandValue: CreateTrackingSegmentCommand,
+		timingPolicy: 'exact' | 'reuse-persisted' = 'exact',
 	): Promise<TrackingSegmentRecord> {
 		const command = createTrackingSegmentCommandSchema.parse(commandValue);
 		const run = await this.requireActiveRun(command.ownerId, command.runId);
@@ -351,22 +367,40 @@ export class TrackingAuthority {
 		const seedJson = JSON.stringify(command.seed.value);
 		await this.database
 			.insert(trackingSegment)
-			.values({
-				id: command.segmentId,
-				runId: command.runId,
-				order: command.order,
-				seedKind: command.seed.kind,
-				seedSourceId: command.seed.sourceId,
-				seedJson,
-				preparedMediaId: command.preparedMediaId,
-				raceWindowEndTimestampMs: specification.raceWindowEndTimestampMs,
-				profileDigest: run.profileDigest,
-				specificationVersion: command.specificationVersion,
-				specificationDigest: specification.digest,
-				availabilityDeadlineAt: command.availabilityDeadlineAt,
-				version: 1,
-				createdAt: command.createdAt,
-			})
+			.select(
+				this.database
+					.select({
+						id: sql<string>`${command.segmentId}`,
+						runId: sql<string>`${command.runId}`,
+						order: sql<number>`${command.order}`,
+						seedKind: sql<'initial' | 'reidentification'>`${command.seed.kind}`,
+						seedSourceId: sql<string | null>`${command.seed.sourceId}`,
+						seedJson: sql<string>`${seedJson}`,
+						preparedMediaId: sql<string>`${command.preparedMediaId}`,
+						raceWindowEndTimestampMs: sql<number>`${specification.raceWindowEndTimestampMs}`,
+						profileDigest: sql<string>`${run.profileDigest}`,
+						specificationVersion: sql<string>`${command.specificationVersion}`,
+						specificationDigest: sql<string>`${specification.digest}`,
+						availabilityDeadlineAt: sql<number>`${command.availabilityDeadlineAt}`,
+						waitReason: sql<null>`NULL`,
+						currentAttemptId: sql<null>`NULL`,
+						authorityLeaseId: sql<null>`NULL`,
+						authorityFence: sql<null>`NULL`,
+						outcome: sql<null>`NULL`,
+						gapJson: sql<null>`NULL`,
+						acceptedArtifactId: sql<null>`NULL`,
+						version: sql<number>`1`,
+						createdAt: sql<string>`${command.createdAt}`,
+					})
+					.from(trackingRun)
+					.where(
+						and(
+							eq(trackingRun.id, run.id),
+							eq(trackingRun.status, 'active'),
+							eq(trackingRun.version, run.version),
+						),
+					),
+			)
 			.onConflictDoNothing();
 		const stored = await this.database
 			.select()
@@ -382,7 +416,6 @@ export class TrackingAuthority {
 				),
 			)
 			.get();
-		/* c8 ignore next -- an insert-or-existing D1 write always yields one matching identity unless D1 fails. */
 		if (!stored) throw conflict('Tracking segment was not persisted');
 		if (
 			stored.id !== command.segmentId ||
@@ -392,8 +425,9 @@ export class TrackingAuthority {
 			stored.preparedMediaId !== command.preparedMediaId ||
 			stored.profileDigest !== run.profileDigest ||
 			stored.specificationDigest !== specification.digest ||
-			stored.availabilityDeadlineAt !== command.availabilityDeadlineAt ||
-			stored.createdAt !== command.createdAt
+			(timingPolicy === 'exact' &&
+				(stored.availabilityDeadlineAt !== command.availabilityDeadlineAt ||
+					stored.createdAt !== command.createdAt))
 		)
 			throw conflict(
 				'Tracking-segment identity was replayed with different immutable input',
@@ -418,7 +452,13 @@ export class TrackingAuthority {
 			workflowId: _workflowId,
 			...segment
 		} = command;
-		await this.createSegment(segment);
+		const existing = await this.ownedSegment(command.runId, command.segmentId);
+		await this.createSegment({
+			...segment,
+			availabilityDeadlineAt:
+				existing?.availabilityDeadlineAt ?? segment.availabilityDeadlineAt,
+			createdAt: existing?.createdAt ?? segment.createdAt,
+		});
 		return this.workflowContext({
 			ownerId: command.ownerId,
 			analysisId: command.analysisId,
@@ -426,6 +466,120 @@ export class TrackingAuthority {
 			workflowId: command.workflowId,
 			segmentId: command.segmentId,
 		});
+	}
+
+	async nextSegment(
+		identity: TrackingWorkflowIdentity,
+	): Promise<TrackingWorkflowContext | null> {
+		await this.workflowContext(identity);
+		const previous = await this.ownedSegment(
+			identity.runId,
+			identity.segmentId,
+		);
+		if (previous?.outcome !== 'tracking-gap')
+			throw conflict('Re-identification requires accepted gap evidence');
+		const next = await this.database
+			.select()
+			.from(trackingSegment)
+			.where(
+				and(
+					eq(trackingSegment.runId, identity.runId),
+					eq(trackingSegment.order, previous.order + 1),
+					eq(trackingSegment.seedSourceId, identity.segmentId),
+				),
+			)
+			.get();
+		return next
+			? this.workflowContext({ ...identity, segmentId: next.id })
+			: null;
+	}
+
+	async reidentify(
+		identity: TrackingWorkflowIdentity,
+		correctionId: string,
+		acceptedDigest: string,
+		seedValue: SubjectSeed,
+		manifestStore: Pick<TrackingArtifactStore, 'read'>,
+	): Promise<TrackingWorkflowContext> {
+		const seed = subjectSeedSchema.parse(seedValue);
+		const context = await this.workflowContext(identity);
+		const previous = await this.ownedSegment(
+			identity.runId,
+			identity.segmentId,
+		);
+		const artifact = await this.acceptedArtifactFor(
+			identity.ownerId,
+			identity.runId,
+			identity.segmentId,
+		);
+		if (
+			!previous ||
+			!artifact ||
+			artifact.outcome !== 'tracking-gap' ||
+			artifact.checksumSha256 !== acceptedDigest ||
+			!artifact.gapJson
+		)
+			throw conflict('Re-identification requires the current accepted gap');
+		const gap = trackingGapSchema.parse(JSON.parse(artifact.gapJson));
+		if (
+			seed.timestampMs <= gap.startTimestampMs ||
+			seed.frameIndex <= context.seed.frameIndex
+		)
+			throw conflict('Re-identification must start on a later clear frame');
+		const frames = await this.reidentificationFrames(identity, manifestStore);
+		if (
+			!frames.some(
+				(frame) =>
+					frame.frameIndex === seed.frameIndex &&
+					frame.timestampMs === seed.timestampMs,
+			)
+		)
+			throw conflict('Subject frame must match the prepared frame manifest');
+		const existing = await this.ownedSegment(identity.runId, correctionId);
+		const next = await this.createSegment(
+			{
+				ownerId: identity.ownerId,
+				runId: identity.runId,
+				segmentId: correctionId,
+				order: previous.order + 1,
+				seed: {
+					kind: 'reidentification',
+					sourceId: identity.segmentId,
+					value: seed,
+				},
+				preparedMediaId: previous.preparedMediaId,
+				specificationVersion: 'tracking-segment-spec.v1',
+				availabilityDeadlineAt:
+					existing?.availabilityDeadlineAt ?? Date.now() + GPU_MAX_DEADLINE_MS,
+				createdAt: existing?.createdAt ?? new Date().toISOString(),
+			},
+			'reuse-persisted',
+		);
+		return this.workflowContext({ ...identity, segmentId: next.id });
+	}
+
+	async reidentificationFrames(
+		identity: TrackingWorkflowIdentity,
+		store: Pick<TrackingArtifactStore, 'read'>,
+	) {
+		const context = await this.workflowContext(identity);
+		const object = await this.database
+			.select({ objectKey: preparedTrackingObject.objectKey })
+			.from(preparedTrackingObject)
+			.where(
+				and(
+					eq(preparedTrackingObject.preparedMediaId, context.preparedMediaId),
+					eq(preparedTrackingObject.runId, identity.runId),
+					eq(preparedTrackingObject.role, 'frame-manifest'),
+				),
+			)
+			.get();
+		if (!object) throw notFound('Prepared frame manifest was not found');
+		return readReidentificationFrames(
+			store,
+			object.objectKey,
+			context.prepared,
+		);
 	}
 
 	async workflowContext(
@@ -439,8 +593,7 @@ export class TrackingAuthority {
 		)
 			throw stale('Tracking Workflow does not own the current run');
 		const segment = await this.ownedSegment(identity.runId, identity.segmentId);
-		if (segment?.order !== 0 || segment.seedKind !== 'initial')
-			throw notFound('The first Tracking segment was not found');
+		if (!segment) throw notFound('The Tracking segment was not found');
 		const [prepared, profile, attempt, outputTransfer] = await Promise.all([
 			this.database
 				.select()
@@ -493,6 +646,7 @@ export class TrackingAuthority {
 			workflowId: run.workflowId,
 			profileDigest: segment.profileDigest,
 			segmentId: segment.id,
+			seedKind: segment.seedKind,
 			preparedMediaId: segment.preparedMediaId,
 			specificationDigest: segment.specificationDigest,
 			availabilityDeadlineAt: segment.availabilityDeadlineAt,
@@ -699,6 +853,72 @@ export class TrackingAuthority {
 		/* c8 ignore next -- a zero-row result requires a concurrent D1 witness change after the read above. */
 		if (!updated) throw stale('Tracking-attempt authority changed');
 		return updated;
+	}
+
+	/** Retire the current attempt and atomically remove its segment authority. */
+	async retireAttempt(
+		commandValue: RetireTrackingAttemptCommand,
+	): Promise<void> {
+		const command = retireTrackingAttemptCommandSchema.parse(commandValue);
+		await this.requireActiveRun(command.ownerId, command.runId);
+		const retired = await this.database
+			.select({ id: trackingExecutionAttempt.id })
+			.from(trackingExecutionAttempt)
+			.innerJoin(
+				trackingSegment,
+				eq(trackingSegment.id, trackingExecutionAttempt.segmentId),
+			)
+			.where(
+				and(
+					eq(trackingSegment.runId, command.runId),
+					eq(trackingSegment.id, command.segmentId),
+					isNull(trackingSegment.currentAttemptId),
+					eq(trackingExecutionAttempt.id, command.attemptId),
+					eq(trackingExecutionAttempt.leaseId, command.leaseId),
+					eq(trackingExecutionAttempt.fence, command.fence),
+					eq(trackingExecutionAttempt.state, command.nextState),
+				),
+			)
+			.get();
+		if (retired) return;
+		const attempt = await this.requireCurrentAttempt(command);
+		await this.database.batch([
+			this.database
+				.update(trackingExecutionAttempt)
+				.set({
+					state: command.nextState,
+					updatedAt: command.updatedAt,
+					version: attempt.version + 1,
+				})
+				.where(
+					and(
+						eq(trackingExecutionAttempt.id, command.attemptId),
+						eq(trackingExecutionAttempt.state, attempt.state),
+						eq(trackingExecutionAttempt.version, attempt.version),
+						this.currentAuthorityExists(command),
+					),
+				),
+			this.database
+				.update(trackingSegment)
+				.set({
+					currentAttemptId: null,
+					authorityLeaseId: null,
+					authorityFence: null,
+					version: sql`${trackingSegment.version} + 1`,
+				})
+				.where(
+					and(
+						eq(trackingSegment.id, command.segmentId),
+						eq(trackingSegment.currentAttemptId, command.attemptId),
+						eq(trackingSegment.authorityLeaseId, command.leaseId),
+						eq(trackingSegment.authorityFence, command.fence),
+						isNull(trackingSegment.outcome),
+					),
+				),
+		]);
+		const segment = await this.ownedSegment(command.runId, command.segmentId);
+		if (!segment || segment.currentAttemptId !== null)
+			throw stale('Tracking attempt retirement lost its authority race');
 	}
 
 	async recordTransferRequest(
@@ -1059,6 +1279,25 @@ export class TrackingAuthority {
 		return updated;
 	}
 
+	async stagingCleanupCursor(): Promise<string | undefined> {
+		const scan = await this.database
+			.select()
+			.from(analysisMediaScan)
+			.where(eq(analysisMediaScan.name, 'tracking-staging'))
+			.get();
+		return scan?.cursor ?? undefined;
+	}
+
+	async saveStagingCleanupCursor(cursor: string | undefined): Promise<void> {
+		await this.database
+			.insert(analysisMediaScan)
+			.values({ name: 'tracking-staging', cursor: cursor ?? null })
+			.onConflictDoUpdate({
+				target: analysisMediaScan.name,
+				set: { cursor: cursor ?? null },
+			});
+	}
+
 	async cleanupPromotionCandidates(
 		now: string,
 		limit = 50,
@@ -1084,21 +1323,33 @@ export class TrackingAuthority {
 					),
 				),
 		);
+		const recheckBefore = new Date(
+			Date.parse(now) - TRACKING_ARTIFACT_GARBAGE_RETENTION_MS,
+		).toISOString();
+		const eligible = or(
+			and(
+				inArray(trackingArtifactPromotion.state, [
+					'pending',
+					'promoted',
+					'deleting',
+				]),
+				lte(trackingArtifactPromotion.deleteAfter, now),
+			),
+			and(
+				eq(trackingArtifactPromotion.state, 'deleted'),
+				lte(trackingArtifactPromotion.updatedAt, recheckBefore),
+			),
+		);
+		// Tombstones are permanent publication fences. Revisit them because a PUT
+		// can complete after DELETE even when its publisher never runs again.
+		const cleanupDueAt = sql`CASE WHEN ${trackingArtifactPromotion.state} = 'deleted'
+            THEN julianday(${trackingArtifactPromotion.updatedAt}) + ${TRACKING_ARTIFACT_GARBAGE_RETENTION_MS / 86_400_000}
+            ELSE julianday(${trackingArtifactPromotion.deleteAfter}) END`;
 		const due = await this.database
 			.select()
 			.from(trackingArtifactPromotion)
-			.where(
-				and(
-					inArray(trackingArtifactPromotion.state, [
-						'pending',
-						'promoted',
-						'deleting',
-					]),
-					lte(trackingArtifactPromotion.deleteAfter, now),
-					unreferenced,
-				),
-			)
-			.orderBy(asc(trackingArtifactPromotion.deleteAfter))
+			.where(and(eligible, unreferenced))
+			.orderBy(asc(cleanupDueAt), asc(trackingArtifactPromotion.artifactId))
 			.limit(limit);
 		const claimed: TrackingArtifactCleanupCandidate[] = [];
 		for (const candidate of due) {
@@ -1110,13 +1361,15 @@ export class TrackingAuthority {
 				.update(trackingArtifactPromotion)
 				.set({
 					state: 'deleting',
+					deletedAt: null,
 					version: candidate.version + 1,
 					updatedAt: now,
 				})
 				.where(
 					and(
 						eq(trackingArtifactPromotion.artifactId, candidate.artifactId),
-						inArray(trackingArtifactPromotion.state, ['pending', 'promoted']),
+						eq(trackingArtifactPromotion.state, candidate.state),
+						eligible,
 						eq(trackingArtifactPromotion.version, candidate.version),
 						unreferenced,
 					),
@@ -1163,10 +1416,11 @@ export class TrackingAuthority {
 			.from(trackingArtifactPromotion)
 			.where(eq(trackingArtifactPromotion.artifactId, command.artifactId))
 			.get();
+		// Concurrent cleaners share a deletion version but can use different clocks.
+		// Preserve the first completion; a later cleanup cycle has a new version.
 		if (
 			stored?.state === 'deleted' &&
-			stored.version === command.expectedVersion + 1 &&
-			stored.deletedAt === command.deletedAt
+			stored.version === command.expectedVersion + 1
 		)
 			return stored;
 		throw stale('Tracking artifact cleanup authority changed');
@@ -1442,6 +1696,68 @@ export class TrackingAuthority {
 		return updated;
 	}
 
+	/** Read cleanup identities only after the durable lifecycle fence exists. */
+	async cancellationTargets(
+		ownerId: string,
+		analysisId: string,
+		workflowId: string,
+	) {
+		const runs = await this.database
+			.select()
+			.from(trackingRun)
+			.where(
+				and(
+					eq(trackingRun.ownerId, ownerId),
+					eq(trackingRun.analysisId, analysisId),
+					eq(trackingRun.workflowId, workflowId),
+					eq(trackingRun.status, 'cancelled'),
+				),
+			);
+		const targets: {
+			segmentId: string;
+			cancelledAt: string;
+			identity: ExecutionIdentity | null;
+		}[] = [];
+		for (const run of runs) {
+			const cancelledAt = fenceTrackingRunCommandSchema.shape.completedAt.parse(
+				run.completedAt,
+			);
+			const segments = await this.database
+				.select()
+				.from(trackingSegment)
+				.where(eq(trackingSegment.runId, run.id));
+			for (const segment of segments) {
+				if (segment.acceptedArtifactId !== null) continue;
+				const attempt =
+					segment.currentAttemptId === null
+						? null
+						: await this.database
+								.select()
+								.from(trackingExecutionAttempt)
+								.where(
+									eq(trackingExecutionAttempt.id, segment.currentAttemptId),
+								)
+								.get();
+				targets.push({
+					segmentId: segment.id,
+					cancelledAt,
+					identity: attempt
+						? {
+								runId: run.id,
+								segmentId: segment.id,
+								attemptId: attempt.id,
+								leaseId: attempt.leaseId,
+								fencingToken: attempt.fence,
+								specificationDigest: segment.specificationDigest,
+								profileDigest: run.profileDigest,
+							}
+						: null,
+				});
+			}
+		}
+		return targets;
+	}
+
 	async publicProvenance(
 		ownerId: string,
 		analysisId: string,
@@ -1490,6 +1806,134 @@ export class TrackingAuthority {
 		});
 	}
 
+	async expireAvailability(
+		value: ExpireTrackingAvailabilityCommand,
+	): Promise<void> {
+		const command = expireTrackingAvailabilityCommandSchema.parse(value);
+		return this.recordUnavailable(command, 'deadline');
+	}
+
+	async failUnavailableOutput(
+		value: FailUnavailableTrackingOutputCommand,
+	): Promise<void> {
+		const { failedAt, ...identity } =
+			failUnavailableTrackingOutputCommandSchema.parse(value);
+		return this.recordUnavailable(
+			{ ...identity, expiredAt: failedAt },
+			'output-authority-lost',
+		);
+	}
+
+	private async recordUnavailable(
+		command: ExpireTrackingAvailabilityCommand,
+		reason: 'deadline' | 'output-authority-lost',
+	): Promise<void> {
+		const changed = await this.database
+			.update(trackingRun)
+			.set({
+				status: 'failed',
+				safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+				completedAt: sql`coalesce(${trackingRun.completedAt}, ${new Date(command.expiredAt).toISOString()})`,
+			})
+			.where(
+				and(
+					eq(trackingRun.id, command.runId),
+					eq(trackingRun.ownerId, command.ownerId),
+					eq(trackingRun.analysisId, command.analysisId),
+					eq(trackingRun.workflowId, command.workflowId),
+					or(
+						eq(trackingRun.status, 'active'),
+						and(
+							eq(trackingRun.status, 'failed'),
+							eq(trackingRun.safeFailureCode, 'TRACKING_PROVIDER_UNAVAILABLE'),
+						),
+					),
+					exists(
+						this.database
+							.select({ id: trackingSegment.id })
+							.from(trackingSegment)
+							.where(
+								and(
+									eq(trackingSegment.id, command.segmentId),
+									eq(trackingSegment.runId, command.runId),
+									isNull(trackingSegment.acceptedArtifactId),
+									reason === 'deadline'
+										? lte(
+												trackingSegment.availabilityDeadlineAt,
+												command.expiredAt,
+											)
+										: exists(
+												this.database
+													.select({ id: trackingExecutionAttempt.id })
+													.from(trackingExecutionAttempt)
+													.where(
+														and(
+															eq(
+																trackingExecutionAttempt.id,
+																trackingSegment.currentAttemptId,
+															),
+															eq(
+																trackingExecutionAttempt.state,
+																'output-ready',
+															),
+														),
+													),
+											),
+									command.expectedCurrentAttemptId === null
+										? isNull(trackingSegment.currentAttemptId)
+										: eq(
+												trackingSegment.currentAttemptId,
+												command.expectedCurrentAttemptId,
+											),
+									sql`${trackingSegment.order} = (SELECT MAX(segment_order) FROM tracking_segment WHERE run_id = ${command.runId})`,
+								),
+							),
+					),
+				),
+			)
+			.returning({ id: trackingRun.id });
+		if (changed.length !== 1)
+			throw stale('Tracking deadline authority is no longer current');
+	}
+
+	async setWaitReason(value: SetTrackingWaitReasonCommand): Promise<void> {
+		const command = setTrackingWaitReasonCommandSchema.parse(value);
+		const changed = await this.database
+			.update(trackingSegment)
+			.set({ waitReason: command.waitReason })
+			.where(
+				and(
+					eq(trackingSegment.id, command.segmentId),
+					eq(trackingSegment.runId, command.runId),
+					isNull(trackingSegment.acceptedArtifactId),
+					command.expectedCurrentAttemptId === null
+						? isNull(trackingSegment.currentAttemptId)
+						: eq(
+								trackingSegment.currentAttemptId,
+								command.expectedCurrentAttemptId,
+							),
+					exists(
+						this.database
+							.select({ id: trackingRun.id })
+							.from(trackingRun)
+							.where(
+								and(
+									eq(trackingRun.id, command.runId),
+									eq(trackingRun.ownerId, command.ownerId),
+									eq(trackingRun.analysisId, command.analysisId),
+									eq(trackingRun.workflowId, command.workflowId),
+									eq(trackingRun.status, 'active'),
+								),
+							),
+					),
+					sql`${trackingSegment.order} = (SELECT MAX(segment_order) FROM tracking_segment WHERE run_id = ${command.runId})`,
+				),
+			)
+			.returning({ id: trackingSegment.id });
+		if (changed.length !== 1)
+			throw stale('Tracking wait authority is no longer current');
+	}
+
 	async publicState(
 		ownerId: string,
 		analysisId: string,
@@ -1536,14 +1980,12 @@ export class TrackingAuthority {
 			(progress, attempt) => Math.max(progress, attempt.progress),
 			0,
 		);
-		const acceptedGap = segments.some(
-			(segment) => segment.outcome === 'tracking-gap',
-		);
+		const currentWaitReason = segments.at(-1)?.waitReason;
+		const acceptedGap = segments.at(-1)?.outcome === 'tracking-gap';
 		const hasAcceptedEvidence = segments.some(
 			(segment) => segment.acceptedArtifactId !== null,
 		);
 		let state: Omit<PublicTrackingState, 'runId' | 'stage'>;
-		/* c8 ignore next 7 -- final run completion belongs to the later measurement/finalization slice; this projection is reserved for that D1 transition. */
 		if (run.status === 'completed') {
 			state = {
 				lifecycle: 'completed',
@@ -1563,7 +2005,16 @@ export class TrackingAuthority {
 				lifecycle: 'failed',
 				progress: Math.min(highWater, 99),
 				waitReason: null,
-				safeFailureCode: publicFailureCode(latestAttempt?.safeFailureCode),
+				safeFailureCode: publicFailureCode(
+					run.safeFailureCode ?? latestAttempt?.safeFailureCode,
+				),
+			};
+		} else if (currentWaitReason) {
+			state = {
+				lifecycle: hasAcceptedEvidence ? 'running' : 'queued',
+				progress: hasAcceptedEvidence ? 99 : Math.min(highWater, 99),
+				waitReason: currentWaitReason,
+				safeFailureCode: null,
 			};
 		} else if (acceptedGap) {
 			state = {

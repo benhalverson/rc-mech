@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	inferenceProfileFixture,
 	RUN_ID,
@@ -36,6 +36,8 @@ const CLEANUP_AT = new Date('2026-08-18T20:01:00.000Z');
 const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
+	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) =>
 		readFileSync(
@@ -109,6 +111,7 @@ const preparationFixture = async (
 	handler: MediaHandler,
 	storeFactory: (media: MockR2Controller) => PreparedTrackViewStore = (media) =>
 		new R2PreparedTrackViewStore(media.bucket),
+	ids: readonly [string, string] = [PREPARED_MEDIA_ID, CORRELATION_ID],
 ) => {
 	sqlite = createSqliteD1();
 	sqlite.exec(migrations);
@@ -140,13 +143,13 @@ const preparationFixture = async (
 		},
 	};
 	const store = storeFactory(analysisMedia);
-	const ids = [PREPARED_MEDIA_ID, CORRELATION_ID];
+	let idIndex = 0;
 	const preparation = new TrackViewPreparation({
 		authority,
 		media,
 		store,
 		now: () => NOW,
-		id: () => ids.shift() ?? 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+		id: () => ids[idIndex++ % ids.length] ?? PREPARED_MEDIA_ID,
 	});
 	return {
 		analysisMedia,
@@ -172,6 +175,66 @@ const expectPreparationError = async (
 };
 
 describe('TrackViewPreparation', () => {
+	test('continues abandoned cleanup when accepted-retention scanning fails', async () => {
+		const value = await preparationFixture(async () => undefined);
+		await value.authority.recordPreparationIntent(
+			OWNER_ID,
+			RUN_ID,
+			PREPARED_MEDIA_ID,
+			TERMINAL_AT.toISOString(),
+		);
+		value.analysisMedia.seed(
+			'prepared/' + PREPARED_MEDIA_ID + '/track-view.mp4',
+			new Uint8Array([1]),
+		);
+		vi.spyOn(sqlite!.database, 'prepare').mockImplementationOnce(() => {
+			throw new Error('temporary D1 failure');
+		});
+		expect(await value.preparation.cleanupDue(CLEANUP_AT)).toBe(1);
+		expect(value.analysisMedia.objects.size).toBe(0);
+	});
+	test('recovers abandoned preparation outputs and cleans later candidates after an R2 failure', async () => {
+		const blockedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+		const value = await preparationFixture(
+			async () => undefined,
+			(media) => {
+				const store = new R2PreparedTrackViewStore(media.bucket);
+				return {
+					head: (key) => store.head(key),
+					delete: async (keys) => {
+						if (keys.some((key) => key.includes(blockedId)))
+							throw new Error('R2 failure');
+						await store.delete(keys);
+					},
+				};
+			},
+		);
+		for (const id of [blockedId, PREPARED_MEDIA_ID]) {
+			await value.authority.recordPreparationIntent(
+				OWNER_ID,
+				RUN_ID,
+				id,
+				TERMINAL_AT.toISOString(),
+			);
+			value.analysisMedia.seed(
+				`prepared/${id}/track-view.mp4`,
+				new Uint8Array([1]),
+			);
+			value.analysisMedia.seed(
+				`prepared/${id}/frame-manifest.json.gz`,
+				new Uint8Array([2]),
+			);
+		}
+		expect(await value.preparation.cleanupDue(NOW)).toBe(0);
+		expect(await value.preparation.cleanupDue(TERMINAL_AT)).toBe(1);
+		expect(value.analysisMedia.objects.size).toBe(2);
+		value.analysisMedia.seed(
+			`prepared/${PREPARED_MEDIA_ID}/track-view.mp4`,
+			new Uint8Array([3]),
+		);
+		expect(await value.preparation.cleanupDue(CLEANUP_AT)).toBe(1);
+		expect(value.analysisMedia.objects.size).toBe(2);
+	});
 	test('publishes and replays one verified private Track view without exposing its keys', async () => {
 		const value = await preparationFixture(
 			async (command, media, inputDigest) => {
@@ -204,6 +267,28 @@ describe('TrackViewPreparation', () => {
 
 		expect(await value.preparation.prepare(OWNER_ID, RUN_ID)).toEqual(result);
 		expect(value.calls).toHaveLength(1);
+	});
+
+	test('retries a lost preparation response with the same immutable request and objects', async () => {
+		let attempts = 0;
+		const value = await preparationFixture(
+			async (command, media, inputDigest) => {
+				await seedPreparedObjects(media, command);
+				attempts += 1;
+				if (attempts === 1) throw new Error('lost response');
+				return acceptedResponse(command, inputDigest);
+			},
+			(media) => new R2PreparedTrackViewStore(media.bucket),
+			[PREPARED_MEDIA_ID, CORRELATION_ID],
+		);
+		const firstRequest = value.preparation.prepare(OWNER_ID, RUN_ID);
+		await expectPreparationError(firstRequest, 'PREPARATION_REJECTED');
+		const result = await value.preparation.prepare(OWNER_ID, RUN_ID);
+
+		expect(value.calls).toHaveLength(2);
+		expect(value.calls[1]).toEqual(value.calls[0]);
+		expect(result.prepared.preparedMediaId).toBe(PREPARED_MEDIA_ID);
+		expect(attempts).toBe(2);
 	});
 
 	test('uses Worker time and UUID capabilities when callers do not override them', async () => {
@@ -276,6 +361,7 @@ describe('TrackViewPreparation', () => {
 	});
 
 	test('sanitizes thrown media failures and surfaces failed cleanup', async () => {
+		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 		const failed = await preparationFixture(async (command, media) => {
 			await media.bucket.put(command.output.mediaObjectKey, 'partial');
 			throw new Error('secret source path');
@@ -285,6 +371,18 @@ describe('TrackViewPreparation', () => {
 			'PREPARATION_REJECTED',
 		);
 		expect(failed.analysisMedia.objects.size).toBe(0);
+		expect(JSON.parse(log.mock.calls[0]?.[0]?.toString() ?? '')).toMatchObject({
+			event: 'track_view_preparation',
+			outcome: 'failed',
+			phase: 'prepare',
+			correlationId: CORRELATION_ID,
+			caseId: RUN_ID,
+			stagedMediaId: failed.input.raceVideoId,
+			preparedMediaId: PREPARED_MEDIA_ID,
+			errorName: 'Error',
+			errorMessage: 'secret source path',
+		});
+		log.mockRestore();
 
 		sqlite?.close();
 		sqlite = undefined;
@@ -304,6 +402,60 @@ describe('TrackViewPreparation', () => {
 			'CLEANUP_FAILED',
 		);
 	});
+
+	test.each([
+		{
+			name: 'an Error without a stack',
+			thrownValue: (() => {
+				const error = new Error('stackless media failure');
+				delete error.stack;
+				return error;
+			})(),
+			errorName: 'Error',
+			errorMessage: 'stackless media failure',
+		},
+		{
+			name: 'a non-Error value',
+			thrownValue: 'plain media failure',
+			errorName: 'unknown',
+			errorMessage: 'plain media failure',
+		},
+		{
+			name: 'null',
+			thrownValue: null,
+			errorName: 'unknown',
+			errorMessage: 'unknown',
+		},
+		{
+			name: 'undefined',
+			thrownValue: undefined,
+			errorName: 'unknown',
+			errorMessage: 'unknown',
+		},
+	])(
+		'logs safe details for $name media failures',
+		async ({ thrownValue, errorName, errorMessage }) => {
+			const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+			const value = await preparationFixture(async () => {
+				throw thrownValue;
+			});
+			await expectPreparationError(
+				value.preparation.prepare(OWNER_ID, RUN_ID),
+				'PREPARATION_REJECTED',
+			);
+			const entry = JSON.parse(log.mock.calls[0]?.[0]?.toString() ?? '');
+			expect(entry).toMatchObject({
+				event: 'track_view_preparation',
+				outcome: 'failed',
+				phase: 'prepare',
+				errorName,
+				errorMessage,
+			});
+			expect(entry).not.toHaveProperty('errorStack');
+			expect(JSON.stringify(entry)).not.toContain('race-videos/');
+			log.mockRestore();
+		},
+	);
 
 	test('cleans output whose descriptor does not match immutable input', async () => {
 		const value = await preparationFixture(

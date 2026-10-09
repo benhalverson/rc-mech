@@ -112,6 +112,17 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+test('prepares owner-scoped Voice metadata without fetching original audio', async () => {
+	const value = fixture();
+	value.d1.queue({ kind: 'all', rows: [voice()] });
+	const response = await value.request('/api/v1/voice-updates');
+	expect(response.status).toBe(200);
+	expect(
+		((await response.json()) as { voiceUpdates: unknown[] }).voiceUpdates,
+	).toHaveLength(1);
+	expect(value.d1.queries[0]?.query).toContain('owner_id');
+});
+
 describe('voice capture and provenance routes', () => {
 	test('lists owner-scoped voice updates for an owned car', async () => {
 		const { d1, request } = fixture();

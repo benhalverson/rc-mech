@@ -1,0 +1,12 @@
+.geometry-halo {
+	stroke: #000;
+}
+
+.geometry-overlay .geometry-corner-view,
+.geometry-active-point {
+	stroke: #fff;
+}
+
+.geometry-overlay .geometry-corner-view {
+	stroke-width: 2;
+}

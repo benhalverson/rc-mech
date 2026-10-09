@@ -11,7 +11,8 @@ import { hasHiddenPathSegment } from '../src/spa-fallback';
 import { forwardedIncomingHeaders, forwardedRawHeaders } from './browser-http';
 
 const hostname = '127.0.0.1';
-const port = 4201;
+const port = Number(process.env['RC_MECH_BROWSER_CLIENT_PORT'] ?? 4201);
+const workerPort = Number(process.env['RC_MECH_BROWSER_WORKER_PORT'] ?? 8787);
 const origin = `http://${hostname}:${port}`;
 const publicRoot = resolve('public');
 const contentTypes: Readonly<Record<string, string>> = {
@@ -32,12 +33,12 @@ const contentTypes: Readonly<Record<string, string>> = {
 
 const proxyApi = (request: IncomingMessage, response: ServerResponse): void => {
 	const headers = forwardedIncomingHeaders(request.headers);
-	headers.host = '127.0.0.1:8787';
+	headers.host = `${hostname}:${workerPort}`;
 	if (!headers.origin) headers.origin = origin;
 	const upstream = requestUpstream(
 		{
 			hostname,
-			port: 8787,
+			port: workerPort,
 			method: request.method,
 			path: request.url,
 			headers,

@@ -185,3 +185,6 @@ playwright-report/
 .wrangler/
 
 videos
+
+# Angular compiler and test cache
+/.angular/cache/

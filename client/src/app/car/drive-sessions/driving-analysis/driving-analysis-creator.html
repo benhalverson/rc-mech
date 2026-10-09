@@ -1,0 +1,136 @@
+<section class="grid gap-4 rounded border border-alloy-separator bg-alloy-surface-subtle p-3" [attr.aria-labelledby]="'analysis-title-' + driveSessionId()">
+	<div>
+		<h5 class="m-0 text-base font-semibold" [id]="'analysis-title-' + driveSessionId()">Start Driving analysis</h5>
+		<p class="m-0 mt-1 text-sm text-alloy-text-secondary">Set the Race start and end, pause when your car is clearly visible, then select that frame and drag a box around the car.</p>
+		<p class="alloy-technical m-0 mt-1 text-xs text-alloy-text-secondary">Private recording · {{ recording().media?.width }} × {{ recording().media?.height }} · {{ recording().media?.durationMs }} ms</p>
+	</div>
+	<form class="grid gap-4" (submit)="submit($event)">
+		<div class="grid gap-2">
+			<label class="text-sm font-semibold" [for]="'analysis-map-' + driveSessionId()">Approved Track map</label>
+			<select class="alloy-control" [id]="'analysis-map-' + driveSessionId()" [formField]="fields.approvedTrackMapVersionId">
+				<option value="">Choose a Track map</option>
+				@for (map of store.approvedTrackMaps(); track map.id) {
+					<option [value]="map.id">{{ map.layoutName }} · version {{ map.version }}</option>
+				}
+			</select>
+			<p class="m-0 text-xs text-alloy-text-secondary">Corner entry and exit lines are saved in the Track map. <a class="alloy-link" routerLink="/track-maps">Open Track maps to mark corners</a>, then choose an approved version here.</p>
+			@if (selectedMap(); as map) {
+				<p class="m-0 text-xs text-alloy-text-secondary">Immutable approved version {{ map.version }} for {{ map.layoutName }}. Approved {{ map.approvedAt ?? 'previously' }}.</p>
+				@if (store.selectedTrackMap(); as version) {
+					<details class="rounded border border-alloy-separator p-2">
+						<summary class="alloy-focus-ring cursor-pointer text-sm font-semibold">Inspect immutable Track-map geometry</summary>
+						<div class="mt-2 border border-alloy-command-separator bg-alloy-command-control p-2">
+							<app-track-map-geometry [corners]="version.corners" [label]="'Approved geometry for ' + map.layoutName + ' version ' + map.version" />
+						</div>
+					</details>
+				} @else if (store.selectedTrackMapLoading()) {
+					<p class="m-0 text-xs text-alloy-text-secondary" role="status">Loading immutable Track-map geometry…</p>
+				}
+			} @else if (store.trackMapsLoading()) {
+				<p class="m-0 text-xs text-alloy-text-secondary" role="status">Loading approved Track maps…</p>
+			} @else if (store.trackMapsFailure()) {
+				<p class="alloy-state alloy-error-state m-0" role="alert">Approved Track maps are unavailable.</p>
+			} @else {
+				<p class="alloy-state m-0">No approved Track-map version is available yet.</p>
+			}
+		</div>
+
+			<video
+				[privateVideoPlayer]="playback"
+				[durationMs]="durationMs()"
+				[sourceIdentity]="playbackSource()"
+				class="aspect-video w-full bg-black"
+				preload="metadata"
+				[src]="recording().playbackUrl"
+				[attr.aria-label]="'Private analysis playback of ' + recording().fileName"
+			>
+				<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
+			</video>
+		@if (playback.failure()) {<p role="alert">Private playback is unavailable. Retry playback or choose another timestamp.</p>}
+
+		<div class="grid gap-2">
+			<p class="m-0 text-sm text-alloy-text-secondary">Use the slider to find the moment you want. Mark Race start and Race end first; changing the window means selecting the car again.</p>
+			<button data-toggle-playback class="alloy-control alloy-control-secondary w-fit" type="button" (click)="playback.toggle()" [attr.aria-label]="playing() ? 'Pause private Race recording' : 'Play private Race recording'">{{ playing() ? 'Pause recording' : 'Play recording' }}</button>
+			<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+				<label class="font-semibold" [for]="'analysis-seek-' + driveSessionId()">Absolute recording timestamp</label>
+				<output class="alloy-technical" [for]="'analysis-seek-' + driveSessionId()">{{ currentTimestampMs() }} ms</output>
+			</div>
+			<input data-race-seek class="w-full accent-alloy-accent" [id]="'analysis-seek-' + driveSessionId()" type="range" min="0" [max]="durationMs()" step="1" [value]="currentTimestampMs()" (input)="seek($event)" />
+			<div class="flex flex-wrap gap-2" role="group" aria-label="Race-window timestamp markers">
+				<button data-mark-start class="alloy-control alloy-control-secondary" type="button" (click)="mark('startTimestampMs')">Mark Race start</button>
+				<button data-mark-end class="alloy-control alloy-control-secondary" type="button" (click)="mark('endTimestampMs')">Mark Race end</button>
+			</div>
+		</div>
+
+		<div data-car-selection class="grid gap-3 rounded border border-alloy-separator p-3">
+			<h6 class="m-0 text-sm font-semibold">Select the car to follow</h6>
+			<p class="m-0 text-sm text-alloy-text-secondary">Pause on a clear view of your car, select this frame, then drag a box around it on the frozen image below. The box is drawn in the outlined lower Track view.</p>
+			<button data-mark-seed class="alloy-control alloy-control-primary w-fit" type="button" (click)="selectFrame()" [attr.aria-busy]="store.subjectFrameLoading()">{{ store.subjectFrameLoading() ? 'Loading car-selection frame.' : 'Select car in this frame' }}</button>
+		@if(store.subjectFrameLoading()){<p role="status">Finding the exact source frame…</p>}
+		@if(store.subjectFrameError();as error){<p role="alert">{{error}}</p>}
+		@if(selectedFrame();as frame){
+			<p>Verified frame {{frame.frameIndex}} · {{frame.timestampMs}} ms. Draw the Subject box on this frozen image.</p>
+			<fieldset data-frame-editor class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
+				<legend class="sr-only">Verified Subject frame</legend>
+				<app-subject-box-editor [editorId]="'analysis-' + driveSessionId()" [(box)]="box" [(valid)]="boxValid">
+					@for (image of frameImage.images(); track image) {
+						<img data-subject-frame class="block h-auto w-full" [src]="image.source.contentUrl" alt="Verified source frame for selecting the Subject car" (load)="frameImage.loaded(image)" (error)="frameImage.error(image)" />
+					}
+				</app-subject-box-editor>
+			</fieldset>
+			@if(frameImage.failed()){<p role="alert">The verified image could not be loaded. Choose the frame again.</p>}
+		}
+
+			@if (!selectedFrame() && !store.subjectFrameLoading() && !store.subjectFrameError()) {
+				<p class="m-0 text-xs text-alloy-text-secondary">Select a frame to reveal the car-selection box. If you change the Race window, select a frame again.</p>
+			}
+		</div>
+
+		<fieldset class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+			<legend class="col-span-full text-sm font-semibold">Immutable Race window and Subject seed</legend>
+			<label class="grid gap-1 text-xs font-semibold">Race start<input class="alloy-control" data-window-start type="number" step="1" [formField]="fields.startTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Race end<input class="alloy-control" data-window-end type="number" step="1" [formField]="fields.endTimestampMs" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Verified Subject timestamp (ms)<input class="alloy-control" data-seed-timestamp type="number" readonly [value]="selectedFrame()?.timestampMs ?? ''" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Verified source frame index<input class="alloy-control" data-seed-frame-index type="number" readonly [value]="selectedFrame()?.frameIndex ?? ''" /></label>
+			<label class="grid gap-1 text-xs font-semibold">Subject identity<input class="alloy-control" data-subject-identity type="text" autocomplete="off" [formField]="fields.subjectIdentity" /></label>
+		</fieldset>
+
+		@if (formError()) {
+			<p class="alloy-state alloy-error-state m-0" role="alert">{{ formError() }}</p>
+		}
+		@if (creation()?.status === 'failed') {
+			<p class="alloy-state alloy-error-state m-0" role="alert">{{ store.analysisError() }}</p>
+		}
+		@if (analysis(); as current) {
+			<a class="alloy-link" [routerLink]="['/garage', carId(), 'drive-sessions', 'analysis', current.id]">Review Corner evidence</a>
+			<div class="alloy-state m-0" role="status">
+				<strong>Analysis {{ current.status }}</strong>
+				<span>{{ stageLabel(current.stage) }} · {{ current.progress }}%</span>
+				@if (current.waitReason) {
+					<p class="m-0">Waiting to continue tracking. We’ll retry automatically.</p>
+				}
+				@if (current.safeFailureCode === 'TRACKING_PROVIDER_UNAVAILABLE') {
+					<p class="m-0">Tracking could not resume in time. You can retry this analysis.</p>
+				}
+				<progress class="mt-2 h-2 w-full accent-alloy-accent" max="100" [value]="current.progress" [attr.aria-label]="'Driving analysis ' + current.progress + ' percent complete'"></progress>
+				<div class="mt-2 flex flex-wrap gap-2">
+					<button data-refresh-analysis class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.refreshAnalysis()">Check status</button>
+					@if (canRetryAnalysis()) {
+						<button data-retry-analysis class="alloy-control alloy-control-secondary w-fit" type="button" (click)="store.retryAnalysis()" [disabled]="store.pending()" [attr.aria-busy]="creation()?.status === 'retrying'">{{ creation()?.status === 'retrying' ? 'Retrying…' : 'Retry workflow' }}</button>
+					}
+				</div>
+				@if (canRetryAnalysis()) {
+					<p class="m-0 mt-2 text-xs text-alloy-text-secondary">Retry keeps the private recording, Race window, Subject seed, and approved Track map, but starts a fresh workflow identity.</p>
+				}
+			</div>
+		}
+		<button data-create-analysis class="alloy-control alloy-control-primary w-fit" type="submit" [disabled]="store.pending() || creation()?.status === 'creating'" [attr.aria-busy]="creation()?.status === 'creating'">
+			{{ creation()?.status === 'creating' ? 'Starting…' : 'Start analysis' }}
+		</button>
+	</form>
+	@if (analysis(); as current) {
+		@if (current.status === 'awaiting-reidentification') {
+			<app-subject-reidentification [analysis]="current" [recording]="recording()" />
+		}
+	}
+</section>

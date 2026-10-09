@@ -212,7 +212,26 @@ describe('Race-recording routes', () => {
 		const get = vi.fn().mockResolvedValue({ id: 'recording-1' });
 		const complete = vi.fn().mockResolvedValue({ id: 'recording-1' });
 		const remove = vi.fn().mockResolvedValue(undefined);
-		const fake = { get, complete, remove } as unknown as RaceRecordingAuthority;
+		const contentMetadata = vi.fn().mockResolvedValue({
+			size: 3,
+			contentType: 'video/mp4',
+			etag: '"etag-1"',
+			uploaded: new Date('2026-08-17T10:00:00.000Z'),
+		});
+		const content = vi.fn().mockResolvedValue({
+			size: 3,
+			contentType: 'video/mp4',
+			etag: '"etag-1"',
+			uploaded: new Date('2026-08-17T10:00:00.000Z'),
+			body: new Blob(['abc']).stream(),
+		});
+		const fake = {
+			get,
+			complete,
+			remove,
+			contentMetadata,
+			content,
+		} as unknown as RaceRecordingAuthority;
 		const { request } = createHonoFixture({
 			raceRecordingAuthority: () => fake,
 		});
@@ -222,6 +241,15 @@ describe('Race-recording routes', () => {
 			200,
 		);
 		expect((await request(base, { method: 'DELETE' })).status).toBe(204);
+		let playback = await request(`${base}/content`, {
+			headers: { range: 'bytes=1-2' },
+		});
+		expect(playback.status).toBe(206);
+		expect(playback.headers.get('content-range')).toBe('bytes 1-2/3');
+		expect(await playback.text()).toBe('abc');
+		playback = await request(`${base}/content`, { method: 'HEAD' });
+		expect(playback.status).toBe(200);
+		expect(await playback.text()).toBe('');
 		expect(complete).toHaveBeenCalledWith({
 			ownerId: 'owner-1',
 			recordingId: 'recording-1',
@@ -230,6 +258,14 @@ describe('Race-recording routes', () => {
 			expect.objectContaining({
 				ownerId: 'owner-1',
 			}),
+		);
+		expect(contentMetadata).toHaveBeenCalledWith({
+			ownerId: 'owner-1',
+			recordingId: 'recording-1',
+		});
+		expect(content).toHaveBeenCalledWith(
+			expect.objectContaining({ ownerId: 'owner-1' }),
+			{ offset: 1, length: 2 },
 		);
 	});
 

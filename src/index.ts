@@ -1,17 +1,25 @@
 import { Scalar } from '@scalar/hono-api-reference';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+
+export { ContainerProxy } from '@cloudflare/containers';
+
 import {
 	type AppDependencies,
 	defaultAppDependencies,
 } from './app-dependencies';
 import { isAllowedOrigin } from './auth-policy';
+import { maintainAnalysisMedia } from './driving-analysis/analysis/lifecycle-maintenance';
+import { createTrackMapRoutes } from './driving-analysis/track-maps/track-map-routes';
+import { createReidentificationRoutes } from './driving-analysis/tracking/reidentification-routes';
+import { createFeatureFlagRoutes } from './feature-flags/routes';
 import { openApi } from './openapi';
 import { createAuthRoutes } from './routes/auth';
 import { createCarsRoutes } from './routes/cars';
 import { createInviteRoutes } from './routes/invites';
 import { createMaintenanceRoutes } from './routes/maintenance';
 import { createPhotosRoutes } from './routes/photos';
+import { createSettingsSyncRoutes } from './routes/settings-sync';
 import { createSetupsRoutes } from './routes/setups';
 import { createVoiceRoutes } from './routes/voice';
 import { spaFallback } from './spa-fallback';
@@ -22,6 +30,8 @@ export {
 	GpuLeaseCoordinator,
 	getGpuLeaseCoordinator,
 } from './driving-analysis/gpu-lease-coordinator';
+export { RaceVideoMediaContainer } from './driving-analysis/race-recording/race-video-media-container';
+export { RaceVideoValidationWorkflow } from './driving-analysis/race-recording/race-video-validation-workflow';
 export { DrivingAnalysisWorkflow } from './driving-analysis/tracking/driving-analysis-workflow';
 export {
 	preparedTrackViewStore,
@@ -33,6 +43,13 @@ export const createApp = (
 	dependencies: AppDependencies = defaultAppDependencies,
 ) => {
 	const app = new Hono<AppEnv>();
+
+	app.use('*', async (c, next) => {
+		const url = new URL(c.req.url);
+		if (url.hostname !== 'www.chassisnotes.com') return next();
+		url.hostname = 'chassisnotes.com';
+		return c.redirect(url.toString(), 308);
+	});
 
 	app.use('/api/*', async (c, next) =>
 		cors({
@@ -59,11 +76,15 @@ export const createApp = (
 
 	app.get('/api/v1/health', (c) => c.json({ ok: true, service: 'rc-mech' }));
 	app.route('/api/v1', createInviteRoutes());
+	app.route('/api/v1', createSettingsSyncRoutes());
+	app.route('/api/v1', createFeatureFlagRoutes());
 	app.route('/api/v1', createCarsRoutes());
 	app.route('/api/v1', createSetupsRoutes());
 	app.route('/api/v1', createPhotosRoutes());
 	app.route('/api/v1', createMaintenanceRoutes(dependencies));
 	app.route('/api/v1', createVoiceRoutes(dependencies));
+	app.route('/api/v1', createTrackMapRoutes());
+	app.route('/api/v1', createReidentificationRoutes());
 
 	app.all('/api', (c) => c.json({ error: 'Not found' }, 404));
 	app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
@@ -81,12 +102,7 @@ export const createWorker = (
 			env: Env,
 			context: ExecutionContext,
 		): void {
-			context.waitUntil(
-				dependencies
-					.raceRecordingAuthority(env)
-					.recoverStale(100)
-					.then(() => undefined),
-			);
+			context.waitUntil(maintainAnalysisMedia(env, dependencies));
 		},
 	});
 };

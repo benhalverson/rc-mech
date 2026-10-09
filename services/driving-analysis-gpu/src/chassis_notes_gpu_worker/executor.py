@@ -23,8 +23,8 @@ from driving_analysis_service.tracking_artifacts import (
     OBSERVATION_SEGMENT_SUFFIX,
     PREPARED_BUNDLE_SUFFIX,
     PREPARED_MEDIA_SUFFIX,
+    artifact_path,
     bundle_member_path,
-    bundle_path,
 )
 from driving_analysis_service.tracking_contracts import (
     ProviderCandidate,
@@ -37,6 +37,10 @@ from chassis_notes_gpu_worker.profile import InferenceProfile
 
 class TrackingExecutionError(RuntimeError):
     """A local Tracking execution failed without exposing provider detail."""
+
+
+class UnsupportedPrecisionError(ValueError):
+    """The installed profile cannot describe this SAM adapter's computation."""
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,13 @@ class _CancellableProvider:
 
 
 class Sam31TrackingExecutor:
+    """Adapter from JobManager submissions to local SAM segment execution.
+
+    Binds the installed profile and verified transferred inputs to the shared
+    tracking service, observes cancellation, and returns an artifact for the
+    manager to publish. It does not own the Cloudflare lease or a durable queue.
+    """
+
     def __init__(
         self,
         profile: InferenceProfile,
@@ -110,6 +121,10 @@ class Sam31TrackingExecutor:
         *,
         provider: InferenceProvider | None = None,
     ) -> None:
+        """Require the pinned SAM runtime's bfloat16 contract before loading it."""
+        if profile.precision != "bfloat16":
+            message = "The pinned SAM 3.1 adapter supports only bfloat16 precision"
+            raise UnsupportedPrecisionError(message)
         settings = InferenceSettings(
             provider="sam31",
             model=profile.model.name,
@@ -146,7 +161,7 @@ class Sam31TrackingExecutor:
         )
         settings.prepare_roots()
         prepared_id = submission.tracking_request.prepared.prepared_media_id
-        prepared_bundle = bundle_path(settings, prepared_id, PREPARED_BUNDLE_SUFFIX)
+        prepared_bundle = artifact_path(settings, prepared_id, PREPARED_BUNDLE_SUFFIX)
         prepared_bundle.mkdir(mode=0o700)
         shutil.copyfile(
             inputs.prepared_media,

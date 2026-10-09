@@ -1,8 +1,9 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -10,15 +11,18 @@ import {
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import {
 	catchError,
+	EMPTY,
 	exhaustMap,
 	type Observable,
 	of,
 	tap,
 	throwError,
 } from 'rxjs';
+import { OFFLINE_OPERATION_ID } from '../offline/offline-garage-storage';
 import { ClipboardCapability } from './clipboard-capability';
 import type { InviteCode, SettingsGatewayFailure } from './settings.models';
 import { SettingsGateway } from './settings-gateway';
+import { SettingsWorkspaceStore } from './settings-workspace-store';
 
 export type InviteCommand =
 	| { readonly kind: 'create'; readonly code: string }
@@ -83,31 +87,51 @@ const failureMessage = (
 		: 'Invite code could not be revoked.';
 };
 
+/**
+ * Settings-route workflow for creating and revoking invite codes. Uses the shared
+ * Settings workspace when prepared and the online gateway otherwise, projecting
+ * canonical rejection and operation outcomes without treating pending local codes
+ * as proof that the server has admitted them.
+ */
 export const InviteStore = signalStore(
-	withState<{ outcome: InviteOutcome }>({ outcome: idleOutcome() }),
+	withState<{
+		outcome: InviteOutcome;
+		localRequestId: string | null;
+		retainedLocally: boolean;
+	}>({ outcome: idleOutcome(), localRequestId: null, retainedLocally: false }),
 	withProps(() => ({
 		gateway: inject(SettingsGateway),
 		clipboard: inject(ClipboardCapability),
 		nextOperationId: { value: 0 },
+		workspace: inject(SettingsWorkspaceStore),
+		nextLocalId: inject(OFFLINE_OPERATION_ID),
 	})),
 	withComputed((store) => ({
-		codes: computed(() =>
-			store.gateway.invites.hasValue()
-				? store.gateway.invites.value().codes
-				: [],
+		codes: computed(
+			() =>
+				store.workspace.current()?.invites.codes ??
+				(store.gateway.invites.hasValue()
+					? store.gateway.invites.value().codes
+					: []),
 		),
-		allowance: computed(() =>
-			store.gateway.invites.hasValue()
-				? {
-						allowance: store.gateway.invites.value().allowance,
-						used: store.gateway.invites.value().used,
-						remaining: store.gateway.invites.value().remaining,
-					}
-				: { allowance: 5, used: 0, remaining: 5 },
+		allowance: computed(
+			() =>
+				store.workspace.current()?.invites ??
+				(store.gateway.invites.hasValue()
+					? {
+							allowance: store.gateway.invites.value().allowance,
+							used: store.gateway.invites.value().used,
+							remaining: store.gateway.invites.value().remaining,
+						}
+					: { allowance: 5, used: 0, remaining: 5 }),
 		),
-		loading: computed(() => store.gateway.invites.isLoading()),
+		loading: computed(
+			() => !store.workspace.current() && store.gateway.invites.isLoading(),
+		),
 		readError: computed(() =>
-			store.gateway.inviteFailure() ? 'Invite codes could not be loaded.' : '',
+			!store.workspace.current() && store.gateway.inviteFailure()
+				? 'Invite codes could not be loaded.'
+				: '',
 		),
 		action: computed(() => {
 			const outcome = store.outcome();
@@ -119,6 +143,7 @@ export const InviteStore = signalStore(
 		message: computed(() => {
 			const outcome = store.outcome();
 			if (outcome.status !== 'succeeded') return '';
+			if (store.retainedLocally()) return 'Saved on this device.';
 			return outcome.command.kind === 'create'
 				? 'Invite code created.'
 				: outcome.command.kind === 'copy'
@@ -126,6 +151,14 @@ export const InviteStore = signalStore(
 					: 'Invite code revoked.';
 		}),
 		actionError: computed(() => {
+			const failure = store.workspace
+				.operations()
+				.find(
+					(operation) =>
+						operation.command.type !== 'timezone' &&
+						operation.status !== 'pending',
+				);
+			if (failure) return `Needs attention: ${failure.feedback}`;
 			const outcome = store.outcome();
 			return outcome.status === 'failed'
 				? failureMessage(outcome.error, outcome.command)
@@ -156,8 +189,21 @@ export const InviteStore = signalStore(
 						return of(null);
 					}
 					patchState(store, {
+						retainedLocally: false,
 						outcome: { status: 'pending', operationId, command },
 					});
+					if (command.kind !== 'copy' && store.workspace.available()) {
+						const requestId = store.nextLocalId();
+						patchState(store, { localRequestId: requestId });
+						store.workspace.mutate({
+							requestId,
+							change:
+								command.kind === 'create'
+									? { type: 'invite-create', code: command.code }
+									: { type: 'invite-revoke', inviteId: command.code.id },
+						});
+						return EMPTY;
+					}
 					return requestFor(store.gateway, store.clipboard, command).pipe(
 						tap(() => {
 							if (command.kind !== 'copy') store.gateway.invites.reload();
@@ -185,8 +231,9 @@ export const InviteStore = signalStore(
 			create(code: string): void {
 				if (
 					store.outcome().status !== 'pending' &&
-					store.gateway.invites.hasValue() &&
-					store.gateway.invites.value().remaining > 0
+					(store.workspace.current() !== null ||
+						store.gateway.invites.hasValue()) &&
+					store.allowance().remaining > 0
 				)
 					mutate({ kind: 'create', code: code.trim() });
 			},
@@ -200,4 +247,32 @@ export const InviteStore = signalStore(
 			},
 		};
 	}),
+	withHooks((store) => ({
+		onInit() {
+			effect(() => {
+				const result = store.workspace.outcome();
+				const current = store.outcome();
+				if (
+					result.requestId !== store.localRequestId() ||
+					current.status !== 'pending'
+				)
+					return;
+				if (result.status === 'succeeded')
+					patchState(store, {
+						localRequestId: null,
+						retainedLocally: true,
+						outcome: { ...current, status: 'succeeded' },
+					});
+				else if (result.status === 'failed')
+					patchState(store, {
+						localRequestId: null,
+						outcome: {
+							...current,
+							status: 'failed',
+							error: { kind: 'validation', message: result.message },
+						},
+					});
+			});
+		},
+	})),
 );

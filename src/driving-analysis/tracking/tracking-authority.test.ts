@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -55,6 +55,8 @@ const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
 	'0022_tracking_artifact_publication.sql',
+	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -64,6 +66,7 @@ let fixture: SqliteD1Fixture | undefined;
 afterEach(() => {
 	fixture?.close();
 	fixture = undefined;
+	vi.restoreAllMocks();
 });
 
 const authorityFixture = () => {
@@ -286,6 +289,306 @@ const expectAuthorityError = async (
 };
 
 describe('TrackingAuthority', () => {
+	test('a cancellation winning the segment insert prevents new immutable work', async () => {
+		const value = authorityFixture();
+		await value.authority.createRun(runCommand());
+		await seedPreparedTrackView(value);
+		const prepare = value.database.prepare.bind(value.database);
+		vi.spyOn(value.database, 'prepare').mockImplementation((query) => {
+			if (query.startsWith('insert into "tracking_segment"'))
+				fixture?.exec(
+					"UPDATE tracking_run SET status = 'cancelled', version = version + 1, completed_at = '2026-08-16T20:01:00.000Z'",
+				);
+			return prepare(query);
+		});
+		await expect(
+			value.authority.createSegment(segmentCommand()),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(
+			await value.database.prepare('SELECT id FROM tracking_segment').all(),
+		).toMatchObject({ results: [] });
+	});
+	test('applies nullable availability fields to populated legacy records without changing their authority', async () => {
+		const { authority, database } = await createAttemptAuthority();
+		await database
+			.prepare('ALTER TABLE tracking_segment DROP COLUMN wait_reason')
+			.run();
+		await database
+			.prepare('ALTER TABLE tracking_run DROP COLUMN safe_failure_code')
+			.run();
+		fixture?.exec(
+			readFileSync(
+				resolve(migrationDirectory, '0034_tracking_availability.sql'),
+				'utf8',
+			),
+		);
+		expect(
+			await authority.workflowContext({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				workflowId: WORKFLOW_ID,
+				runId: RUN_ID,
+				segmentId: SEGMENT_ID,
+			}),
+		).toMatchObject({ attempt: { attemptId: ATTEMPT_ID, fence: 7 } });
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'running',
+			waitReason: null,
+			safeFailureCode: null,
+		});
+	});
+
+	test('rejects stale wait and deadline commands, and preserves progress through waiting and expiry', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		const identity = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: WORKFLOW_ID,
+			runId: RUN_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: ATTEMPT_ID,
+		};
+		await authority.transitionAttempt({
+			...attemptWitness(),
+			expectedState: 'active',
+			nextState: 'processing',
+			progress: 75,
+			safeFailureCode: null,
+			updatedAt: LATER,
+		});
+		await expectAuthorityError(
+			authority.setWaitReason({
+				...identity,
+				expectedCurrentAttemptId: null,
+				waitReason: 'waiting-for-provider',
+			}),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.expireAvailability({
+				...identity,
+				expiredAt: segment.availabilityDeadlineAt - 1,
+			}),
+			'STALE_AUTHORITY',
+		);
+		await authority.setWaitReason({
+			...identity,
+			waitReason: 'waiting-for-provider',
+		});
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'queued', progress: 75 });
+		await authority.expireAvailability({
+			...identity,
+			expiredAt: segment.availabilityDeadlineAt,
+		});
+		await expectAuthorityError(
+			authority.setWaitReason({ ...identity, waitReason: null }),
+			'STALE_AUTHORITY',
+		);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			progress: 75,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+		});
+	});
+
+	test('keeps a later segment wait running after accepting evidence', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		const artifact = await preparePromotion(
+			authority,
+			segment.specificationDigest,
+		);
+		await authority.acceptArtifact(artifact);
+		await authority.createSegment(
+			segmentCommand({
+				segmentId: SECOND_SEGMENT_ID,
+				order: 1,
+				seed: {
+					kind: 'reidentification',
+					sourceId: REIDENTIFICATION_ID,
+					value: {
+						...submissionFixture().trackingRequest.subjectSeed,
+						timestampMs: 200,
+					},
+				},
+			}),
+		);
+		await authority.setWaitReason({
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			workflowId: WORKFLOW_ID,
+			runId: RUN_ID,
+			segmentId: SECOND_SEGMENT_ID,
+			expectedCurrentAttemptId: null,
+			waitReason: 'waiting-for-capacity',
+		});
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'running',
+			stage: 'tracking',
+			progress: 99,
+			waitReason: 'waiting-for-capacity',
+		});
+	});
+	test('records deadline expiry without an acquired attempt and replays the safe failure', async () => {
+		const { authority, segment } = await createSegmentAuthority();
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: null,
+			expiredAt: segment.availabilityDeadlineAt,
+		};
+		await authority.expireAvailability(command);
+		await authority.expireAvailability(command);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			progress: 0,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+		});
+	});
+
+	test('failure replay does not postpone terminal prepared-media retention', async () => {
+		const { authority, preparedAuthority } = await createSegmentAuthority();
+		const expiredAt = Date.parse(LATER);
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: null,
+			expiredAt,
+		};
+		await authority.expireAvailability(command);
+		await authority.expireAvailability({
+			...command,
+			expiredAt: expiredAt + 60 * 60 * 1000,
+		});
+		expect(
+			await preparedAuthority.cleanupCandidates(
+				new Date(expiredAt + 24 * 60 * 60 * 1000).toISOString(),
+				LATER,
+			),
+		).toEqual([
+			expect.objectContaining({ runId: RUN_ID, preparedMediaId: PREPARED_ID }),
+		]);
+	});
+
+	test('fails unavailable output authority before the deadline and fences the run while retaining its original attempt', async () => {
+		const { authority, database } = await createAttemptAuthority();
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: ATTEMPT_ID,
+			failedAt: Date.parse(LATER),
+		};
+		await expectAuthorityError(
+			authority.failUnavailableOutput(command),
+			'STALE_AUTHORITY',
+		);
+		await makeOutputReady(authority);
+		await expectAuthorityError(
+			authority.failUnavailableOutput({ ...command, workflowId: 'superseded' }),
+			'STALE_AUTHORITY',
+		);
+		await expectAuthorityError(
+			authority.failUnavailableOutput({
+				...command,
+				expectedCurrentAttemptId: SECOND_ATTEMPT_ID,
+			}),
+			'STALE_AUTHORITY',
+		);
+		await authority.failUnavailableOutput(command);
+		await authority.failUnavailableOutput(command);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'failed',
+			progress: 90,
+			waitReason: null,
+			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+		});
+		expect(
+			await database
+				.prepare('SELECT current_attempt_id FROM tracking_segment WHERE id = ?')
+				.bind(SEGMENT_ID)
+				.first(),
+		).toEqual({ current_attempt_id: ATTEMPT_ID });
+		await expectAuthorityError(
+			authority.activateAttempt(
+				attemptCommand({
+					attemptId: SECOND_ATTEMPT_ID,
+					leaseId: SECOND_LEASE_ID,
+					fence: 8,
+					expectedCurrentAttemptId: ATTEMPT_ID,
+				}),
+			),
+			'STALE_AUTHORITY',
+		);
+	});
+
+	test('does not turn accepted output into an availability failure', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest),
+		);
+		await expectAuthorityError(
+			authority.failUnavailableOutput({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				runId: RUN_ID,
+				workflowId: WORKFLOW_ID,
+				segmentId: SEGMENT_ID,
+				expectedCurrentAttemptId: ATTEMPT_ID,
+				failedAt: Date.parse(LATER),
+			}),
+			'STALE_AUTHORITY',
+		);
+	});
+
+	test('persists a safe wait under current segment authority and clears it on resume', async () => {
+		const { authority } = await createAttemptAuthority();
+		const command = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+			expectedCurrentAttemptId: ATTEMPT_ID,
+		};
+		await authority.setWaitReason({
+			...command,
+			waitReason: 'waiting-for-provider',
+		});
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({
+			lifecycle: 'queued',
+			waitReason: 'waiting-for-provider',
+		});
+		await authority.setWaitReason({ ...command, waitReason: null });
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'running', waitReason: null });
+	});
+
 	test('pins one canonical profile and makes run creation replay-safe', async () => {
 		const { authority } = authorityFixture();
 		const created = await authority.createRun(runCommand());
@@ -417,6 +720,80 @@ describe('TrackingAuthority', () => {
 					expectedCurrentAttemptId: ATTEMPT_ID,
 				}),
 			),
+			'STALE_AUTHORITY',
+		);
+	});
+
+	test('retires an attempt atomically while preserving its historical record', async () => {
+		const value = await createAttemptAuthority();
+		await makeOutputReady(value.authority);
+
+		await value.authority.retireAttempt({
+			...attemptWitness(),
+			nextState: 'replaced',
+			updatedAt: LATER,
+		});
+		await expect(
+			value.authority.retireAttempt({
+				...attemptWitness(),
+				nextState: 'replaced',
+				updatedAt: LATER,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(
+			await value.authority.workflowContext({
+				ownerId: OWNER_ID,
+				analysisId: ANALYSIS_ID,
+				runId: RUN_ID,
+				workflowId: WORKFLOW_ID,
+				segmentId: SEGMENT_ID,
+			}),
+		).toMatchObject({ attempt: null });
+		const historicalAttempt = await value.database
+			.prepare('SELECT id, state FROM tracking_execution_attempt WHERE id = ?1')
+			.bind(ATTEMPT_ID)
+			.first();
+		const segment = await value.database
+			.prepare(
+				'SELECT id, current_attempt_id, authority_lease_id, authority_fence FROM tracking_segment WHERE id = ?1',
+			)
+			.bind(SEGMENT_ID)
+			.first();
+		expect(historicalAttempt).toMatchObject({
+			id: ATTEMPT_ID,
+			state: 'replaced',
+		});
+		expect(segment).toMatchObject({
+			id: SEGMENT_ID,
+			current_attempt_id: null,
+			authority_lease_id: null,
+			authority_fence: null,
+		});
+		await expectAuthorityError(
+			value.authority.retireAttempt({
+				...attemptWitness(),
+				nextState: 'expired',
+				updatedAt: LATER,
+			}),
+			'STALE_AUTHORITY',
+		);
+	});
+
+	test('rejects retirement when the segment authority update loses its fence', async () => {
+		const value = await createAttemptAuthority();
+		await value.database
+			.prepare(
+				"UPDATE tracking_segment SET outcome = 'tracking-gap', accepted_artifact_id = 'artifact', gap_json = '{}' WHERE id = ?1",
+			)
+			.bind(SEGMENT_ID)
+			.run();
+		await expectAuthorityError(
+			value.authority.retireAttempt({
+				...attemptWitness(),
+				nextState: 'expired',
+				updatedAt: LATER,
+			}),
 			'STALE_AUTHORITY',
 		);
 	});
@@ -706,6 +1083,201 @@ describe('TrackingAuthority', () => {
 		});
 	});
 
+	test('loads only the current prepared manifest and rejects missing authority', async () => {
+		const { authority, database } = await createAttemptAuthority();
+		const identity = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+		};
+		const store = { read: vi.fn(async () => null) };
+		await expect(
+			authority.reidentificationFrames(identity, store),
+		).rejects.toThrow('unavailable');
+		expect(store.read).toHaveBeenCalledWith(
+			`prepared/${PREPARED_ID}/frame-manifest.json.gz`,
+			15,
+		);
+		await database.exec(
+			"DROP TRIGGER prepared_tracking_object_immutable_delete; DELETE FROM prepared_tracking_object WHERE role = 'frame-manifest'",
+		);
+		await expect(
+			authority.reidentificationFrames(identity, store),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+	});
+
+	test('resumes only accepted owner-scoped gaps once and preserves immutable evidence', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		const manifestStore = { read: vi.fn() };
+		vi.spyOn(authority, 'reidentificationFrames').mockResolvedValue([
+			{ frameIndex: 3, timestampMs: 300 },
+		]);
+		const identity = {
+			ownerId: OWNER_ID,
+			analysisId: ANALYSIS_ID,
+			runId: RUN_ID,
+			workflowId: WORKFLOW_ID,
+			segmentId: SEGMENT_ID,
+		};
+		const seed = {
+			...submissionFixture().trackingRequest.subjectSeed,
+			timestampMs: 300,
+			frameIndex: 3,
+		};
+		await expect(authority.nextSegment(identity)).rejects.toMatchObject({
+			code: 'CONFLICT',
+		});
+		await expect(
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await makeOutputReady(authority);
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest, {
+				outcome: 'tracking-gap',
+				gap: { startTimestampMs: 250, reason: 'ambiguous-identity' },
+				firstTimestampMs: null,
+				lastTimestampMs: null,
+			}),
+		);
+		expect(await authority.nextSegment(identity)).toBeNull();
+		await expect(
+			authority.reidentify(
+				{ ...identity, ownerId: 'other' },
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		await expect(
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'f'.repeat(64),
+				seed,
+				manifestStore,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{
+					...seed,
+					timestampMs: 250,
+				},
+				manifestStore,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{
+					...seed,
+					frameIndex: 0,
+				},
+				manifestStore,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{ ...seed, timestampMs: 301 },
+				manifestStore,
+			),
+		).rejects.toThrow('Subject frame must match');
+		expect(await authority.nextSegment(identity)).toBeNull();
+		let now = Date.now();
+		vi.spyOn(Date, 'now').mockImplementation(() => now++);
+		const [next, concurrent] = await Promise.all([
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+		]);
+		expect(concurrent).toEqual(next);
+		expect(next).toMatchObject({
+			segmentId: SECOND_SEGMENT_ID,
+			seed,
+			attempt: null,
+			acceptedArtifactId: null,
+		});
+		expect(
+			await authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+		).toEqual(next);
+		expect(await authority.nextSegment(identity)).toEqual(next);
+		await expect(
+			authority.reidentify(
+				identity,
+				REIDENTIFICATION_ID,
+				'a'.repeat(64),
+				seed,
+				manifestStore,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		await expect(
+			authority.reidentify(
+				identity,
+				SECOND_SEGMENT_ID,
+				'a'.repeat(64),
+				{
+					...seed,
+					timestampMs: 400,
+				},
+				manifestStore,
+			),
+		).rejects.toMatchObject({ code: 'CONFLICT' });
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'running' });
+		const provenance = await authority.publicProvenance(
+			OWNER_ID,
+			ANALYSIS_ID,
+			RUN_ID,
+		);
+		expect(provenance.segments).toHaveLength(2);
+		expect(provenance.segments[0]?.gap?.startTimestampMs).toBe(250);
+		await authority.fenceRun({
+			ownerId: OWNER_ID,
+			runId: RUN_ID,
+			expectedVersion: 1,
+			status: 'cancelled',
+			completedAt: LATER,
+		});
+		await expect(authority.nextSegment(identity)).rejects.toMatchObject({
+			code: 'STALE_AUTHORITY',
+		});
+	});
+
 	test('requires one granted output transfer before publication', async () => {
 		const { authority, segment } = await createAttemptAuthority();
 		await makeOutputReady(authority);
@@ -844,6 +1416,37 @@ describe('TrackingAuthority', () => {
 				deletedAt: LATER,
 			}),
 		).toEqual(deleted);
+		for (const offset of [-1, 1]) {
+			expect(
+				await authority.markArtifactPromotionDeleted({
+					artifactId: artifact.artifactId,
+					expectedVersion: claimed.version,
+					deletedAt: new Date(Date.parse(LATER) + offset).toISOString(),
+				}),
+			).toEqual(deleted);
+		}
+		const recheckAt = new Date(
+			Date.parse(LATER) + 24 * 60 * 60 * 1000,
+		).toISOString();
+		const [reclaimed] = await authority.cleanupPromotionCandidates(recheckAt);
+		if (!reclaimed) throw new Error('Expected a tombstone recheck claim');
+		const staleCompletion = {
+			artifactId: artifact.artifactId,
+			expectedVersion: claimed.version,
+			deletedAt: recheckAt,
+		};
+		await expectAuthorityError(
+			authority.markArtifactPromotionDeleted(staleCompletion),
+			'STALE_AUTHORITY',
+		);
+		await authority.markArtifactPromotionDeleted({
+			...staleCompletion,
+			expectedVersion: reclaimed.version,
+		});
+		await expectAuthorityError(
+			authority.markArtifactPromotionDeleted(staleCompletion),
+			'STALE_AUTHORITY',
+		);
 		await expectAuthorityError(
 			authority.markArtifactPromotionDeleted({
 				artifactId: artifact.artifactId,
@@ -1062,6 +1665,9 @@ describe('TrackingAuthority', () => {
 
 	test('fences every late mutation after cancellation and replays the fence', async () => {
 		const { authority } = await createAttemptAuthority();
+		expect(
+			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+		).toEqual([]);
 		const fenced = await authority.fenceRun({
 			ownerId: OWNER_ID,
 			runId: RUN_ID,
@@ -1069,6 +1675,34 @@ describe('TrackingAuthority', () => {
 			status: 'cancelled',
 			completedAt: LATER,
 		});
+		expect(
+			await authority.cancellationTargets(
+				'other-owner',
+				ANALYSIS_ID,
+				WORKFLOW_ID,
+			),
+		).toEqual([]);
+		expect(
+			await authority.cancellationTargets(
+				OWNER_ID,
+				ANALYSIS_ID,
+				'other-workflow',
+			),
+		).toEqual([]);
+		expect(
+			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+		).toMatchObject([
+			{
+				segmentId: SEGMENT_ID,
+				cancelledAt: LATER,
+				identity: {
+					runId: RUN_ID,
+					attemptId: ATTEMPT_ID,
+					leaseId: LEASE_ID,
+					fencingToken: 7,
+				},
+			},
+		]);
 		expect(
 			await authority.fenceRun({
 				ownerId: OWNER_ID,
@@ -1099,6 +1733,37 @@ describe('TrackingAuthority', () => {
 			}),
 			'STALE_AUTHORITY',
 		);
+	});
+
+	test('cancellation cleanup snapshots queued segments and preserves accepted evidence', async () => {
+		const { authority, segment } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest),
+		);
+		await authority.createSegment(
+			segmentCommand({
+				segmentId: SECOND_SEGMENT_ID,
+				order: 1,
+				seed: {
+					kind: 'reidentification',
+					sourceId: REIDENTIFICATION_ID,
+					value: submissionFixture().trackingRequest.subjectSeed,
+				},
+			}),
+		);
+		await authority.fenceRun({
+			ownerId: OWNER_ID,
+			runId: RUN_ID,
+			expectedVersion: 1,
+			status: 'cancelled',
+			completedAt: LATER,
+		});
+		expect(
+			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+		).toEqual([
+			{ segmentId: SECOND_SEGMENT_ID, identity: null, cancelledAt: LATER },
+		]);
 	});
 
 	test('enforces immutable database records below the gateway', async () => {

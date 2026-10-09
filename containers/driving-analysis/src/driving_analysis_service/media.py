@@ -153,16 +153,19 @@ class MediaValidationService:
     ) -> ValidationResponse:
         started_at = time.monotonic()
         stage: ErrorStage = "claim"
+        _log_result(request.correlation_id, stage, started_at, "started")
         try:
             self.settings.prepare_roots()
             with claim_staged_media(request, self.settings) as claimed_path:
                 stage = "inspect"
+                _log_result(request.correlation_id, stage, started_at, "started")
                 byte_count, checksum, metadata = inspect_and_probe_media(
                     claimed_path,
                     expected_byte_count=request.input.expected_byte_count,
                     settings=self.settings,
                 )
                 stage = "decode"
+                _log_result(request.correlation_id, stage, started_at, "started")
                 decoded_frame_count = _decode_media(
                     claimed_path,
                     metadata,
@@ -730,6 +733,7 @@ def _decode_media(
                 standard_error_observer=StderrLineObserver(
                     layout_observer,
                     MAX_SHOWINFO_LINE_BYTES,
+                    settings.limits.max_decode_diagnostic_bytes,
                 )
             ),
         )

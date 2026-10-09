@@ -173,14 +173,16 @@ def test_bounded_process_consumes_selected_bounded_stderr_lines() -> None:
         ),
         timeout_seconds=5,
         max_output_bytes=1024,
-        streams=ProcessStreams(standard_error_observer=StderrLineObserver(observe, 32)),
+        streams=ProcessStreams(
+            standard_error_observer=StderrLineObserver(observe, 32, 1024)
+        ),
     )
 
     assert observed == [b"drop", b"keep"]
     assert result.stderr == b"keep"
 
 
-def test_discarded_stderr_still_counts_toward_combined_output_limit() -> None:
+def test_discarded_stderr_uses_its_separate_observed_output_limit() -> None:
     with pytest.raises(ProcessOutputLimitError):
         run_bounded_process(
             PYTHON,
@@ -188,14 +190,55 @@ def test_discarded_stderr_still_counts_toward_combined_output_limit() -> None:
             timeout_seconds=5,
             max_output_bytes=32,
             streams=ProcessStreams(
-                standard_error_observer=StderrLineObserver(lambda _line: True, 16)
+                standard_error_observer=StderrLineObserver(
+                    lambda _line: True,
+                    16,
+                    32,
+                )
+            ),
+        )
+
+
+def test_discarded_stderr_may_exceed_captured_output_limit() -> None:
+    result = run_bounded_process(
+        PYTHON,
+        ("-c", "import sys; sys.stderr.write('x' * 40 + '\\n')"),
+        timeout_seconds=5,
+        max_output_bytes=32,
+        streams=ProcessStreams(
+            standard_error_observer=StderrLineObserver(
+                lambda _line: True,
+                64,
+                64,
+            )
+        ),
+    )
+
+    assert result.stderr == b""
+
+
+def test_unrecognized_stderr_still_uses_captured_output_limit() -> None:
+    with pytest.raises(ProcessOutputLimitError):
+        run_bounded_process(
+            PYTHON,
+            ("-c", "import sys; sys.stderr.write('x' * 40 + '\\n')"),
+            timeout_seconds=5,
+            max_output_bytes=32,
+            streams=ProcessStreams(
+                standard_error_observer=StderrLineObserver(
+                    lambda _line: False,
+                    64,
+                    1024,
+                )
             ),
         )
 
 
 def test_stderr_line_observer_requires_a_positive_bound() -> None:
     with pytest.raises(ValueError, match="positive byte bound"):
-        StderrLineObserver(lambda _line: True, 0)
+        StderrLineObserver(lambda _line: True, 0, 1)
+    with pytest.raises(ValueError, match="positive byte bound"):
+        StderrLineObserver(lambda _line: True, 16, 0)
 
 
 @pytest.mark.parametrize(
@@ -246,6 +289,29 @@ def test_bounded_process_enforces_timeout_after_output_pipes_close() -> None:
         )
 
     assert time.monotonic() - started_at < 0.4
+
+
+def test_bounded_process_terminates_when_wait_expires_after_pipes_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_wait = subprocess.Popen.wait
+    expired = False
+
+    def expire_once(
+        process: subprocess.Popen[bytes], timeout: float | None = None
+    ) -> int:
+        nonlocal expired
+        if not expired:
+            expired = True
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        return original_wait(process, timeout=timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "wait", expire_once)
+    with pytest.raises(ProcessTimeoutError):
+        run_bounded_process(
+            PYTHON, ("-c", "pass"), timeout_seconds=5, max_output_bytes=1024
+        )
+    assert expired
 
 
 def test_bounded_process_timeout_terminates_process_group_descendants(
@@ -318,6 +384,7 @@ def test_bounded_process_enforces_observed_line_limit(suffix: str) -> None:
                 standard_error_observer=StderrLineObserver(
                     lambda _line: True,
                     32,
+                    1024,
                 )
             ),
         )

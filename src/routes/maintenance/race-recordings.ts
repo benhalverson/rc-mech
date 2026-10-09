@@ -9,6 +9,7 @@ import {
 	RACE_RECORDING_PART_SIZE,
 	raceRecordingPartRequestSchema,
 } from '../../driving-analysis/race-recording/race-recording-contracts';
+import { raceRecordingPlaybackResponse } from '../../driving-analysis/race-recording/race-recording-playback';
 import type { AppEnv } from '../../types';
 
 const errorStatus = (
@@ -33,10 +34,10 @@ const errorStatus = (
 
 const handle = async <T>(
 	operation: () => Promise<T>,
-	onSuccess: (value: T) => Response,
+	onSuccess: (value: T) => Response | Promise<Response>,
 ): Promise<Response> => {
 	try {
-		return onSuccess(await operation());
+		return await onSuccess(await operation());
 	} catch (error) {
 		if (error instanceof RaceRecordingAuthorityError)
 			return Response.json(
@@ -77,6 +78,24 @@ export const createRaceRecordingRoutes = (dependencies: AppDependencies) => {
 			(raceVideo) => Response.json({ raceVideo }),
 		),
 	);
+
+	routes.on(['GET', 'HEAD'], '/race-videos/:raceVideoId/content', (c) => {
+		const recordingIdentity = identity(
+			c.get('userId'),
+			c.req.param('raceVideoId'),
+		);
+		const authority = dependencies.raceRecordingAuthority(c.env);
+		return handle(
+			() => authority.contentMetadata(recordingIdentity),
+			(metadata) =>
+				raceRecordingPlaybackResponse(
+					authority,
+					recordingIdentity,
+					c.req.raw,
+					metadata,
+				),
+		);
+	});
 
 	routes.post('/cars/:carId/drives/:driveId/race-videos', async (c) => {
 		const parsed = createRaceRecordingInputSchema.safeParse(

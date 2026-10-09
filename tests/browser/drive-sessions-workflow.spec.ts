@@ -1,7 +1,175 @@
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
+import type { PublicDrivingAnalysis } from '../../src/driving-analysis/analysis/driving-analysis-contracts';
 
 let authentication = 0;
+
+test('reviews private Corner comparisons with keyboard-accessible provenance and AXE', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await createCar(page, 'Corner comparison fixture');
+	const pass = {
+		cornerId: 'corner-1',
+		cornerKey: 'hairpin',
+		cornerOrder: 1,
+		ordinal: 1,
+		entry: { timestampMs: 100.125, beforeFrameIndex: 2, afterFrameIndex: 3 },
+		exit: { timestampMs: 600.875, beforeFrameIndex: 15, afterFrameIndex: 16 },
+		durationMs: 500.75,
+		eligibility: 'eligible',
+		exclusionReason: null,
+		rank: 1,
+		tieGroup: 1,
+		best: true,
+		provenance: {
+			segmentId: 'segment-1',
+			segmentSequence: 1,
+			profileDigest: 'a'.repeat(64),
+			observationChecksum: 'b'.repeat(64),
+			manifestChecksum: 'c'.repeat(64),
+			measurementVersion: 'corner-evidence.v1',
+			measurementDigest: 'd'.repeat(64),
+		},
+	};
+	await page.route('**/api/v1/driving-analyses/analysis-1/evidence', (route) =>
+		route.fulfill({
+			json: {
+				evidence: {
+					analysisId: 'analysis-1',
+					carId: created.car.id,
+					driveSessionId: 'drive-1',
+					stateVersion: 4,
+					status: 'running',
+					runId: 'run-1',
+					trackMapVersionId: 'map-1',
+					tieToleranceMs: 40,
+					corners: [
+						{
+							id: 'corner-1',
+							name: 'Hairpin',
+							order: 1,
+							passes: [
+								pass,
+								{
+									...pass,
+									ordinal: 2,
+									durationMs: 530.75,
+									exit: { ...pass.exit, timestampMs: 630.875 },
+								},
+								{
+									...pass,
+									ordinal: 3,
+									durationMs: null,
+									entry: null,
+									exit: null,
+									eligibility: 'ineligible',
+									exclusionReason: 'tracking-gap',
+									rank: null,
+									tieGroup: null,
+									best: false,
+								},
+							],
+						},
+					],
+				},
+			},
+		}),
+	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/clips', (route) =>
+		route.fulfill({
+			json: {
+				clips: [1, 2].map((ordinal) => ({
+					id: `clip-${ordinal}`,
+					cornerId: 'corner-1',
+					ordinal,
+					segmentId: 'segment-1',
+					status: 'ready',
+					inputDigest: 'e'.repeat(64),
+					checksum: 'f'.repeat(64),
+					durationMs: 1500,
+					pipelineVersion: 'corner-render.v1',
+				})),
+			},
+		}),
+	);
+	await page.route('**/api/v1/driving-analyses/analysis-1/lifecycle', (route) =>
+		route.fulfill({
+			json: {
+				lifecycle: {
+					analysisId: 'analysis-1',
+					status: 'running',
+					stateVersion: 1,
+					permanent: false,
+					canCancel: true,
+					canRetry: false,
+					failure: null,
+				},
+			},
+		}),
+	);
+	await page.route(
+		'**/api/v1/driving-analyses/analysis-1/clips/*/content',
+		(route) =>
+			route.fulfill({ body: playableRaceVideo, contentType: 'video/mp4' }),
+	);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(
+		`/garage/${created.car.id}/drive-sessions/analysis/analysis-1`,
+	);
+	await expect(
+		page.getByRole('heading', { name: 'Corner comparison' }),
+	).toBeVisible();
+	await expect(
+		page.getByText('Best corner pass', { exact: false }),
+	).toHaveCount(2);
+	await expect(
+		page.getByText('Tracking lost the Subject car during this pass.'),
+	).toBeVisible();
+	const videos = page.locator('video');
+	await expect(videos).toHaveCount(2);
+	await expect(videos.first()).toHaveAttribute('controls', '');
+	await videos.first().evaluate(async (video: HTMLVideoElement) => {
+		await video.play();
+		video.pause();
+	});
+	await expect
+		.poll(() =>
+			videos.first().evaluate((video: HTMLVideoElement) => video.readyState),
+		)
+		.toBeGreaterThan(0);
+	const details = page
+		.getByText('Timing and provenance', { exact: true })
+		.first();
+	await details.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		page
+			.getByLabel('Hairpin, segment 1, pass 1')
+			.getByText('100.125 ms, between frames 2 and 3'),
+	).toBeVisible();
+	await expect(
+		page.getByRole('link', { name: 'Back to Drive sessions' }),
+	).toHaveAttribute('href', `/garage/${created.car.id}/drive-sessions`);
+	expect(await scan(page)).toEqual([]);
+	const deleteButton = page.getByRole('button', {
+		name: 'Delete analysis',
+		exact: true,
+	});
+	await deleteButton.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		page.getByRole('button', { name: 'Confirm deletion' }),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Keep analysis' }).click();
+	await expect(deleteButton).toBeFocused();
+});
+const playableRaceVideo = readFileSync(
+	new URL('./support/race-video.mp4', import.meta.url),
+);
 
 const authenticateOwner = async (page: Page): Promise<void> => {
 	authentication += 1;
@@ -25,6 +193,69 @@ const createCar = async (page: Page, name: string) => {
 	});
 	expect(response.ok()).toBe(true);
 	return (await response.json()) as { car: { id: string } };
+};
+
+const createApprovedTrackMap = async (
+	page: Page,
+	name: string,
+	raceVideoId: string,
+) => {
+	const layoutResponse = await page.request.post('/api/v1/track-layouts', {
+		data: { name },
+	});
+	expect(layoutResponse.status()).toBe(201);
+	const layout = (await layoutResponse.json()) as {
+		trackLayout: { id: string };
+	};
+	const draftResponse = await page.request.post(
+		`/api/v1/track-layouts/${layout.trackLayout.id}/map-versions`,
+		{ data: {} },
+	);
+	expect(draftResponse.status()).toBe(201);
+	const draft = (await draftResponse.json()) as {
+		trackMapVersion: { id: string; stateVersion: number };
+	};
+	const frameResponse = await page.request.post(
+		`/api/v1/track-map-versions/${draft.trackMapVersion.id}/reference-frame`,
+		{ data: { raceVideoId, timestampMs: 250 } },
+	);
+	expect(frameResponse.status()).toBe(201);
+	const geometryResponse = await page.request.patch(
+		`/api/v1/track-map-versions/${draft.trackMapVersion.id}`,
+		{
+			data: {
+				expectedStateVersion: draft.trackMapVersion.stateVersion,
+				corners: [
+					{
+						key: 'browser-turn',
+						name: 'Browser turn',
+						order: 1,
+						entryGate: {
+							start: { x: 0.2, y: 0.7 },
+							end: { x: 0.35, y: 0.6 },
+							direction: 'forward',
+						},
+						exitGate: {
+							start: { x: 0.5, y: 0.4 },
+							end: { x: 0.6, y: 0.5 },
+							direction: 'forward',
+						},
+						cornerView: { x: 0.15, y: 0.3, width: 0.5, height: 0.4 },
+					},
+				],
+			},
+		},
+	);
+	expect(geometryResponse.ok()).toBe(true);
+	const geometry = (await geometryResponse.json()) as {
+		trackMapVersion: { stateVersion: number };
+	};
+	const approvalResponse = await page.request.post(
+		`/api/v1/track-map-versions/${draft.trackMapVersion.id}/approve`,
+		{ data: { expectedStateVersion: geometry.trackMapVersion.stateVersion } },
+	);
+	expect(approvalResponse.ok()).toBe(true);
+	return { id: draft.trackMapVersion.id, name };
 };
 
 const scan = async (page: Page) => {
@@ -202,6 +433,740 @@ test('keeps dark Drive session editing, history, and archive states accessible',
 	expect(await scan(page)).toEqual([]);
 });
 
+test('creates a queued Driving analysis from a ready private Race recording', async ({
+	page,
+}, testInfo) => {
+	test.setTimeout(45_000);
+	await authenticateOwner(page);
+	const created = await createCar(page, 'Driving analysis browser fixture');
+	const driveResponse = await page.request.post(
+		`/api/v1/cars/${created.car.id}/drives`,
+		{
+			data: {
+				startedAt: '2026-08-17T18:00:00.000Z',
+				durationMinutes: 10,
+				conditions: 'Dry',
+			},
+		},
+	);
+	expect(driveResponse.ok()).toBe(true);
+	const drive = (await driveResponse.json()) as {
+		driveSession: { id: string };
+	};
+	const collectionUrl = `/api/v1/cars/${created.car.id}/drives/${drive.driveSession.id}/race-videos`;
+	const createResponse = await page.request.post(collectionUrl, {
+		data: {
+			fileName: 'Analysis.mp4',
+			contentType: 'video/mp4',
+			sizeBytes: playableRaceVideo.length,
+			requestId: randomUUID(),
+		},
+	});
+	expect(createResponse.status()).toBe(201);
+	const recording = (await createResponse.json()) as {
+		raceVideo: { id: string };
+	};
+	const partResponse = await page.request.put(
+		`/api/v1/race-videos/${recording.raceVideo.id}/upload-parts/1`,
+		{
+			headers: {
+				'content-length': String(playableRaceVideo.length),
+				'content-type': 'application/octet-stream',
+				'x-transfer-request-id': 'analysis-browser-part-1',
+			},
+			data: playableRaceVideo,
+		},
+	);
+	expect(partResponse.ok()).toBe(true);
+	const completionResponse = await page.request.post(
+		`/api/v1/race-videos/${recording.raceVideo.id}/complete`,
+	);
+	expect(completionResponse.ok()).toBe(true);
+	expect(await completionResponse.json()).toMatchObject({
+		raceVideo: { status: 'ready' },
+	});
+	const trackMap = await createApprovedTrackMap(
+		page,
+		`Analysis browser circuit ${randomUUID()}`,
+		recording.raceVideo.id,
+	);
+
+	await page.goto(`/garage/${created.car.id}/drive-sessions`);
+	const section = page.locator(
+		`section[aria-labelledby="race-recording-title-${drive.driveSession.id}"]`,
+	);
+	await expect(section.getByText('Ready for analysis')).toBeVisible();
+	const creator = section.locator('app-driving-analysis-creator');
+	await expect(
+		creator.getByRole('heading', { name: 'Select the car to follow' }),
+	).toBeVisible();
+	await expect(
+		creator.getByRole('button', { name: 'Select car in this frame' }),
+	).toBeVisible();
+	await expect(creator.locator('[data-box-surface]')).toHaveCount(0);
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-before-frame.png'),
+	});
+	// Exercise real native playback across repeated SPA teardown and replacement.
+	for (let navigation = 0; navigation < 3; navigation++) {
+		await creator.locator('[data-toggle-playback]').click();
+		await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+		const previousVideo = await creator.locator('video').elementHandle();
+		if (!previousVideo) throw new Error('Missing previous native player');
+		await page.getByRole('link', { name: 'Overview', exact: true }).click();
+		await expect(creator).toHaveCount(0);
+		expect(await previousVideo.evaluate((video) => video.paused)).toBe(true);
+		await page
+			.getByRole('link', { name: 'Drive sessions', exact: true })
+			.click();
+		await expect(creator).toBeVisible();
+		await previousVideo.evaluate((video) => {
+			video.dispatchEvent(new Event('play'));
+			video.dispatchEvent(new Event('timeupdate'));
+		});
+		await expect(creator.locator('output')).toHaveText('0 ms');
+		await expect(creator.locator('[data-toggle-playback]')).toHaveText(
+			'Play recording',
+		);
+		await previousVideo.dispose();
+	}
+	// Leaving while a source image is pending cancels its presentation lifetime.
+	const abandonedImageResponse = Promise.withResolvers<void>();
+	let abandonImage = true;
+	await page.route('**/subject-frames/*/content?checksum=*', async (route) => {
+		if (!abandonImage) return route.continue();
+		abandonImage = false;
+		await abandonedImageResponse.promise;
+		await route.fulfill({ status: 503, body: 'Abandoned image' });
+	});
+	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-mark-seed]').click();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		true,
+	);
+	const abandonedImage = await creator
+		.locator('[data-subject-frame]')
+		.elementHandle();
+	if (!abandonedImage) throw new Error('Missing pending creator image');
+	await page.getByRole('link', { name: 'Overview', exact: true }).click();
+	await expect(creator).toHaveCount(0);
+	abandonedImageResponse.resolve();
+	await abandonedImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await page.getByRole('link', { name: 'Drive sessions', exact: true }).click();
+	await expect(creator).toBeVisible();
+	await expect(creator.locator('[data-subject-frame]')).toHaveCount(0);
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Choose and load a verified Subject frame' }),
+	).toBeVisible();
+	await abandonedImage.dispose();
+	// Native failures are injected locally; the browser still renders and retries the capability.
+	await creator.locator('video').evaluate((video) => {
+		Object.defineProperty(video, 'play', {
+			configurable: true,
+			value: () => Promise.reject(new Error('Denied')),
+		});
+	});
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Private playback is unavailable' }),
+	).toContainText('Private playback is unavailable');
+	await creator.locator('video').evaluate((video) => {
+		Reflect.deleteProperty(video, 'play');
+	});
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+	await creator.locator('[data-toggle-playback]').click();
+	await creator.locator('[data-race-seek]').fill('250');
+	await expect(creator.locator('output')).toHaveText('250 ms');
+	await creator.locator('video').evaluate((video) => {
+		Object.defineProperty(video, 'currentTime', {
+			configurable: true,
+			set: () => {
+				throw new Error('Seek denied');
+			},
+		});
+	});
+	await creator.locator('[data-race-seek]').fill('500');
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Private playback is unavailable' }),
+	).toContainText('Private playback is unavailable');
+	await expect(creator.locator('output')).toHaveText('250 ms');
+	await creator.locator('video').evaluate((video) => {
+		Reflect.deleteProperty(video, 'currentTime');
+	});
+	await creator.locator('[data-race-seek]').fill('125');
+	await expect(creator.locator('output')).toHaveText('125 ms');
+	await expect(
+		creator.getByText('Private playback is unavailable', { exact: false }),
+	).toHaveCount(0);
+	const mapSelector = creator.getByLabel('Approved Track map');
+	await mapSelector.selectOption(trackMap.id);
+	await expect(mapSelector).toHaveValue(trackMap.id);
+	await expect(
+		creator.getByText(`Immutable approved version 1 for ${trackMap.name}`, {
+			exact: false,
+		}),
+	).toBeVisible();
+	await creator
+		.locator('summary', { hasText: 'Inspect immutable Track-map geometry' })
+		.click();
+	await expect(
+		creator.getByRole('img', {
+			name: `Approved geometry for ${trackMap.name} version 1`,
+		}),
+	).toBeVisible();
+	const playback = creator.getByRole('button', {
+		name: 'Play private Race recording',
+	});
+	await playback.click();
+	await expect(
+		creator.getByRole('button', { name: 'Pause private Race recording' }),
+	).toBeVisible();
+	await creator
+		.getByRole('button', { name: 'Pause private Race recording' })
+		.click();
+	await creator.getByLabel('Race start').fill('100');
+	await creator.getByLabel('Race end').fill('900');
+	await creator.locator('[data-race-seek]').fill('125');
+	await creator.locator('[data-toggle-playback]').click();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', false);
+	await creator.locator('[data-race-seek]').fill('125');
+	// Hold and fail the real creator image, then retry the exact same frame.
+	const creatorImageFailure = Promise.withResolvers<void>();
+	let failCreatorImage = true;
+	await page.route('**/subject-frames/2/content?checksum=*', async (route) => {
+		if (!failCreatorImage) return route.continue();
+		failCreatorImage = false;
+		await creatorImageFailure.promise;
+		await route.fulfill({ status: 503, body: 'Frame unavailable' });
+	});
+	await creator.locator('[data-mark-seed]').focus();
+	await page.keyboard.press('Enter');
+	await expect(creator.locator('[data-mark-seed]')).toBeFocused();
+	await expect(creator.locator('video')).toHaveJSProperty('paused', true);
+	await expect(creator.locator('[data-subject-frame]')).toBeAttached();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		true,
+	);
+	const failedCreatorImage = await creator
+		.locator('[data-subject-frame]')
+		.elementHandle();
+	if (!failedCreatorImage) throw new Error('Missing creator frame image');
+	creatorImageFailure.resolve();
+	await expect(
+		creator.getByText(
+			'The verified image could not be loaded. Choose the frame again.',
+		),
+	).toBeVisible();
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	await expect(
+		creator
+			.getByRole('alert')
+			.filter({ hasText: 'Choose and load a verified Subject frame' }),
+	).toBeVisible();
+	await creator.locator('[data-mark-seed]').click();
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		false,
+	);
+	await failedCreatorImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+		'disabled',
+		false,
+	);
+	await failedCreatorImage.dispose();
+	// Each repeated selection remounts an exact image and waits for its own load.
+	for (let selection = 0; selection < 3; selection++) {
+		const priorImage = await creator
+			.locator('[data-subject-frame]')
+			.elementHandle();
+		if (!priorImage) throw new Error('Missing previous creator image');
+		await creator.locator('[data-mark-seed]').click();
+		await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+			'disabled',
+			false,
+		);
+		await expect
+			.poll(() =>
+				priorImage.evaluate(
+					(image) => image !== document.querySelector('[data-subject-frame]'),
+				),
+			)
+			.toBe(true);
+		await priorImage.evaluate((image) => {
+			image.dispatchEvent(new Event('load'));
+			image.dispatchEvent(new Event('error'));
+		});
+		await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
+			'disabled',
+			false,
+		);
+		await priorImage.dispose();
+	}
+
+	await expect(
+		creator.getByLabel('Verified Subject timestamp (ms)'),
+	).toHaveValue('200');
+	await expect(creator.getByLabel('Verified source frame index')).toHaveValue(
+		'2',
+	);
+	await creator.getByLabel('Subject identity').fill('car-44');
+	const subjectBox = creator.locator('[data-subject-box]');
+	const surface = creator.locator('[data-box-surface]');
+	await surface.scrollIntoViewIfNeeded();
+	let surfaceBounds = await surface.boundingBox();
+	if (!surfaceBounds) throw new Error('Subject-box surface bounds missing');
+	// A redraw must also start inside the default box already covering the car.
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.46,
+		surfaceBounds.y + surfaceBounds.height * 0.46,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.65,
+		surfaceBounds.y + surfaceBounds.height * 0.6,
+	);
+	await page.mouse.up();
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-redraw-from-existing-box.png'),
+	});
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue('0.46');
+	await expect(subjectBox).toBeFocused();
+	// Capturing the whole selection panel scrolls it; remeasure before the next drag.
+	await surface.scrollIntoViewIfNeeded();
+	surfaceBounds = await surface.boundingBox();
+	if (!surfaceBounds) throw new Error('Subject-box redraw bounds missing');
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.63,
+		surfaceBounds.y + surfaceBounds.height * 0.58,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		surfaceBounds.x + surfaceBounds.width * 0.47,
+		surfaceBounds.y + surfaceBounds.height * 0.47,
+	);
+	await page.mouse.up();
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue('0.47');
+	await expect(creator.getByLabel('Top', { exact: true })).toHaveValue('0.47');
+	await expect(creator.getByLabel('Width', { exact: true })).toHaveValue(
+		'0.16',
+	);
+	await expect(creator.getByLabel('Height', { exact: true })).toHaveValue(
+		'0.11',
+	);
+	const pointerFractions = {
+		start: { x: 0.237, y: 0.183 },
+		end: { x: 0.688, y: 0.516 },
+	};
+	const pointerStart = {
+		x: surfaceBounds.x + surfaceBounds.width * pointerFractions.start.x,
+		y: surfaceBounds.y + surfaceBounds.height * pointerFractions.start.y,
+	};
+	const pointerEnd = {
+		x: surfaceBounds.x + surfaceBounds.width * pointerFractions.end.x,
+		y: surfaceBounds.y + surfaceBounds.height * pointerFractions.end.y,
+	};
+	const roundToSixDecimals = (value: number) =>
+		Math.round(value * 1_000_000) / 1_000_000;
+	const pointerSubjectBox = {
+		x: roundToSixDecimals(pointerFractions.start.x),
+		y: roundToSixDecimals(pointerFractions.start.y),
+		width: roundToSixDecimals(
+			pointerFractions.end.x - pointerFractions.start.x,
+		),
+		height: roundToSixDecimals(
+			pointerFractions.end.y - pointerFractions.start.y,
+		),
+	};
+	const expectedSubjectBox = { ...pointerSubjectBox, width: 0.12 };
+	await page.mouse.move(pointerStart.x, pointerStart.y);
+	await page.mouse.down();
+	await page.mouse.move(pointerEnd.x, pointerEnd.y);
+	await page.mouse.up();
+	await expect(creator.getByLabel('Left', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.x),
+	);
+	await expect(creator.getByLabel('Top', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.y),
+	);
+	await expect(creator.getByLabel('Width', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.width),
+	);
+	await expect(creator.getByLabel('Height', { exact: true })).toHaveValue(
+		String(pointerSubjectBox.height),
+	);
+	await creator.locator('[data-car-selection]').screenshot({
+		path: testInfo.outputPath('car-selection-drawn-box.png'),
+	});
+	await creator.getByLabel('Width').fill('');
+	await expect(
+		creator.getByText('Enter all four normalized Subject-box coordinates.'),
+	).toBeVisible();
+	await creator.getByLabel('Width').fill('0.12');
+	await expect(subjectBox).toHaveAttribute(
+		'aria-label',
+		new RegExp(`${expectedSubjectBox.x * 100}% from the left`),
+	);
+	const invalidControls = await creator.locator('form').evaluate((form) =>
+		Array.from((form as HTMLFormElement).elements)
+			.filter((control) => !(control as HTMLInputElement).checkValidity())
+			.map((control) => ({
+				name: (control as HTMLInputElement).name,
+				message: (control as HTMLInputElement).validationMessage,
+			})),
+	);
+	expect(invalidControls).toEqual([]);
+
+	const requestPromise = page.waitForRequest(
+		(request) =>
+			request.method() === 'POST' &&
+			request
+				.url()
+				.endsWith(
+					`/api/v1/cars/${created.car.id}/drives/${drive.driveSession.id}/driving-analyses`,
+				),
+	);
+	const responsePromise = page.waitForResponse(
+		(response) =>
+			response.request().method() === 'POST' &&
+			response
+				.url()
+				.endsWith(
+					`/api/v1/cars/${created.car.id}/drives/${drive.driveSession.id}/driving-analyses`,
+				),
+	);
+	await creator.getByRole('button', { name: 'Start analysis' }).click();
+	const analysisRequest = await requestPromise;
+	expect(analysisRequest.postDataJSON()).toMatchObject({
+		raceVideoId: recording.raceVideo.id,
+		approvedTrackMapVersionId: trackMap.id,
+		raceWindow: { startTimestampMs: 100, endTimestampMs: 900 },
+		subjectSeed: {
+			timestampMs: 200,
+			frameIndex: 2,
+			identity: 'car-44',
+			box: expectedSubjectBox,
+		},
+	});
+	expect((await responsePromise).status()).toBe(202);
+	await expect(creator.getByText('Analysis queued')).toBeVisible();
+	await expect(creator.getByText('Preparation · 0%')).toBeVisible();
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(creator.getByText('Preparation · 0%')).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	const { drivingAnalysis }: { drivingAnalysis: PublicDrivingAnalysis } =
+		await (await responsePromise).json();
+	let trackingState: PublicDrivingAnalysis = {
+		...drivingAnalysis,
+		lifecycle: 'tracking',
+		status: 'queued',
+		stage: 'tracking',
+		progress: 50,
+		waitReason: 'waiting-for-provider',
+		safeFailureCode: null,
+	};
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}`,
+		(route) => route.fulfill({ json: { drivingAnalysis: trackingState } }),
+	);
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(
+		creator.getByText(
+			'Waiting to continue tracking. We’ll retry automatically.',
+		),
+	).toBeVisible();
+	await expect(creator.getByText('Analysis queued')).toBeVisible();
+	await expect(creator.getByText('Tracking · 50%')).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	trackingState = {
+		...trackingState,
+		status: 'running',
+		waitReason: 'waiting-for-capacity',
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(creator.getByText('Analysis running')).toBeVisible();
+	const correctionRequests: unknown[] = [];
+	const gapContext = {
+		frames: [{ frameIndex: 7, timestampMs: 700 }],
+		runId: '11111111-1111-4111-8111-111111111111',
+		segmentId: '22222222-2222-4222-8222-222222222222',
+		acceptedDigest: 'a'.repeat(64),
+		gap: { startTimestampMs: 600, reason: 'missing' },
+	};
+	let failGapContext = false;
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/reidentification*`,
+		async (route) => {
+			if (route.request().method() === 'GET') {
+				if (failGapContext) {
+					failGapContext = false;
+					await route.fulfill({ status: 503, json: { error: 'Unavailable' } });
+					return;
+				}
+				await route.fulfill({ json: { context: gapContext } });
+				return;
+			}
+			const correction = route.request().postDataJSON() as {
+				correctionId: string;
+			};
+			correctionRequests.push(correction);
+			await route.fulfill(
+				correctionRequests.length === 1
+					? { status: 503, json: { error: 'Retry saved correction' } }
+					: {
+							status: 202,
+							json: {
+								correctionId: correction.correctionId,
+								runId: gapContext.runId,
+								segmentId: correction.correctionId,
+							},
+						},
+			);
+		},
+	);
+	// Hold the real correction image request to exercise local loading and retry.
+	const firstFrameFailure = Promise.withResolvers<void>();
+	let failFirstFrame = true;
+	await page.route('**/subject-frames/7/content?checksum=*', async (route) => {
+		if (!failFirstFrame) return route.continue();
+		failFirstFrame = false;
+		await firstFrameFailure.promise;
+		await route.fulfill({ status: 503, body: 'Frame unavailable' });
+	});
+	trackingState = {
+		...trackingState,
+		stateVersion: trackingState.stateVersion + 1,
+		lifecycle: 'awaiting-reidentification',
+		status: 'awaiting-reidentification',
+		waitReason: null,
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	const correctionEditor = creator.locator('app-subject-reidentification');
+	await expect(
+		correctionEditor.getByText('Tracking became uncertain', { exact: false }),
+	).toBeVisible();
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '0');
+	await expect(
+		correctionEditor.getByText('Selected source frame 7 at 700 ms'),
+	).toBeVisible();
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	const confirmCorrection = correctionEditor.getByRole('button', {
+		name: 'Confirm Subject and resume',
+	});
+	await expect(confirmCorrection).toBeDisabled();
+	firstFrameFailure.resolve();
+	await expect(correctionEditor.getByRole('alert')).toContainText(
+		'exact frame image could not be loaded',
+	);
+	await expect(confirmCorrection).toBeDisabled();
+	expect(await scan(page)).toEqual([]);
+	await correctionEditor
+		.getByRole('button', { name: 'Retry frame image' })
+		.click();
+	await expect
+		.poll(() =>
+			correctionEditor
+				.locator('img')
+				.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		)
+		.toBeGreaterThan(0);
+	// Change the accepted gap to two exact frames, delaying the second image.
+	const oldImage = await correctionEditor.locator('img').elementHandle();
+	if (!oldImage) throw new Error('Missing correction image');
+	const nextFrame = Promise.withResolvers<void>();
+	await page.route('**/subject-frames/8/content?checksum=*', async (route) => {
+		await nextFrame.promise;
+		await route.continue();
+	});
+	gapContext.frames.push({ frameIndex: 8, timestampMs: 800 });
+	trackingState = {
+		...trackingState,
+		stateVersion: trackingState.stateVersion + 1,
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(
+		correctionEditor.getByLabel('Inspect a later clear frame'),
+	).toHaveAttribute('max', '1');
+	await correctionEditor.getByLabel('Inspect a later clear frame').fill('1');
+	await correctionEditor
+		.getByLabel('Inspect a later clear frame')
+		.dispatchEvent('change');
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/8\/content\?checksum=/,
+	);
+	await oldImage.evaluate((image) => {
+		image.dispatchEvent(new Event('load'));
+		image.dispatchEvent(new Event('error'));
+	});
+	await expect(confirmCorrection).toBeDisabled();
+	expect(await scan(page)).toEqual([]);
+	nextFrame.resolve();
+	await expect(confirmCorrection).toBeEnabled();
+	await correctionEditor.getByLabel('Inspect a later clear frame').fill('0');
+	await correctionEditor
+		.getByLabel('Inspect a later clear frame')
+		.dispatchEvent('change');
+	await expect(correctionEditor.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	await expect(confirmCorrection).toBeEnabled();
+	await oldImage.dispose();
+	await correctionEditor.getByLabel('Width', { exact: true }).fill('0.12');
+	expect(await scan(page)).toEqual([]);
+	await correctionEditor
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.click();
+	await expect(correctionEditor.getByRole('alert')).toContainText(
+		'Retry the same frame',
+	);
+	await correctionEditor
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.click();
+	await expect(correctionEditor.getByRole('status')).toContainText(
+		'Subject correction accepted',
+	);
+	expect(correctionRequests).toHaveLength(2);
+	expect(correctionRequests[1]).toEqual(correctionRequests[0]);
+	expect(correctionRequests[0]).toMatchObject({
+		runId: gapContext.runId,
+		segmentId: gapContext.segmentId,
+		acceptedDigest: gapContext.acceptedDigest,
+		subjectSeed: { timestampMs: 700, frameIndex: 7 },
+	});
+	expect(await scan(page)).toEqual([]);
+	trackingState = {
+		...trackingState,
+		lifecycle: 'failed',
+		status: 'failed',
+		waitReason: null,
+		safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
+	};
+	await creator.getByRole('button', { name: 'Check status' }).click();
+	await expect(
+		creator.getByText(
+			'Tracking could not resume in time. You can retry this analysis.',
+		),
+	).toBeVisible();
+	await expect(
+		creator.getByRole('button', { name: 'Retry workflow' }),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	trackingState = {
+		...trackingState,
+		lifecycle: 'awaiting-reidentification',
+		status: 'awaiting-reidentification',
+		stateVersion: trackingState.stateVersion + 1,
+		safeFailureCode: null,
+	};
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/lifecycle`,
+		(route) =>
+			route.fulfill({
+				json: {
+					lifecycle: {
+						analysisId: drivingAnalysis.id,
+						status: trackingState.status,
+						stateVersion: trackingState.stateVersion,
+						permanent: false,
+						canCancel: true,
+						canRetry: false,
+						failure: null,
+					},
+				},
+			}),
+	);
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/evidence`,
+		(route) =>
+			route.fulfill({
+				json: {
+					evidence: {
+						analysisId: drivingAnalysis.id,
+						carId: created.car.id,
+						driveSessionId: drive.driveSession.id,
+						stateVersion: trackingState.stateVersion,
+						status: trackingState.status,
+						runId: gapContext.runId,
+						trackMapVersionId: trackMap.id,
+						tieToleranceMs: null,
+						corners: [],
+					},
+				},
+			}),
+	);
+	await page.route(
+		`**/api/v1/driving-analyses/${drivingAnalysis.id}/clips`,
+		(route) => route.fulfill({ json: { clips: [] } }),
+	);
+	failGapContext = true;
+	await page.goto(
+		`/garage/${created.car.id}/drive-sessions/analysis/${drivingAnalysis.id}`,
+	);
+	const reopenedCorrection = page.locator(
+		'app-corner-review app-subject-reidentification',
+	);
+	await expect(reopenedCorrection.getByRole('alert')).toContainText(
+		'Gap context could not be loaded',
+	);
+	expect(await scan(page)).toEqual([]);
+	await reopenedCorrection
+		.getByRole('button', { name: 'Retry gap context' })
+		.focus();
+	await page.keyboard.press('Enter');
+	await expect(
+		reopenedCorrection.getByText('Selected source frame 7 at 700 ms'),
+	).toBeVisible();
+	await expect(reopenedCorrection.locator('img')).toHaveAttribute(
+		'src',
+		/\/subject-frames\/7\/content\?checksum=/,
+	);
+	await expect
+		.poll(() =>
+			reopenedCorrection
+				.locator('img')
+				.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		)
+		.toBeGreaterThan(0);
+	await expect(
+		reopenedCorrection.getByRole('heading', {
+			name: 'Subject car correction',
+			level: 4,
+		}),
+	).toBeVisible();
+	expect(await scan(page)).toEqual([]);
+	await reopenedCorrection
+		.getByRole('button', { name: 'Confirm Subject and resume' })
+		.focus();
+	await page.keyboard.press('Enter');
+	await expect(reopenedCorrection.getByRole('status')).toContainText(
+		'Subject correction accepted',
+	);
+	expect(correctionRequests).toHaveLength(3);
+	expect(await scan(page)).toEqual([]);
+});
+
 test('resumes a Race recording from authoritative multipart progress without retransmitting completed parts', async ({
 	page,
 }) => {
@@ -222,11 +1187,12 @@ test('resumes a Race recording from authoritative multipart progress without ret
 		driveSession: { id: string };
 	};
 	const uploadUrl = `/api/v1/cars/${created.car.id}/drives/${driveBody.driveSession.id}/race-videos`;
+	const displaySize = playableRaceVideo.length.toLocaleString();
 	const createResponse = await page.request.post(uploadUrl, {
 		data: {
 			fileName: 'Final.mp4',
 			contentType: 'video/mp4',
-			sizeBytes: 3,
+			sizeBytes: playableRaceVideo.length,
 			requestId: '00000000-0000-4000-8000-000000000234',
 		},
 	});
@@ -239,11 +1205,11 @@ test('resumes a Race recording from authoritative multipart progress without ret
 		`/api/v1/race-videos/${recordingId}/upload-parts/1`,
 		{
 			headers: {
-				'content-length': '3',
+				'content-length': String(playableRaceVideo.length),
 				'content-type': 'application/octet-stream',
 				'x-transfer-request-id': 'browser-seeded-part-1',
 			},
-			data: Buffer.from('abc'),
+			data: playableRaceVideo,
 		},
 	);
 	expect(seededPart.ok()).toBe(true);
@@ -256,30 +1222,163 @@ test('resumes a Race recording from authoritative multipart progress without ret
 			browserPartRequests += 1;
 	});
 	await page.goto(`/garage/${created.car.id}/drive-sessions`);
-	await expect(page.getByText('Final.mp4 · 3 bytes')).toBeVisible();
+	await expect(
+		page.getByText(`Final.mp4 · ${displaySize} bytes`),
+	).toBeVisible();
 	await expect(page.getByText('Upload paused')).toBeVisible();
 	await expect(page.getByRole('progressbar')).toHaveAttribute('value', '100');
 	await page.locator('input[type="file"]').setInputFiles({
 		name: 'Final.mp4',
 		mimeType: 'video/mp4',
-		buffer: Buffer.from('abc'),
+		buffer: playableRaceVideo,
 	});
-	await expect(page.getByText('Upload complete')).toBeVisible();
+	await expect(page.getByText('Ready for analysis')).toBeVisible();
 	expect(browserPartRequests).toBe(0);
 	expect(await scan(page)).toEqual([]);
 
+	const validationResponse = await page.request.get(
+		`/api/v1/race-videos/${recordingId}`,
+	);
+	const validationBody = (await validationResponse.json()) as {
+		raceVideo: Record<string, unknown>;
+	};
+	const collectionUrl = `**/api/v1/cars/${created.car.id}/race-videos`;
+	await page.route(collectionUrl, (route) =>
+		route.fulfill({
+			status: 200,
+			json: {
+				raceVideos: [
+					{
+						...validationBody.raceVideo,
+						status: 'ready',
+						validationStateVersion: 2,
+						media: {
+							byteCount: playableRaceVideo.length,
+							durationMs: 1000,
+							width: 160,
+							height: 90,
+							videoCodec: 'h264',
+							audioCodecs: [],
+							containerFormats: ['mp4'],
+							decodedFrameCount: 10,
+							averageFrameRate: { numerator: 10, denominator: 1 },
+							timeBase: { numerator: 1, denominator: 10240 },
+							sampleAspectRatio: { numerator: 1, denominator: 1 },
+							displayAspectRatio: { numerator: 16, denominator: 9 },
+							startTimeMs: 0,
+							checksumSha256: 'a'.repeat(64),
+						},
+						validationError: null,
+						validatedAt: '2026-08-16T18:01:00.000Z',
+						playbackUrl: `/api/v1/race-videos/${recordingId}/content`,
+					},
+				],
+			},
+		}),
+	);
+	const mediaRangeRequests: string[] = [];
+	await page.route(`**/api/v1/race-videos/${recordingId}/content`, (route) => {
+		const range = route.request().headers()['range'];
+		const match = range ? /^bytes=(\d+)-(\d*)$/.exec(range) : null;
+		const start = match ? Number(match[1]) : 0;
+		const requestedEnd = match?.[2] ? Number(match[2]) : null;
+		const end = Math.min(
+			requestedEnd ?? playableRaceVideo.length - 1,
+			playableRaceVideo.length - 1,
+		);
+		if (range) mediaRangeRequests.push(range);
+		return route.fulfill({
+			status: match ? 206 : 200,
+			headers: {
+				'accept-ranges': 'bytes',
+				'content-length': String(end - start + 1),
+				'content-type': 'video/mp4',
+				...(match
+					? {
+							'content-range': `bytes ${start}-${end}/${playableRaceVideo.length}`,
+						}
+					: {}),
+			},
+			body: playableRaceVideo.subarray(start, end + 1),
+		});
+	});
 	await page.reload();
 	const completedSection = page.locator(
 		`section[aria-labelledby="race-recording-title-${driveBody.driveSession.id}"]`,
 	);
-	await expect(completedSection.getByText('Final.mp4 · 3 bytes')).toBeVisible();
-	await expect(completedSection.getByText('Upload complete')).toBeVisible();
+	await expect(
+		completedSection.getByText(`Final.mp4 · ${displaySize} bytes`),
+	).toBeVisible();
+	await expect(completedSection.getByText('Ready for analysis')).toBeVisible();
+	const player = completedSection.locator('video');
+	await expect(player).toHaveAttribute(
+		'src',
+		`/api/v1/race-videos/${recordingId}/content`,
+	);
+	await expect(
+		completedSection.getByRole('button', {
+			name: 'Play private Race recording',
+		}),
+	).toBeVisible();
+	await expect(player).toHaveAttribute('preload', 'metadata');
+	const playback = await player.evaluate(async (video: HTMLVideoElement) => {
+		if (video.readyState < HTMLMediaElement.HAVE_METADATA)
+			await new Promise<void>((resolve, reject) => {
+				const timeout = window.setTimeout(
+					() => reject(new Error('Video metadata timed out')),
+					5_000,
+				);
+				video.addEventListener(
+					'loadedmetadata',
+					() => {
+						window.clearTimeout(timeout);
+						resolve();
+					},
+					{ once: true },
+				);
+			});
+		video.muted = true;
+		await video.play();
+		const played = !video.paused;
+		video.pause();
+		const target = Math.min(0.5, video.duration / 2);
+		await new Promise<void>((resolve, reject) => {
+			const timeout = window.setTimeout(
+				() => reject(new Error('Video seek timed out')),
+				5_000,
+			);
+			video.addEventListener(
+				'seeked',
+				() => {
+					window.clearTimeout(timeout);
+					resolve();
+				},
+				{ once: true },
+			);
+			video.currentTime = target;
+		});
+		return {
+			played,
+			paused: video.paused,
+			currentTime: video.currentTime,
+			duration: video.duration,
+		};
+	});
+	expect(playback.played).toBe(true);
+	expect(playback.paused).toBe(true);
+	expect(playback.currentTime).toBeGreaterThan(0);
+	expect(playback.currentTime).toBeLessThanOrEqual(playback.duration);
+	expect(mediaRangeRequests.some((range) => range.startsWith('bytes='))).toBe(
+		true,
+	);
+	expect(await scan(page)).toEqual([]);
+	await page.unroute(collectionUrl);
 	await completedSection
 		.getByRole('button', { name: 'Delete recording permanently' })
 		.click();
-	await expect(completedSection.getByText('Final.mp4 · 3 bytes')).toHaveCount(
-		0,
-	);
+	await expect(
+		completedSection.getByText(`Final.mp4 · ${displaySize} bytes`),
+	).toHaveCount(0);
 	await expect(completedSection.locator('input[type="file"]')).toBeFocused();
 
 	const cancellableDrive = await page.request.post(

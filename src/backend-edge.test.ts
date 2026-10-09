@@ -108,7 +108,7 @@ describe('backend defensive and alternate paths', () => {
 		for (const [from, to, expected] of [
 			['active', 'active', false],
 			['paused', 'paused', false],
-			['archived', 'active', false],
+			['archived', 'active', true],
 			['active', 'archived', true],
 			['paused', 'archived', true],
 		] as const)
@@ -501,7 +501,7 @@ describe('backend defensive and alternate paths', () => {
 				references += 1;
 			}
 		}
-		expect(references).toBe(32);
+		expect(references).toBe(45);
 	});
 
 	test('covers consumable cross-field validation alternatives', () => {

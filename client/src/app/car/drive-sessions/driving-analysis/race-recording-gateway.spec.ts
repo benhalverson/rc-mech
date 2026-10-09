@@ -29,11 +29,48 @@ const recording = {
 	status: 'uploading',
 	uploadedBytes: 0,
 	uploadedPartNumbers: [],
+	validationStateVersion: null,
+	media: null,
+	validationError: null,
+	validatedAt: null,
+	playbackUrl: null,
 	createdAt: '2026-08-16T20:00:00.000Z',
 	updatedAt: '2026-08-16T20:00:00.000Z',
 	expiresAt: '2026-08-23T20:00:00.000Z',
 	completedAt: null,
 } as const;
+
+const media = {
+	byteCount: 3,
+	durationMs: 1000,
+	width: 1920,
+	height: 1080,
+	videoCodec: 'h264',
+	audioCodecs: [],
+	containerFormats: ['mp4'],
+	decodedFrameCount: 60,
+	averageFrameRate: { numerator: 60, denominator: 1 },
+	timeBase: { numerator: 1, denominator: 60 },
+	sampleAspectRatio: { numerator: 1, denominator: 1 },
+	displayAspectRatio: { numerator: 16, denominator: 9 },
+	startTimeMs: 0,
+	checksumSha256: 'a'.repeat(64),
+};
+
+const validationError = {
+	code: 'CORRUPT_MEDIA' as const,
+	stage: 'probe' as const,
+	message: 'The recording is corrupt.',
+};
+
+const completedRecording = {
+	...recording,
+	status: 'validating' as const,
+	uploadedBytes: 3,
+	uploadedPartNumbers: [1],
+	validationStateVersion: 1,
+	completedAt: '2026-08-16T20:01:00.000Z',
+};
 
 describe('RaceRecordingGateway', () => {
 	let gateway: RaceRecordingGateway;
@@ -88,11 +125,72 @@ describe('RaceRecordingGateway', () => {
 			uploadedBytes: RACE_RECORDING_PART_SIZE + 3,
 			uploadedPartNumbers: [1, 2],
 			status: 'validating',
+			validationStateVersion: 1,
 			completedAt: '2026-08-16T20:01:00.000Z',
 		} as const;
 		expect(parseRaceRecordingMutation({ raceVideo: twoPartRecording })).toEqual(
 			twoPartRecording,
 		);
+
+		const ready = {
+			...completedRecording,
+			status: 'ready' as const,
+			validationStateVersion: 2,
+			media,
+			validatedAt: '2026-08-16T20:02:00.000Z',
+			playbackUrl: '/api/v1/race-videos/recording-1/content',
+		};
+		const invalid = {
+			...completedRecording,
+			status: 'invalid' as const,
+			validationStateVersion: 2,
+			validationError,
+			validatedAt: '2026-08-16T20:02:00.000Z',
+		};
+		expect(parseRaceRecordingMutation({ raceVideo: ready })).toEqual(ready);
+		expect(parseRaceRecordingMutation({ raceVideo: invalid })).toEqual(invalid);
+
+		for (const raceVideo of [
+			{ ...recording, validationStateVersion: 1 },
+			{ ...recording, media },
+			{ ...recording, validationError },
+			{ ...recording, validatedAt: 'now' },
+			{ ...recording, playbackUrl: '/private' },
+			{ ...completedRecording, completedAt: null },
+			{ ...completedRecording, validationStateVersion: null },
+			{ ...completedRecording, media },
+			{ ...completedRecording, validationError },
+			{ ...completedRecording, validatedAt: 'now' },
+			{ ...completedRecording, playbackUrl: '/private' },
+			{ ...ready, media: null },
+			{ ...ready, validationError },
+			{ ...ready, validatedAt: null },
+			{ ...ready, playbackUrl: '/wrong' },
+			{ ...ready, media: { ...media, checksumSha256: 'invalid' } },
+			{ ...invalid, media },
+			{ ...invalid, validationError: null },
+			{ ...invalid, validatedAt: null },
+			{ ...invalid, playbackUrl: '/private' },
+			{
+				...invalid,
+				validationError: { ...validationError, message: 'https://private' },
+			},
+			{
+				...invalid,
+				validationError: { ...validationError, message: 'See www.private' },
+			},
+			{
+				...invalid,
+				validationError: { ...validationError, message: 'Bad\nmessage' },
+			},
+			{
+				...invalid,
+				validationError: { ...validationError, message: 'Bad\u007fmessage' },
+			},
+		])
+			expect(() => parseRaceRecordingMutation({ raceVideo })).toThrow(
+				'invalid',
+			);
 	});
 
 	it('maps transport, API, parser, and unknown failures', () => {
@@ -227,6 +325,7 @@ describe('RaceRecordingGateway', () => {
 			raceVideo: {
 				...recording,
 				status: 'validating',
+				validationStateVersion: 1,
 				uploadedBytes: recording.sizeBytes,
 				uploadedPartNumbers: [1],
 				completedAt: '2026-08-16T20:01:00.000Z',

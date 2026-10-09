@@ -79,6 +79,7 @@ class MediaLimits:
     max_frames: int = 1_000_000
     process_timeout_seconds: float = 15 * 60
     max_process_output_bytes: int = 1024 * 1024
+    max_decode_diagnostic_bytes: int = 512 * 1024 * 1024
     max_request_body_bytes: int = 4 * 1024
     max_concurrent_validations: int = 2
     max_concurrent_processing: int = 1

@@ -1,3 +1,11 @@
+@if (settingsWorkspace.current()) {
+ <section class="alloy-state" role="status" aria-live="polite" aria-label="Settings synchronization">
+  @if (settingsWorkspace.operations().length === 0) { <p>Settings synchronized.</p> }
+  @for (operation of settingsWorkspace.operations(); track operation.operationId) {
+   <p><strong>{{ operation.status === 'pending' ? 'Pending sync' : operation.status === 'conflict' ? 'Sync conflict' : 'Needs attention' }}</strong>: {{ operation.command.type === 'timezone' ? 'Timezone change' : 'Invite change' }}. {{ operation.feedback }} @if (operation.remote) { Remote timezone: {{ operation.remote }}. Your local timezone is retained. }</p>
+  }
+ </section>
+}
 <div class="grid min-w-0 max-w-4xl grid-cols-1 gap-6">
 	<app-appearance-selector />
 
@@ -109,7 +117,9 @@
 		</header>
 		<p class="alloy-supporting-text m-0 max-w-3xl">Register the devices you trust. Your browser handles platform prompts and cross-device handoff, including QR where supported.</p>
 
-		@if (!passkeys.webAuthnAvailable()) {
+		@if (!passkeys.administrationAvailable()) {
+			<p class="alloy-state" role="status">Connection needed. Passkey registration, rename, and revocation are unavailable offline. These actions are not queued.</p>
+		} @else if (!passkeys.webAuthnAvailable()) {
 			<p class="alloy-state alloy-attention-state mt-0" role="status"><span class="alloy-state-heading"><svg lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><strong>Attention</strong></span><span>Passkey registration is unavailable in this browser. Your existing passkeys and magic-link recovery remain available.</span></p>
 		}
 
@@ -151,7 +161,7 @@
 						@if (editingPasskeyId() === passkey.id) {
 							<form class="grid min-w-0 gap-3 sm:col-span-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-start" (submit)="renamePasskey($event, passkey)" novalidate>
 								<label class="grid min-w-0 gap-2 text-sm font-semibold text-alloy-text" [for]="'rename-' + passkey.id"><span>Passkey name</span><input class="alloy-field alloy-focus-ring min-w-0" [id]="'rename-' + passkey.id" type="text" [formField]="renameForm.name" [attr.aria-describedby]="renameForm.name().touched() && renameForm.name().invalid() ? 'rename-validation-' + passkey.id : null" /></label>
-								<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="passkeys.action() !== null"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>Save</button>
+								<button class="alloy-control alloy-focus-ring inline-flex items-center justify-center gap-2" type="submit" [disabled]="!passkeys.administrationAvailable() || passkeys.action() !== null"><svg lucideSave size="18" strokeWidth="1.8" aria-hidden="true"></svg>Save</button>
 								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="cancelRename(passkey)"><svg lucideX size="18" strokeWidth="1.8" aria-hidden="true"></svg>Cancel</button>
 								@if (renameForm.name().touched() && renameForm.name().invalid()) {
 									<span [id]="'rename-validation-' + passkey.id" class="flex items-start gap-2 text-sm text-alloy-text sm:col-span-3" role="alert"><svg class="mt-0.5 shrink-0" lucideTriangleAlert size="18" strokeWidth="1.8" aria-hidden="true"></svg><span><strong>Error.</strong> {{ renameForm.name().errors()[0]?.message }}</span></span>
@@ -160,8 +170,8 @@
 						} @else {
 							<div class="min-w-0"><strong class="block break-words text-alloy-text">{{ passkey.name || 'Unnamed passkey' }}</strong><span class="mt-1 block text-[13px] text-alloy-text-secondary">Added {{ passkey.createdAt ? (passkey.createdAt | date:'mediumDate') : 'recently' }}</span></div>
 							<div class="flex flex-wrap gap-2 sm:justify-end">
-								<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" [id]="'rename-launcher-' + passkey.id" type="button" (click)="beginRename(passkey)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Rename</button>
-								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="passkeys.revoke(passkey)" [disabled]="passkeys.action() !== null"><svg lucideTrash2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ passkeys.action() === 'revoke:' + passkey.id ? 'Revoking…' : 'Revoke' }}</button>
+								<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" [id]="'rename-launcher-' + passkey.id" type="button" (click)="beginRename(passkey)" [disabled]="!passkeys.administrationAvailable()"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Rename</button>
+								<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2 text-alloy-text underline underline-offset-4" type="button" (click)="passkeys.revoke(passkey)" [disabled]="!passkeys.administrationAvailable() || passkeys.action() !== null"><svg lucideTrash2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>{{ passkeys.action() === 'revoke:' + passkey.id ? 'Revoking…' : 'Revoke' }}</button>
 							</div>
 						}
 					</li>
@@ -170,3 +180,5 @@
 		}
 	</section>
 </div>
+
+<app-feature-flags />

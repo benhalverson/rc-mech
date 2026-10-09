@@ -90,6 +90,11 @@ const payload = (form: ComponentForm, includeSlot = true) => ({
 	...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
 });
 
+/**
+ * Owns Component editor forms, local selection, and accessible Build presentation.
+ * Passes validated install/edit/replace/remove intent to CarBuildStore so form and
+ * focus state do not become part of the durable synchronization command.
+ */
 @Component({
 	selector: 'app-car-build',
 	host: { class: 'block' },
@@ -220,6 +225,19 @@ export class CarBuild {
 			slot: component.slot,
 		});
 		this.editing.set(true);
+	}
+
+	protected remove(component: InstalledComponent): void {
+		if (this.carStore.car()?.archivedAt || this.action()) return;
+		this.buildStore.save({
+			mode: 'remove',
+			componentId: component.id,
+			input: {
+				name: component.name,
+				slot: component.slot,
+				slotType: componentSlotType(component),
+			},
+		});
 	}
 
 	protected cancel(): void {

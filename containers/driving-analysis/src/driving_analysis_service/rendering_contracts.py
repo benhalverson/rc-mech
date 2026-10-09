@@ -71,21 +71,6 @@ class RenderSpecification(StrictContract):
         )
         if duration > MAX_RENDER_DURATION_MS:
             raise ValueError("render duration exceeds the configured maximum")
-        points = (
-            self.overlay.subject_center,
-            self.overlay.entry_gate.entry,
-            self.overlay.entry_gate.exit,
-            self.overlay.exit_gate.entry,
-            self.overlay.exit_gate.exit,
-        )
-        if any(
-            point.x < self.corner_view.x
-            or point.x > self.corner_view.x + self.corner_view.width
-            or point.y < self.corner_view.y
-            or point.y > self.corner_view.y + self.corner_view.height
-            for point in points
-        ):
-            raise ValueError("render overlay points must lie inside cornerView")
         return self
 
 

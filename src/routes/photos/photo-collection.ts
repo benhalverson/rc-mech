@@ -82,6 +82,7 @@ export const createPhotoCollectionRoutes = () => {
 				409,
 			);
 		const parsed = await parsePhotoForm(c);
+		console.log('Parsed photo form:', parsed);
 		if ('error' in parsed)
 			return c.json({ error: parsed.error, maxBytes: PHOTO_MAX_BYTES }, 400);
 		const database = db(c.env);
@@ -91,6 +92,7 @@ export const createPhotoCollectionRoutes = () => {
 			.where(eq(photo.carId, carId));
 		const id = crypto.randomUUID();
 		const objectKey = photoObjectKey(carId, id);
+		console.log('Generated object key for photo:', objectKey);
 		const requestedPrimary =
 			parsed.primary === 'true' || parsed.primary === '1';
 		const sortOrderValue =

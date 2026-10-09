@@ -107,6 +107,7 @@ type Waiter = {
 	deadlineAt: number;
 	kind: WorkKind;
 	ordinal: number;
+	restoredFrom?: { leaseId: string; fence: number };
 };
 type Lease = Waiter & {
 	leaseId: string;
@@ -121,6 +122,7 @@ export type PersistedGpuLeaseState = {
 	waiters: Waiter[];
 	activeLease: Lease | null;
 	terminal: Record<string, TerminalReason>;
+	completedReleases: Record<string, { leaseId: string; fence: number }>;
 };
 
 const emptyState = (): PersistedGpuLeaseState => ({
@@ -129,6 +131,7 @@ const emptyState = (): PersistedGpuLeaseState => ({
 	waiters: [],
 	activeLease: null,
 	terminal: {},
+	completedReleases: {},
 });
 
 /** The sole serialized authority for the physical GPU capacity. */
@@ -244,11 +247,40 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 	async release(raw: GpuLeaseReleaseInput): Promise<GpuLeaseMutationResult> {
 		const input = gpuLeaseReleaseInput.parse(raw);
 		const result = await this.mutate((state) => {
+			const receipt = state.completedReleases[input.segmentId];
+			if (
+				input.completed &&
+				receipt?.leaseId === input.leaseId &&
+				receipt.fence === input.fence
+			)
+				return { status: 'ok' } as const;
 			this.expire(state, Date.now());
-			if (!this.current(state, input)) return { status: 'stale' } as const;
+			if (!this.current(state, input)) {
+				const restored = state.waiters.find(
+					(waiter) => waiter.segmentId === input.segmentId,
+				)?.restoredFrom;
+				if (
+					!input.completed &&
+					restored?.leaseId === input.leaseId &&
+					restored.fence === input.fence
+				) {
+					state.waiters = state.waiters.filter(
+						(waiter) => waiter.segmentId !== input.segmentId,
+					);
+					return { status: 'ok' } as const;
+				}
+				return { status: 'stale' } as const;
+			}
 			state.activeLease = null;
-			if (input.completed)
+			if (input.completed) {
 				this.markTerminal(state, input.segmentId, 'completed');
+				// Persist proof in the same transaction that clears capacity.
+				// Retain receipts so lost responses remain replayable after eviction.
+				state.completedReleases[input.segmentId] = {
+					leaseId: input.leaseId,
+					fence: input.fence,
+				};
+			}
 			return { status: 'ok' } as const;
 		});
 		await this.scheduleAlarm();
@@ -299,7 +331,15 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 		const result = await this.mutate((state) => {
 			this.expire(state, now);
 			const lease = this.current(state, input);
-			if (!lease) return { status: 'stale' } as const;
+			if (!lease) {
+				const restored = state.waiters.find(
+					(waiter) => waiter.segmentId === input.segmentId,
+				)?.restoredFrom;
+				return restored?.leaseId === input.leaseId &&
+					restored.fence === input.fence
+					? ({ status: 'ok' } as const)
+					: ({ status: 'stale' } as const);
+			}
 			const alreadyQueued = state.waiters.some(
 				(waiter) => waiter.segmentId === input.segmentId,
 			);
@@ -316,11 +356,19 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 					deadlineAt: lease.deadlineAt,
 					kind: lease.kind,
 					ordinal: lease.ordinal,
+					restoredFrom: { leaseId: lease.leaseId, fence: lease.fence },
 				});
 			return { status: 'ok' } as const;
 		});
 		await this.scheduleAlarm();
 		return result;
+	}
+
+	/** Release a provider-lost lease while retaining the waiter's FIFO place. */
+	async requeueProviderLoss(
+		raw: GpuLeaseBusyInput,
+	): Promise<GpuLeaseMutationResult> {
+		return this.restoreCapacityBusy(raw);
 	}
 
 	async beginCommitHold(
@@ -382,6 +430,7 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 				(await transaction.get<PersistedGpuLeaseState>(
 					GPU_LEASE_COORDINATOR_STORAGE_KEY,
 				)) ?? emptyState();
+			state.completedReleases ??= {};
 			const result = mutator(state);
 			await transaction.put(GPU_LEASE_COORDINATOR_STORAGE_KEY, state);
 			return result;
@@ -411,6 +460,7 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 				deadlineAt: lease.deadlineAt,
 				kind: lease.kind,
 				ordinal: lease.ordinal,
+				restoredFrom: { leaseId: lease.leaseId, fence: lease.fence },
 			});
 		}
 	}

@@ -33,6 +33,15 @@
 				</div>
 			</header>
 
+ @if (driveSessionStore.localPending()) { <p role="status">Drive session saved on this device. Pending sync.</p> }
+ @for (operation of driveSessionStore.syncOperations(); track operation.operationId) {
+ @if (operation.status !== 'pending') {
+ <section role="status" class="alloy-state"><strong>{{ operation.status === 'conflict' ? 'Sync conflict' : 'Needs attention' }}</strong><p>{{ operation.feedback?.message }}</p>
+ @if (operation.remote; as remote) { <p>Remote drive history retained for review:</p><ul>@for (session of remote.sessions; track session.id) { <li>{{ session.startedAt }} — {{ session.conditions }} — {{ session.notes }}</li> }</ul> }
+ </section>
+ }
+ }
+
 			@if (editing()) {
 				<form class="alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="drive-session-form-title" [attr.aria-describedby]="formError() ? 'drive-session-form-error' : 'drive-session-form-intro'" novalidate>
 					<div>
@@ -133,7 +142,9 @@
 									</div>
 								}
 							</article>
+							@if (analysisVisibility.visible()) {
 							<app-race-recording-upload [carId]="car.id" [driveSession]="session" [carArchived]="!!car.archivedAt" />
+							}
 						</li>
 					}
 				</ol>

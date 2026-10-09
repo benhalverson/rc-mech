@@ -2,6 +2,7 @@ import { computed, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { VisibilityStore } from '../../driving-analysis-visibility/visibility-store';
 import { CarStore } from '../car-store';
 import type {
 	ArchiveDriveSessionCommand,
@@ -47,6 +48,10 @@ class FakeCarStore {
 }
 
 class FakeDriveSessionStore {
+	readonly localPending = signal(false);
+	readonly syncOperations = signal<
+		readonly import('../drive-sync/drive-sync.models').DriveSyncOperation[]
+	>([]);
 	readonly sessions = signal<readonly DriveSession[]>([]);
 	readonly timezone = signal('UTC');
 	readonly loading = signal(false);
@@ -109,14 +114,17 @@ describe('DriveSessions', () => {
 	let carStore: FakeCarStore;
 	let store: FakeDriveSessionStore;
 	let raceRecordingStore: FakeDrivingAnalysisStore;
+	const visible = signal(true);
 
 	beforeEach(async () => {
+		visible.set(true);
 		carStore = new FakeCarStore();
 		store = new FakeDriveSessionStore();
 		raceRecordingStore = new FakeDrivingAnalysisStore();
 		await TestBed.configureTestingModule({
 			imports: [DriveSessions],
 			providers: [
+				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([]),
 				{ provide: CarStore, useValue: carStore },
 				{ provide: DriveSessionStore, useValue: store },
@@ -133,6 +141,64 @@ describe('DriveSessions', () => {
 		fixture.detectChanges();
 		return fixture.nativeElement as HTMLElement;
 	};
+
+	it('announces pending work and retains canonical rejection and conflict history accessibly', async () => {
+		store.localPending.set(true);
+		const operation: import('../drive-sync/drive-sync.models').DriveSyncOperation =
+			{
+				operationId: 'op',
+				ownerKey: 'owner',
+				carId: 'car-1',
+				command: {
+					type: 'drive.change',
+					action: 'save',
+					carId: 'car-1',
+					sessionId: 'drive-1',
+					base: null,
+					baseVersion: 1,
+					input: {
+						startedAt: '2026-10-09T12:00:00Z',
+						durationMinutes: null,
+						conditions: 'Dry',
+						notes: '',
+					},
+				},
+				dependencies: [],
+				status: 'pending',
+				createdAt: '2026-10-09',
+				sequence: 1,
+			};
+		store.syncOperations.set([
+			operation,
+			{
+				...operation,
+				operationId: 'rejected',
+				status: 'needs-attention',
+				feedback: { code: 'INVALID', message: 'Fix this outing' },
+			},
+			{
+				...operation,
+				operationId: 'conflict',
+				status: 'conflict',
+				remote: { carId: 'car-1', version: 2, sessions: [driveSession()] },
+			},
+		]);
+		expect(detect().textContent).toContain('Pending sync');
+		expect(detect().textContent).toContain('Fix this outing');
+		expect(detect().textContent).toContain('Sync conflict');
+	});
+
+	it('hides the entire recording and analysis subtree while keeping ordinary sessions usable', () => {
+		store.sessions.set([driveSession()]);
+		visible.set(false);
+		const root = detect();
+		expect(root.querySelector('app-race-recording-upload')).toBeNull();
+		expect(root.textContent).toContain('Edit drive session');
+		expect(root.textContent).toContain('Archive drive session');
+		visible.set(true);
+		detect();
+		expect(root.querySelector('app-race-recording-upload')).not.toBeNull();
+	});
 
 	const button = (label: string): HTMLButtonElement => {
 		const match = [

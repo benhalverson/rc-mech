@@ -76,7 +76,9 @@ const MOCK_ENV = {
 	ENVIRONMENT: 'local',
 	GPU_PROVIDER_ORIGIN: 'https://gpu.invalid',
 	GPU_LEASE_COORDINATOR: {} as Env['GPU_LEASE_COORDINATOR'],
+	RACE_VIDEO_MEDIA_CONTAINER: {} as Env['RACE_VIDEO_MEDIA_CONTAINER'],
 	DRIVING_ANALYSIS_WORKFLOW: {} as Env['DRIVING_ANALYSIS_WORKFLOW'],
+	RACE_VIDEO_VALIDATION_WORKFLOW: {} as Env['RACE_VIDEO_VALIDATION_WORKFLOW'],
 } satisfies Env;
 
 const request = (path: string, init?: RequestInit) =>
@@ -129,12 +131,37 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	).toBeDefined();
 	expect(document.paths['/api/v1/race-videos/{raceVideoId}']).toBeDefined();
 	expect(
+		document.paths['/api/v1/cars/{carId}/drives/{driveId}/driving-analyses'],
+	).toBeDefined();
+	expect(document.paths['/api/v1/driving-analyses/{analysisId}']).toBeDefined();
+	expect(
+		document.paths['/api/v1/driving-analyses/{analysisId}/retry'],
+	).toBeDefined();
+	expect(
+		document.paths['/api/v1/track-map-versions/{versionId}/approve'],
+	).toBeDefined();
+	expect(
+		document.paths['/api/v1/track-map-versions/{versionId}/retire'],
+	).toBeDefined();
+	expect(document.paths['/api/v1/track-map-recordings']).toBeDefined();
+	expect(
+		document.paths['/api/v1/track-map-versions/{versionId}/reference-frame'],
+	).toBeDefined();
+	expect(
+		document.paths[
+			'/api/v1/track-map-versions/{versionId}/reference-frame/content'
+		],
+	).toBeDefined();
+	expect(
 		document.paths[
 			'/api/v1/race-videos/{raceVideoId}/upload-parts/{partNumber}'
 		],
 	).toBeDefined();
 	expect(
 		document.paths['/api/v1/race-videos/{raceVideoId}/complete'],
+	).toBeDefined();
+	expect(
+		document.paths['/api/v1/race-videos/{raceVideoId}/content'],
 	).toBeDefined();
 	const syncOperation = document.paths[
 		'/api/v1/sync/operations/{operationId}'
@@ -164,6 +191,11 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 			(command) => command.properties.type.const,
 		),
 	).toEqual([
+		'build.change',
+		'drive.change',
+		'maintenance.change',
+		'maintenance.change',
+		'maintenance.change',
 		'car.create',
 		'car.edit',
 		'car.archive',
@@ -172,6 +204,8 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 		'setup.correct',
 		'setup.select-current',
 	]);
+	expect(document.paths['/api/v1/components']).toBeDefined();
+	expect(document.paths['/api/v1/drives']).toBeDefined();
 	expect(document.paths['/api/v1/cars/{carId}/voice-updates']).toBeDefined();
 	expect(
 		document.paths['/api/v1/voice-updates/{voiceUpdateId}/confirm'],

@@ -1,4 +1,6 @@
+import threading
 from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +21,27 @@ class _Array:
         return self.value
 
 
+class _Model:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def init_state(
+        self,
+        *,
+        resource_path: str,
+        offload_video_to_cpu: bool = False,
+        async_loading_frames: bool = False,
+    ) -> object:
+        self.calls.append(
+            {
+                "resource_path": resource_path,
+                "offload_video_to_cpu": offload_video_to_cpu,
+                "async_loading_frames": async_loading_frames,
+            }
+        )
+        return {}
+
+
 class _Predictor:
     def __init__(
         self,
@@ -34,6 +57,7 @@ class _Predictor:
         )
         self.requests: list[dict[str, object]] = []
         self.stream_closed = False
+        self.model = _Model()
 
     def handle_request(self, request: dict[str, object]) -> object:
         self.requests.append(request)
@@ -129,6 +153,46 @@ def test_sam31_runtime_uses_official_point_prompt_video_api(tmp_path: Path) -> N
         {"type": "close_session", "session_id": "session-1"},
     ]
     assert predictor.stream_closed
+
+
+def test_sam31_runtime_enters_cuda_autocast_on_tracking_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predictor = _Predictor((_output(0, ids=[], boxes=[], scores=[]),))
+    context_threads: list[int] = []
+
+    @contextmanager
+    def cuda_autocast() -> Generator[None]:
+        context_threads.append(threading.get_ident())
+        yield
+
+    monkeypatch.setattr(runtime_module, "_build_predictor", lambda _path: predictor)
+    monkeypatch.setattr(
+        runtime_module,
+        "_cuda_autocast",
+        cuda_autocast,
+        raising=False,
+    )
+    runtime = Sam31CudaRuntime(tmp_path / "checkpoint.pt")
+    worker_results: list[object] = []
+
+    def run() -> None:
+        worker_results.extend(
+            runtime.track(
+                frame_directory=tmp_path / "frames",
+                seed_position=0,
+                seed_box=(0.1, 0.2, 0.2, 0.2),
+                frame_count=1,
+            )
+        )
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    worker.join()
+
+    assert len(worker_results) == 1
+    assert context_threads == [worker.ident]
 
 
 @pytest.mark.parametrize(
@@ -284,9 +348,21 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
         calls.append(kwargs)
         return predictor
 
+    autocast_calls: list[dict[str, object]] = []
+    bfloat16 = object()
+
+    @contextmanager
+    def autocast(*, device_type: str, dtype: object) -> Generator[None]:
+        autocast_calls.append({"device_type": device_type, "dtype": dtype})
+        yield
+
     cuda = SimpleNamespace(is_available=lambda: True)
     modules = {
-        "torch": SimpleNamespace(cuda=cuda),
+        "torch": SimpleNamespace(
+            autocast=autocast,
+            bfloat16=bfloat16,
+            cuda=cuda,
+        ),
         "sam3.model_builder": SimpleNamespace(
             build_sam3_multiplex_video_predictor=builder
         ),
@@ -297,7 +373,9 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
     )
     checkpoint = tmp_path / "sam3.1.pt"
 
-    assert runtime_module._build_predictor(checkpoint) is predictor
+    built = runtime_module._build_predictor(checkpoint)
+
+    assert built is predictor
     assert calls == [
         {
             "checkpoint_path": str(checkpoint),
@@ -309,6 +387,22 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
             "async_loading_frames": False,
         }
     ]
+    predictor.model.init_state(
+        resource_path="frames",
+        offload_video_to_cpu=True,
+        async_loading_frames=True,
+        offload_state_to_cpu=False,  # type: ignore[call-arg]
+    )
+    assert predictor.model.calls == [
+        {
+            "resource_path": "frames",
+            "offload_video_to_cpu": True,
+            "async_loading_frames": True,
+        }
+    ]
+    with runtime_module._cuda_autocast():
+        pass
+    assert autocast_calls == [{"device_type": "cuda", "dtype": bfloat16}]
 
     modules["torch"] = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
     with pytest.raises(RuntimeError):

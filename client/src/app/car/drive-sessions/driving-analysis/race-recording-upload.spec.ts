@@ -1,8 +1,10 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DriveSession } from '../drive-session.models';
 import { DrivingAnalysisStore } from './driving-analysis-store';
+import { PrivateVideoPlayerCapability } from './private-video-player';
 import type {
 	RaceRecording,
 	RaceRecordingGatewayFailure,
@@ -32,6 +34,11 @@ const recording = (overrides: Partial<RaceRecording> = {}): RaceRecording => ({
 	status: 'uploading',
 	uploadedBytes: 1,
 	uploadedPartNumbers: [],
+	validationStateVersion: null,
+	media: null,
+	validationError: null,
+	validatedAt: null,
+	playbackUrl: null,
 	createdAt: '2026-08-16T20:00:00.000Z',
 	updatedAt: '2026-08-16T20:00:00.000Z',
 	expiresAt: '2026-08-23T20:00:00.000Z',
@@ -49,9 +56,24 @@ const idleTransfer = (): RaceRecordingTransferState => ({
 });
 
 class FakeDrivingAnalysisStore {
+	readonly selectedSubjectFrame = signal(null);
+	readonly subjectFrameLoading = signal(false);
+	readonly subjectFrameError = signal(null);
 	readonly recordings = signal<readonly RaceRecording[]>([]);
 	readonly transfer = signal<RaceRecordingTransferState>(idleTransfer());
 	readonly pending = signal(false);
+	readonly approvedTrackMaps = signal([]);
+	readonly trackMapsLoading = signal(false);
+	readonly trackMapsFailure = signal<unknown>(null);
+	readonly selectedTrackMap = signal(null);
+	readonly selectedTrackMapLoading = signal(false);
+	readonly analysisCreation = signal({
+		status: 'idle' as 'idle' | 'creating' | 'accepted' | 'failed',
+		driveSessionId: null as string | null,
+		analysis: null,
+		error: null,
+	});
+	readonly analysisError = signal('Analysis failed.');
 	readonly error = signal('Upload failed.');
 	readonly removal = signal<{
 		status: 'idle' | 'removing' | 'failed';
@@ -75,6 +97,9 @@ class FakeDrivingAnalysisStore {
 	readonly resumeUpload = vi.fn();
 	readonly removeRecording = vi.fn();
 	readonly retry = vi.fn();
+	readonly createAnalysis = vi.fn();
+	readonly refreshAnalysis = vi.fn();
+	readonly selectTrackMap = vi.fn();
 	readonly hasSelectedFile = vi.fn(() => this.selectedFile());
 	readonly selectedFileName = vi.fn(() => this.selectedFileNameValue());
 }
@@ -87,7 +112,11 @@ describe('RaceRecordingUpload', () => {
 		store = new FakeDrivingAnalysisStore();
 		await TestBed.configureTestingModule({
 			imports: [RaceRecordingUpload],
-			providers: [{ provide: DrivingAnalysisStore, useValue: store }],
+			providers: [
+				provideRouter([]),
+				PrivateVideoPlayerCapability,
+				{ provide: DrivingAnalysisStore, useValue: store },
+			],
 		}).compileComponents();
 		fixture = TestBed.createComponent(RaceRecordingUpload);
 		fixture.componentRef.setInput('carId', 'car-1');
@@ -253,7 +282,9 @@ describe('RaceRecordingUpload', () => {
 			recording({ status: 'validating', uploadedBytes: 3, completedAt: 'now' }),
 		]);
 		root = detect();
-		expect(root.textContent).toContain('Upload complete');
+		expect(root.textContent).toContain('Validating recording');
+		button('Check status').click();
+		expect(store.retry).toHaveBeenCalledOnce();
 		expect(root.querySelector('input[type="file"]')).toBeNull();
 		expect(root.textContent).toContain('Delete recording permanently');
 		const component = fixture.componentInstance as unknown as {
@@ -276,7 +307,7 @@ describe('RaceRecordingUpload', () => {
 			error: null,
 		});
 		root = detect();
-		expect(root.textContent).toContain('Upload complete');
+		expect(root.textContent).toContain('Validating recording');
 		expect(root.textContent).toContain('Delete recording permanently');
 		expect(root.textContent).not.toContain('Cancel upload');
 
@@ -294,12 +325,65 @@ describe('RaceRecordingUpload', () => {
 		expect(root.textContent).toContain('Upload failed');
 
 		store.transfer.set(idleTransfer());
+		store.recordings.set([
+			recording({
+				status: 'ready',
+				uploadedBytes: 3,
+				completedAt: 'now',
+				validationStateVersion: 2,
+				validatedAt: 'later',
+				playbackUrl: '/api/v1/race-videos/recording-1/content',
+				media: {
+					byteCount: 3,
+					durationMs: 1000,
+					width: 1920,
+					height: 1080,
+					videoCodec: 'h264',
+					audioCodecs: [],
+					containerFormats: ['mp4'],
+					decodedFrameCount: 60,
+					averageFrameRate: { numerator: 60, denominator: 1 },
+					timeBase: { numerator: 1, denominator: 60 },
+					sampleAspectRatio: { numerator: 1, denominator: 1 },
+					displayAspectRatio: { numerator: 16, denominator: 9 },
+					startTimeMs: 0,
+					checksumSha256: 'a'.repeat(64),
+				},
+			}),
+		]);
+		root = detect();
+		expect(root.textContent).toContain('Ready for analysis');
+		expect(root.querySelector('video')?.getAttribute('src')).toBe(
+			'/api/v1/race-videos/recording-1/content',
+		);
+		expect(root.textContent).toContain('1920 × 1080');
+
+		store.recordings.set([
+			recording({
+				status: 'invalid',
+				uploadedBytes: 3,
+				completedAt: 'now',
+				validationStateVersion: 2,
+				validatedAt: 'later',
+				validationError: {
+					code: 'CORRUPT_MEDIA',
+					stage: 'probe',
+					message: 'The recording is corrupt.',
+				},
+			}),
+		]);
+		root = detect();
+		expect(root.textContent).toContain('Recording can’t be analyzed');
+		expect(root.textContent).toContain('The recording is corrupt.');
+		expect(root.querySelector('video')).toBeNull();
+
+		store.transfer.set(idleTransfer());
 		store.recordings.set([]);
 		store.readFailure.set({ kind: 'http', status: 503 });
 		root = detect();
 		expect(root.textContent).toContain('Recording status unavailable');
 		button('Try again').click();
-		expect(store.retry).toHaveBeenCalledOnce();
+		expect(store.retry).toHaveBeenCalledTimes(2);
 	});
 
 	it('keeps archived and deleted Drive sessions upload-read-only and guards absent removal', () => {

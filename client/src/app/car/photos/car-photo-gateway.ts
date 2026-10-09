@@ -4,7 +4,7 @@ import {
 	httpResource,
 } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
-import { catchError, map, type Observable, throwError } from 'rxjs';
+import { catchError, map, type Observable, tap, throwError } from 'rxjs';
 import {
 	type CarPhoto,
 	carPhotoCollectionSchema,
@@ -43,6 +43,12 @@ export const photoGatewayFailure = (error: unknown): PhotoGatewayFailure => {
 		: { kind: 'unavailable' };
 };
 
+/**
+ * Route-scoped HTTP resource and legacy mutation transport for CarPhotoStore.
+ * Retains the online path when no prepared offline workspace is available; the
+ * root PhotoSyncGateway serves durable replay instead. This resource owns the
+ * selected-car request, not the local queue or retained original URLs.
+ */
 @Injectable()
 export class CarPhotoGateway {
 	private readonly http = inject(HttpClient);
@@ -132,12 +138,18 @@ export class CarPhotoGateway {
 	private sendFile(url: string, file: File): Observable<CarPhoto> {
 		const body = new FormData();
 		body.append('file', file, file.name);
-		return this.http.post<unknown>(url, body, { withCredentials: true }).pipe(
-			map(parsePhotoMutation),
-			catchError((error: unknown) =>
-				throwError(() => photoGatewayFailure(error)),
-			),
-		);
+		return this.http
+			.post<unknown>(url, body, {
+				headers: { 'ngsw-bypass': 'true' },
+				withCredentials: true,
+			})
+			.pipe(
+				tap((body) => console.log('Uploaded photo data:', body)),
+				map(parsePhotoMutation),
+				catchError((error: unknown) =>
+					throwError(() => photoGatewayFailure(error)),
+				),
+			);
 	}
 
 	private endpoint(photo: CarPhoto): string {

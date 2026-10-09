@@ -10,6 +10,8 @@ import type {
 	SettingsGatewayFailure,
 } from './settings.models';
 import { SettingsGateway } from './settings-gateway';
+import { FakeSettingsWorkspace } from './settings-sync.testing';
+import { SettingsWorkspaceStore } from './settings-workspace-store';
 
 const invite = (overrides: Partial<InviteCode> = {}): InviteCode => ({
 	id: 'invite-1',
@@ -119,6 +121,7 @@ describe('InviteStore', () => {
 		clipboard = new FakeClipboardCapability();
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: SettingsWorkspaceStore, useClass: FakeSettingsWorkspace },
 				InviteStore,
 				{ provide: SettingsGateway, useValue: gateway },
 				{ provide: ClipboardCapability, useValue: clipboard },
@@ -227,5 +230,56 @@ describe('InviteStore', () => {
 		gateway.failRevoke({ kind: 'unavailable' });
 		expect(store.actionError()).toBe('Invite code could not be revoked.');
 		expect(store.message()).toBe('');
+	});
+	it('uses cached invites and durable commands while retaining canonical rejection feedback', () => {
+		const workspace = TestBed.inject(
+			SettingsWorkspaceStore,
+		) as unknown as FakeSettingsWorkspace;
+		const code = {
+			id: 'invite',
+			code: 'TRACK-01',
+			status: 'available',
+			createdAt: 'today',
+		};
+		workspace.available.set(true);
+		workspace.current.set({
+			timezone: 'UTC',
+			invites: { allowance: 5, used: 1, remaining: 4, codes: [code] },
+		});
+		expect(store.codes()).toEqual([code]);
+		expect(store.allowance().remaining).toBe(4);
+		expect(store.loading()).toBe(false);
+		expect(store.readError()).toBe('');
+		store.create('TRACK-02');
+		const request = workspace.mutate.mock.lastCall?.[0] as {
+			requestId: string;
+		};
+		workspace.outcome.set({
+			status: 'succeeded',
+			requestId: request.requestId,
+		});
+		TestBed.tick();
+		expect(store.message()).toBe('Saved on this device.');
+		store.revoke(code);
+		const failed = workspace.mutate.mock.lastCall?.[0] as { requestId: string };
+		workspace.outcome.set({
+			status: 'failed',
+			requestId: failed.requestId,
+			message: 'Storage full',
+		});
+		TestBed.tick();
+		expect(store.actionError()).toBe('Storage full');
+		workspace.operations.set([
+			{
+				operationId: 'op',
+				ownerKey: 'owner',
+				createdAt: 'today',
+				command: { type: 'invite-create', code: 'SETTINGS' },
+				dependencies: [],
+				status: 'needs-attention',
+				feedback: 'Reserved code',
+			},
+		]);
+		expect(store.actionError()).toBe('Needs attention: Reserved code');
 	});
 });

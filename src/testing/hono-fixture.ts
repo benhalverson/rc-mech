@@ -1,4 +1,6 @@
 import { expect } from 'vitest';
+import { defaultAppDependencies } from '../app-dependencies';
+import { DrivingAnalysisAuthority } from '../driving-analysis/analysis/driving-analysis-authority';
 import { RaceRecordingAuthority } from '../driving-analysis/race-recording/race-recording-authority';
 import { type AppDependencies, createApp } from '../index';
 import type { VoiceProcessor } from '../voice-processing';
@@ -69,9 +71,19 @@ export type RecordedD1Query = {
 	operation: Exclude<D1Step['kind'], 'error'>;
 };
 
+/**
+ * Scriptable D1 boundary for Hono request tests. Supplies selected rows and batch
+ * results while recording SQL/bindings, so synchronization races and ownership
+ * failures can be exercised without a live database or a new Worker emulator.
+ */
 export class MockD1Controller {
 	readonly queries: RecordedD1Query[] = [];
 	readonly batches: string[][] = [];
+	readonly batchQueries: RecordedD1Query[][] = [];
+	private readonly valuesByStatement = new WeakMap<
+		D1PreparedStatement,
+		unknown[]
+	>();
 	readonly database: D1Database;
 	private steps: D1Step[] = [];
 	private readonly queryByStatement = new WeakMap<
@@ -109,6 +121,7 @@ export class MockD1Controller {
 		const statement: D1PreparedStatement = {
 			bind: (...nextValues) => {
 				values = nextValues;
+				this.valuesByStatement.set(statement, values);
 				return statement;
 			},
 			first: async <T = Record<string, unknown>>() => {
@@ -153,6 +166,13 @@ export class MockD1Controller {
 				statements.map(
 					(statement) => this.queryByStatement.get(statement) ?? '<unknown>',
 				),
+			);
+			this.batchQueries.push(
+				statements.map((statement) => ({
+					query: this.queryByStatement.get(statement) ?? '<unknown>',
+					values: this.valuesByStatement.get(statement) ?? [],
+					operation: 'batch',
+				})),
 			);
 			this.queries.push({ query: '<batch>', values: [], operation: 'batch' });
 			const step = this.take('batch');
@@ -471,6 +491,8 @@ type HonoFixtureOptions = {
 	voiceProcessor?: VoiceProcessor;
 	database?: D1Database;
 	raceRecordingAuthority?: AppDependencies['raceRecordingAuthority'];
+	drivingAnalysisAuthority?: AppDependencies['drivingAnalysisAuthority'];
+	analysisLifecycle?: AppDependencies['analysisLifecycle'];
 };
 
 export const createHonoFixture = (
@@ -489,11 +511,16 @@ export const createHonoFixture = (
 	const assets = Object.assign(async (..._args: unknown[]) => ({}), {
 		fetch: async (input: RequestInfo | URL) => {
 			const request = new Request(input);
-			return new URL(request.url).pathname === '/'
+			const pathname = new URL(request.url).pathname;
+			return pathname === '/' && !request.url.includes('asset-miss=1')
 				? new Response('<app-root></app-root>', {
 						headers: { 'content-type': 'text/html' },
 					})
-				: new Response('Not found', { status: 404 });
+				: pathname === '/assets/app.js'
+					? new Response('console.log("asset");', {
+							headers: { 'content-type': 'application/javascript' },
+						})
+					: new Response('Not found', { status: 404 });
 		},
 		connect: (): Socket => {
 			throw new Error('Unexpected socket connection in backend tests');
@@ -529,9 +556,14 @@ export const createHonoFixture = (
 		ENVIRONMENT: 'local',
 		GPU_PROVIDER_ORIGIN: 'https://gpu.invalid',
 		GPU_LEASE_COORDINATOR: {} as Env['GPU_LEASE_COORDINATOR'],
+		RACE_VIDEO_MEDIA_CONTAINER: {} as Env['RACE_VIDEO_MEDIA_CONTAINER'],
 		DRIVING_ANALYSIS_WORKFLOW: {} as Env['DRIVING_ANALYSIS_WORKFLOW'],
+		RACE_VIDEO_VALIDATION_WORKFLOW: {} as Env['RACE_VIDEO_VALIDATION_WORKFLOW'],
 	} satisfies Env;
 	const auth: AppDependencies = {
+		analysisLifecycle:
+			fixtureOptions.analysisLifecycle ??
+			defaultAppDependencies.analysisLifecycle,
 		getSession: async () =>
 			fixtureOptions.authenticated !== false
 				? { user: { id: fixtureOptions.userId ?? 'owner-1' } }
@@ -549,6 +581,9 @@ export const createHonoFixture = (
 			fixtureOptions.raceRecordingAuthority ??
 			((environment) =>
 				new RaceRecordingAuthority(environment.DB, environment.ANALYSIS_MEDIA)),
+		drivingAnalysisAuthority:
+			fixtureOptions.drivingAnalysisAuthority ??
+			((environment) => new DrivingAnalysisAuthority(environment.DB)),
 	};
 	const app = createApp(auth);
 	return {

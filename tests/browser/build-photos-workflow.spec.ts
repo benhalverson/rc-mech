@@ -1,6 +1,8 @@
 import { expect, type Page, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
+test.use({ serviceWorkers: 'allow' });
+
 let authentication = 0;
 
 const authenticateOwner = async (page: Page): Promise<void> => {
@@ -122,8 +124,43 @@ test('renders the private photo list and archived state accessibly in dark mode'
 		page.getByRole('list', { name: 'Car photo gallery' }),
 	).toBeVisible();
 	await expect(page.getByText('Primary photo')).toBeVisible();
+	await expect
+		.poll(() =>
+			page.evaluate(() => Boolean(navigator.serviceWorker.controller)),
+		)
+		.toBe(true);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	const photoUpload = page.waitForResponse(
+		(response) =>
+			response
+				.url()
+				.includes(`/api/v1/cars/${created.car.id}/photos/captures/`) &&
+			response.request().method() === 'PUT',
+	);
+	const photoRequest = page.waitForRequest(
+		(request) =>
+			request
+				.url()
+				.includes(`/api/v1/cars/${created.car.id}/photos/captures/`) &&
+			request.method() === 'PUT',
+	);
+	await page.locator('.upload-button input').setInputFiles({
+		name: 'browser-upload.webp',
+		mimeType: 'image/webp',
+		buffer: Buffer.from('browser photo'),
+	});
+	const [uploadResponse, uploadRequest] = await Promise.all([
+		photoUpload,
+		photoRequest,
+	]);
+	expect(uploadResponse.status()).toBe(200);
+	expect(uploadRequest.headers()['content-type']).toMatch(
+		/^multipart\/form-data;\s*boundary=.+$/i,
+	);
+	expect(uploadRequest.headers()['ngsw-bypass']).toBe('true');
+	await expect(page.getByRole('listitem')).toHaveCount(2);
 	await expect(
-		page.getByRole('button', { name: 'Move photo earlier' }),
+		page.getByRole('button', { name: 'Move photo earlier' }).first(),
 	).toBeDisabled();
 	expect(await scan(page)).toEqual([]);
 

@@ -1,8 +1,10 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
+import { toObservable } from '@angular/core/rxjs-interop';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -20,7 +22,21 @@ import {
 	switchMap,
 	takeUntil,
 	tap,
+	timer,
 } from 'rxjs';
+import {
+	TrackMapGateway,
+	trackMapGatewayFailure,
+} from '../../../track-maps/track-map-gateway';
+import {
+	type CreateDrivingAnalysisCommand,
+	type DrivingAnalysis,
+	type DrivingAnalysisGatewayFailure,
+	type StartDrivingAnalysisCommand,
+} from './driving-analysis.models';
+import { DrivingAnalysisGateway } from './driving-analysis-gateway';
+import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
+import { PageVisibilityCapability } from './page-visibility';
 import {
 	idleRaceRecordingTransfer,
 	type RaceRecordingGatewayFailure,
@@ -30,12 +46,30 @@ import {
 } from './race-recording.models';
 import { RaceRecordingFileCapability } from './race-recording-file';
 import { RaceRecordingGateway } from './race-recording-gateway';
+import type { SubjectFrameRequest } from './subject-frame.models';
 
 type RaceRecordingState = {
+	subjectFrameRequest: SubjectFrameRequest | null;
 	carId: string;
 	transfer: RaceRecordingTransferState;
 	removal: RaceRecordingRemovalState;
+	analysisCreation: DrivingAnalysisCreationState;
 };
+
+type DrivingAnalysisCreationState = Readonly<{
+	status: 'idle' | 'creating' | 'retrying' | 'accepted' | 'failed';
+	driveSessionId: string | null;
+	analysis: DrivingAnalysis | null;
+	error: DrivingAnalysisGatewayFailure | null;
+}>;
+
+export type ApprovedTrackMapOption = Readonly<{
+	id: string;
+	layoutId: string;
+	layoutName: string;
+	version: number;
+	approvedAt: string | null;
+}>;
 
 type RaceRecordingRemovalState = Readonly<{
 	status: 'idle' | 'removing' | 'failed';
@@ -48,6 +82,13 @@ const idleRaceRecordingRemoval = (): RaceRecordingRemovalState => ({
 	status: 'idle',
 	driveSessionId: null,
 	recordingId: null,
+	error: null,
+});
+
+const idleDrivingAnalysisCreation = (): DrivingAnalysisCreationState => ({
+	status: 'idle',
+	driveSessionId: null,
+	analysis: null,
 	error: null,
 });
 
@@ -69,6 +110,15 @@ const removalFailureMessage = (
 	return 'The Race recording could not be removed.';
 };
 
+const analysisFailureMessage = (
+	failure: DrivingAnalysisGatewayFailure,
+): string => {
+	if ('status' in failure && failure.status === 401)
+		return 'Your garage session has expired. Sign in again to continue.';
+	if (failure.kind === 'rejected-response') return failure.message;
+	return 'The Driving analysis could not be started or retried.';
+};
+
 const transferState = (
 	status: RaceRecordingTransferState['status'],
 	driveSessionId: string,
@@ -87,16 +137,38 @@ const transferState = (
 
 export const DrivingAnalysisStore = signalStore(
 	withState<RaceRecordingState>({
+		subjectFrameRequest: null,
 		carId: '',
 		transfer: idleRaceRecordingTransfer(),
 		removal: idleRaceRecordingRemoval(),
+		analysisCreation: idleDrivingAnalysisCreation(),
 	}),
-	withProps(() => ({
-		gateway: inject(RaceRecordingGateway),
-		files: inject(RaceRecordingFileCapability),
-		stopTransfer: new Subject<void>(),
-	})),
+	withProps((store) => {
+		const visibility = inject(PageVisibilityCapability);
+		return {
+			subjectFrames: inject(DrivingAnalysisGateway).readSubjectFrame(
+				store.subjectFrameRequest,
+			),
+			gateway: inject(RaceRecordingGateway),
+			analyses: inject(DrivingAnalysisGateway),
+			analysisRequests: inject(DrivingAnalysisRequestIdentityCapability),
+			trackMaps: inject(TrackMapGateway),
+			files: inject(RaceRecordingFileCapability),
+			visibility,
+			visibilityChanges: toObservable(visibility.hidden),
+			stopTransfer: new Subject<void>(),
+		};
+	}),
 	withComputed((store) => ({
+		selectedSubjectFrame: computed(() =>
+			store.subjectFrames.hasValue() ? store.subjectFrames.value() : null,
+		),
+		subjectFrameLoading: computed(() => store.subjectFrames.isLoading()),
+		subjectFrameError: computed(() =>
+			store.subjectFrames.error()
+				? 'The source frame could not be verified. Choose the frame again.'
+				: null,
+		),
 		recordings: computed(() =>
 			store.gateway.collection.hasValue()
 				? store.gateway.collection.value()
@@ -104,10 +176,42 @@ export const DrivingAnalysisStore = signalStore(
 		),
 		loading: computed(() => store.gateway.collection.isLoading()),
 		readFailure: computed(() => store.gateway.collectionFailure()),
+		approvedTrackMaps: computed<readonly ApprovedTrackMapOption[]>(() => {
+			if (!store.trackMaps.layouts.hasValue()) return [];
+			return store.trackMaps.layouts
+				.value()
+				.trackLayouts.filter((layout) => layout.status === 'active')
+				.flatMap((layout) =>
+					layout.mapVersions
+						.filter((version) => version.status === 'approved')
+						.map((version) => ({
+							id: version.id,
+							layoutId: layout.id,
+							layoutName: layout.name,
+							version: version.version,
+							approvedAt: version.approvedAt,
+						})),
+				);
+		}),
+		trackMapsLoading: computed(() => store.trackMaps.layouts.isLoading()),
+		trackMapsFailure: computed(() => {
+			const error = store.trackMaps.layouts.error();
+			return error ? trackMapGatewayFailure(error) : null;
+		}),
+		selectedTrackMap: computed(() =>
+			store.trackMaps.version.hasValue()
+				? store.trackMaps.version.value()
+				: null,
+		),
+		selectedTrackMapLoading: computed(() =>
+			store.trackMaps.version.isLoading(),
+		),
+		analysis: computed(() => store.analysisCreation().analysis),
 		pending: computed(
 			() =>
 				['uploading', 'cancelling'].includes(store.transfer().status) ||
-				store.removal().status === 'removing',
+				store.removal().status === 'removing' ||
+				['creating', 'retrying'].includes(store.analysisCreation().status),
 		),
 		removalPending: computed(() => store.removal().status === 'removing'),
 		error: computed(() => {
@@ -118,8 +222,193 @@ export const DrivingAnalysisStore = signalStore(
 			const error = store.removal().error;
 			return error ? removalFailureMessage(error) : '';
 		}),
+		analysisError: computed(() => {
+			const error = store.analysisCreation().error;
+			return error ? analysisFailureMessage(error) : '';
+		}),
 	})),
+	withHooks({
+		onInit(store) {
+			effect(() => {
+				if (store.analyses.analysis.hasValue()) {
+					const analysis = store.analyses.analysis.value();
+					const current = store.analysisCreation();
+					if (
+						['accepted', 'retrying'].includes(current.status) &&
+						current.analysis?.id === analysis.id &&
+						current.analysis.stateVersion === analysis.stateVersion &&
+						current.analysis.waitReason === analysis.waitReason &&
+						current.analysis.safeFailureCode === analysis.safeFailureCode
+					)
+						return;
+					patchState(store, {
+						analysisCreation: {
+							status: 'accepted',
+							driveSessionId: analysis.driveSessionId,
+							analysis,
+							error: null,
+						},
+					});
+					return;
+				}
+				const failure = store.analyses.analysisFailure();
+				const current = store.analysisCreation();
+				if (
+					failure &&
+					current.analysis &&
+					(current.status !== 'failed' || current.error !== failure)
+				)
+					patchState(store, {
+						analysisCreation: {
+							...current,
+							status: 'failed',
+							error: failure,
+						},
+					});
+			});
+		},
+	}),
 	withMethods((store) => {
+		const monitorAnalysis = rxMethod<string>((analysisIds$) =>
+			analysisIds$.pipe(
+				switchMap(() =>
+					store.visibilityChanges.pipe(
+						switchMap((hidden) => {
+							const interval = hidden ? 30_000 : 3_000;
+							return timer(interval, interval);
+						}),
+						tap(() => {
+							const analysis = store.analysisCreation().analysis;
+							if (
+								analysis &&
+								![
+									'completed',
+									'failed',
+									'cancelled',
+									'deleting',
+									'deleted',
+								].includes(analysis.status)
+							)
+								store.analyses.refresh();
+						}),
+					),
+				),
+			),
+		);
+		const createAnalysis = rxMethod<CreateDrivingAnalysisCommand>((commands$) =>
+			commands$.pipe(
+				exhaustMap((command) => {
+					if (!command.carId || command.carId !== store.carId()) return EMPTY;
+					patchState(store, {
+						analysisCreation: {
+							status: 'creating',
+							driveSessionId: command.driveSessionId,
+							analysis: null,
+							error: null,
+						},
+					});
+					return store.analyses.create(command).pipe(
+						tap((analysis) => {
+							patchState(store, {
+								analysisCreation: {
+									status: 'accepted',
+									driveSessionId: command.driveSessionId,
+									analysis,
+									error: null,
+								},
+							});
+							store.analyses.selectAnalysis(analysis.id);
+							monitorAnalysis(analysis.id);
+						}),
+						catchError((error: DrivingAnalysisGatewayFailure) => {
+							patchState(store, {
+								analysisCreation: {
+									status: 'failed',
+									driveSessionId: command.driveSessionId,
+									analysis: null,
+									error,
+								},
+							});
+							return EMPTY;
+						}),
+					);
+				}),
+			),
+		);
+		const retryAnalysis = rxMethod<DrivingAnalysis>((analyses$) =>
+			analyses$.pipe(
+				exhaustMap((analysis) => {
+					const current = store.analysisCreation();
+					if (
+						!['running', 'awaiting-reidentification', 'failed'].includes(
+							analysis.status,
+						)
+					)
+						return EMPTY;
+					patchState(store, {
+						analysisCreation: {
+							...current,
+							status: 'retrying',
+							error: null,
+						},
+					});
+					return store.analyses
+						.retry(
+							analysis.id,
+							analysis.stateVersion,
+							store.analysisRequests.retryId(
+								analysis.id,
+								analysis.stateVersion,
+							),
+						)
+						.pipe(
+							tap((retried) => {
+								patchState(store, {
+									analysisCreation: {
+										status: 'accepted',
+										driveSessionId: retried.driveSessionId,
+										analysis: retried,
+										error: null,
+									},
+								});
+								store.analyses.selectAnalysis(retried.id);
+								monitorAnalysis(retried.id);
+							}),
+							catchError((error: DrivingAnalysisGatewayFailure) => {
+								patchState(store, {
+									analysisCreation: {
+										...current,
+										status: 'failed',
+										error,
+									},
+								});
+								return EMPTY;
+							}),
+						);
+				}),
+			),
+		);
+		const monitorValidation = rxMethod<string>((carIds$) =>
+			carIds$.pipe(
+				switchMap(() =>
+					store.visibilityChanges.pipe(
+						switchMap((hidden) => {
+							const interval = hidden ? 30_000 : 3_000;
+							return timer(interval, interval);
+						}),
+						tap(() => {
+							if (
+								store.gateway.collection.hasValue() &&
+								store.gateway.collection
+									.value()
+									.some((recording) => recording.status === 'validating')
+							)
+								store.gateway.refresh();
+						}),
+					),
+				),
+			),
+		);
 		const upload = rxMethod<StartRaceRecordingCommand>((commands$) =>
 			commands$.pipe(
 				exhaustMap((command) => {
@@ -246,7 +535,9 @@ export const DrivingAnalysisStore = signalStore(
 							}),
 							takeUntil(store.stopTransfer),
 							tap((recording) => {
-								if (recording.status !== 'validating')
+								if (
+									!['validating', 'ready', 'invalid'].includes(recording.status)
+								)
 									throw {
 										kind: 'rejected-response',
 										status: 409,
@@ -332,16 +623,23 @@ export const DrivingAnalysisStore = signalStore(
 		);
 
 		return {
+			selectSubjectFrame(command: SubjectFrameRequest): void {
+				patchState(store, { subjectFrameRequest: command });
+			},
 			selectCar(carId: string): void {
 				if (store.carId() === carId) return;
 				store.stopTransfer.next();
 				store.files.clear();
+				store.analysisRequests.clear();
+				store.analyses.selectAnalysis(null);
 				patchState(store, {
 					carId,
 					transfer: idleRaceRecordingTransfer(),
 					removal: idleRaceRecordingRemoval(),
+					analysisCreation: idleDrivingAnalysisCreation(),
 				});
 				store.gateway.selectCar(carId);
+				monitorValidation(carId);
 			},
 			startUpload(command: StartRaceRecordingCommand): void {
 				if (!command.carId || command.carId !== store.carId()) return;
@@ -378,6 +676,22 @@ export const DrivingAnalysisStore = signalStore(
 			removeRecording(command: RaceRecordingIdentity): void {
 				remove(command);
 			},
+			createAnalysis(command: StartDrivingAnalysisCommand): void {
+				createAnalysis({
+					...command,
+					requestId: store.analysisRequests.requestId(command),
+				});
+			},
+			refreshAnalysis(): void {
+				if (store.analysisCreation().analysis) store.analyses.refresh();
+			},
+			retryAnalysis(): void {
+				const analysis = store.analysisCreation().analysis;
+				if (analysis) retryAnalysis(analysis);
+			},
+			selectTrackMap(versionId: string | null): void {
+				store.trackMaps.selectVersion(versionId);
+			},
 			hasSelectedFile(driveSessionId: string): boolean {
 				return store.files.file(driveSessionId) !== null;
 			},
@@ -386,6 +700,7 @@ export const DrivingAnalysisStore = signalStore(
 			},
 			retry(): void {
 				store.gateway.refresh();
+				store.trackMaps.refresh();
 			},
 		};
 	}),

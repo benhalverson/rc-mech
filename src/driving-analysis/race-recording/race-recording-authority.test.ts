@@ -8,9 +8,13 @@ import {
 	authRateLimit,
 	car,
 	driveSession,
+	inferenceProfileAuthority,
 	owner,
 	raceVideo,
 	raceVideoUploadPart,
+	raceVideoValidation,
+	trackingRun,
+	trackingRunInput,
 } from '../../schema';
 import { MockR2Controller } from '../../testing/hono-fixture';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
@@ -23,6 +27,8 @@ import {
 	MAX_RACE_RECORDING_CREATIONS_PER_HOUR,
 	RACE_RECORDING_PART_SIZE,
 } from './race-recording-contracts';
+import { RaceVideoValidationAuthority } from './race-video-validation-authority';
+import { RACE_VIDEO_VALIDATION_CONTRACT_VERSION } from './race-video-validation-contracts';
 
 const OWNER_ID = 'owner-1';
 const CAR_ID = 'car-1';
@@ -913,17 +919,15 @@ describe('RaceRecordingAuthority', () => {
 		const base = sqlite.database;
 		const lostFinalWitness = new RaceRecordingAuthority(
 			{
-				prepare: (query: string) => {
-					const statement = base.prepare(query);
-					return query.startsWith('update "race_video" set') &&
-						query.includes('"actual_size"')
-						? withoutReturningRows(statement)
-						: statement;
-				},
+				prepare: base.prepare.bind(base),
 				exec: base.exec.bind(base),
 				withSession: base.withSession.bind(base),
 				dump: base.dump.bind(base),
-				batch: base.batch.bind(base),
+				batch: async () =>
+					[
+						{ success: true, results: [], meta: {} },
+						{ success: true, results: [], meta: {} },
+					] as never,
 			},
 			r2.bucket,
 			{ clock: () => NOW },
@@ -1398,6 +1402,501 @@ describe('RaceRecordingAuthority', () => {
 		).resolves.toBeUndefined();
 		expect(await database.select().from(raceVideo)).toEqual([]);
 		expect(deleteObject).toHaveBeenCalledOnce();
+	});
+
+	test('starts deterministic validation after completion and resumes it on replay', async () => {
+		const { authority, database, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'validation-start',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		const startValidation = vi.fn(async () => undefined);
+		const integrated = new RaceRecordingAuthority(database.$client, r2.bucket, {
+			clock: () => NOW,
+			startValidation,
+		});
+		await expect(
+			integrated.complete(identity(recording.id)),
+		).resolves.toMatchObject({
+			status: 'validating',
+			validationStateVersion: 1,
+			media: null,
+			validationError: null,
+			playbackUrl: null,
+		});
+		expect(startValidation).toHaveBeenCalledWith({
+			ownerId: OWNER_ID,
+			recordingId: recording.id,
+			validationId: recording.id,
+			expectedStateVersion: 1,
+		});
+		await integrated.complete(identity(recording.id));
+		expect(startValidation).toHaveBeenCalledTimes(2);
+
+		startValidation.mockRejectedValueOnce(new Error('Workflow unavailable'));
+		await expectCode(
+			integrated.complete(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+	});
+
+	test('atomically persists pending validation and reconciles every stranded start', async () => {
+		const { authority, database, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'stranded-validation',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		const startValidation = vi
+			.fn<(payload: unknown) => Promise<void>>()
+			.mockRejectedValueOnce(new Error('Workflow unavailable'))
+			.mockResolvedValue(undefined);
+		const integrated = new RaceRecordingAuthority(database.$client, r2.bucket, {
+			clock: () => NOW,
+			startValidation,
+		});
+
+		await expectCode(
+			integrated.complete(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+		expect(
+			await database
+				.select()
+				.from(raceVideoValidation)
+				.where(eq(raceVideoValidation.raceVideoId, recording.id))
+				.get(),
+		).toMatchObject({ status: 'pending', stateVersion: 1 });
+		const terminalRace = vi
+			.spyOn(RaceVideoValidationAuthority.prototype, 'public')
+			.mockResolvedValueOnce({
+				status: 'ready',
+				stateVersion: 2,
+				media: null,
+				error: null,
+				validatedAt: '2026-08-17T20:01:00.000Z',
+			});
+		expect(await integrated.recoverStale(1)).toBe(1);
+		expect(startValidation).toHaveBeenCalledOnce();
+		terminalRace.mockRestore();
+		expect(await integrated.recoverStale(1)).toBe(1);
+		expect(startValidation).toHaveBeenCalledTimes(2);
+
+		await database
+			.delete(raceVideoValidation)
+			.where(eq(raceVideoValidation.raceVideoId, recording.id));
+		await expect(integrated.get(OWNER_ID, recording.id)).resolves.toMatchObject(
+			{
+				status: 'validating',
+				validationStateVersion: null,
+			},
+		);
+		expect(await integrated.recoverStale(1)).toBe(1);
+		expect(startValidation).toHaveBeenCalledTimes(3);
+	});
+
+	test('serves only validation-ready owned content and exposes no object key', async () => {
+		const { authority, database, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'playback-ready',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		await authority.complete(identity(recording.id));
+		vi.spyOn(
+			RaceVideoValidationAuthority.prototype,
+			'public',
+		).mockResolvedValueOnce({
+			status: 'ready',
+			stateVersion: 2,
+			media: null,
+			error: null,
+			validatedAt: '2026-08-17T20:00:30.000Z',
+		});
+		await expectCode(
+			authority.contentMetadata(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+		const validation = new RaceVideoValidationAuthority(database.$client);
+		const payload = await validation.ensure(recording.id, NOW.toISOString());
+		await validation.publish(
+			payload,
+			{
+				contractVersion: RACE_VIDEO_VALIDATION_CONTRACT_VERSION,
+				correlationId: recording.id,
+				outcome: 'accepted',
+				media: {
+					byteCount: 1,
+					durationMs: 1000,
+					width: 1920,
+					height: 1080,
+					videoCodec: 'h264',
+					audioCodecs: [],
+					containerFormats: ['mov', 'mp4'],
+					decodedFrameCount: 60,
+					averageFrameRate: { numerator: 60, denominator: 1 },
+					timeBase: { numerator: 1, denominator: 60 },
+					sampleAspectRatio: { numerator: 1, denominator: 1 },
+					displayAspectRatio: { numerator: 16, denominator: 9 },
+					startTimeMs: 0,
+					checksumSha256: 'a'.repeat(64),
+				},
+			},
+			'2026-08-17T20:01:00.000Z',
+		);
+		const publicRecording = await authority.get(OWNER_ID, recording.id);
+		expect(publicRecording).toMatchObject({
+			status: 'ready',
+			validationStateVersion: 2,
+			playbackUrl: `/api/v1/race-videos/${recording.id}/content`,
+			validatedAt: '2026-08-17T20:01:00.000Z',
+		});
+		expect(JSON.stringify(publicRecording)).not.toContain('objectKey');
+		await expect(
+			authority.contentMetadata(identity(recording.id)),
+		).resolves.toMatchObject({
+			size: 1,
+			contentType: 'video/mp4',
+		});
+		const get = vi.spyOn(r2.bucket, 'get');
+		const content = await authority.content(identity(recording.id), {
+			offset: 0,
+			length: 1,
+		});
+		expect((await new Response(content.body).arrayBuffer()).byteLength).toBe(1);
+		expect(get).toHaveBeenCalledWith(expect.any(String), {
+			range: { offset: 0, length: 1 },
+		});
+		await expectCode(
+			authority.contentMetadata({
+				ownerId: 'other',
+				recordingId: recording.id,
+			}),
+			'NOT_FOUND',
+		);
+	});
+
+	test('fails playback safely before readiness and when R2 becomes unavailable', async () => {
+		const { authority, database, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await expectCode(
+			authority.contentMetadata(identity(recording.id)),
+			'CONFLICT',
+		);
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'unavailable-playback',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		await authority.complete(identity(recording.id));
+		const validation = new RaceVideoValidationAuthority(database.$client);
+		const payload = await validation.ensure(recording.id, NOW.toISOString());
+		await validation.publish(
+			payload,
+			{
+				contractVersion: RACE_VIDEO_VALIDATION_CONTRACT_VERSION,
+				correlationId: recording.id,
+				outcome: 'rejected',
+				error: {
+					code: 'CORRUPT_MEDIA',
+					stage: 'probe',
+					message: 'The recording is corrupt.',
+				},
+			},
+			'2026-08-17T20:01:00.000Z',
+		);
+		await expectCode(
+			authority.contentMetadata(identity(recording.id)),
+			'CONFLICT',
+		);
+
+		await database
+			.delete(raceVideoValidation)
+			.where(eq(raceVideoValidation.raceVideoId, recording.id));
+		await validation.ensure(recording.id, NOW.toISOString());
+		const acceptedPayload = await validation.ensure(
+			recording.id,
+			NOW.toISOString(),
+		);
+		await validation.publish(
+			acceptedPayload,
+			{
+				contractVersion: RACE_VIDEO_VALIDATION_CONTRACT_VERSION,
+				correlationId: recording.id,
+				outcome: 'accepted',
+				media: {
+					byteCount: 1,
+					durationMs: 1,
+					width: 1,
+					height: 1,
+					videoCodec: 'h264',
+					audioCodecs: [],
+					containerFormats: ['matroska'],
+					decodedFrameCount: 1,
+					averageFrameRate: { numerator: 1, denominator: 1 },
+					timeBase: { numerator: 1, denominator: 1 },
+					sampleAspectRatio: { numerator: 1, denominator: 1 },
+					displayAspectRatio: { numerator: 1, denominator: 1 },
+					startTimeMs: 0,
+					checksumSha256: 'a'.repeat(64),
+				},
+			},
+			'2026-08-17T20:02:00.000Z',
+		);
+		await expectCode(
+			authority.contentMetadata(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+		await database
+			.delete(raceVideoValidation)
+			.where(eq(raceVideoValidation.raceVideoId, recording.id));
+		const playablePayload = await validation.ensure(
+			recording.id,
+			NOW.toISOString(),
+		);
+		await validation.publish(
+			playablePayload,
+			{
+				contractVersion: RACE_VIDEO_VALIDATION_CONTRACT_VERSION,
+				correlationId: recording.id,
+				outcome: 'accepted',
+				media: {
+					byteCount: 1,
+					durationMs: 1,
+					width: 1,
+					height: 1,
+					videoCodec: 'h264',
+					audioCodecs: [],
+					containerFormats: ['mp4'],
+					decodedFrameCount: 1,
+					averageFrameRate: { numerator: 1, denominator: 1 },
+					timeBase: { numerator: 1, denominator: 1 },
+					sampleAspectRatio: { numerator: 1, denominator: 1 },
+					displayAspectRatio: { numerator: 1, denominator: 1 },
+					startTimeMs: 0,
+					checksumSha256: 'a'.repeat(64),
+				},
+			},
+			'2026-08-17T20:03:00.000Z',
+		);
+		vi.spyOn(r2.bucket, 'head').mockRejectedValueOnce(
+			new Error('R2 unavailable'),
+		);
+		await expectCode(
+			authority.contentMetadata(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+		vi.spyOn(r2.bucket, 'get').mockRejectedValueOnce(
+			new Error('R2 unavailable'),
+		);
+		await expectCode(
+			authority.content(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+		r2.objects.clear();
+		await expectCode(
+			authority.contentMetadata(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+		await expectCode(
+			authority.content(identity(recording.id)),
+			'STORAGE_UNAVAILABLE',
+		);
+	});
+
+	test('atomically fences deletion from a concurrently active analysis', async () => {
+		const { authority, database, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'analysis-delete-fence',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		await authority.complete(identity(recording.id));
+		const validation = new RaceVideoValidationAuthority(database.$client);
+		const payload = await validation.ensure(recording.id, NOW.toISOString());
+		await validation.publish(
+			payload,
+			{
+				contractVersion: RACE_VIDEO_VALIDATION_CONTRACT_VERSION,
+				correlationId: recording.id,
+				outcome: 'accepted',
+				media: {
+					byteCount: 1,
+					durationMs: 1000,
+					width: 1920,
+					height: 1080,
+					videoCodec: 'h264',
+					audioCodecs: [],
+					containerFormats: ['mp4'],
+					decodedFrameCount: 60,
+					averageFrameRate: { numerator: 60, denominator: 1 },
+					timeBase: { numerator: 1, denominator: 60 },
+					sampleAspectRatio: { numerator: 1, denominator: 1 },
+					displayAspectRatio: { numerator: 16, denominator: 9 },
+					startTimeMs: 0,
+					checksumSha256: 'c'.repeat(64),
+				},
+			},
+			'2026-08-17T20:01:00.000Z',
+		);
+		const source = await database
+			.select({ objectKey: raceVideo.objectKey })
+			.from(raceVideo)
+			.where(eq(raceVideo.id, recording.id))
+			.get();
+		if (!source) throw new Error('Race-video source was not found');
+		await database.insert(inferenceProfileAuthority).values({
+			profileDigest: 'a'.repeat(64),
+			contractVersion: 'inference-profile.v1',
+			canonicalizationVersion: 'canonical-json.v1',
+			configurationJson: '{}',
+			createdAt: NOW.toISOString(),
+		});
+		await database.insert(trackingRun).values({
+			id: 'active-run',
+			analysisId: 'analysis-1',
+			ownerId: OWNER_ID,
+			sequence: 1,
+			workflowId: 'workflow-1',
+			profileDigest: 'a'.repeat(64),
+			inputDigest: 'b'.repeat(64),
+			status: 'active',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			completedAt: null,
+		});
+		const activeInput = {
+			runId: 'active-run',
+			ownerId: OWNER_ID,
+			raceVideoId: recording.id,
+			sourceObjectKey: source.objectKey,
+			sourceByteCount: 1,
+			sourceChecksum: 'c'.repeat(64),
+			windowStartTimestampMs: 0,
+			windowEndTimestampMs: 1,
+			approvedTrackMapVersionId: 'map-version-1',
+			sourceLayoutVersion: 'source-layout.v1',
+			sourceLayoutDigest: 'd'.repeat(64),
+			sourceWidth: 1920,
+			sourceHeight: 1080,
+			inputDigest: 'b'.repeat(64),
+			createdAt: NOW.toISOString(),
+		};
+		await expect(
+			database
+				.insert(trackingRunInput)
+				.values({ ...activeInput, sourceObjectKey: 'untrusted/source' }),
+		).rejects.toThrow('Failed query');
+		expect(await database.select().from(trackingRunInput)).toEqual([]);
+		await database.insert(trackingRunInput).values(activeInput);
+		vi.spyOn(
+			RaceVideoValidationAuthority.prototype,
+			'hasActiveAnalysis',
+		).mockResolvedValueOnce(false);
+
+		await expectCode(authority.remove(identity(recording.id)), 'CONFLICT');
+		expect(
+			await database
+				.select({ status: raceVideo.status })
+				.from(raceVideo)
+				.where(eq(raceVideo.id, recording.id))
+				.get(),
+		).toEqual({ status: 'validating' });
+		expect(r2.objects.size).toBe(1);
+
+		await database.insert(trackingRun).values({
+			id: 'active-run-2',
+			analysisId: 'analysis-1',
+			ownerId: OWNER_ID,
+			sequence: 2,
+			workflowId: 'workflow-2',
+			profileDigest: 'a'.repeat(64),
+			inputDigest: 'b'.repeat(64),
+			status: 'active',
+			version: 1,
+			createdAt: NOW.toISOString(),
+			completedAt: null,
+		});
+		await database
+			.update(raceVideo)
+			.set({ status: 'deleting' })
+			.where(eq(raceVideo.id, recording.id));
+		await expect(
+			database
+				.insert(trackingRunInput)
+				.values({ ...activeInput, runId: 'active-run-2' }),
+		).rejects.toThrow('Failed query');
+		expect(
+			await database
+				.select()
+				.from(trackingRunInput)
+				.where(eq(trackingRunInput.runId, 'active-run-2')),
+		).toEqual([]);
+	});
+
+	test('schedules invalid media for idempotent object and metadata cleanup', async () => {
+		const { authority, database, r2 } = await authorityFixture();
+		const { recording } = await authority.create({
+			...createCommand(),
+			input: { ...createCommand().input, sizeBytes: 1 },
+		});
+		await authority.uploadPart({
+			...identity(recording.id),
+			partNumber: 1,
+			transferRequestId: 'invalid-cleanup',
+			...streamingPart(Uint8Array.of(1).buffer),
+		});
+		await authority.complete(identity(recording.id));
+		const validation = new RaceVideoValidationAuthority(database.$client);
+		const payload = await validation.ensure(recording.id, NOW.toISOString());
+		await validation.publish(
+			payload,
+			{
+				contractVersion: RACE_VIDEO_VALIDATION_CONTRACT_VERSION,
+				correlationId: recording.id,
+				outcome: 'rejected',
+				error: {
+					code: 'CORRUPT_MEDIA',
+					stage: 'probe',
+					message: 'The recording is corrupt.',
+				},
+			},
+			'2026-08-17T20:01:00.000Z',
+		);
+		await expect(authority.get(OWNER_ID, recording.id)).resolves.toMatchObject({
+			status: 'invalid',
+		});
+		expect(r2.objects.size).toBe(1);
+
+		expect(await authority.recoverStale(1)).toBe(1);
+		expect(r2.objects.size).toBe(0);
+		expect(await database.select().from(raceVideo)).toEqual([]);
+		expect(await authority.recoverStale(1)).toBe(0);
 	});
 
 	test('reconciles a concurrent create and rejects an unowned insertion conflict', async () => {

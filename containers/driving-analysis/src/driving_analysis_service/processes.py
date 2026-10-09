@@ -34,10 +34,14 @@ _PROCESS_REAP_SLOTS = BoundedSemaphore(1)
 class StderrLineObserver:
     consume: Callable[[bytes], bool]
     max_line_bytes: int
+    max_observed_bytes: int
 
     def __post_init__(self) -> None:
         if self.max_line_bytes <= 0:
             msg = "Observed process lines require a positive byte bound"
+            raise ValueError(msg)
+        if self.max_observed_bytes <= 0:
+            msg = "Observed process output requires a positive byte bound"
             raise ValueError(msg)
 
 
@@ -76,13 +80,13 @@ class _ProcessCapture:
     stderr: bytearray = field(default_factory=bytearray)
     pending_stderr: bytearray = field(default_factory=bytearray)
     output_bytes: int = 0
+    observed_stderr_bytes: int = 0
 
     def consume(self, destination: object, chunk: bytes) -> None:
         if not isinstance(destination, bytearray):
             msg = "Unexpected process output target"
             raise TypeError(msg)
         if destination is self.stderr and self.stderr_line_observer is not None:
-            self._account(chunk)
             self._consume_stderr(chunk, final=False)
             return
         self._append(destination, chunk)
@@ -112,8 +116,10 @@ class _ProcessCapture:
         observer = cast("StderrLineObserver", self.stderr_line_observer)
         if len(line) > observer.max_line_bytes:
             raise ProcessOutputLimitError
-        if not observer.consume(line):
-            self._store(self.stderr, line + suffix)
+        if observer.consume(line):
+            self._account_observed(line, suffix)
+        else:
+            self._append(self.stderr, line + suffix)
 
     def _append(self, destination: bytearray, chunk: bytes) -> None:
         self._account(chunk)
@@ -124,8 +130,12 @@ class _ProcessCapture:
             raise ProcessOutputLimitError
         self.output_bytes += len(chunk)
 
-    def _store(self, destination: bytearray, chunk: bytes) -> None:
-        destination.extend(chunk)
+    def _account_observed(self, line: bytes, suffix: bytes) -> None:
+        observer = cast("StderrLineObserver", self.stderr_line_observer)
+        observed_bytes = len(line) + len(suffix)
+        if self.observed_stderr_bytes + observed_bytes > observer.max_observed_bytes:
+            raise ProcessOutputLimitError
+        self.observed_stderr_bytes += observed_bytes
 
 
 class _ProcessScope:

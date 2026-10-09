@@ -149,6 +149,15 @@ def test_probe_accepts_and_reports_real_media_facts(
     }
     assert isinstance(log_event["elapsedMs"], int)
     assert 0 <= log_event["elapsedMs"] <= 10_000
+    assert [
+        (json.loads(message)["stage"], json.loads(message)["outcome"])
+        for message in caplog.messages
+    ] == [
+        ("claim", "started"),
+        ("inspect", "started"),
+        ("decode", "started"),
+        ("complete", "accepted"),
+    ]
     assert str(settings.staging_root) not in caplog.text
     assert STAGED_MEDIA_ID not in caplog.text
     assert checksum not in caplog.text

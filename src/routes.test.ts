@@ -388,6 +388,8 @@ describe('car routes', () => {
 			expect(await response.json()).toEqual({
 				components: [componentRow()],
 				history,
+				carId: 'car-1',
+				version: 1,
 			});
 		},
 	);
@@ -538,7 +540,7 @@ describe('car routes', () => {
 		d1.queue(
 			{ kind: 'first', value: carRow() },
 			{ kind: 'first', value: componentRow() },
-			{ kind: 'run' },
+			{ kind: 'batch' },
 			{ kind: 'first', value: componentRow({ name: 'Updated motor' }) },
 		);
 

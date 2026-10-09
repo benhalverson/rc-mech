@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { type APIResponse, expect, test } from '@playwright/test';
 import { getViolations, injectAxe } from 'axe-playwright';
 
 test.use({ serviceWorkers: 'allow' });
@@ -94,13 +94,14 @@ test('car context switches at 1024px and the mobile picker handles long, numerou
 			(_, index) => `Picker car ${String(index + 1).padStart(2, '0')}`,
 		),
 	];
-	const responses = await Promise.all(
-		names.map((name) =>
-			page.request.post('/api/v1/cars', {
+	const responses: APIResponse[] = [];
+	for (const name of names) {
+		responses.push(
+			await page.request.post('/api/v1/cars', {
 				data: { name, make: 'Shell fixture', model: 'Responsive' },
 			}),
-		),
-	);
+		);
+	}
 	for (const response of responses) expect(response.ok()).toBe(true);
 	const cars = await Promise.all(
 		responses.map(

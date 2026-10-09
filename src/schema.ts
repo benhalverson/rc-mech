@@ -1,4 +1,5 @@
 import {
+	type AnySQLiteColumn,
 	index,
 	integer,
 	primaryKey,
@@ -8,6 +9,12 @@ import {
 	uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
+export {
+	analysisDeletion,
+	analysisMediaScan,
+	analysisRetryCommand,
+	preparationIntent,
+} from './driving-analysis/analysis/lifecycle-schema';
 export {
 	inferenceProfileAuthority,
 	preparedTrackingMedia,
@@ -20,6 +27,7 @@ export {
 	trackingSegment,
 	trackingTransferRequest,
 } from './driving-analysis/tracking/authority-schema';
+export { drivingAnalysisFlag } from './feature-flags/schema';
 
 const id = (name: string) => text(name).primaryKey();
 export const car = sqliteTable('car', {
@@ -210,6 +218,122 @@ export const raceVideo = sqliteTable(
 		uniqueIndex('race_video_owner_request').on(table.ownerId, table.requestId),
 	],
 );
+export const raceVideoValidation = sqliteTable(
+	'race_video_validation',
+	{
+		raceVideoId: text('race_video_id')
+			.primaryKey()
+			.references(() => raceVideo.id, { onDelete: 'cascade' }),
+		validationId: text('validation_id').notNull().unique(),
+		status: text('status', { enum: ['pending', 'ready', 'invalid'] })
+			.notNull()
+			.default('pending'),
+		stateVersion: integer('state_version').notNull().default(1),
+		byteCount: integer('byte_count'),
+		durationMs: integer('duration_ms'),
+		width: integer('width'),
+		height: integer('height'),
+		videoCodec: text('video_codec'),
+		audioCodecsJson: text('audio_codecs_json'),
+		containerFormatsJson: text('container_formats_json'),
+		decodedFrameCount: integer('decoded_frame_count'),
+		averageFrameRateNumerator: integer('average_frame_rate_numerator'),
+		averageFrameRateDenominator: integer('average_frame_rate_denominator'),
+		timeBaseNumerator: integer('time_base_numerator'),
+		timeBaseDenominator: integer('time_base_denominator'),
+		sampleAspectRatioNumerator: integer('sample_aspect_ratio_numerator'),
+		sampleAspectRatioDenominator: integer('sample_aspect_ratio_denominator'),
+		displayAspectRatioNumerator: integer('display_aspect_ratio_numerator'),
+		displayAspectRatioDenominator: integer('display_aspect_ratio_denominator'),
+		startTimeMs: integer('start_time_ms'),
+		checksumSha256: text('checksum_sha256'),
+		errorCode: text('error_code'),
+		errorStage: text('error_stage'),
+		errorMessage: text('error_message'),
+		startedAt: text('started_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		completedAt: text('completed_at'),
+	},
+	(table) => [
+		index('race_video_validation_status').on(table.status, table.updatedAt),
+	],
+);
+export const drivingAnalysis = sqliteTable(
+	'driving_analysis',
+	{
+		id: id('id'),
+		ownerId: text('owner_id')
+			.notNull()
+			.references(() => owner.id),
+		requestId: text('request_id').notNull(),
+		requestDigest: text('request_digest').notNull(),
+		carId: text('car_id')
+			.notNull()
+			.references(() => car.id),
+		driveSessionId: text('drive_session_id')
+			.notNull()
+			.references(() => driveSession.id),
+		raceVideoId: text('race_video_id').notNull(),
+		raceWindowStartMs: integer('race_window_start_ms').notNull(),
+		raceWindowEndMs: integer('race_window_end_ms').notNull(),
+		approvedTrackMapVersionId: text('approved_track_map_version_id')
+			.notNull()
+			.references(() => trackMapVersion.id),
+		subjectSeedTimestampMs: integer('subject_seed_timestamp_ms').notNull(),
+		subjectSeedFrameIndex: integer('subject_seed_frame_index').notNull(),
+		subjectSeedIdentity: text('subject_seed_identity').notNull(),
+		subjectBoxX: real('subject_box_x').notNull(),
+		subjectBoxY: real('subject_box_y').notNull(),
+		subjectBoxWidth: real('subject_box_width').notNull(),
+		subjectBoxHeight: real('subject_box_height').notNull(),
+		sourceLayoutVersion: text('source_layout_version').notNull(),
+		sourceLayoutDigest: text('source_layout_digest').notNull(),
+		sourceWidth: integer('source_width').notNull(),
+		sourceHeight: integer('source_height').notNull(),
+		workflowId: text('workflow_id').notNull().unique(),
+		workflowSequence: integer('workflow_sequence').notNull().default(1),
+		status: text('status', {
+			enum: [
+				'queued',
+				'running',
+				'awaiting-reidentification',
+				'completed',
+				'failed',
+				'cancelled',
+				'deleting',
+				'deleted',
+			],
+		})
+			.notNull()
+			.default('queued'),
+		stage: text('stage', {
+			enum: [
+				'preparation',
+				'tracking',
+				'measurement',
+				'clip-rendering',
+				'finalization',
+			],
+		})
+			.notNull()
+			.default('preparation'),
+		progress: integer('progress').notNull().default(0),
+		stateVersion: integer('state_version').notNull().default(1),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+	},
+	(table) => [
+		uniqueIndex('driving_analysis_owner_request_idx').on(
+			table.ownerId,
+			table.requestId,
+		),
+		index('driving_analysis_owner_drive_idx').on(
+			table.ownerId,
+			table.driveSessionId,
+			table.createdAt,
+		),
+	],
+);
 export const raceVideoUploadPart = sqliteTable(
 	'race_video_upload_part',
 	{
@@ -240,6 +364,121 @@ export const raceVideoUploadPart = sqliteTable(
 			table.raceVideoId,
 			table.claimTransferRequestId,
 		),
+	],
+);
+export const trackLayout = sqliteTable(
+	'track_layout',
+	{
+		id: id('id'),
+		name: text('name').notNull(),
+		status: text('status', { enum: ['active', 'retired'] })
+			.notNull()
+			.default('active'),
+		createdBy: text('created_by')
+			.notNull()
+			.references(() => owner.id),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		retiredAt: text('retired_at'),
+	},
+	(table) => [uniqueIndex('track_layout_name_idx').on(table.name)],
+);
+export const trackMapVersion = sqliteTable(
+	'track_map_version',
+	{
+		id: id('id'),
+		layoutId: text('layout_id')
+			.notNull()
+			.references(() => trackLayout.id),
+		version: integer('version').notNull(),
+		stateVersion: integer('state_version').notNull().default(1),
+		status: text('status', { enum: ['draft', 'approved', 'retired'] })
+			.notNull()
+			.default('draft'),
+		sourceVersionId: text('source_version_id').references(
+			(): AnySQLiteColumn => trackMapVersion.id,
+		),
+		createdBy: text('created_by')
+			.notNull()
+			.references(() => owner.id),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		approvedBy: text('approved_by').references(() => owner.id),
+		approvedAt: text('approved_at'),
+		retiredAt: text('retired_at'),
+	},
+	(table) => [
+		uniqueIndex('track_map_version_layout_version_idx').on(
+			table.layoutId,
+			table.version,
+		),
+		index('track_map_version_layout_status_idx').on(
+			table.layoutId,
+			table.status,
+			table.version,
+		),
+	],
+);
+export const trackCorner = sqliteTable(
+	'track_corner',
+	{
+		id: id('id'),
+		mapVersionId: text('map_version_id')
+			.notNull()
+			.references(() => trackMapVersion.id, { onDelete: 'cascade' }),
+		key: text('corner_key').notNull(),
+		name: text('corner_name').notNull(),
+		order: integer('corner_order').notNull(),
+		entryStartX: real('entry_start_x').notNull(),
+		entryStartY: real('entry_start_y').notNull(),
+		entryEndX: real('entry_end_x').notNull(),
+		entryEndY: real('entry_end_y').notNull(),
+		entryDirection: text('entry_direction', {
+			enum: ['forward', 'reverse'],
+		}).notNull(),
+		exitStartX: real('exit_start_x').notNull(),
+		exitStartY: real('exit_start_y').notNull(),
+		exitEndX: real('exit_end_x').notNull(),
+		exitEndY: real('exit_end_y').notNull(),
+		exitDirection: text('exit_direction', {
+			enum: ['forward', 'reverse'],
+		}).notNull(),
+		viewX: real('view_x').notNull(),
+		viewY: real('view_y').notNull(),
+		viewWidth: real('view_width').notNull(),
+		viewHeight: real('view_height').notNull(),
+	},
+	(table) => [
+		uniqueIndex('track_corner_version_key_idx').on(
+			table.mapVersionId,
+			table.key,
+		),
+		uniqueIndex('track_corner_version_order_idx').on(
+			table.mapVersionId,
+			table.order,
+		),
+	],
+);
+export const trackMapReferenceFrame = sqliteTable(
+	'track_map_reference_frame',
+	{
+		id: id('id'),
+		mapVersionId: text('map_version_id')
+			.notNull()
+			.references(() => trackMapVersion.id, { onDelete: 'cascade' }),
+		raceVideoId: text('race_video_id').notNull(),
+		timestampMs: integer('timestamp_ms').notNull(),
+		objectKey: text('object_key').notNull(),
+		byteCount: integer('byte_count').notNull(),
+		checksumSha256: text('checksum_sha256').notNull(),
+		contentType: text('content_type').notNull(),
+		createdBy: text('created_by')
+			.notNull()
+			.references(() => owner.id),
+		createdAt: text('created_at').notNull(),
+	},
+	(table) => [
+		index('track_map_reference_frame_version_idx').on(table.mapVersionId),
 	],
 );
 export const maintenancePlan = sqliteTable('maintenance_plan', {
@@ -274,6 +513,7 @@ export const serviceRecord = sqliteTable('service_record', {
 	deletedAt: text('deleted_at'),
 });
 export const photo = sqliteTable('photo', {
+	revision: integer('revision').notNull().default(1),
 	id: id('id'),
 	carId: text('car_id').notNull(),
 	objectKey: text('object_key').notNull().unique(),

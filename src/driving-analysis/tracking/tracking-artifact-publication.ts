@@ -15,12 +15,14 @@ import {
 	uuidV4Schema,
 } from './contracts';
 import type { InferenceProfile } from './inference-profile';
+import { asPythonFloat, pythonCanonical } from './python-canonical';
 import {
 	type PrivateTrackingArtifactObject,
 	R2TrackingArtifactStore,
 	type TrackingArtifactStore,
 	TrackingArtifactStoreError,
 } from './r2-tracking-artifact-store';
+import { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 import {
 	type SubjectObservationArtifactRecord,
 	type TrackingArtifactPublicationContext,
@@ -30,7 +32,7 @@ import {
 
 export const TRACKING_ARTIFACT_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 export const TRACKING_ARTIFACT_MAX_CONTRACT_BYTES = 64 * 1024 * 1024;
-export const TRACKING_ARTIFACT_GARBAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+export { TRACKING_ARTIFACT_GARBAGE_RETENTION_MS } from './tracking-artifact-retention';
 
 const publishTrackingArtifactCommandSchema = z.strictObject({
 	ownerId: z.string().trim().min(1).max(128),
@@ -103,16 +105,18 @@ export class TrackingArtifactPublication {
 		try {
 			const candidates = await this.authority.cleanupPromotionCandidates(
 				now.toISOString(),
-				limit,
+				Math.max(1, Math.floor(limit / 2)),
 			);
-			for (const candidate of candidates) {
-				await this.store.delete([candidate.acceptedObjectKey]);
-				await this.authority.markArtifactPromotionDeleted({
-					artifactId: candidate.artifactId,
-					expectedVersion: candidate.version,
-					deletedAt: now.toISOString(),
-				});
-			}
+			const promotions = await Promise.allSettled(
+				candidates.map(async (candidate) => {
+					await this.store.delete([candidate.acceptedObjectKey]);
+					await this.authority.markArtifactPromotionDeleted({
+						artifactId: candidate.artifactId,
+						expectedVersion: candidate.version,
+						deletedAt: now.toISOString(),
+					});
+				}),
+			);
 
 			const stagingLimit = limit - candidates.length;
 			const stagingKeys =
@@ -122,8 +126,19 @@ export class TrackingArtifactPublication {
 							new Date(now.getTime() - TRACKING_ARTIFACT_GARBAGE_RETENTION_MS),
 							stagingLimit,
 						);
-			if (stagingKeys.length > 0) await this.store.delete(stagingKeys);
-			return candidates.length + stagingKeys.length;
+			const staging = await Promise.allSettled(
+				stagingKeys.map((key) => this.store.delete([key])),
+			);
+			const outcomes = [...promotions, ...staging];
+			const deleted = outcomes.filter(
+				(result) => result.status === 'fulfilled',
+			).length;
+			if (
+				deleted === 0 &&
+				outcomes.some((result) => result.status === 'rejected')
+			)
+				throw new TrackingArtifactPublicationError('CLEANUP_FAILED');
+			return deleted;
 		} catch (error) {
 			if (error instanceof TrackingArtifactPublicationError) throw error;
 			throw new TrackingArtifactPublicationError('CLEANUP_FAILED');
@@ -143,7 +158,7 @@ export class TrackingArtifactPublication {
 		);
 		if (existing) {
 			await this.validateAcceptedReplay(existing, artifact, acceptedObjectKey);
-			await this.retrySuccessfulRelease(artifact);
+			await this.releaseCompletedLease(artifact);
 			return existing;
 		}
 
@@ -241,12 +256,7 @@ export class TrackingArtifactPublication {
 			throw error;
 		}
 
-		const released = await this.leaseCoordinator.release({
-			...leaseIdentity(artifact),
-			completed: true,
-		});
-		if (released.status !== 'ok')
-			throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
+		await this.releaseCompletedLease(artifact);
 		return accepted;
 	}
 
@@ -284,14 +294,14 @@ export class TrackingArtifactPublication {
 			throw new TrackingArtifactPublicationError('PROMOTION_CONFLICT');
 	}
 
-	private async retrySuccessfulRelease(
-		artifact: OutputArtifact,
-	): Promise<void> {
+	private async releaseCompletedLease(artifact: OutputArtifact): Promise<void> {
 		try {
-			await this.leaseCoordinator.release({
+			const released = await this.leaseCoordinator.release({
 				...leaseIdentity(artifact),
 				completed: true,
 			});
+			if (released.status !== 'ok')
+				throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
 		} catch {
 			throw new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED');
 		}
@@ -313,15 +323,21 @@ export class TrackingArtifactPublication {
 
 	private async dueStagingKeys(cutoff: Date, limit: number): Promise<string[]> {
 		const keys: string[] = [];
-		let cursor: string | undefined;
+		let cursor = await this.authority.stagingCleanupCursor();
+		let pages = 0;
 		do {
+			pages += 1;
 			const page = await this.store.list('tracking-staging/', cursor);
 			for (const object of page.objects) {
 				if (object.uploaded <= cutoff) keys.push(object.key);
-				if (keys.length === limit) return keys;
+				if (keys.length === limit) {
+					await this.authority.saveStagingCleanupCursor(cursor);
+					return keys;
+				}
 			}
 			cursor = page.cursor ?? undefined;
-		} while (cursor !== undefined);
+		} while (cursor !== undefined && pages < 10);
+		await this.authority.saveStagingCleanupCursor(cursor);
 		return keys;
 	}
 }
@@ -439,50 +455,6 @@ export const trackingInputDigestFor = async (
 			})}\n`,
 		),
 	);
-
-const pythonFloat = (value: number): string => {
-	if (Object.is(value, -0)) return '-0.0';
-	if (Number.isInteger(value)) return `${value}.0`;
-	return String(value).replace(
-		/e-(\d+)$/i,
-		(_match, exponent) => `e-${String(exponent).padStart(2, '0')}`,
-	);
-};
-
-class PythonFloatValue {
-	constructor(readonly value: number) {}
-}
-
-const asPythonFloat = (value: number): PythonFloatValue =>
-	new PythonFloatValue(value);
-
-const pythonCanonical = (value: unknown): string => {
-	if (typeof value === 'string') return pythonString(value);
-	if (typeof value === 'number') {
-		/* c8 ignore next 2 -- every plain number in the constructed digest payload is schema-bounded integer data. */
-		if (!Number.isSafeInteger(value))
-			throw new TrackingArtifactPublicationError('INVALID_ARTIFACT');
-		return String(value);
-	}
-	if (value instanceof PythonFloatValue) return pythonFloat(value.value);
-	/* c8 ignore next 2 -- digest payloads are constructed locally from strict object contracts and contain no unsupported values. */
-	if (typeof value !== 'object' || value === null || Array.isArray(value))
-		throw new TrackingArtifactPublicationError('INVALID_ARTIFACT');
-	return `{${Object.entries(value)
-		.sort(([left], [right]) => (left < right ? -1 : 1))
-		.map(([key, item]) => `${pythonString(key)}:${pythonCanonical(item)}`)
-		.join(',')}}`;
-};
-
-const pythonString = (value: string): string =>
-	JSON.stringify(value)
-		.split('')
-		.map((character) =>
-			character.charCodeAt(0) > 0x7f
-				? `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
-				: character,
-		)
-		.join('');
 
 const provenanceForDigest = (
 	provenance: Omit<SubjectProvenance, 'configurationDigest'>,

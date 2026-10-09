@@ -1,4 +1,4 @@
-import { and, eq, exists, isNull } from 'drizzle-orm';
+import { and, eq, exists, getTableColumns, isNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db';
 import { car, maintenancePlan, syncOperation } from '../../schema';
@@ -11,8 +11,15 @@ import {
 	carSyncOperationId,
 	carUpdateInput,
 } from '../../types';
+import {
+	pendingSyncReceipt,
+	syncInsertSelection,
+} from '../pending-sync-receipt';
 import { applySetupSyncOperation } from '../setups/setup-sync';
+import { applyBuildSyncOperation } from './build-sync';
 import { ownedCar, publicCar } from './car-records';
+import { applyDriveSyncOperation } from './drive-sync';
+import { applyMaintenanceSyncOperation } from './maintenance-sync';
 
 const canonicalJson = (value: unknown): string => {
 	if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -45,6 +52,12 @@ const storedReceiptResponse = (
 	});
 };
 
+/**
+ * Registers stable-operation Car synchronization and dispatches related command
+ * families. Receipts bind owner, operation ID, and request hash; conditional writes
+ * and stored terminal responses make retries safe without treating an old request
+ * as authority to overwrite a newer Car version.
+ */
 export const createCarSyncRoutes = () => {
 	const routes = new Hono<AppEnv>();
 	routes.onError((error, c) => {
@@ -97,9 +110,18 @@ export const createCarSyncRoutes = () => {
 		const command = parsed.data.command;
 		const isSetupCommand = command.type.startsWith('setup.');
 		const setupId = command['setupId'];
+		const isBuildCommand = command.type === 'build.change';
+		const isDriveCommand = command.type === 'drive.change';
+		const isMaintenanceCommand = command.type === 'maintenance.change';
 		const now = new Date().toISOString();
 		const database = db(c.env);
 		const requestHash = await requestDigest(parsed.data);
+		const receiptPending = pendingSyncReceipt(
+			database,
+			ownerId,
+			operationId.data,
+			requestHash,
+		);
 		const readReceipt = () =>
 			database
 				.select()
@@ -124,7 +146,15 @@ export const createCarSyncRoutes = () => {
 				operationId: operationId.data,
 				contractVersion: parsed.data.contractVersion,
 				kind: command.type,
-				entityType: isSetupCommand ? 'setup' : 'car',
+				entityType: isSetupCommand
+					? 'setup'
+					: isBuildCommand
+						? 'build'
+						: isDriveCommand
+							? 'drive'
+							: isMaintenanceCommand
+								? 'maintenance'
+								: 'car',
 				entityId:
 					isSetupCommand && typeof setupId === 'string'
 						? setupId
@@ -246,6 +276,32 @@ export const createCarSyncRoutes = () => {
 			return c.json(response, 404);
 		};
 
+		if (isBuildCommand)
+			return applyBuildSyncOperation(c, {
+				command,
+				operationId: operationId.data,
+				requestHash,
+				now,
+				requireTerminalReceipt,
+			});
+
+		if (isMaintenanceCommand)
+			return applyMaintenanceSyncOperation(c, {
+				command,
+				operationId: operationId.data,
+				requestHash,
+				now,
+				requireTerminalReceipt,
+			});
+		if (isDriveCommand)
+			return applyDriveSyncOperation(c, {
+				command,
+				operationId: operationId.data,
+				requestHash,
+				now,
+				requireTerminalReceipt,
+			});
+
 		if (isSetupCommand)
 			return applySetupSyncOperation(c, {
 				command,
@@ -341,6 +397,7 @@ export const createCarSyncRoutes = () => {
 							eq(car.id, existing.id),
 							eq(car.ownerId, ownerId),
 							eq(car.version, existing.version),
+							receiptPending,
 						),
 					),
 				database
@@ -461,17 +518,20 @@ export const createCarSyncRoutes = () => {
 				car: updatedCar,
 			};
 			const operationWitness = () =>
-				exists(
-					database
-						.select({ id: car.id })
-						.from(car)
-						.where(
-							and(
-								eq(car.id, existing.id),
-								eq(car.ownerId, ownerId),
-								eq(car.lastOperationId, operationId.data),
+				and(
+					receiptPending,
+					exists(
+						database
+							.select({ id: car.id })
+							.from(car)
+							.where(
+								and(
+									eq(car.id, existing.id),
+									eq(car.ownerId, ownerId),
+									eq(car.lastOperationId, operationId.data),
+								),
 							),
-						),
+					),
 				);
 			const maintenanceUpdate =
 				lifecycle.type === 'car.archive'
@@ -513,6 +573,7 @@ export const createCarSyncRoutes = () => {
 							eq(car.id, existing.id),
 							eq(car.ownerId, ownerId),
 							eq(car.version, existing.version),
+							receiptPending,
 							lifecycleBase,
 						),
 					),
@@ -562,11 +623,29 @@ export const createCarSyncRoutes = () => {
 			car: createdCar,
 		};
 		await database.batch([
-			database.insert(car).values({
-				...createdCar,
-				ownerId,
-				lastOperationId: operationId.data,
-			}),
+			database.insert(car).select(
+				database
+					.select(
+						syncInsertSelection(
+							{
+								...createdCar,
+								ownerId,
+								currentSetupVersion: 0,
+								currentSetupOperationId: null,
+								lastOperationId: operationId.data,
+							},
+							getTableColumns(car),
+						),
+					)
+					.from(syncOperation)
+					.where(
+						and(
+							eq(syncOperation.ownerId, ownerId),
+							eq(syncOperation.operationId, operationId.data),
+							receiptPending,
+						),
+					),
+			),
 			database
 				.update(syncOperation)
 				.set({

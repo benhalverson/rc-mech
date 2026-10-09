@@ -1,5 +1,6 @@
 import { inject } from '@angular/core';
 import { type Route, Router, type Routes } from '@angular/router';
+import { drivingAnalysisCanMatch } from '../driving-analysis-visibility/visibility.guard';
 import { ownerSessionCanMatch } from '../owner-session.guard';
 
 const loadGarageRoutes = () =>
@@ -34,10 +35,21 @@ const loadMaintenanceRoutes = () =>
 	import('../maintenance/maintenance.routes').then(
 		({ MAINTENANCE_ROUTES }) => MAINTENANCE_ROUTES,
 	);
+const loadTrackMapRoutes = () =>
+	import('../track-maps/track-maps.routes').then(
+		({ TRACK_MAP_ROUTES }) => TRACK_MAP_ROUTES,
+	);
 const loadWorkspaceShell = () =>
 	import('./workspace-shell').then(({ WorkspaceShell }) => WorkspaceShell);
 
 export const workspaceRoutes: Routes = [
+	{
+		path: 'offline-unavailable',
+		loadComponent: () =>
+			import('../offline/offline-unavailable').then(
+				({ OfflineUnavailable }) => OfflineUnavailable,
+			),
+	},
 	{
 		path: 'garage',
 		pathMatch: 'full',
@@ -83,6 +95,11 @@ export const workspaceRoutes: Routes = [
 	{
 		path: 'settings',
 		loadChildren: loadSettingsRoutes,
+	},
+	{
+		path: 'track-maps',
+		canMatch: [drivingAnalysisCanMatch],
+		loadChildren: loadTrackMapRoutes,
 	},
 ];
 

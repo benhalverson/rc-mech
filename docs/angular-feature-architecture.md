@@ -21,6 +21,8 @@ Reactive operation outcome
 
 Dependencies do not point sideways between workflow stores or backward from a gateway into UI state.
 
+Subject correction is a cohesive workflow shared by the analysis creator and the evidence review route. Its route-provided `ReidentificationStore` owns accepted-gap reads, immutable correction commands, retry identities, concurrency, and typed outcomes. `SubjectReidentification` receives immutable analysis and recording context through inputs; it does not inject either parent workflow store. This keeps correction recovery reusable without coupling creation and evidence review. The correction gateway reads a store-owned selection signal, and a focused player capability owns native pause and seek operations. Local frame selection, box editing, validation focus, and accessible presentation remain in the editor.
+
 ## Responsibilities
 
 | Layer | Owns | Does not own |

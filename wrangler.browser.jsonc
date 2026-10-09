@@ -1,7 +1,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "rc-mech-browser",
-	"main": "src/index.ts",
+	"main": "src/testing/browser-worker-entry.ts",
 	"compatibility_date": "2026-07-01",
 	"compatibility_flags": ["nodejs_compat"],
 	"assets": { "directory": "./public", "binding": "ASSETS" },
@@ -19,6 +19,20 @@
 		{
 			"binding": "ANALYSIS_MEDIA",
 			"bucket_name": "rc-mech-analysis-media"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "RACE_VIDEO_MEDIA_CONTAINER",
+				"class_name": "BrowserRaceVideoMediaContainer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1-race-video-media-container",
+			"new_sqlite_classes": ["BrowserRaceVideoMediaContainer"]
 		}
 	],
 	"vars": { "APP_URL": "http://localhost:8787", "ENVIRONMENT": "local" }

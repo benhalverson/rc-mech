@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import parityFixtures from '../../../containers/driving-analysis/tests/fixtures/tracking-canonical/tracking-python-canonical.json';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -26,7 +27,11 @@ import type {
 	GpuLeaseMutationResult,
 	GpuLeaseReleaseInput,
 } from '../gpu-lease-coordinator';
-import type { OutputArtifact, SubjectProvenance } from './contracts';
+import {
+	type OutputArtifact,
+	type SubjectProvenance,
+	trackStageRequestSchema,
+} from './contracts';
 import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
 import {
 	R2TrackingArtifactStore,
@@ -61,6 +66,8 @@ const migrations = [
 	'0019_tracking_authority.sql',
 	'0020_immutable_track_view.sql',
 	'0022_tracking_artifact_publication.sql',
+	'0034_tracking_availability.sql',
+	'0036_analysis_lifecycle.sql',
 ]
 	.map((name) => readFileSync(resolve(migrationDirectory, name), 'utf8'))
 	.join('\n');
@@ -356,6 +363,75 @@ const wrappingStore = (
 });
 
 describe('TrackingArtifactPublication', () => {
+	test.each(['stale', 'not-found', 'exception'] as const)(
+		'requires proven release on initial publication and accepted replay: %s',
+		async (failure) => {
+			const value = await publicationFixture();
+			const artifact = await artifactFixture(value);
+			seedStaging(value, artifact.bytes);
+			if (failure === 'exception')
+				value.lease.releaseError = new Error('lost coordinator response');
+			else value.lease.releaseResult = { status: failure };
+			await expect(publish(value, artifact.artifact)).rejects.toEqual(
+				new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED'),
+			);
+			const accepted = await value.authority.acceptedArtifactFor(
+				OWNER_ID,
+				RUN_ID,
+				SEGMENT_ID,
+			);
+			expect(accepted).not.toBeNull();
+			await expect(publish(value, artifact.artifact)).rejects.toEqual(
+				new TrackingArtifactPublicationError('LEASE_RELEASE_FAILED'),
+			);
+			expect(
+				await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
+			).toEqual(accepted);
+			value.lease.releaseError = undefined;
+			value.lease.releaseResult = { status: 'ok' };
+			expect(await publish(value, artifact.artifact)).toEqual(accepted);
+		},
+	);
+
+	test.each(parityFixtures)(
+		'matches Python production bytes and digests: $name',
+		async (fixture) => {
+			const value = await publicationFixture();
+			const request = trackStageRequestSchema.parse(fixture.request);
+			const digestSpy = vi.spyOn(crypto.subtle, 'digest');
+			try {
+				const provenance = await subjectProvenanceForProfile({
+					...inferenceProfileFixture(),
+					model: {
+						...inferenceProfileFixture().model,
+						version: fixture.profile.model.version,
+					},
+					identityConfidenceThreshold:
+						fixture.profile.identityConfidenceThreshold,
+				});
+				expect(new TextDecoder().decode(digestSpy.mock.calls[0][1])).toBe(
+					fixture.provenanceCanonical,
+				);
+				expect(provenance.configurationDigest).toBe(fixture.provenanceDigest);
+				const digest = await trackingInputDigestFor(
+					{
+						...value.context,
+						prepared: request.prepared,
+						seed: request.subjectSeed,
+					},
+					request.observationSegmentId,
+					provenance,
+				);
+				expect(new TextDecoder().decode(digestSpy.mock.calls[1][1])).toBe(
+					fixture.trackingCanonical,
+				);
+				expect(digest).toBe(fixture.trackingDigest);
+			} finally {
+				digestSpy.mockRestore();
+			}
+		},
+	);
+
 	test('validates, promotes, binds, releases, and replays one immutable artifact', async () => {
 		const value = await publicationFixture();
 		const { artifact, bytes } = await artifactFixture(value);
@@ -776,6 +852,189 @@ describe('TrackingArtifactPublication', () => {
 		);
 	});
 
+	test.each([false, true])(
+		'collects a PUT completed after deletion, including lost publisher response: %s',
+		async (lostResponse) => {
+			const value = await publicationFixture();
+			const artifact = await artifactFixture(value);
+			seedStaging(value, artifact.bytes);
+			const cleanupAt = new Date(
+				START.getTime() + TRACKING_ARTIFACT_GARBAGE_RETENTION_MS,
+			);
+			const acceptedKey = acceptedEvidenceObjectKey(artifact.artifact);
+			const delayedStore: TrackingArtifactStore = {
+				...wrappingStore(value, (read) => read()),
+				putIfAbsent: async (key, bytes, checksum) => {
+					// The PUT is in flight while cleanup deletes its key and tombstones the record.
+					expect(await value.publication.cleanupDue(cleanupAt, 1)).toBe(1);
+					const result = await value.store.putIfAbsent(key, bytes, checksum);
+					if (lostResponse) throw new Error('publisher lost its PUT response');
+					return result;
+				},
+			};
+			const publication = new TrackingArtifactPublication(
+				value.authority,
+				delayedStore,
+				value.lease,
+				() => START,
+			);
+			await expect(
+				publication.publish({
+					ownerId: OWNER_ID,
+					transferRequestId: TRANSFER_ID,
+					artifact: artifact.artifact,
+				}),
+			).rejects.toEqual(
+				new TrackingArtifactPublicationError(
+					lostResponse ? 'COMMIT_FAILED' : 'STALE_AUTHORITY',
+				),
+			);
+			expect(
+				await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
+			).toBeNull();
+			expect(
+				await value.store.read(acceptedKey, artifact.bytes.length),
+			).not.toBeNull();
+			if (!sqlite) throw new Error('Expected SQLite');
+			const database = sqlite.database;
+			const cleaner = () =>
+				new TrackingArtifactPublication(
+					new TrackingAuthority(database),
+					value.store,
+					value.lease,
+				);
+			// Remove staging first; the retained tombstone is not yet due again.
+			expect(await cleaner().cleanupDue(cleanupAt)).toBe(1);
+			expect(
+				await cleaner().cleanupDue(
+					new Date(
+						cleanupAt.getTime() + TRACKING_ARTIFACT_GARBAGE_RETENTION_MS - 1,
+					),
+				),
+			).toBe(0);
+			const recheckAt = new Date(
+				cleanupAt.getTime() + TRACKING_ARTIFACT_GARBAGE_RETENTION_MS,
+			);
+			const failingCleaner = new TrackingArtifactPublication(
+				new TrackingAuthority(database),
+				{
+					...wrappingStore(value, (read) => read()),
+					delete: async () => {
+						throw new Error('R2 deletion failed');
+					},
+				},
+				value.lease,
+			);
+			await expect(failingCleaner.cleanupDue(recheckAt, 1)).rejects.toEqual(
+				new TrackingArtifactPublicationError('CLEANUP_FAILED'),
+			);
+			const retryable = await new TrackingAuthority(
+				database,
+			).cleanupPromotionCandidates(recheckAt.toISOString(), 1);
+			expect(retryable).toMatchObject([
+				{ state: 'deleting', deletedAt: null, version: 4 },
+			]);
+			expect(
+				await value.store.read(acceptedKey, artifact.bytes.length),
+			).not.toBeNull();
+			expect(
+				await Promise.all([
+					cleaner().cleanupDue(recheckAt, 1),
+					cleaner().cleanupDue(new Date(recheckAt.getTime() + 1), 1),
+				]),
+			).toEqual([1, 1]);
+			expect(
+				await value.store.read(acceptedKey, artifact.bytes.length),
+			).toBeNull();
+			expect(await cleaner().cleanupDue(recheckAt, 1)).toBe(0);
+		},
+	);
+
+	test('orders bounded batches by effective due time and never reselects freshly checked tombstones', async () => {
+		const value = await publicationFixture();
+		const artifact = await artifactFixture(value);
+		seedStaging(value, artifact.bytes);
+		value.lease.beginResult = { status: 'stale' };
+		await expect(publish(value, artifact.artifact)).rejects.toEqual(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		if (!sqlite) throw new Error('Expected SQLite');
+		const database = sqlite.database;
+		const day = TRACKING_ARTIFACT_GARBAGE_RETENTION_MS;
+		const at = (days: number) =>
+			new Date(START.getTime() + days * day).toISOString();
+		// Historical attempts and transfers provide realistic FK-backed garbage records.
+		for (const [suffix, deleted, dueDays] of [
+			['a', true, 2],
+			['b', false, 1.5],
+			['c', true, 2],
+			['d', false, 2.5],
+		] as const) {
+			const id = `${suffix.repeat(8)}-${suffix.repeat(4)}-4${suffix.repeat(3)}-8${suffix.repeat(3)}-${suffix.repeat(12)}`;
+			await database
+				.prepare(`INSERT INTO tracking_execution_attempt
+                (id, segment_id, profile_digest, specification_digest, lease_id, fence, state, created_at, updated_at)
+                SELECT ?, segment_id, profile_digest, specification_digest, ?, fence, 'expired', created_at, updated_at
+                FROM tracking_execution_attempt WHERE id = ?`)
+				.bind(id, id, ATTEMPT_ID)
+				.run();
+			await database
+				.prepare(`INSERT INTO tracking_transfer_request
+                (id, attempt_id, role, method, object_scope, state, created_at, updated_at)
+                SELECT ?, ?, role, method, ?, state, created_at, updated_at
+                FROM tracking_transfer_request WHERE id = ?`)
+				.bind(id, id, id, TRANSFER_ID)
+				.run();
+			await database
+				.prepare(`INSERT INTO tracking_artifact_promotion
+                (artifact_id, run_id, segment_id, attempt_id, transfer_request_id, staging_object_key, accepted_object_key,
+                 checksum_sha256, contract_digest, byte_count, state, delete_after, version, created_at, updated_at, deleted_at)
+                SELECT ?, run_id, segment_id, ?, ?, ?, ?, checksum_sha256, contract_digest, byte_count, ?, ?, 1, created_at, ?, ?
+                FROM tracking_artifact_promotion WHERE artifact_id = ?`)
+				.bind(
+					id,
+					id,
+					id,
+					`tracking-staging/${id}`,
+					`tracking-evidence/${id}`,
+					deleted ? 'deleted' : 'pending',
+					at(deleted ? 1 : dueDays),
+					at(deleted ? dueDays - 1 : 0),
+					deleted ? at(dueDays - 1) : null,
+					ATTEMPT_ID,
+				)
+				.run();
+			value.r2.seed(`tracking-evidence/${id}`, 'late bytes');
+		}
+		const deletedKeys: string[] = [];
+		const cleaner = new TrackingArtifactPublication(
+			new TrackingAuthority(database),
+			{
+				...wrappingStore(value, (read) => read()),
+				delete: async (keys) => {
+					deletedKeys.push(...keys);
+					await value.store.delete(keys);
+				},
+			},
+			value.lease,
+		);
+		const cleanupAt = new Date(at(3));
+		for (let batch = 0; batch < 5; batch += 1)
+			expect(await cleaner.cleanupDue(cleanupAt, 1)).toBe(1);
+		const key = (s: string) =>
+			`tracking-evidence/${s.repeat(8)}-${s.repeat(4)}-4${s.repeat(3)}-8${s.repeat(3)}-${s.repeat(12)}`;
+		expect(deletedKeys).toEqual([
+			acceptedEvidenceObjectKey(artifact.artifact),
+			key('b'),
+			key('a'),
+			key('c'),
+			key('d'),
+		]);
+		// The last bounded batch drains staging; no tombstone is immediately due again.
+		expect(await cleaner.cleanupDue(cleanupAt, 1)).toBe(1);
+		expect(await cleaner.cleanupDue(cleanupAt, 1)).toBe(0);
+	});
+
 	test('keeps unreferenced promotions collectible and never deletes accepted evidence', async () => {
 		const orphan = await publicationFixture();
 		const orphanArtifact = await artifactFixture(orphan);
@@ -890,6 +1149,61 @@ describe('TrackingArtifactPublication', () => {
 			).cleanupDue(cleanupAt),
 		).rejects.toEqual(new TrackingArtifactPublicationError('CLEANUP_FAILED'));
 	});
+	test('continues staging cleanup when an earlier object cannot be deleted', async () => {
+		const value = await publicationFixture();
+		const deleted: string[] = [];
+		const store: TrackingArtifactStore = {
+			read: (...args) => value.store.read(...args),
+			putIfAbsent: (...args) => value.store.putIfAbsent(...args),
+			list: async () => ({
+				objects: [
+					artifactListing('first', START),
+					artifactListing('second', START),
+				],
+				cursor: null,
+			}),
+			delete: async (keys) => {
+				if (keys.includes('tracking-staging/first'))
+					throw new Error('R2 unavailable');
+				deleted.push(...keys);
+			},
+		};
+		const cleaner = new TrackingArtifactPublication(
+			value.authority,
+			store,
+			value.lease,
+		);
+		expect(
+			await cleaner.cleanupDue(
+				new Date(START.getTime() + TRACKING_ARTIFACT_GARBAGE_RETENTION_MS + 1),
+			),
+		).toBe(1);
+		expect(deleted).toEqual(['tracking-staging/second']);
+	});
+	test('bounds scans of recent staging objects and resumes after the last page', async () => {
+		const value = await publicationFixture();
+		let pages = 0;
+		const cursors: (string | undefined)[] = [];
+		const store: TrackingArtifactStore = {
+			read: (...args) => value.store.read(...args),
+			putIfAbsent: (...args) => value.store.putIfAbsent(...args),
+			delete: (...args) => value.store.delete(...args),
+			list: async (_prefix, cursor) => {
+				cursors.push(cursor);
+				pages += 1;
+				return { objects: [], cursor: pages < 20 ? String(pages) : null };
+			},
+		};
+		const cleaner = new TrackingArtifactPublication(
+			value.authority,
+			store,
+			value.lease,
+		);
+		await cleaner.cleanupDue(START, 10);
+		expect(pages).toBe(10);
+		await cleaner.cleanupDue(START, 10);
+		expect(cursors[10]).toBe('10');
+	});
 
 	test('a cleanup claim wins safely over the final conditional commit', async () => {
 		const value = await publicationFixture();
@@ -904,6 +1218,32 @@ describe('TrackingArtifactPublication', () => {
 			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
 		);
 		expect(value.lease.holdReleaseCalls).toHaveLength(1);
+		expect(
+			await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
+		).toBeNull();
+	});
+
+	test('cancellation during the commit hold rejects promoted evidence and late completion replay', async () => {
+		const value = await publicationFixture();
+		const { artifact, bytes } = await artifactFixture(value);
+		seedStaging(value, bytes);
+		value.lease.onBegin = async () => {
+			await value.authority.fenceRun({
+				ownerId: OWNER_ID,
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status: 'cancelled',
+				completedAt: START.toISOString(),
+			});
+		};
+		await expect(publish(value, artifact)).rejects.toEqual(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		await expect(publish(value, artifact)).rejects.toEqual(
+			new TrackingArtifactPublicationError('STALE_AUTHORITY'),
+		);
+		expect(value.lease.holdReleaseCalls).toHaveLength(1);
+		expect(value.lease.releaseCalls).toHaveLength(0);
 		expect(
 			await value.authority.acceptedArtifactFor(OWNER_ID, RUN_ID, SEGMENT_ID),
 		).toBeNull();

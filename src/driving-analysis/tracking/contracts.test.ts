@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'vitest';
+import { z } from 'zod';
+import observationsCompleteAcceptedFixture from '../../../containers/driving-analysis/tests/fixtures/subject-tracking/observations-complete-accepted.json';
 import prepareAcceptedFixture from '../../../containers/driving-analysis/tests/fixtures/subject-tracking/prepare-accepted.json';
 import trackGapAcceptedFixture from '../../../containers/driving-analysis/tests/fixtures/subject-tracking/track-gap-accepted.json';
 import {
@@ -12,6 +14,7 @@ import {
 	cancelCommandSchema,
 	executionIdentitySchema,
 	jobStatusSchema,
+	MAX_SUBJECT_OBSERVATIONS,
 	observationSegmentArtifactSchema,
 	outputArtifactSchema,
 	preparedMediaArtifactSchema,
@@ -24,7 +27,23 @@ import {
 } from './contracts';
 
 describe('tracking provider contracts', () => {
+	test('shares the provider runtime observation ceiling', () => {
+		const segmentSchema = z.toJSONSchema(subjectObservationSegmentSchema);
+		const artifactSchema = z.toJSONSchema(observationSegmentArtifactSchema);
+		expect(segmentSchema.properties?.observations).toMatchObject({
+			maxItems: MAX_SUBJECT_OBSERVATIONS,
+		});
+		expect(artifactSchema.properties?.observationCount).toMatchObject({
+			maximum: MAX_SUBJECT_OBSERVATIONS,
+		});
+	});
+
 	test('accepts the strict shared provider payloads', () => {
+		expect(
+			subjectObservationSegmentSchema.parse(
+				observationsCompleteAcceptedFixture,
+			),
+		).toEqual(observationsCompleteAcceptedFixture);
 		expect(
 			preparedMediaArtifactSchema.parse(prepareAcceptedFixture.prepared),
 		).toEqual(prepareAcceptedFixture.prepared);

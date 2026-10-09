@@ -50,13 +50,14 @@ from driving_analysis_service.rendering_contracts import (
     RenderStageResponse,
 )
 from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.stage_admission import processing_slot
 from driving_analysis_service.tracking_artifacts import (
     ArtifactConflictError,
     BundleReservation,
     InvalidArtifactError,
+    artifact_path,
     bundle_exists,
     bundle_member_path,
-    bundle_path,
     canonical_json,
     copy_verified_artifact,
     ensure_bundle_durable,
@@ -96,6 +97,13 @@ class _PixelCrop:
 
 
 class CornerRenderService:
+    """Runs a bounded Corner-clip request for the internal media API.
+
+    Owns admission, input/specification checks, FFmpeg execution, and immutable
+    artifact recovery/publication. Geometry conversion and runtime probing are
+    helpers; the service keeps cleanup and request deadline ownership together.
+    """
+
     def __init__(
         self,
         settings: ServiceSettings,
@@ -109,35 +117,34 @@ class CornerRenderService:
     def render(  # noqa: C901, PLR0911 - each safe failure maps directly to one response
         self, request: RenderStageRequest
     ) -> RenderStageResponse:
-        if not self._admission.acquire(blocking=False):
-            return _rejected(request, "SERVICE_BUSY")
-        started_at = time.monotonic()
-        try:
-            return self._render(
-                request,
-                start_deadline(self.settings.limits.process_timeout_seconds),
-                started_at,
-            )
-        except MediaValidationError as error:
-            if error.code == "PROCESS_TIMEOUT":
+        with processing_slot(self._admission) as admitted:
+            if not admitted:
+                return _rejected(request, "SERVICE_BUSY")
+            started_at = time.monotonic()
+            try:
+                return self._render(
+                    request,
+                    start_deadline(self.settings.limits.process_timeout_seconds),
+                    started_at,
+                )
+            except MediaValidationError as error:
+                if error.code == "PROCESS_TIMEOUT":
+                    return _rejected(request, "PROCESS_TIMEOUT")
+                return _rejected(request, "MEDIA_UNAVAILABLE")
+            except RenderInvalidMediaError:
+                return _rejected(request, "MEDIA_UNAVAILABLE")
+            except RenderProcessError:
+                return _rejected(request, "RENDER_FAILED")
+            except InvalidArtifactError:
+                return _rejected(request, "RENDER_FAILED")
+            except ArtifactConflictError:
+                return _rejected(request, "ARTIFACT_CONFLICT")
+            except ProcessTimeoutError:
                 return _rejected(request, "PROCESS_TIMEOUT")
-            return _rejected(request, "MEDIA_UNAVAILABLE")
-        except RenderInvalidMediaError:
-            return _rejected(request, "MEDIA_UNAVAILABLE")
-        except RenderProcessError:
-            return _rejected(request, "RENDER_FAILED")
-        except InvalidArtifactError:
-            return _rejected(request, "RENDER_FAILED")
-        except ArtifactConflictError:
-            return _rejected(request, "ARTIFACT_CONFLICT")
-        except ProcessTimeoutError:
-            return _rejected(request, "PROCESS_TIMEOUT")
-        except ProcessOutputLimitError:
-            return _rejected(request, "RESOURCE_LIMIT")
-        except (OSError, ValidationError, ValueError):
-            return _rejected(request, "RENDER_FAILED")
-        finally:
-            self._admission.release()
+            except ProcessOutputLimitError:
+                return _rejected(request, "RESOURCE_LIMIT")
+            except (OSError, ValidationError, ValueError):
+                return _rejected(request, "RENDER_FAILED")
 
     def _render(
         self,
@@ -153,7 +160,7 @@ class CornerRenderService:
         media_name = f"{request.render_id}{RENDER_MEDIA_SUFFIX}"
         completion_name = f"{request.render_id}{RENDER_COMPLETION_SUFFIX}"
         with reserve_bundle(
-            bundle_path(self.settings, request.render_id, RENDER_BUNDLE_SUFFIX),
+            artifact_path(self.settings, request.render_id, RENDER_BUNDLE_SUFFIX),
             {
                 media_name: request.specification.max_output_bytes,
                 completion_name: MAX_COMPLETION_BYTES,
@@ -282,7 +289,7 @@ def _recover(
     settings: ServiceSettings,
     deadline: float,
 ) -> RenderArtifact | None:
-    bundle = bundle_path(settings, request.render_id, RENDER_BUNDLE_SUFFIX)
+    bundle = artifact_path(settings, request.render_id, RENDER_BUNDLE_SUFFIX)
     if not bundle_exists(settings, request.render_id, RENDER_BUNDLE_SUFFIX):
         return None
     completion = read_completion(
@@ -443,6 +450,7 @@ def _render_clip(  # noqa: PLR0913 - FFmpeg invocation requires explicit bounded
                     standard_error_observer=StderrLineObserver(
                         _discard_process_error,
                         MAX_FFMPEG_ERROR_LINE_BYTES,
+                        settings.limits.max_process_output_bytes,
                     ),
                 ),
             )
@@ -462,15 +470,31 @@ def _pixel_crop(
     specification: RenderSpecification, metadata: ProbeMetadata
 ) -> _PixelCrop:
     view = specification.corner_view
-    crop_width = int(metadata.width * view.width) // 2 * 2
-    crop_height = int(metadata.height * view.height * TRACK_VIEW_HEIGHT) // 2 * 2
-    if crop_width < MIN_OUTPUT_DIMENSION or crop_height < MIN_OUTPUT_DIMENSION:
-        raise RenderInvalidMediaError
+    # Enclose the immutable normalized view on the codec's even-pixel grid.
+    # At a source boundary, keep the minimum two-pixel cell inside the frame.
+    right = min(
+        metadata.width // 2 * 2,
+        math.ceil(metadata.width * (view.x + view.width) / 2) * 2,
+    )
+    bottom = min(
+        metadata.height // 2 * 2,
+        math.ceil(
+            metadata.height
+            * (TRACK_VIEW_Y + (view.y + view.height) * TRACK_VIEW_HEIGHT)
+            / 2
+        )
+        * 2,
+    )
+    left = min(int(metadata.width * view.x) // 2 * 2, right - MIN_OUTPUT_DIMENSION)
+    top = min(
+        int(metadata.height * (TRACK_VIEW_Y + view.y * TRACK_VIEW_HEIGHT)) // 2 * 2,
+        bottom - MIN_OUTPUT_DIMENSION,
+    )
     return _PixelCrop(
-        width=crop_width,
-        height=crop_height,
-        x=int(metadata.width * view.x) // 2 * 2,
-        y=int(metadata.height * (TRACK_VIEW_Y + view.y * TRACK_VIEW_HEIGHT)) // 2 * 2,
+        width=right - left,
+        height=bottom - top,
+        x=left,
+        y=top,
     )
 
 
@@ -567,7 +591,8 @@ def _write_overlay_script(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
         "Effect, Text\n"
         + "\n".join(
-            f"Dialogue: {layer},0:00:00.00,9:59:59.00,Default,,0,0,0,,{line}"
+            f"Dialogue: {layer},0:00:00.00,9:59:59.00,Default,,0,0,0,,"
+            f"{{\\clip(0,0,{crop.width},{crop.height})}}{line}"
             for layer, line in enumerate(lines)
         )
         + "\n",
@@ -580,21 +605,18 @@ def _pixel_point(
 ) -> tuple[int, int]:
     frame_y = TRACK_VIEW_Y + point.y * TRACK_VIEW_HEIGHT
     return (
-        min(max(round(point.x * metadata.width) - crop.x, 0), crop.width - 1),
-        min(max(round(frame_y * metadata.height) - crop.y, 0), crop.height - 1),
+        round(point.x * metadata.width) - crop.x,
+        round(frame_y * metadata.height) - crop.y,
     )
 
 
 def _pixel_gate(
     gate: DirectedGate, metadata: ProbeMetadata, crop: _PixelCrop
 ) -> tuple[tuple[int, int], tuple[int, int]]:
-    result = (
+    return (
         _pixel_point(gate.entry, metadata, crop),
         _pixel_point(gate.exit, metadata, crop),
     )
-    if result[0] == result[1]:
-        raise RenderInvalidMediaError
-    return result
 
 
 def _escape_filter_value(value: str) -> str:

@@ -7,7 +7,7 @@
 		"deploy": "pnpm client:build && pnpm db:migrate:production && wrangler deploy",
 		"client:build": "pnpm --dir client build",
 		"client:dev": "pnpm --dir client start",
-		"worker:dev": "wrangler dev --env local",
+		"worker:dev": "node --import tsx scripts/local-worker.ts",
 		"cf-typegen": "wrangler types",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate:local": "wrangler d1 migrations apply DB --local --env local",
@@ -30,11 +30,12 @@
 	"dependencies": {
 		"@better-auth/drizzle-adapter": "^1.6.26",
 		"@better-auth/passkey": "^1.6.26",
+		"@cloudflare/containers": "0.3.7",
 		"@scalar/hono-api-reference": "^0.11.13",
 		"aws4fetch": "1.0.20",
 		"better-auth": "^1.6.26",
 		"drizzle-orm": "^0.45.2",
-		"hono": "4.13.1",
+		"hono": "4.13.5",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
@@ -43,13 +44,14 @@
 		"@cloudflare/workers-types": "^5.20260808.1",
 		"@playwright/test": "^1.62.1",
 		"@types/node": "24.13.3",
-		"@vitest/coverage-v8": "4.1.10",
+		"@vitest/coverage-istanbul": "4.1.11",
+		"@vitest/coverage-v8": "4.1.11",
 		"axe-playwright": "^2.2.2",
 		"commander": "^15.0.0",
 		"drizzle-kit": "^0.31.10",
 		"tsx": "^4.23.11",
 		"typescript": "^7.0.2",
-		"vitest": "^4.1.10",
+		"vitest": "^4.1.11",
 		"wrangler": "^4.120.0"
 	}
 }
