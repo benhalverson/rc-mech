@@ -173,6 +173,7 @@ for (const appearance of ['light', 'dark'] as const) {
 		await expect(
 			page.getByRole('link', { name: /Alloy B7 track car/ }),
 		).toBeVisible();
+		await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
 		await stabilizeVisuals(page);
 		await expect(page).toHaveScreenshot(`garage-mobile-${appearance}.png`, {
 			animations: 'disabled',

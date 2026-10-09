@@ -1758,10 +1758,12 @@ test('reviews a conflicting photo replacement against the exact remote revision 
 		.getByRole('button', { name: 'Keep device version and retry' })
 		.click();
 	await expect(review).toHaveCount(0);
-	const { photos } = (await (
-		await page.request.get(`/api/v1/cars/${car.id}/photos`)
-	).json()) as { photos: Array<{ id: string; fileName: string }> };
-	expect(photos).toMatchObject([{ id: photo.id, fileName: 'device.png' }]);
+	await expect
+		.poll(async () => {
+			const response = await page.request.get(`/api/v1/cars/${car.id}/photos`);
+			return ((await response.json()) as { photos: unknown[] }).photos;
+		})
+		.toMatchObject([{ id: photo.id, fileName: 'device.png' }]);
 	await expectAxeClean(page);
 });
 
