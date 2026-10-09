@@ -8,6 +8,13 @@ from driving_analysis_service.contracts import TrackingGap
 
 
 class OrderedGapCursor:
+    """Single-pass cursor used by benchmark crossing, identity, and gap metrics.
+
+    Each metric owns a cursor over validated ordered, non-overlapping gaps and
+    must query nondecreasing starts. Closed endpoints deliberately reject trusted
+    evidence touching ambiguity; consuming a match prevents reusing the same gap.
+    """
+
     def __init__(self, gaps: tuple[TrackingGap, ...]) -> None:
         self._gaps = gaps
         self._index = 0
