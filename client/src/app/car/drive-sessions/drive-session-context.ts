@@ -23,6 +23,11 @@ export const DRIVE_SESSION_CONTEXT = new InjectionToken<DriveSessionContext>(
 	'DRIVE_SESSION_CONTEXT',
 );
 
+/**
+ * Exposes the current Car's Drive-session selection through DRIVE_SESSION_CONTEXT
+ * to Voice workflows. Keeps that read context separate from the Drive editor
+ * store so Voice can attach an outing without depending on a sibling workflow.
+ */
 export const DriveSessionContextStore = signalStore(
 	withState({ carId: '' }),
 	withProps(() => ({

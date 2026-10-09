@@ -9,6 +9,10 @@ import {
 	voiceGatewayFailure,
 } from './voice-gateway';
 
+/**
+ * Marks a parsed response for the wrong capture as invalid, preventing another
+ * Voice record from acknowledging or advancing this capture's durable phase.
+ */
 class MisdirectedVoiceResponse extends Error {}
 const failure = (
 	error: unknown,
@@ -36,6 +40,12 @@ const failure = (
 	}
 	return voiceGatewayFailure(error);
 };
+/**
+ * Transport for VoiceWorkspaceStore's stable-ID text/audio uploads and subsequent
+ * server processing. Parses acknowledgements and provenance without deciding
+ * when a capture is durable or removable; upload and processing are separate
+ * queue phases so reconnect can resume without losing the original recording.
+ */
 @Service()
 export class VoiceSyncGateway {
 	private readonly http = inject(HttpClient);

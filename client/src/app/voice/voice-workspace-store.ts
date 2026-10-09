@@ -25,6 +25,12 @@ export type VoiceLocalOutcome =
 	| Readonly<{ status: 'pending'; requestId: string }>
 	| Readonly<{ status: 'succeeded'; requestId: string }>
 	| Readonly<{ status: 'failed'; requestId: string; message: string }>;
+/**
+ * Application-wide Voice capture coordinator. Persists text/audio with Car/Drive
+ * prerequisites, migrates legacy captures, and resumes upload then server
+ * processing across route changes. Acknowledgements advance durable phases;
+ * owner/session fences and failed-capture retention protect original bytes.
+ */
 export const VoiceWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<{

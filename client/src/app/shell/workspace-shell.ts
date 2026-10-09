@@ -22,6 +22,11 @@ import {
 } from './shell-route-context';
 import { SignOutStore } from './sign-out-store';
 
+/**
+ * Authenticated shell composition point. Starts shared workspace coordinators and
+ * renders navigation, offline status, and sign-out confirmation across lazy routes;
+ * feature stores retain their own commands and the shell does not sequence HTTP.
+ */
 @Component({
 	selector: 'app-workspace-shell',
 	imports: [OfflineStatus, RouterLink, RouterLinkActive, RouterOutlet],

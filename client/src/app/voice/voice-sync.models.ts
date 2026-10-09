@@ -1,3 +1,7 @@
+/**
+ * Durable Voice capture phases and retained originals shared by storage, migration, and background upload/processing.
+ */
+
 import type { PendingVoiceCapture, VoiceUpdate } from './voice.models';
 export type VoiceCapture = PendingVoiceCapture &
 	Readonly<{
