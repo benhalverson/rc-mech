@@ -16,7 +16,7 @@ import {
 } from '../../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../../offline/offline-workspace-store';
 import type { PhotoMutationCommand } from '../car.models';
-import type { PhotoView } from './photo-sync.models';
+import type { PhotoCapture, PhotoView } from './photo-sync.models';
 import { PhotoSyncGateway } from './photo-sync-gateway';
 
 export type PhotoCaptureMutationOutcome =
@@ -159,6 +159,11 @@ export const PhotoWorkspaceStore = signalStore(
 				| Readonly<{ carId: string; file: File }>
 				| Readonly<{
 						carId: string;
+						capture: PhotoCapture;
+						decision: 'retry' | 'discard';
+				  }>
+				| Readonly<{
+						carId: string;
 						edit: Exclude<PhotoMutationCommand, { kind: 'upload' }>;
 				  }>,
 			requestId: string,
@@ -167,17 +172,23 @@ export const PhotoWorkspaceStore = signalStore(
 			patchState(store, { outcome: { status: 'pending', requestId } });
 			try {
 				const view =
-					'edit' in command
-						? await store.storage.commitPhotoChange(
-								command.carId,
-								command.edit,
+					'capture' in command
+						? await store.storage.resolvePhotoCapture(
+								command.capture,
+								command.decision,
 								identity,
 							)
-						: await store.storage.commitPhoto(
-								command.carId,
-								command.file,
-								identity,
-							);
+						: 'edit' in command
+							? await store.storage.commitPhotoChange(
+									command.carId,
+									command.edit,
+									identity,
+								)
+							: await store.storage.commitPhoto(
+									command.carId,
+									command.file,
+									identity,
+								);
 				if (!matches(identity)) return;
 				patchState(store, {
 					view,
@@ -232,6 +243,11 @@ export const PhotoWorkspaceStore = signalStore(
 					requestId: string;
 					change:
 						| Readonly<{ carId: string; file: File }>
+						| Readonly<{
+								carId: string;
+								capture: PhotoCapture;
+								decision: 'retry' | 'discard';
+						  }>
 						| Readonly<{
 								carId: string;
 								edit: Exclude<PhotoMutationCommand, { kind: 'upload' }>;

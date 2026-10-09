@@ -4,6 +4,8 @@ import {
 	applyPhotoChange,
 	type PhotoChange,
 	photoChangeBase,
+	photoChangesOverlap,
+	photoChangeTouchesGallery,
 } from '../../../../shared/photo-sync';
 import type {
 	BuildSyncCollection,
@@ -909,6 +911,11 @@ export class OfflineGarageStorage {
 			.where('ownerKey')
 			.equals(current.ownerKey)
 			.toArray();
+		captures.sort(
+			(a, b) =>
+				a.photo.createdAt.localeCompare(b.photo.createdAt) ||
+				a.operationId.localeCompare(b.operationId),
+		);
 		const changes = await this.photoChanges
 			.where('ownerKey')
 			.equals(current.ownerKey)
@@ -1011,10 +1018,19 @@ export class OfflineGarageStorage {
 							.filter((value) => value.carId === carId)
 							.map((value) => value.operationId),
 						...view.captures
-							.filter((value) => value.carId === carId)
+							.filter(
+								(value) =>
+									value.carId === carId &&
+									(photoChangeTouchesGallery(command) ||
+										value.photo.id === command.photoId),
+							)
 							.map((value) => value.operationId),
 						...view.changes
-							.filter((value) => value.carId === carId)
+							.filter(
+								(value) =>
+									value.carId === carId &&
+									photoChangesOverlap(command, value.command),
+							)
 							.map((value) => value.operationId),
 					],
 					...(change.kind === 'replace' ? { blob: change.file } : {}),
@@ -1147,6 +1163,91 @@ export class OfflineGarageStorage {
 		);
 	}
 
+	async resolvePhotoCapture(
+		capture: PhotoCapture,
+		decision: 'retry' | 'discard',
+		fence: OfflineWorkspaceFence,
+	): Promise<PhotoView> {
+		return this.database.transaction(
+			'rw',
+			[
+				this.metadata,
+				this.snapshots,
+				this.photoCaptures,
+				this.photoChanges,
+				this.photoMedia,
+			],
+			async () => {
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				if (!snapshot) throw new Error('The offline Garage is unavailable.');
+				const stored = await this.photoCaptures.get(capture.operationId);
+				if (
+					!stored ||
+					stored.ownerKey !== fence.ownerKey ||
+					stored.status !== 'needs-attention' ||
+					JSON.stringify(stored) !== JSON.stringify(capture)
+				)
+					throw new Error('This photo changed. Reopen its recovery actions.');
+				const nextId = this.nextOperationId();
+				await this.photoCaptures.delete(stored.operationId);
+				await this.photoMedia.delete([fence.ownerKey, stored.photo.id]);
+				if (decision === 'retry') {
+					await this.photoCaptures.add({
+						...stored,
+						operationId: nextId,
+						photo: { ...stored.photo, id: nextId },
+						status: 'pending',
+						feedback: undefined,
+					});
+					await this.photoMedia.put({
+						ownerKey: fence.ownerKey,
+						photoId: nextId,
+						blob: stored.blob,
+						revision: 1,
+					});
+				}
+				for (const change of await this.photoChanges
+					.where('ownerKey')
+					.equals(fence.ownerKey)
+					.toArray()) {
+					if (!change.dependencies.includes(stored.operationId)) continue;
+					const remap = (id: string) => (id === stored.photo.id ? nextId : id);
+					await this.photoChanges.put(
+						decision === 'retry'
+							? {
+									...change,
+									dependencies: change.dependencies.map((id) =>
+										id === stored.operationId ? nextId : id,
+									),
+									command: {
+										...change.command,
+										photoId:
+											change.command.photoId === null
+												? null
+												: remap(change.command.photoId),
+										order: change.command.order.map(remap),
+										base: change.command.base.map((value) => ({
+											...value,
+											id: remap(value.id),
+										})),
+									},
+								}
+							: {
+									...change,
+									status: 'needs-attention',
+									feedback: {
+										code: 'PHOTO_CAPTURE_DISCARDED',
+										message:
+											'The prerequisite photo capture was discarded. Your later change remains here for review.',
+									},
+								},
+					);
+				}
+				return this.photoView(fence);
+			},
+		);
+	}
+
 	async commitPhoto(
 		carId: string,
 		file: File,
@@ -1190,7 +1291,14 @@ export class OfflineGarageStorage {
 					id: operationId,
 					carId,
 					contentType: file.type,
-					createdAt: new Date(this.now()).toISOString(),
+					createdAt: new Date(
+						Math.max(
+							this.now(),
+							...view.captures.map(
+								(value) => Date.parse(value.photo.createdAt) + 1,
+							),
+						),
+					).toISOString(),
 					sortOrder: photos.length,
 					isPrimary: !photos.some((photo) => photo.isPrimary),
 				};

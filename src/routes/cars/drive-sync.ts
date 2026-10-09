@@ -3,6 +3,7 @@ import { db } from '../../db';
 import { driveSyncCommandInput } from '../../drive-sync-contract';
 import { car, driveSession, syncOperation } from '../../schema';
 import type { AppContext } from '../../types';
+import { pendingSyncReceipt } from '../pending-sync-receipt';
 import { ownedCar } from './car-records';
 
 type DriveSyncContext = Readonly<{
@@ -21,6 +22,12 @@ export const applyDriveSyncOperation = async (
 		context;
 	const database = db(c.env);
 	const ownerId = c.get('userId');
+	const receiptPending = pendingSyncReceipt(
+		database,
+		ownerId,
+		operationId,
+		requestHash,
+	);
 	const receiptWhere = and(
 		eq(syncOperation.ownerId, ownerId),
 		eq(syncOperation.operationId, operationId),
@@ -145,19 +152,22 @@ export const applyDriveSyncOperation = async (
 		outcome: 'applied',
 		collection: { carId: parent.id, version, sessions: nextSessions },
 	};
-	const witness = exists(
-		database
-			.select({ id: car.id })
-			.from(car)
-			.where(
-				and(
-					eq(car.id, parent.id),
-					eq(car.ownerId, ownerId),
-					eq(car.version, version),
-					eq(car.lastOperationId, operationId),
-					isNull(car.archivedAt),
+	const witness = and(
+		receiptPending,
+		exists(
+			database
+				.select({ id: car.id })
+				.from(car)
+				.where(
+					and(
+						eq(car.id, parent.id),
+						eq(car.ownerId, ownerId),
+						eq(car.version, version),
+						eq(car.lastOperationId, operationId),
+						isNull(car.archivedAt),
+					),
 				),
-			),
+		),
 	);
 	const mutation = current
 		? database
@@ -197,6 +207,7 @@ export const applyDriveSyncOperation = async (
 					eq(car.id, parent.id),
 					eq(car.ownerId, ownerId),
 					eq(car.version, parent.version),
+					receiptPending,
 					isNull(car.archivedAt),
 				),
 			),

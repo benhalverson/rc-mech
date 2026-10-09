@@ -205,19 +205,28 @@ export const createPhotoChangeRoutes = () => {
 			sql`(select count(*) from photo where car_id = ${change.carId}) = ${photos.length}`,
 			sql`not exists (select 1 from photo p where p.car_id = ${change.carId} and not exists (select 1 from json_each(${JSON.stringify(photos.map((value) => ({ id: value.id, revision: value.revision })))}) expected where json_extract(expected.value, '$.id') = p.id and json_extract(expected.value, '$.revision') = p.revision))`,
 		);
-		const witness = exists(
+		const receiptPending = exists(
 			database
-				.select({ id: car.id })
-				.from(car)
-				.where(
-					and(
-						eq(car.id, change.carId),
-						eq(car.ownerId, ownerId),
-						eq(car.version, parent.version + 1),
-						eq(car.lastOperationId, operationId),
-						isNull(car.archivedAt),
+				.select({ id: syncOperation.operationId })
+				.from(syncOperation)
+				.where(pending),
+		);
+		const witness = and(
+			receiptPending,
+			exists(
+				database
+					.select({ id: car.id })
+					.from(car)
+					.where(
+						and(
+							eq(car.id, change.carId),
+							eq(car.ownerId, ownerId),
+							eq(car.version, parent.version + 1),
+							eq(car.lastOperationId, operationId),
+							isNull(car.archivedAt),
+						),
 					),
-				),
+			),
 		);
 		const cleanup =
 			existing && (change.action === 'replace' || change.action === 'delete')
@@ -252,6 +261,7 @@ export const createPhotoChangeRoutes = () => {
 						eq(car.ownerId, ownerId),
 						eq(car.version, parent.version),
 						isNull(car.archivedAt),
+						receiptPending,
 						unchanged,
 					),
 				),

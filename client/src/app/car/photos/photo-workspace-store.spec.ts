@@ -52,6 +52,7 @@ let storage: {
 	readyPhotoCaptures: ReturnType<typeof vi.fn>;
 	readyPhotoChanges: ReturnType<typeof vi.fn>;
 	commitPhotoChange: ReturnType<typeof vi.fn>;
+	resolvePhotoCapture: ReturnType<typeof vi.fn>;
 	recordPhotoChangeOutcome: ReturnType<typeof vi.fn>;
 	refreshPhotos: ReturnType<typeof vi.fn>;
 };
@@ -84,6 +85,7 @@ beforeEach(() => {
 	storage = {
 		readyPhotoChanges: vi.fn(async () => []),
 		commitPhotoChange: vi.fn(async () => view),
+		resolvePhotoCapture: vi.fn(async () => view),
 		recordPhotoChangeOutcome: vi.fn(async () => view),
 		readyPhotoCaptures: vi.fn(async () => view?.captures ?? []),
 		refreshPhotos: vi.fn(async () => view),
@@ -441,4 +443,19 @@ it('exposes an empty change list before a prepared gallery read completes', asyn
 	store.open();
 	await settle();
 	expect(store.changes()).toEqual([]);
+});
+
+it('acknowledges capture recovery only after the durable transaction', async () => {
+	offline.hasSnapshot.set(true);
+	await settle();
+	store.mutate({
+		requestId: 'retry',
+		change: { carId: 'car', capture: operation, decision: 'retry' },
+	});
+	await settle();
+	expect(storage.resolvePhotoCapture).toHaveBeenCalledWith(operation, 'retry', {
+		ownerKey: 'owner',
+		sessionKey: 'session',
+	});
+	expect(store.outcome().status).toBe('succeeded');
 });

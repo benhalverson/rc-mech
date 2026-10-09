@@ -15,6 +15,16 @@
 	</header>
 
 @if (captureFeedback()) { <p role="status" class="alloy-supporting-text">{{ captureFeedback() }}</p> }
+@for(capture of captureFailures();track capture.operationId) {
+ <section class="alloy-state alloy-attention-state mt-0 grid gap-3" [attr.aria-label]="'Recover photo ' + capture.fileName">
+  <strong>{{ capture.fileName }} · Needs attention</strong><p>{{ capture.feedback }}</p>
+  <p>Retry keeps the original bytes and related photo edits. Discard removes this unsynchronized original from this device; any dependent changes remain available for review.</p>
+  <div class="flex flex-wrap gap-2">
+   <button type="button" class="alloy-control alloy-focus-ring" [disabled]="action() !== null || archived()" (click)="resolveCapture(capture,'retry')">Retry photo capture</button>
+   <button type="button" class="alloy-control alloy-control-secondary alloy-focus-ring" [disabled]="action() !== null" (click)="resolveCapture(capture,'discard')">Discard unsynced photo</button>
+  </div>
+ </section>
+}
 @if (offline()) { <p class="alloy-supporting-text">Photo changes are saved on this device and synchronize when the connection returns.</p> }
 	@if (archived()) {
 		<p class="alloy-state alloy-attention-state mt-0">

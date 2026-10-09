@@ -15,6 +15,7 @@ import {
 	syncOperation,
 } from '../../schema';
 import type { AppContext } from '../../types';
+import { pendingSyncReceipt } from '../pending-sync-receipt';
 import { ownedCar } from './car-records';
 import { applyConsumableSyncOperation } from './consumable-sync';
 
@@ -33,6 +34,12 @@ export const applyMaintenanceSyncOperation = async (
 		context;
 	const database = db(c.env);
 	const ownerId = c.get('userId');
+	const receiptPending = pendingSyncReceipt(
+		database,
+		ownerId,
+		operationId,
+		requestHash,
+	);
 	const pending = and(
 		eq(syncOperation.ownerId, ownerId),
 		eq(syncOperation.operationId, operationId),
@@ -202,19 +209,22 @@ export const applyMaintenanceSyncOperation = async (
 		change.entity === 'service' ? change.baselineSessionCount : 0,
 	);
 	const version = parent.version + 1;
-	const witness = exists(
-		database
-			.select({ id: car.id })
-			.from(car)
-			.where(
-				and(
-					eq(car.id, parent.id),
-					eq(car.ownerId, ownerId),
-					eq(car.version, version),
-					eq(car.lastOperationId, operationId),
-					isNull(car.archivedAt),
+	const witness = and(
+		receiptPending,
+		exists(
+			database
+				.select({ id: car.id })
+				.from(car)
+				.where(
+					and(
+						eq(car.id, parent.id),
+						eq(car.ownerId, ownerId),
+						eq(car.version, version),
+						eq(car.lastOperationId, operationId),
+						isNull(car.archivedAt),
+					),
 				),
-			),
+		),
 	);
 	const selectParent = and(eq(car.id, parent.id), witness);
 	const plan = next.plans.find(
@@ -366,6 +376,7 @@ export const applyMaintenanceSyncOperation = async (
 					eq(car.id, parent.id),
 					eq(car.ownerId, ownerId),
 					eq(car.version, parent.version),
+					receiptPending,
 					unchangedPlan,
 					unchangedRecord,
 					isNull(car.archivedAt),

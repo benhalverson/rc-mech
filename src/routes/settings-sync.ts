@@ -1,4 +1,4 @@
-import { and, eq, exists, type SQL } from 'drizzle-orm';
+import { and, eq, exists, getTableColumns, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { db } from '../db';
@@ -7,6 +7,10 @@ import { validateInviteCode } from '../invite-policy';
 import { inviteCode, owner, syncOperation } from '../schema';
 import { settingsSyncEnvelope } from '../settings-sync-contract';
 import type { AppEnv } from '../types';
+import {
+	pendingSyncReceipt,
+	syncInsertSelection,
+} from './pending-sync-receipt';
 
 export const createSettingsSyncRoutes = () => {
 	const routes = new Hono<AppEnv>();
@@ -38,6 +42,12 @@ export const createSettingsSyncRoutes = () => {
 		const requestHash = [...new Uint8Array(digest)]
 			.map((byte) => byte.toString(16).padStart(2, '0'))
 			.join('');
+		const receiptPending = pendingSyncReceipt(
+			database,
+			ownerId,
+			operationId,
+			requestHash,
+		);
 		const identity = and(
 			eq(syncOperation.ownerId, ownerId),
 			eq(syncOperation.operationId, operationId),
@@ -128,7 +138,11 @@ export const createSettingsSyncRoutes = () => {
 					.update(owner)
 					.set({ timezone: command.timezone })
 					.where(
-						and(eq(owner.id, ownerId), eq(owner.timezone, current.timezone)),
+						and(
+							eq(owner.id, ownerId),
+							eq(owner.timezone, current.timezone),
+							receiptPending,
+						),
 					),
 				terminal(
 					'applied',
@@ -167,15 +181,32 @@ export const createSettingsSyncRoutes = () => {
 			const inserts = [1, 2, 3, 4, 5].map((slot) =>
 				database
 					.insert(inviteCode)
-					.values({
-						id: operationId,
-						code: code.code,
-						creatorId: ownerId,
-						slot,
-						status: 'available',
-						createdAt: now,
-						updatedAt: now,
-					})
+					.select(
+						database
+							.select(
+								syncInsertSelection(
+									{
+										id: operationId,
+										code: code.code,
+										creatorId: ownerId,
+										slot,
+										status: 'available',
+										reservedEmail: null,
+										reservedUntil: null,
+										redeemedEmail: null,
+										redeemedUserId: null,
+										reservedAt: null,
+										redeemedAt: null,
+										revokedAt: null,
+										createdAt: now,
+										updatedAt: now,
+									},
+									getTableColumns(inviteCode),
+								),
+							)
+							.from(owner)
+							.where(and(eq(owner.id, ownerId), receiptPending)),
+					)
 					.onConflictDoNothing(),
 			);
 			await database.batch([
@@ -226,6 +257,7 @@ export const createSettingsSyncRoutes = () => {
 						eq(inviteCode.id, command.inviteId),
 						eq(inviteCode.creatorId, ownerId),
 						eq(inviteCode.status, 'available'),
+						receiptPending,
 					),
 				),
 			terminal(

@@ -1764,3 +1764,137 @@ test('reviews a conflicting photo replacement against the exact remote revision 
 	expect(photos).toMatchObject([{ id: photo.id, fileName: 'device.png' }]);
 	await expectAxeClean(page);
 });
+
+test('recovers rejected photo captures without losing bytes or dependent replacement intent', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const { car } = (await (
+		await page.request.post('/api/v1/cars', {
+			data: { name: 'Recover retained captures' },
+		})
+	).json()) as { car: { id: string } };
+	const png = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXZkAAAAASUVORK5CYII=',
+		'base64',
+	);
+	const path = `/garage/${car.id}/photos`;
+	await page.goto(path);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	for (const name of ['retry.png', 'discard.png']) {
+		await page
+			.locator('.upload-button input')
+			.setInputFiles({ name, mimeType: 'image/png', buffer: png });
+		await expect(
+			page.locator('app-car-photo-gallery').getByText(/Pending sync/),
+		).toBeVisible();
+	}
+	await page.getByLabel('Replace photo 1', { exact: true }).setInputFiles({
+		name: 'replacement.png',
+		mimeType: 'image/png',
+		buffer: png,
+	});
+	expect((await page.request.post(`/api/v1/cars/${car.id}/archive`)).ok()).toBe(
+		true,
+	);
+	await context.setOffline(false);
+	const retry = page.getByRole('region', {
+		name: 'Recover photo retry.png',
+		exact: true,
+	});
+	const discard = page.getByRole('region', {
+		name: 'Recover photo discard.png',
+		exact: true,
+	});
+	await expect(retry).toBeVisible();
+	await expect(discard).toBeVisible();
+	await expectAxeClean(page);
+	expect((await page.request.post(`/api/v1/cars/${car.id}/restore`)).ok()).toBe(
+		true,
+	);
+	await retry.getByRole('button', { name: 'Retry photo capture' }).click();
+	await expect(retry).toHaveCount(0);
+	await expect(
+		page.locator('app-car-photo-gallery').getByText(/Pending sync/),
+	).toHaveCount(0);
+	await discard.getByRole('button', { name: 'Discard unsynced photo' }).click();
+	await expect(discard).toHaveCount(0);
+	await expect(page.locator('.photo-grid img')).toHaveCount(1);
+	const { photos } = (await (
+		await page.request.get(`/api/v1/cars/${car.id}/photos`)
+	).json()) as { photos: Array<{ id: string; fileName: string }> };
+	expect(photos).toHaveLength(1);
+	expect(photos[0].fileName).toBe('replacement.png');
+	expect(
+		await (await page.request.get(`/api/v1/photos/${photos[0].id}`)).body(),
+	).toEqual(png);
+	const reopened = await reopenOffline(context, page, path);
+	await expect(reopened.locator('.photo-grid img')).toHaveCount(1);
+	await expectAxeClean(reopened);
+});
+
+test('concurrent retries cannot apply a photo change twice after its receipt completes', async ({
+	page,
+}) => {
+	await authenticateOwner(page);
+	const { car } = (await (
+		await page.request.post('/api/v1/cars', {
+			data: { name: 'Concurrent photo retry' },
+		})
+	).json()) as { car: { id: string } };
+	const png = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXZkAAAAASUVORK5CYII=',
+		'base64',
+	);
+	for (const name of ['one.png', 'two.png'])
+		expect(
+			(
+				await page.request.post(`/api/v1/cars/${car.id}/photos`, {
+					multipart: { file: { name, mimeType: 'image/png', buffer: png } },
+				})
+			).ok(),
+		).toBe(true);
+	const { photos } = (await (
+		await page.request.get(`/api/v1/cars/${car.id}/photos`)
+	).json()) as {
+		photos: Array<{ id: string; revision: number; isPrimary: boolean }>;
+	};
+	const target = photos.find((value) => !value.isPrimary);
+	expect(target).toBeDefined();
+	const command = {
+		type: 'photo.change',
+		carId: car.id,
+		action: 'primary',
+		photoId: target?.id,
+		order: [],
+		base: photos.map(({ id, revision }) => ({ id, revision })),
+		replacement: null,
+	};
+	const endpoint = `/api/v1/cars/${car.id}/photos/operations/${crypto.randomUUID()}`;
+	const send = () =>
+		page.request.put(endpoint, {
+			multipart: { command: JSON.stringify(command) },
+		});
+	const replies = await Promise.all([send(), send(), send()]);
+	expect(
+		replies.every((response) => [200, 503].includes(response.status())),
+	).toBe(true);
+	expect((await send()).ok()).toBe(true);
+	const canonical = (await (
+		await page.request.get(`/api/v1/cars/${car.id}/photos`)
+	).json()) as {
+		photos: Array<{ id: string; revision: number; isPrimary: boolean }>;
+	};
+	for (const value of canonical.photos)
+		expect(value.revision).toBe(
+			(photos.find((old) => old.id === value.id)?.revision ?? 0) + 1,
+		);
+	expect(
+		canonical.photos.find((value) => value.id === target?.id)?.isPrimary,
+	).toBe(true);
+	await page.goto(`/garage/${car.id}/photos`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await expectAxeClean(page);
+});

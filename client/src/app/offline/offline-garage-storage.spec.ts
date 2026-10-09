@@ -3294,4 +3294,210 @@ describe('OfflineGarageStorage', () => {
 			await (await storage.retainedPhoto(legacy.id, userAFence))?.text(),
 		).toBe('new');
 	});
+	it('retries a rejected capture with new identity and atomically remaps all dependent photo intent', async () => {
+		await preparePhotos();
+		const original = {
+			id: 'saved',
+			carId: 'car-a',
+			revision: 1,
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+		};
+		await storage.refreshPhotos([original], undefined, userAFence);
+		const file = Object.assign(
+			new NodeBlob(['capture bytes'], { type: 'image/jpeg' }),
+			{ name: 'capture.jpg' },
+		) as unknown as File;
+		const captured = (await storage.commitPhoto('car-a', file, userAFence))
+			.captures[0];
+		const replaced = await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'replace', photo: captured.photo, file },
+			userAFence,
+		);
+		await storage.commitPhotoChange(
+			'car-a',
+			{ kind: 'reorder', photos: [original, captured.photo] },
+			userAFence,
+		);
+		const rejected = await storage.recordPhotoOutcome(
+			{
+				operationId: captured.operationId,
+				outcome: 'rejected',
+				error: 'Car is archived',
+			},
+			[],
+			userAFence,
+		);
+		const recoverable = rejected.captures[0];
+		await expect(
+			storage.resolvePhotoCapture(
+				{ ...recoverable, feedback: 'stale' },
+				'retry',
+				userAFence,
+			),
+		).rejects.toThrow('changed');
+		const retried = await storage.resolvePhotoCapture(
+			recoverable,
+			'retry',
+			userAFence,
+		);
+		const next = retried.captures[0];
+		expect(next.operationId).not.toBe(captured.operationId);
+		expect(next.status).toBe('pending');
+		expect(
+			await (await storage.retainedPhoto(next.photo.id, userAFence))?.text(),
+		).toBe('capture bytes');
+		expect(
+			await storage.retainedPhoto(captured.photo.id, userAFence),
+		).toBeNull();
+		expect(retried.changes[0].command.photoId).toBe(next.photo.id);
+		expect(retried.changes[0].dependencies).toContain(next.operationId);
+		expect(retried.changes[1].dependencies).toContain(
+			replaced.changes[0].operationId,
+		);
+		expect(retried.changes[1].command.order).toEqual([
+			original.id,
+			next.photo.id,
+		]);
+		expect(retried.changes[1].command.base.map((value) => value.id)).toContain(
+			next.photo.id,
+		);
+		expect(await storage.readyPhotoChanges(userAFence)).toEqual([]);
+		await expect(
+			storage.resolvePhotoCapture(next, 'discard', userAFence),
+		).rejects.toThrow('changed');
+		const rejectedAgain = await storage.recordPhotoOutcome(
+			{
+				operationId: next.operationId,
+				outcome: 'rejected',
+				error: 'Unavailable',
+			},
+			[],
+			userAFence,
+		);
+		const discarded = await storage.resolvePhotoCapture(
+			rejectedAgain.captures[0],
+			'discard',
+			userAFence,
+		);
+		expect(discarded.captures).toEqual([]);
+		expect(
+			discarded.changes.every((value) => value.status === 'needs-attention'),
+		).toBe(true);
+		expect(await storage.retainedPhoto(next.photo.id, userAFence)).toBeNull();
+		await expect(
+			storage.resolvePhotoCapture(recoverable, 'discard', userAFence),
+		).rejects.toThrow('changed');
+	});
+	it('fences capture recovery and does not modify unrelated work', async () => {
+		await preparePhotos();
+		const captured = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		const rejected = await storage.recordPhotoOutcome(
+			{ operationId: captured.operationId, outcome: 'rejected', error: 'No' },
+			[],
+			userAFence,
+		);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('photoChanges').put({
+				ownerKey: 'user-a',
+				operationId: 'unrelated',
+				carId: 'car-b',
+				status: 'pending',
+				dependencies: [],
+				createdAt: 1,
+				command: {
+					type: 'photo.change',
+					carId: 'car-b',
+					action: 'reorder',
+					photoId: null,
+					order: [],
+					base: [],
+					replacement: null,
+				},
+			});
+			await inspect
+				.table('photoCaptures')
+				.put({ ...rejected.captures[0], ownerKey: 'user-b' });
+			await expect(
+				storage.resolvePhotoCapture(
+					rejected.captures[0],
+					'discard',
+					userAFence,
+				),
+			).rejects.toThrow('changed');
+			await inspect.table('photoCaptures').put(rejected.captures[0]);
+		} finally {
+			inspect.close();
+		}
+		expect(
+			(
+				await storage.resolvePhotoCapture(
+					rejected.captures[0],
+					'discard',
+					userAFence,
+				)
+			).changes[0].operationId,
+		).toBe('unrelated');
+		await storage.deactivate();
+		await expect(
+			storage.resolvePhotoCapture(rejected.captures[0], 'discard', userAFence),
+		).rejects.toThrow('unavailable');
+	});
+	it('keeps legacy capture ordering stable and lets an unrelated replacement pass a rejected capture', async () => {
+		await preparePhotos();
+		const original = {
+			id: 'saved',
+			carId: 'car-a',
+			revision: 1,
+			contentType: 'image/jpeg',
+			createdAt: 'today',
+		};
+		await storage.refreshPhotos([original], undefined, userAFence);
+		const capture = (await storage.commitPhoto('car-a', image(), userAFence))
+			.captures[0];
+		await storage.recordPhotoOutcome(
+			{
+				operationId: capture.operationId,
+				outcome: 'rejected',
+				error: 'Rejected',
+			},
+			[],
+			userAFence,
+		);
+		const independent = await storage.commitPhotoChange(
+			'car-a',
+			{
+				kind: 'replace',
+				photo: original,
+				file: Object.assign(new NodeBlob(['new'], { type: 'image/jpeg' }), {
+					name: 'new.jpg',
+				}) as unknown as File,
+			},
+			userAFence,
+		);
+		expect(independent.changes[0].dependencies).toEqual([]);
+		expect((await storage.readyPhotoChanges(userAFence))[0].operationId).toBe(
+			independent.changes[0].operationId,
+		);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('photoCaptures').put({
+				...capture,
+				operationId: 'same-time',
+				photo: { ...capture.photo, id: 'same-time' },
+			});
+		} finally {
+			inspect.close();
+		}
+		expect(
+			(await storage.photoView(userAFence)).captures.map(
+				(value) => value.operationId,
+			),
+		).toEqual([capture.operationId, 'same-time']);
+	});
 });

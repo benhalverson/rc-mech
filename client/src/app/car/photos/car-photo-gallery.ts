@@ -20,6 +20,7 @@ import {
 } from '@lucide/angular';
 import type { CarPhoto } from '../car.models';
 import { CarPhotoStore } from './car-photo-store';
+import type { PhotoCapture } from './photo-sync.models';
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -52,6 +53,13 @@ export class CarPhotoGallery {
 	);
 	protected readonly readFailure = this.store.failure;
 	protected readonly offline = this.store.offline;
+	protected readonly captureFailures = this.store.captureFailures;
+	protected resolveCapture(
+		capture: PhotoCapture,
+		decision: 'retry' | 'discard',
+	): void {
+		this.store.resolveCapture({ capture, decision });
+	}
 	protected readonly captureFeedback = this.store.captureFeedback;
 	protected readonly error = this.store.error;
 	protected readonly action = this.store.action;

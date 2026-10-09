@@ -3,6 +3,7 @@ import {
 	applyPhotoChange,
 	type PhotoChange,
 	photoBase,
+	photoChangesOverlap,
 } from '../shared/photo-sync';
 import { createHonoFixture } from './testing/hono-fixture';
 
@@ -164,6 +165,8 @@ test.each(['primary', 'reorder', 'replace', 'delete'] as const)(
 			outcome: 'applied',
 		});
 		expect(f.d1.batches[0][0]).toContain('revision');
+		expect(f.d1.batches[0][0]).toContain('sync_operation');
+		expect(f.d1.batches[0][1]).toContain('sync_operation');
 		expect(f.d1.batches[0][0]).toContain('count(*)');
 		expect(f.d1.batches[0].at(-1)).toContain('last_operation_id');
 		expect(f.r2.objects.has(second.objectKey)).toBe(
@@ -362,4 +365,16 @@ test('merges an unrelated photo edit and cleans a replacement abandoned after a 
 	expect((await g.request(endpoint, form(change('replace')))).status).toBe(409);
 	expect(g.r2.objects.has(key)).toBe(false);
 	g.d1.expectConsumed();
+});
+
+test('orders only related photo actions while allowing independent replacements', () => {
+	expect(
+		photoChangesOverlap(
+			{ ...change('replace'), photoId: first.id },
+			change('replace'),
+		),
+	).toBe(false);
+	expect(photoChangesOverlap(change('replace'), change('delete'))).toBe(true);
+	expect(photoChangesOverlap(change('primary'), change('replace'))).toBe(true);
+	expect(photoChangesOverlap(change('replace'), change('reorder'))).toBe(true);
 });

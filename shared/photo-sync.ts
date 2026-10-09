@@ -82,3 +82,14 @@ export const applyPhotoChange = <T extends PhotoRecord>(
 			: value;
 	});
 };
+
+export const photoChangeTouchesGallery = (
+	change: Pick<PhotoChange, 'action'>,
+): boolean => change.action === 'primary' || change.action === 'reorder';
+export const photoChangesOverlap = (
+	left: PhotoChange,
+	right: PhotoChange,
+): boolean =>
+	photoChangeTouchesGallery(left) ||
+	photoChangeTouchesGallery(right) ||
+	left.photoId === right.photoId;

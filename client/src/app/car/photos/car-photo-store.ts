@@ -19,6 +19,7 @@ import type {
 import { carReadFailure } from '../car-read-failure';
 import { CarPhotoGateway } from './car-photo-gateway';
 import { PhotoMediaAccess } from './photo-media-access';
+import type { PhotoCapture } from './photo-sync.models';
 import { PhotoWorkspaceStore } from './photo-workspace-store';
 
 type PhotoMutationResult =
@@ -142,6 +143,15 @@ export const CarPhotoStore = signalStore(
 				!store.workspace.available() && store.gateway.collection.isLoading(),
 		),
 		offline: computed(() => store.workspace.offline.networkUnavailable()),
+		captureFailures: computed(() =>
+			store.workspace
+				.captures()
+				.filter(
+					(capture) =>
+						capture.carId === store.carId() &&
+						capture.status === 'needs-attention',
+				),
+		),
 		captureFeedback: computed(() =>
 			[
 				...store.workspace.captures(),
@@ -153,7 +163,7 @@ export const CarPhotoStore = signalStore(
 				.map((capture) =>
 					capture.status === 'pending'
 						? 'Pending sync'
-						: `Needs attention: ${capture.feedback}`,
+						: `${capture.status === 'conflict' ? 'Sync conflict' : 'Needs attention'}: ${capture.feedback}`,
 				)
 				.join('; '),
 		),
@@ -286,6 +296,23 @@ export const CarPhotoStore = signalStore(
 			);
 		};
 		return {
+			resolveCapture(
+				command: Readonly<{
+					capture: PhotoCapture;
+					decision: 'retry' | 'discard';
+				}>,
+			): void {
+				if (
+					command.capture.carId !== store.carId() ||
+					store.action() ||
+					!store.workspace.available()
+				)
+					return;
+				store.workspace.mutate({
+					requestId: String(++store.nextOperationId.value),
+					change: { carId: store.carId(), ...command },
+				});
+			},
 			loadMedia(): void {
 				void loadMedia();
 			},

@@ -170,6 +170,9 @@ describe('CarPhotoStore', () => {
 
 	beforeEach(() => {
 		workspace.available.set(false);
+		workspace.mutate.mockClear();
+		workspace.refresh.mockClear();
+		workspace.changes.set([]);
 		workspace.photos.set([]);
 		workspace.captures.set([]);
 		workspace.outcome.set({ status: 'idle', requestId: null });
@@ -518,11 +521,43 @@ describe('CarPhotoStore', () => {
 		]);
 		expect(store.captureFeedback()).toContain('Changed');
 		workspace.changes.set([{ ...workspace.changes()[0], feedback: undefined }]);
-		expect(store.captureFeedback()).toContain('Needs attention');
+		expect(store.captureFeedback()).toContain('Sync conflict');
 		workspace.changes.set([]);
 		workspace.available.set(false);
 		workspace.offline.networkUnavailable.set(true);
 		store.mutate({ kind: 'delete', photo: photo() });
 		expect(gateway.delete).toHaveBeenCalledTimes(1);
+	});
+	it('fences capture recovery by route, local capability, and current mutation', () => {
+		const capture: PhotoCapture = {
+			operationId: 'capture',
+			ownerKey: 'owner',
+			carId: 'car-1',
+			photo: photo(),
+			blob: file,
+			fileName: file.name,
+			status: 'needs-attention',
+			feedback: 'Rejected',
+		};
+		store.selectCar('car-1');
+		workspace.captures.set([capture, { ...capture, carId: 'other' }]);
+		expect(store.captureFailures()).toEqual([capture]);
+		store.resolveCapture({ capture, decision: 'retry' });
+		expect(workspace.mutate).not.toHaveBeenCalled();
+		workspace.available.set(true);
+		store.resolveCapture({
+			capture: { ...capture, carId: 'other' },
+			decision: 'retry',
+		});
+		expect(workspace.mutate).not.toHaveBeenCalled();
+		workspace.outcome.set({ status: 'pending', requestId: 'pending' });
+		store.resolveCapture({ capture, decision: 'retry' });
+		expect(workspace.mutate).not.toHaveBeenCalled();
+		workspace.outcome.set({ status: 'idle', requestId: null });
+		store.resolveCapture({ capture, decision: 'retry' });
+		expect(workspace.mutate).toHaveBeenCalledWith({
+			requestId: expect.any(String),
+			change: { carId: 'car-1', capture, decision: 'retry' },
+		});
 	});
 });
