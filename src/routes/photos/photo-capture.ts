@@ -9,6 +9,12 @@ import type { AppEnv } from '../../types';
 import { ownedCar } from '../cars/car-records';
 import { parsePhotoForm, publicPhoto } from './photo-records';
 
+/**
+ * Accepts stable-ID offline photo captures. Writes immutable request-bound bytes,
+ * then conditionally commits metadata and the receipt under the owned Car witness.
+ * Replay returns the saved outcome; rejection cleans up only that request's
+ * abandoned object and never removes an acknowledged original.
+ */
 export const createPhotoCaptureRoutes = () => {
 	const routes = new Hono<AppEnv>();
 	routes.onError(

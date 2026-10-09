@@ -22,6 +22,10 @@ export type PhotoView = Readonly<{
 export type PhotoCaptureOutcome =
 	| Readonly<{ operationId: string; outcome: 'applied'; photo: CarPhoto }>
 	| Readonly<{ operationId: string; outcome: 'rejected'; error: string }>;
+/**
+ * Overlays retained captures on server metadata by stable photo ID for the local
+ * gallery; an acknowledged capture therefore appears once during refresh/replay.
+ */
 export const materializePhotos = (
 	photos: readonly CarPhoto[],
 	captures: readonly PhotoCapture[],

@@ -22,6 +22,12 @@ export type PhotoCaptureMutationOutcome =
 	| Readonly<{ status: 'idle'; requestId: null }>
 	| Readonly<{ status: 'pending' | 'succeeded'; requestId: string }>
 	| Readonly<{ status: 'failed'; requestId: string; message: string }>;
+/**
+ * Application-wide coordinator for durable photo captures. Publishes the
+ * owner/session-fenced working gallery and replays dependency-ready operations
+ * through PhotoSyncGateway across route changes. Storage commits precede local
+ * success, and rejected captures keep their bytes for recovery.
+ */
 export const PhotoWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<{
