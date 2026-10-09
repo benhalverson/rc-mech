@@ -76,12 +76,13 @@ export class OfflineGarageGateway {
 					invites,
 					photos,
 					maintenance,
+					voice,
 				}) => ({
 					settings: settingsSnapshotSchema.parse({
 						...Object(timezone),
 						invites,
 					}),
-					photos: parsePhotoCollection(photos),
+					photos: parsePhotoCollection(photos).photos,
 					maintenance: maintenanceSnapshotSchema.parse(maintenance),
 					voiceUpdates: parseVoiceUpdates(voice),
 					...parseGarageCollection(garage),

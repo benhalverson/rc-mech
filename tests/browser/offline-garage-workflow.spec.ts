@@ -75,7 +75,7 @@ test('reopens the prepared User-scoped Garage after the page closes offline', as
 	await expect(page.locator('[data-offline-status="offline"]')).toContainText(
 		'Offline—changes will be saved here and sync when connection returns.',
 	);
-	await expect(page.getByText('Pending sync', { exact: false })).toBeVisible();
+	await expect(page.getByText('Pending sync', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Edit details' }).click();
 	const editForm = page.locator('.car-form');
 	await editForm.getByLabel('Name').fill('Offline-created SCT');
@@ -324,7 +324,7 @@ test('explains unavailable deep links after an offline restart and keeps Garage 
 	await authenticateOwner(page);
 	await page.goto('/garage');
 	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
-	const reopened = await reopenOffline(context, page, '/settings');
+	const reopened = await reopenOffline(context, page, '/track-maps');
 	await expect(reopened).toHaveURL(/\/offline-unavailable$/);
 	await expect(
 		reopened.getByRole('heading', { name: 'Connection needed' }),
@@ -400,6 +400,73 @@ test('retains Component edits, replacements, and removals across an offline rest
 	expect(
 		body.components.every((component) => component.removedAt !== null),
 	).toBe(true);
+});
+
+test('synchronizes a plan for an offline Component only after its build and restores both routes', async ({
+	page,
+	context,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Dependent bench buggy' },
+	});
+	const { car } = (await created.json()) as { car: { id: string } };
+	await page.goto(`/garage/${car.id}/build`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page.getByRole('button', { name: 'Add component' }).click();
+	await page.getByLabel('Name').fill('Offline service motor');
+	await page.getByRole('button', { name: 'Save component' }).click();
+	await expect(
+		page.getByText('Offline service motor', { exact: true }),
+	).toBeVisible();
+	const maintenance = await reopenOffline(context, page, '/maintenance');
+	await maintenance
+		.getByRole('button', { name: /^(Create a plan|New plan)$/ })
+		.click();
+	await maintenance
+		.getByRole('combobox', { name: 'Car', exact: true })
+		.selectOption(car.id);
+	const component = maintenance.getByLabel('Installed component');
+	const id = await component
+		.locator('option')
+		.filter({ hasText: 'Offline service motor' })
+		.getAttribute('value');
+	expect(id).toBeTruthy();
+	await component.selectOption(id as string);
+	await maintenance.getByLabel('Plan name').fill('Offline motor service');
+	await maintenance.locator('input[name$=".calendarValue"]').fill('7');
+	await maintenance
+		.getByRole('button', { name: 'Save plan', exact: true })
+		.click();
+	await expect(
+		maintenance
+			.locator('article.plan-row')
+			.filter({ hasText: 'Offline motor service' }),
+	).toBeVisible();
+	await expectAxeClean(maintenance);
+	await context.setOffline(false);
+	await expect(
+		maintenance.locator('[data-offline-status]').getByText(/Pending sync/),
+	).toHaveCount(0);
+	const result = (await (
+		await maintenance.request.get('/api/v1/maintenance/sync/snapshot')
+	).json()) as {
+		collections: Array<{
+			carId: string;
+			plans: Array<{ componentId: string; name: string }>;
+		}>;
+	};
+	expect(
+		result.collections.find((collection) => collection.carId === car.id)?.plans,
+	).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({
+				componentId: id,
+				name: 'Offline motor service',
+			}),
+		]),
+	);
 });
 
 test('records and edits Drive sessions after an offline restart and reconciles usage once', async ({
@@ -865,7 +932,7 @@ test('retains Maintenance conflicts and rejection feedback while independent ser
 	).toBeVisible();
 	await expect(page.getByText(/Pending sync/)).toHaveCount(0);
 	await expect(
-		page.getByText('Local conflict intent', { exact: true }),
+		page.getByRole('heading', { name: 'Local conflict intent', exact: true }),
 	).toBeVisible();
 	await expect(
 		page.getByText('Rejected service retained', { exact: true }).first(),
@@ -1072,10 +1139,31 @@ test('preserves original Voice audio bytes through offline restart, upload and r
 		return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))];
 	}, original.id);
 	expect(remoteDigest).toEqual(original.digest);
+	await context.setOffline(true);
+	const playback = await reopenOffline(
+		context,
+		reopened,
+		`/garage/${car.id}/voice`,
+	);
+	await playback
+		.getByRole('button', { name: 'View original recording' })
+		.click();
+	const player = playback.getByLabel('Original voice recording');
+	await expect(player).toHaveAttribute('src', /^blob:/);
+	const retainedDigest = await player.evaluate(async (element) => {
+		const bytes = await (
+			await fetch((element as HTMLAudioElement).src)
+		).arrayBuffer();
+		return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))];
+	});
+	expect(retainedDigest).toEqual(original.digest);
+	await expectAxeClean(playback);
+	await context.setOffline(false);
+
 	expect(
 		(
 			await (
-				await reopened.request.get(`/api/v1/cars/${car.id}/voice-updates`)
+				await playback.request.get(`/api/v1/cars/${car.id}/voice-updates`)
 			).json()
 		).voiceUpdates,
 	).toHaveLength(1);
@@ -1181,8 +1269,23 @@ test('retains Consumable tire and fluid history with stable reports across resta
 				replay = { url: request.url(), body };
 		}
 	});
-	await context.setOffline(true);
 	const ledger = page.locator('.consumable-ledger');
+	const initialCount = Number.parseInt(
+		await ledger.locator('.history-total').innerText(),
+		10,
+	);
+	const initialSpend = Number(
+		(await ledger.locator('.spend-strip strong').last().innerText()).replace(
+			/[^0-9.]/g,
+			'',
+		),
+	);
+	const expectedSpend = new Intl.NumberFormat('en-US', {
+		style: 'currency',
+		currency: 'USD',
+	}).format(initialSpend + 30);
+	const expectedCount = `${initialCount + 3} entries`;
+	await context.setOffline(true);
 	await ledger
 		.getByRole('button', { name: 'Record change', exact: true })
 		.click();
@@ -1202,7 +1305,7 @@ test('retains Consumable tire and fluid history with stable reports across resta
 		.click();
 	await expect(ledger.getByText('Pending sync', { exact: true })).toBeVisible();
 	await expect(
-		ledger.locator('.spend-strip').getByText('$30.00'),
+		ledger.locator('.spend-strip').getByText(expectedSpend, { exact: true }),
 	).toBeVisible();
 	for (const kind of ['shock-fluid', 'differential-fluid']) {
 		await ledger
@@ -1218,12 +1321,12 @@ test('retains Consumable tire and fluid history with stable reports across resta
 			.getByRole('button', { name: 'Save change', exact: true })
 			.click();
 	}
-	await expect(ledger.locator('.history-total')).toHaveText('3 entries');
+	await expect(ledger.locator('.history-total')).toHaveText(expectedCount);
 	const restarted = await reopenOffline(context, page, '/maintenance');
 	const history = restarted.locator('.consumable-ledger');
-	await expect(history.locator('.history-total')).toHaveText('3 entries');
+	await expect(history.locator('.history-total')).toHaveText(expectedCount);
 	await expect(
-		history.locator('.spend-strip').getByText('$30.00'),
+		history.locator('.spend-strip').getByText(expectedSpend, { exact: true }),
 	).toBeVisible();
 	await expectAxeClean(restarted);
 	await context.setOffline(false);
@@ -1244,9 +1347,9 @@ test('retains Consumable tire and fluid history with stable reports across resta
 		snapshot.collections.find((value) => value.carId === car.id)?.consumables,
 	).toHaveLength(3);
 	await restarted.reload();
-	await expect(history.locator('.history-total')).toHaveText('3 entries');
+	await expect(history.locator('.history-total')).toHaveText(expectedCount);
 	await expect(
-		history.locator('.spend-strip').getByText('$30.00'),
+		history.locator('.spend-strip').getByText(expectedSpend, { exact: true }),
 	).toBeVisible();
 });
 
@@ -1360,4 +1463,133 @@ test('preserves conflicting and rejected Consumable work while independent fluid
 		snapshot.collections.find((value) => value.carId === archived.id)
 			?.consumables,
 	).toEqual([]);
+});
+
+test('reviews both Car versions and rejects a stale conflict resolution before accepting a current choice', async ({
+	page,
+	context,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Conflict review original' },
+	});
+	const { car } = (await created.json()) as { car: { id: string } };
+	await page.goto(`/garage/${car.id}/overview`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page.getByRole('button', { name: 'Edit details' }).click();
+	await page.locator('.car-form').getByLabel('Name').fill('Device review name');
+	await page
+		.locator('.car-form')
+		.getByRole('button', { name: 'Save car' })
+		.click();
+	expect(
+		(
+			await page.request.patch(`/api/v1/cars/${car.id}`, {
+				data: { name: 'First remote name' },
+			})
+		).ok(),
+	).toBe(true);
+	await context.setOffline(false);
+	const review = page.getByRole('region', { name: 'Review device changes' });
+	await review.locator('summary').click();
+	await expect(
+		review.getByText('Device review name', { exact: true }),
+	).toBeVisible();
+	await expect(
+		review.getByText('First remote name', { exact: true }),
+	).toBeVisible();
+	await expectAxeClean(page);
+	expect(
+		(
+			await page.request.patch(`/api/v1/cars/${car.id}`, {
+				data: { name: 'Newer remote name' },
+			})
+		).ok(),
+	).toBe(true);
+	await review
+		.getByRole('button', { name: 'Keep device version and retry' })
+		.click();
+	await expect(
+		review.getByText('Newer remote name', { exact: true }),
+	).toBeAttached();
+	await review.locator('summary').click();
+	await expect(
+		review.getByText('Newer remote name', { exact: true }),
+	).toBeVisible();
+	await review
+		.getByRole('button', { name: 'Keep device version and retry' })
+		.click();
+	await expect(review).toHaveCount(0);
+	await expect(page.getByText(/Pending sync/)).toHaveCount(0);
+	const saved = (await (
+		await page.request.get(`/api/v1/cars/${car.id}`)
+	).json()) as { car: { name: string } };
+	expect(saved.car.name).toBe('Device review name');
+});
+
+test('keeps pending work through a compatible Service Worker version update and an offline restart', async ({
+	page,
+	context,
+}) => {
+	await authenticateOwner(page);
+	await page.goto('/garage');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	const manifest = (await (
+		await page.request.get('/ngsw.json')
+	).json()) as Record<string, unknown>;
+	await context.route('**/api/v1/sync/operations/**', (route) => route.abort());
+	await page.getByRole('button', { name: 'Add a car' }).click();
+	await page.getByLabel('Name').fill('Queued across shell update');
+	await page.getByRole('button', { name: 'Save car' }).click();
+	await expect(
+		page.locator('[data-offline-status]').getByText(/Pending sync/),
+	).toBeVisible();
+	await context.route('**/ngsw.json*', (route) =>
+		route.fulfill({
+			json: { ...manifest, appData: { testRelease: 'compatible-version-2' } },
+		}),
+	);
+	const updated = await page.evaluate(async () => {
+		const registration = await navigator.serviceWorker.ready;
+		return new Promise<boolean>((resolve) => {
+			const listener = (event: MessageEvent<{ type?: string }>) => {
+				if (event.data.type === 'VERSION_READY') {
+					clearTimeout(timer);
+					navigator.serviceWorker.removeEventListener('message', listener);
+					resolve(true);
+				}
+			};
+			const timer = setTimeout(() => {
+				navigator.serviceWorker.removeEventListener('message', listener);
+				resolve(false);
+			}, 5000);
+			navigator.serviceWorker.addEventListener('message', listener);
+			registration.active?.postMessage({
+				action: 'CHECK_FOR_UPDATES',
+				nonce: 987654,
+			});
+		});
+	});
+	expect(updated).toBe(true);
+	const nextVersion = await context.newPage();
+	await page.close();
+	await nextVersion.goto('/garage');
+	await expect(
+		nextVersion.getByRole('link', { name: /Queued across shell update/ }),
+	).toBeVisible();
+	const reopened = await reopenOffline(context, nextVersion, '/garage');
+	await expect(
+		reopened.getByRole('link', { name: /Queued across shell update/ }),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await context.unroute('**/api/v1/sync/operations/**');
+	await context.setOffline(false);
+	await expect(reopened.getByText(/Pending sync/)).toHaveCount(0);
+	const saved = (await (await reopened.request.get('/api/v1/cars')).json()) as {
+		cars: Array<{ name: string }>;
+	};
+	expect(
+		saved.cars.filter((car) => car.name === 'Queued across shell update'),
+	).toHaveLength(1);
 });

@@ -4,6 +4,7 @@ import { provideRouter, withDisabledInitialNavigation } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 import { RouteTransitionAnnouncer } from './route-transition-announcer';
+import { SignOutRecovery } from './shell/sign-out-recovery';
 
 class FakeRouteTransitionAnnouncer {
 	readonly loading = signal(false);
@@ -22,6 +23,7 @@ describe('App', () => {
 		await TestBed.configureTestingModule({
 			imports: [App],
 			providers: [
+				{ provide: SignOutRecovery, useValue: {} },
 				provideRouter([], withDisabledInitialNavigation()),
 				{ provide: RouteTransitionAnnouncer, useValue: transition },
 			],

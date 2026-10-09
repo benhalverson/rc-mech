@@ -88,12 +88,19 @@ import {
 	settingsDependencies,
 	settingsView,
 } from '../settings/settings-sync-rules';
-
 import type { PendingVoiceCapture, VoiceUpdate } from '../voice/voice.models';
 import type {
 	VoiceCapture,
 	VoiceWorkingCopy,
 } from '../voice/voice-sync.models';
+import { OFFLINE_CONTRACT_VERSION } from './offline-contract';
+import type {
+	ReviewDecision,
+	ReviewFamily,
+	ReviewOperation,
+	SyncReview,
+} from './offline-sync-review.models';
+import { retryReviewedOperation } from './offline-sync-review-rules';
 
 export const offlineDatabaseName = (): string => 'chassis-notes-offline-v1';
 
@@ -149,6 +156,7 @@ export const OFFLINE_OPERATION_ID = new InjectionToken<() => string>(
 );
 
 export type OfflineGarageSnapshot = Readonly<{
+	contractVersion?: number;
 	ownerKey: string;
 	ownerEmail: string;
 	sessionKey?: string;
@@ -290,6 +298,52 @@ export class OfflineGarageStorage {
 				updates.set(capture.id, capture.remote);
 		return { captures, updates: [...updates.values()] };
 	}
+	async retainedVoiceOriginal(
+		id: string,
+		fence: OfflineWorkspaceFence,
+	): Promise<Blob | null> {
+		const view = await this.voiceView(fence);
+		const update = view.updates.find((value) => value.id === id);
+		if (!update || update.artifactDeletedAt) return null;
+		return view.captures.find((capture) => capture.id === id)?.blob ?? null;
+	}
+	async retainVoiceOriginal(
+		id: string,
+		blob: Blob,
+		fence: OfflineWorkspaceFence,
+	): Promise<void> {
+		await this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.voiceCaptures],
+			async () => {
+				const view = await this.voiceView(fence);
+				const update = view.updates.find((value) => value.id === id);
+				if (!update?.audioUrl || update.artifactDeletedAt)
+					throw new Error('Original voice recording is unavailable.');
+				const capture = view.captures.find((value) => value.id === id);
+				await this.voiceCaptures.put(
+					capture
+						? { ...capture, blob }
+						: {
+								id,
+								ownerKey: fence.ownerKey,
+								carId: update.carId,
+								driveSessionId: update.driveSessionId,
+								blob,
+								contentType: blob.type,
+								fileName: update.fileName ?? 'voice-recording',
+								createdAt: update.createdAt,
+								status: 'queued',
+								error: null,
+								phase: 'retained',
+								dependencies: [],
+								remote: update,
+							},
+				);
+			},
+		);
+	}
+
 	async keepVoice(
 		capture: PendingVoiceCapture,
 		fence: OfflineWorkspaceFence,
@@ -585,6 +639,43 @@ export class OfflineGarageStorage {
 	async isSessionRevoked(sessionKey: string): Promise<boolean> {
 		return Boolean(await this.revokedSessions.get(sessionKey));
 	}
+	async pendingWorkCount(
+		legacyVoiceIds: readonly string[] = [],
+	): Promise<number> {
+		const active = await this.metadata.get('active-owner');
+		return active?.key === 'active-owner'
+			? this.ownerPendingWorkCount(active.ownerKey, legacyVoiceIds)
+			: 0;
+	}
+	private async ownerPendingWorkCount(
+		ownerKey: string,
+		legacyVoiceIds: readonly string[] = [],
+	): Promise<number> {
+		const counts = await Promise.all(
+			[
+				this.operations,
+				this.setupOperations,
+				this.settingsOperations,
+
+				this.maintenanceOperations,
+				this.buildOperations,
+				this.driveOperations,
+				this.photoCaptures,
+			].map((table) => table.where('ownerKey').equals(ownerKey).count()),
+		);
+		return (
+			counts.reduce((total, value) => total + value, 0) +
+			(await this.voiceCaptures
+				.where('ownerKey')
+				.equals(ownerKey)
+				.filter(
+					(capture) =>
+						capture.phase !== 'retained' &&
+						!legacyVoiceIds.includes(capture.id),
+				)
+				.count())
+		);
+	}
 	async requestSignOut(
 		sessionKey: string | null,
 		discardPending: boolean,
@@ -610,28 +701,18 @@ export class OfflineGarageStorage {
 			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
+				if (active?.key === 'active-owner') {
+					const snapshot = await this.snapshots.get(active.ownerKey);
+					if (
+						snapshot?.contractVersion !== undefined &&
+						snapshot.contractVersion !== OFFLINE_CONTRACT_VERSION
+					)
+						throw new Error(
+							'Reload the current application before clearing this working copy.',
+						);
+				}
 				if (active?.key === 'active-owner' && !discardPending) {
-					const counts = await Promise.all(
-						[
-							this.operations,
-							this.setupOperations,
-							this.settingsOperations,
-
-							this.maintenanceOperations,
-							this.buildOperations,
-							this.driveOperations,
-							this.photoCaptures,
-						].map((table) =>
-							table.where('ownerKey').equals(active.ownerKey).count(),
-						),
-					);
-					const count =
-						counts.reduce((total, value) => total + value, 0) +
-						(await this.voiceCaptures
-							.where('ownerKey')
-							.equals(active.ownerKey)
-							.filter((capture) => capture.phase !== 'retained')
-							.count());
+					const count = await this.ownerPendingWorkCount(active.ownerKey);
 					if (count > 0) return { kind: 'confirmation', count } as const;
 				}
 				return {
@@ -722,6 +803,16 @@ export class OfflineGarageStorage {
 		return operationId;
 	}
 
+	async pendingSignOut(): Promise<Readonly<{
+		operationId: string;
+		sessionKey: string;
+	}> | null> {
+		const pending = await this.metadata.get('sign-out');
+		return pending?.key === 'sign-out' && pending.state === 'pending'
+			? { operationId: pending.operationId, sessionKey: pending.sessionKey }
+			: null;
+	}
+
 	async completeSignOut(operationId: string): Promise<void> {
 		await this.database.transaction(
 			'rw',
@@ -758,6 +849,12 @@ export class OfflineGarageStorage {
 					active?.key !== 'active-owner' ||
 					active.ownerKey !== snapshot.ownerKey ||
 					active.sessionKey !== sessionKey
+				)
+					return false;
+				const existing = await this.snapshots.get(snapshot.ownerKey);
+				if (
+					existing?.contractVersion !== undefined &&
+					existing.contractVersion !== OFFLINE_CONTRACT_VERSION
 				)
 					return false;
 				await this.snapshots.put(snapshot);
@@ -996,16 +1093,19 @@ export class OfflineGarageStorage {
 				this.metadata,
 				this.operations,
 				this.driveOperations,
+				this.buildOperations,
 				this.maintenanceOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
 				if (!current) throw new Error('The offline Garage is unavailable.');
 				const view = await this.maintenanceSyncView(fence);
-				const [carOperations, driveOperations] = await Promise.all([
-					this.ownerOperations(current.ownerKey),
-					this.ownerDriveOperations(current.ownerKey),
-				]);
+				const [carOperations, driveOperations, buildOperations] =
+					await Promise.all([
+						this.ownerOperations(current.ownerKey),
+						this.ownerDriveOperations(current.ownerKey),
+						this.ownerBuildOperations(current.ownerKey),
+					]);
 				const drives = materializeDriveCollections(
 					current.driveCollections ?? [],
 					driveOperations,
@@ -1034,8 +1134,19 @@ export class OfflineGarageStorage {
 				);
 				if (!parent || parent.archivedAt)
 					throw new Error('An active Car is required.');
-				await this.maintenanceOperations.add(built);
-				return maintenanceView(view.canonical, [...view.operations, built]);
+				const componentId =
+					built.command.entity === 'consumable'
+						? null
+						: built.command.input.componentId;
+				const componentDependencies = buildOperations
+					.filter((operation) => operation.command.componentId === componentId)
+					.map((operation) => operation.operationId);
+				const operation = {
+					...built,
+					dependencies: [...built.dependencies, ...componentDependencies],
+				};
+				await this.maintenanceOperations.add(operation);
+				return maintenanceView(view.canonical, [...view.operations, operation]);
 			},
 		);
 	}
@@ -1049,6 +1160,7 @@ export class OfflineGarageStorage {
 				this.metadata,
 				this.operations,
 				this.driveOperations,
+				this.buildOperations,
 				this.maintenanceOperations,
 			],
 			async () => {
@@ -1056,6 +1168,7 @@ export class OfflineGarageStorage {
 				const dependencies = [
 					...(await this.ownerOperations(fence.ownerKey)),
 					...(await this.ownerDriveOperations(fence.ownerKey)),
+					...(await this.ownerBuildOperations(fence.ownerKey)),
 					...view.operations,
 				];
 				const ids = new Set(
@@ -1967,6 +2080,185 @@ export class OfflineGarageStorage {
 		);
 	}
 
+	async resolveSyncReview(
+		review: SyncReview,
+		decision: ReviewDecision,
+		fence: OfflineWorkspaceFence,
+	): Promise<void> {
+		const tables = this.reviewTables();
+		const operationId = this.nextOperationId();
+		await this.database.transaction(
+			'rw',
+			[
+				this.snapshots,
+				this.metadata,
+				this.voiceCaptures,
+				...Object.values(tables),
+			],
+			async () => {
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				if (!snapshot) throw new Error('The offline Garage is unavailable.');
+				const table = tables[review.family];
+				const stored = await table.get(review.operation.operationId);
+				if (
+					!stored ||
+					stored.ownerKey !== fence.ownerKey ||
+					stored.status === 'pending' ||
+					JSON.stringify(stored) !== JSON.stringify(review.operation)
+				)
+					throw new Error('This change was updated. Open its review again.');
+				await this.mergeReviewedRemote(review, snapshot);
+				await table.delete(stored.operationId);
+				if (decision === 'device')
+					await table.add(retryReviewedOperation(review, operationId));
+				const message =
+					'The prerequisite device change was discarded. Review this change before retrying.';
+				for (const [family, dependentTable] of Object.entries(tables)) {
+					const dependents = await dependentTable
+						.where('ownerKey')
+						.equals(fence.ownerKey)
+						.filter((candidate) =>
+							candidate.dependencies.includes(stored.operationId),
+						)
+						.toArray();
+					for (const dependent of dependents) {
+						await dependentTable.put(
+							decision === 'device'
+								? {
+										...dependent,
+										dependencies: dependent.dependencies.map((id) =>
+											id === stored.operationId ? operationId : id,
+										),
+									}
+								: ({
+										...dependent,
+										status: 'needs-attention',
+										feedback:
+											family === 'settings'
+												? message
+												: { code: 'PREREQUISITE_DISCARDED', message },
+									} as ReviewOperation),
+						);
+					}
+				}
+				const voices = await this.voiceCaptures
+					.where('ownerKey')
+					.equals(fence.ownerKey)
+					.filter((capture) =>
+						capture.dependencies.includes(stored.operationId),
+					)
+					.toArray();
+				for (const capture of voices)
+					await this.voiceCaptures.put(
+						decision === 'device'
+							? {
+									...capture,
+									dependencies: capture.dependencies.map((id) =>
+										id === stored.operationId ? operationId : id,
+									),
+								}
+							: { ...capture, status: 'failed', error: message },
+					);
+			},
+		);
+	}
+	private reviewTables(): Readonly<
+		Record<ReviewFamily, Table<ReviewOperation, string>>
+	> {
+		return {
+			car: this.operations as Table<ReviewOperation, string>,
+			setup: this.setupOperations as Table<ReviewOperation, string>,
+			build: this.buildOperations as Table<ReviewOperation, string>,
+			drive: this.driveOperations as Table<ReviewOperation, string>,
+			maintenance: this.maintenanceOperations as Table<ReviewOperation, string>,
+			settings: this.settingsOperations as Table<ReviewOperation, string>,
+		};
+	}
+	private async mergeReviewedRemote(
+		review: SyncReview,
+		snapshot: OfflineGarageSnapshot,
+	): Promise<void> {
+		switch (review.family) {
+			case 'car':
+				if (review.operation.remote)
+					await this.snapshots.put({
+						...snapshot,
+						cars: this.mergeCanonicalCars(snapshot.cars, [
+							review.operation.remote,
+						]),
+					});
+				return;
+			case 'setup': {
+				const remote = review.operation.remote;
+				if (remote)
+					await this.snapshots.put({
+						...snapshot,
+						setupCollections: this.mergeSetupCollections(
+							snapshot.setupCollections ?? [],
+							{
+								carId: review.operation.carId,
+								currentSetupId: remote.currentSetupId,
+								currentSetupVersion: remote.currentSetupVersion,
+								setups: remote.setup ? [remote.setup] : [],
+							},
+						),
+					});
+				return;
+			}
+			case 'build':
+				if (review.operation.remote)
+					await this.snapshots.put({
+						...snapshot,
+						buildCollections: mergeBuildCollection(
+							snapshot.buildCollections ?? [],
+							review.operation.remote,
+						),
+					});
+				return;
+			case 'drive':
+				if (review.operation.remote)
+					await this.snapshots.put({
+						...snapshot,
+						driveCollections: mergeDriveCollection(
+							snapshot.driveCollections ?? [],
+							review.operation.remote,
+						),
+					});
+				return;
+			case 'maintenance': {
+				const remote = review.operation.remote;
+				if (remote && snapshot.maintenance) {
+					const current = snapshot.maintenance.collections.find(
+						(collection) => collection.carId === remote.carId,
+					);
+					if (!current || remote.version >= current.version)
+						await this.snapshots.put({
+							...snapshot,
+							maintenance: {
+								...snapshot.maintenance,
+								collections: [
+									...snapshot.maintenance.collections.filter(
+										(collection) => collection.carId !== remote.carId,
+									),
+									remote,
+								],
+							},
+						});
+				}
+				return;
+			}
+			case 'settings':
+				if (review.operation.remote !== undefined && snapshot.settings)
+					await this.snapshots.put({
+						...snapshot,
+						settings: {
+							...snapshot.settings,
+							timezone: review.operation.remote,
+						},
+					});
+		}
+	}
+
 	close(): void {
 		this.database.close();
 	}
@@ -2045,7 +2337,12 @@ export class OfflineGarageStorage {
 		)
 			return null;
 		const snapshot = await this.snapshots.get(active.ownerKey);
-		if (!snapshot || Date.parse(snapshot.offlineUntil) <= now.valueOf())
+		if (
+			!snapshot ||
+			(snapshot.contractVersion !== undefined &&
+				snapshot.contractVersion !== OFFLINE_CONTRACT_VERSION) ||
+			Date.parse(snapshot.offlineUntil) <= now.valueOf()
+		)
 			return null;
 		return snapshot;
 	}

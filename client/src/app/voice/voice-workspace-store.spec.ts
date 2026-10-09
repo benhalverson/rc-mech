@@ -8,6 +8,7 @@ import { OfflineGarageStorage } from '../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import type { VoiceMutationResponse } from './voice.models';
 import { VoiceLegacyMigration } from './voice-legacy-migration';
+import { VoiceMediaAccess } from './voice-media-access';
 import type { VoiceWorkingCopy } from './voice-sync.models';
 import {
 	voiceCaptureFixture as capture,
@@ -16,6 +17,10 @@ import {
 import { VoiceSyncGateway } from './voice-sync-gateway';
 import { VoiceWorkspaceStore } from './voice-workspace-store';
 
+const mediaAccess = {
+	open: vi.fn(async (): Promise<string | null> => 'blob:original'),
+	clear: vi.fn(),
+};
 const identity = { ownerKey: 'owner', sessionKey: 'session' };
 describe('VoiceWorkspaceStore', () => {
 	let view: VoiceWorkingCopy;
@@ -80,6 +85,7 @@ describe('VoiceWorkspaceStore', () => {
 		offline.networkUnavailable.set(false);
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: VoiceMediaAccess, useValue: mediaAccess },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 				{ provide: OfflineGarageStorage, useValue: storage },
 				{ provide: OfflineConnectivity, useValue: connectivity },
@@ -102,6 +108,30 @@ describe('VoiceWorkspaceStore', () => {
 		TestBed.tick();
 	});
 	afterEach(() => TestBed.resetTestingModule());
+	it('opens owner-fenced original media and keeps unavailable metadata visible', async () => {
+		expect(store.media()).toEqual({});
+		offline.hasSnapshot.set(true);
+		await settle();
+		store.openOriginal('capture');
+		await settle();
+		expect(store.media()['capture']).toBe('blob:original');
+		mediaAccess.open.mockRejectedValueOnce(new Error('offline'));
+		store.openOriginal('uncached');
+		await settle();
+		expect(store.media()['uncached']).toBeNull();
+		let resolve!: (value: string | null) => void;
+		mediaAccess.open.mockReturnValueOnce(
+			new Promise((value) => {
+				resolve = value;
+			}),
+		);
+		store.openOriginal('late');
+		offline.ownerKey.set('another');
+		resolve('blob:late');
+		await settle();
+		expect(store.media()['late']).toBeUndefined();
+	});
+
 	it('opens only the current owner and retains audio through upload and processing', async () => {
 		expect(store.current()).toBeNull();
 		expect(store.captures()).toEqual([]);

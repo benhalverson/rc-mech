@@ -1,7 +1,16 @@
-/** Delivered offline slices only; expand alongside each verified feature slice. */
+/** Routes backed by the complete shared offline working copy. */
 export const canOpenOfflineRoute = (paths: readonly string[]): boolean =>
 	(paths.length === 1 &&
-		(paths[0] === 'garage' || paths[0] === 'offline-unavailable')) ||
+		['garage', 'maintenance', 'settings', 'offline-unavailable'].includes(
+			paths[0],
+		)) ||
 	(paths.length === 3 &&
 		paths[0] === 'garage' &&
-		(paths[2] === 'overview' || paths[2] === 'setups'));
+		[
+			'overview',
+			'setups',
+			'build',
+			'photos',
+			'drive-sessions',
+			'voice',
+		].includes(paths[2]));

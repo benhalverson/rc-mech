@@ -44,4 +44,9 @@ it('copies original bytes and stable identities before deleting the legacy copy'
 	);
 	await migration.migrate('owner@example.com', fence);
 	expect(storage.importVoice).toHaveBeenCalledTimes(4);
+	await expect(
+		migration.pendingForSignOut(' OWNER@example.com '),
+	).resolves.toEqual([capture.id]);
+	await migration.discardForSignOut(' OWNER@example.com ');
+	expect(legacy.remove).toHaveBeenLastCalledWith(capture.id);
 });

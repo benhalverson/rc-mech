@@ -18,6 +18,7 @@ import {
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import type { PendingVoiceCapture, VoiceGatewayFailure } from './voice.models';
 import { VoiceLegacyMigration } from './voice-legacy-migration';
+import { VoiceMediaAccess } from './voice-media-access';
 import type { VoiceWorkingCopy } from './voice-sync.models';
 import { VoiceSyncGateway } from './voice-sync-gateway';
 export type VoiceLocalOutcome =
@@ -29,12 +30,14 @@ export const VoiceWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<{
 		view: VoiceWorkingCopy | null;
+		mediaCache: Readonly<Record<string, string | null>>;
 		fence: OfflineWorkspaceFence | null;
 		outcome: VoiceLocalOutcome;
 		failure: string;
 		syncing: boolean;
 	}>({
 		view: null,
+		mediaCache: {},
 		fence: null,
 		outcome: { status: 'idle', requestId: null },
 		failure: '',
@@ -42,6 +45,7 @@ export const VoiceWorkspaceStore = signalStore(
 	}),
 	withProps(() => ({
 		storage: inject(OfflineGarageStorage),
+		mediaAccess: inject(VoiceMediaAccess),
 		offline: inject(OfflineWorkspaceStore),
 		carsWorkspace: inject(CarWorkspaceStore),
 		connectivity: inject(OfflineConnectivity),
@@ -63,6 +67,7 @@ export const VoiceWorkspaceStore = signalStore(
 		),
 	})),
 	withComputed((store) => ({
+		media: computed(() => (store.current() ? store.mediaCache() : {})),
 		captures: computed(
 			() =>
 				store
@@ -119,7 +124,8 @@ export const VoiceWorkspaceStore = signalStore(
 									{
 										phase:
 											response.voiceUpdate.status === 'needs-review' ||
-											response.voiceUpdate.status === 'saved'
+											response.voiceUpdate.status === 'saved' ||
+											response.voiceUpdate.status === 'discarded'
 												? 'retained'
 												: 'processing',
 										remote: response.voiceUpdate,
@@ -274,6 +280,8 @@ export const VoiceWorkspaceStore = signalStore(
 			}
 		};
 		const refresh = async () => {
+			store.mediaAccess.clear();
+			patchState(store, { mediaCache: {} });
 			const identity = fence();
 			try {
 				const updates = await firstValueFrom(store.gateway.load());
@@ -291,6 +299,25 @@ export const VoiceWorkspaceStore = signalStore(
 			}
 		};
 		return {
+			openOriginal(id: string): void {
+				const identity = fence();
+				void (async () => {
+					let url: string | null = null;
+					try {
+						url = await store.mediaAccess.open(
+							id,
+							identity,
+							store.offline.networkUnavailable(),
+						);
+					} catch {
+						/* Keep metadata visible when originals are unavailable. */
+					}
+					if (matches(identity))
+						patchState(store, {
+							mediaCache: { ...store.mediaCache(), [id]: url },
+						});
+				})();
+			},
 			open() {
 				void open();
 			},
@@ -320,8 +347,10 @@ export const VoiceWorkspaceStore = signalStore(
 				store.offline.sessionKey();
 				const available = store.offline.hasSnapshot();
 				untracked(() => {
+					store.mediaAccess.clear();
 					patchState(store, {
 						view: null,
+						mediaCache: {},
 						fence: null,
 						outcome: { status: 'idle', requestId: null },
 						failure: '',

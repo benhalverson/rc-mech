@@ -1,4 +1,5 @@
 /// <reference types="node" />
+
 import { Blob as NodeBlob } from 'node:buffer';
 import { TestBed } from '@angular/core/testing';
 import Dexie from 'dexie';
@@ -35,6 +36,8 @@ import {
 	offlineOwnerFenceKey,
 	offlineOwnerFenceStorage,
 } from './offline-garage-storage';
+import type { SyncReview } from './offline-sync-review.models';
+import { syncReviewFixtures } from './offline-sync-review.testing';
 
 const car = (id: string, name: string): GarageCar => ({ id, name });
 const userAFence = { ownerKey: 'user-a', sessionKey: 'session-a' } as const;
@@ -1762,6 +1765,8 @@ describe('OfflineGarageStorage', () => {
 		expect(await storage.settingsSyncView()).toBeNull();
 	});
 	it('clears only confirmed owner work and prevents another owner reading settings', async () => {
+		expect(await storage.pendingWorkCount()).toBe(0);
+		expect(await storage.pendingSignOut()).toBeNull();
 		expect((await storage.requestSignOut(null, false)).kind).toBe('cleared');
 		await storage.activate('user-a', 'session-a');
 		await storage.save(
@@ -1781,6 +1786,11 @@ describe('OfflineGarageStorage', () => {
 		expect((await storage.requestSignOut('session-a', false)).kind).toBe(
 			'cleared',
 		);
+		const pending = await storage.pendingSignOut();
+		expect(pending).toMatchObject({ sessionKey: 'session-a' });
+		if (!pending) throw new Error('Missing pending sign-out');
+		await storage.completeSignOut(pending.operationId);
+		expect(await storage.pendingSignOut()).toBeNull();
 		await storage.activate('user-b', 'session-b');
 		expect(await storage.settingsSyncView()).toBeNull();
 		expect(await storage.read('user-a')).toBeNull();
@@ -2043,6 +2053,48 @@ describe('OfflineGarageStorage', () => {
 				.version,
 		).toBe(5);
 	});
+	it('retains a plan for a pending Component across restart and releases it only after the build is acknowledged', async () => {
+		await prepareMaintenance();
+		const build = await storage.commitBuild(
+			{ ...buildCommand, carId: 'car' },
+			userAFence,
+		);
+		const componentId = build.operation.command.componentId;
+		const saved = await storage.commitMaintenance(
+			{
+				...maintenanceCommand,
+				plan: { ...maintenanceCommand.plan, componentId },
+			},
+			userAFence,
+		);
+		expect(saved.operations[0].dependencies).toContain(
+			build.operation.operationId,
+		);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toEqual([]);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(await storage.readyMaintenanceOperations(userAFence)).toEqual([]);
+		await storage.recordBuildOutcome({
+			operationId: build.operation.operationId,
+			outcome: 'applied',
+			collection: build.collection,
+		});
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		expect(
+			(
+				await storage.maintenanceSyncView(userAFence)
+			).current.collections[0].plans.find(
+				(plan) => plan.componentId === componentId,
+			),
+		).toBeDefined();
+		expect(await storage.requestSignOut('session-a', false)).toEqual({
+			kind: 'confirmation',
+			count: 1,
+		});
+	});
+
 	it('waits for pending Car and Drive work while retaining service usage exactly once', async () => {
 		await prepareMaintenance();
 		const drive = await storage.commitDrive(
@@ -2205,6 +2257,58 @@ describe('OfflineGarageStorage', () => {
 			'session-a',
 		);
 	};
+	it('keeps viewed Voice originals in the shared owner lifecycle and rejects removed or unknown media', async () => {
+		await prepareVoice();
+		const blob = new NodeBlob(['original'], {
+			type: 'audio/webm',
+		}) as unknown as Blob;
+		expect(
+			await storage.retainedVoiceOriginal('missing', userAFence),
+		).toBeNull();
+		await expect(
+			storage.retainVoiceOriginal('missing', blob, userAFence),
+		).rejects.toThrow('unavailable');
+		await storage.refreshVoice(
+			[{ ...voiceUpdateFixture, audioUrl: '/audio/capture' }],
+			userAFence,
+		);
+		expect(
+			await storage.retainedVoiceOriginal('capture', userAFence),
+		).toBeNull();
+		await storage.retainVoiceOriginal('capture', blob, userAFence);
+		await storage.retainVoiceOriginal('capture', blob, userAFence);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(
+			await (
+				await storage.retainedVoiceOriginal('capture', userAFence)
+			)?.arrayBuffer(),
+		).toEqual(await blob.arrayBuffer());
+		await storage.refreshVoice(
+			[
+				{
+					...voiceUpdateFixture,
+					audioUrl: '/audio/capture',
+					artifactDeletedAt: '2026-10-10',
+					updatedAt: '2026-10-10',
+				},
+			],
+			userAFence,
+		);
+		expect(
+			await storage.retainedVoiceOriginal('capture', userAFence),
+		).toBeNull();
+		await expect(
+			storage.retainVoiceOriginal('capture', blob, userAFence),
+		).rejects.toThrow('unavailable');
+		expect((await storage.requestSignOut('session-a', false)).kind).toBe(
+			'cleared',
+		);
+		await expect(
+			storage.retainedVoiceOriginal('capture', userAFence),
+		).rejects.toThrow('unavailable');
+	});
+
 	it('retains exact voice bytes and stable identity across restart, processing and metadata refresh', async () => {
 		await prepareVoice();
 		// Native Blob is structured-cloneable in fake-indexeddb; jsdom's wrapper is not.
@@ -2213,6 +2317,12 @@ describe('OfflineGarageStorage', () => {
 		}) as unknown as Blob;
 		const capture = { ...voiceCaptureFixture, blob };
 		await storage.keepVoice(capture, userAFence);
+		expect(await storage.pendingWorkCount()).toBe(1);
+		expect(await storage.pendingWorkCount([capture.id])).toBe(0);
+		expect(await storage.requestSignOut('session-a', false)).toEqual({
+			kind: 'confirmation',
+			count: 1,
+		});
 		await storage.keepVoice(
 			{ ...capture, text: 'duplicate must not overwrite' },
 			userAFence,
@@ -2484,5 +2594,276 @@ describe('OfflineGarageStorage', () => {
 			frontCost: 12,
 			archivedAt: null,
 		});
+	});
+	const reviewTableNames = {
+		car: 'operations',
+		setup: 'setupOperations',
+		build: 'buildOperations',
+		drive: 'driveOperations',
+		maintenance: 'maintenanceOperations',
+		settings: 'settingsOperations',
+	} as const;
+	it.each(
+		syncReviewFixtures.flatMap((review) =>
+			(['device', 'remote'] as const).map((decision) => ({ review, decision })),
+		),
+	)(
+		'resolves $review.family review atomically with the $decision choice and retains dependent intent',
+		async ({ review, decision }) => {
+			await prepareMaintenance();
+			const snapshot = await storage.read('user-a');
+			assert(snapshot);
+			await storage.save(
+				{
+					...snapshot,
+					settings: {
+						timezone: 'UTC',
+						invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+					},
+				},
+				'session-a',
+			);
+			const inspect = new Dexie(databaseName);
+			await inspect.open();
+			try {
+				const table = inspect.table(reviewTableNames[review.family]);
+				await table.put(review.operation);
+				const dependent = {
+					...syncReviewFixtures[0].operation,
+					operationId: 'dependent',
+					dependencies: ['review', 'other'],
+					status: 'pending',
+				};
+				await inspect.table('operations').put(dependent);
+				await inspect.table('settingsOperations').put({
+					...syncReviewFixtures[5].operation,
+					operationId: 'setting-dependent',
+					dependencies: ['review', 'other'],
+					status: 'pending',
+				});
+				await inspect.table('voiceCaptures').put({
+					...voiceCaptureFixture,
+					ownerKey: 'user-a',
+					id: 'voice-dependent',
+					dependencies: ['review', 'other'],
+				});
+				await storage.resolveSyncReview(review, decision, userAFence);
+				expect(await table.get('review')).toBeUndefined();
+				const child = await inspect.table('operations').get('dependent');
+				const voice = await inspect
+					.table('voiceCaptures')
+					.get('voice-dependent');
+				if (decision === 'device') {
+					const retried = (await table.toArray()).find(
+						(value) =>
+							value.operationId !== 'dependent' &&
+							value.operationId !== 'setting-dependent',
+					);
+					expect(retried.status).toBe('pending');
+					expect(retried.operationId).not.toBe('review');
+					expect(child.dependencies).toEqual([retried.operationId, 'other']);
+					expect(voice.dependencies).toEqual([retried.operationId, 'other']);
+				} else {
+					expect(child.status).toBe('needs-attention');
+					expect(child.feedback.code).toBe('PREREQUISITE_DISCARDED');
+					expect(voice.status).toBe('failed');
+					expect(
+						(await inspect.table('settingsOperations').get('setting-dependent'))
+							.feedback,
+					).toContain('prerequisite');
+				}
+			} finally {
+				inspect.close();
+			}
+		},
+	);
+	it('does not replace a newer local canonical collection while reviewing older remote evidence', async () => {
+		await prepareMaintenance();
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		const review = syncReviewFixtures[4];
+		assert(review.family === 'maintenance');
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			for (const maintenance of [
+				undefined,
+				{ ...maintenanceSnapshotFixture, collections: [] },
+				{
+					...maintenanceSnapshotFixture,
+					collections: [
+						{ ...maintenanceSnapshotFixture.collections[0], version: 9 },
+					],
+				},
+			]) {
+				await storage.save({ ...snapshot, maintenance }, 'session-a');
+				await inspect.table('maintenanceOperations').put(review.operation);
+				await storage.resolveSyncReview(review, 'remote', userAFence);
+				if (maintenance?.collections[0])
+					expect(
+						(await storage.read('user-a'))?.maintenance?.collections[0].version,
+					).toBe(9);
+			}
+		} finally {
+			inspect.close();
+		}
+	});
+	it('retries canonical rejections without invented remote data and refuses stale or foreign review decisions', async () => {
+		await prepareMaintenance();
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			for (const fixture of syncReviewFixtures) {
+				const review = {
+					...fixture,
+					operation: {
+						...fixture.operation,
+						remote: undefined,
+						status: 'needs-attention',
+					},
+				} as SyncReview;
+				const table = inspect.table(reviewTableNames[review.family]);
+				await table.clear();
+				await table.put(review.operation);
+				await storage.resolveSyncReview(review, 'device', userAFence);
+				expect((await table.toArray())[0].command).toEqual(
+					review.operation.command,
+				);
+				await expect(
+					storage.resolveSyncReview(review, 'remote', userAFence),
+				).rejects.toThrow('updated');
+			}
+			const review = syncReviewFixtures[0];
+			for (const override of [
+				{ ownerKey: 'other' },
+				{ status: 'pending' },
+				{ createdAt: 'changed' },
+			]) {
+				await inspect
+					.table('operations')
+					.put({ ...review.operation, ...override });
+				await expect(
+					storage.resolveSyncReview(review, 'remote', userAFence),
+				).rejects.toThrow('updated');
+			}
+			await expect(
+				storage.resolveSyncReview(review, 'remote', {
+					...userAFence,
+					sessionKey: 'other',
+				}),
+			).rejects.toThrow('unavailable');
+		} finally {
+			inspect.close();
+		}
+	});
+	it('rolls back a removed-Setup retry and can deliberately discard it without erasing dependent records', async () => {
+		await prepareMaintenance();
+		const fixture = syncReviewFixtures[1];
+		assert(fixture.family === 'setup');
+		assert(fixture.operation.remote);
+		const review = {
+			...fixture,
+			operation: {
+				...fixture.operation,
+				remote: { ...fixture.operation.remote, setup: null },
+			},
+		};
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect.table('setupOperations').put(review.operation);
+			await expect(
+				storage.resolveSyncReview(review, 'device', userAFence),
+			).rejects.toThrow('no longer exists');
+			await expect(
+				inspect.table('setupOperations').get('review'),
+			).resolves.toEqual(review.operation);
+			await storage.resolveSyncReview(review, 'remote', userAFence);
+			await expect(
+				inspect.table('setupOperations').get('review'),
+			).resolves.toBeUndefined();
+			const settings = syncReviewFixtures[5];
+			await inspect.table('settingsOperations').put(settings.operation);
+			await storage.resolveSyncReview(settings, 'remote', userAFence);
+		} finally {
+			inspect.close();
+		}
+	});
+	it('upgrades the deployed structured queue schema without dropping pending intent while older readers leave the upgraded tables intact', async () => {
+		const old = new Dexie(databaseName);
+		old.version(4).stores({
+			snapshots: '&ownerKey,preparedAt',
+			metadata: '&key',
+			revokedSessions: '&sessionKey',
+			operations: '&operationId,ownerKey,carId,status,createdAt',
+			setupOperations: '&operationId,ownerKey,carId,setupId,status,createdAt',
+		});
+		await old.open();
+		const carReview = syncReviewFixtures[0];
+		const setupReview = syncReviewFixtures[1];
+		await old.table('operations').put(carReview.operation);
+		await old.table('setupOperations').put(setupReview.operation);
+		old.close();
+		await storage.read('user-a');
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			expect(await inspect.table('operations').get('review')).toEqual(
+				carReview.operation,
+			);
+			expect(await inspect.table('setupOperations').get('review')).toEqual(
+				setupReview.operation,
+			);
+			expect(inspect.tables.map((table) => table.name)).toEqual(
+				expect.arrayContaining([
+					'buildOperations',
+					'driveOperations',
+					'maintenanceOperations',
+					'settingsOperations',
+					'photoCaptures',
+					'photoMedia',
+					'voiceCaptures',
+				]),
+			);
+		} finally {
+			inspect.close();
+		}
+		await old.open();
+		expect(await old.table('operations').get('review')).toEqual(
+			carReview.operation,
+		);
+		old.close();
+	});
+	it('refuses future synchronization contracts without replacing or clearing their pending work', async () => {
+		await prepareMaintenance();
+		const snapshot = await storage.read('user-a');
+		assert(snapshot);
+		const inspect = new Dexie(databaseName);
+		await inspect.open();
+		try {
+			await inspect
+				.table('snapshots')
+				.put({ ...snapshot, contractVersion: 99 });
+			expect(await storage.restoreCurrent()).toBeNull();
+			expect(
+				await storage.save({ ...snapshot, contractVersion: 1 }, 'session-a'),
+			).toBe(false);
+			await expect(storage.requestSignOut('session-a', true)).rejects.toThrow(
+				'Reload',
+			);
+			expect(
+				(await inspect.table('snapshots').get('user-a')).contractVersion,
+			).toBe(99);
+			await inspect.table('snapshots').put({ ...snapshot, contractVersion: 1 });
+			expect(
+				await storage.save({ ...snapshot, contractVersion: 1 }, 'session-a'),
+			).toBe(true);
+			expect(await storage.restoreCurrent()).not.toBeNull();
+			expect((await storage.requestSignOut('session-a', true)).kind).toBe(
+				'cleared',
+			);
+		} finally {
+			inspect.close();
+		}
 	});
 });

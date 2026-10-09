@@ -137,8 +137,19 @@
 
 						<div class="grid gap-4 p-4">
 							@if (update.audioUrl) {
-								<!-- biome-ignore lint/a11y/useMediaCaption: The verbatim transcript is rendered next to the review after processing. -->
-								<audio class="w-full" controls preload="metadata" [src]="update.audioUrl" aria-label="Original voice recording"></audio>
+								@if (voiceStore.offlinePrepared()) {
+									@if (voiceStore.media()[update.id]; as original) {
+										<!-- biome-ignore lint/a11y/useMediaCaption: The transcript is rendered next to the original recording. -->
+										<audio class="w-full" controls preload="metadata" [src]="original" aria-label="Original voice recording"></audio>
+									} @else if (voiceStore.media()[update.id] === null) {
+										<p role="status">Original recording is not available on this device. Connect to view and keep it offline.</p>
+									} @else {
+										<button type="button" class="alloy-control alloy-focus-ring" (click)="voiceStore.openOriginal(update.id)">View original recording</button>
+									}
+								} @else {
+									<!-- biome-ignore lint/a11y/useMediaCaption: The verbatim transcript is rendered next to the review after processing. -->
+									<audio class="w-full" controls preload="metadata" [src]="update.audioUrl" aria-label="Original voice recording"></audio>
+								}
 							}
 							@if (update.status === 'pending' || update.status === 'failed') {
 								@if (update.error) { <p class="alloy-state alloy-error-state m-0" role="alert">{{ update.error }}</p> }

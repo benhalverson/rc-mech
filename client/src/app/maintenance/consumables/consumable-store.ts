@@ -163,7 +163,9 @@ export const ConsumableStore = signalStore(
 			syncMessage: computed(
 				() =>
 					store.localFailure() ||
-					(store.workspace.available() ? store.workspace.syncMessage() : ''),
+					(store.workspace.available()
+						? store.workspace.consumableSyncMessage()
+						: ''),
 			),
 			action: computed(() => {
 				const outcome = store.outcome();

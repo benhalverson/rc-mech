@@ -61,7 +61,7 @@ describe('ownerSessionCanMatch', () => {
 					{ path: 'sign-in', component: PublicSignIn },
 					{ path: 'offline-unavailable', component: PublicSignIn },
 					{
-						path: 'garage/:carId/photos',
+						path: 'garage/:carId/:section',
 						canMatch: [ownerSessionCanMatch],
 						loadComponent: loadPrivateFeature,
 					},
@@ -151,7 +151,7 @@ describe('ownerSessionCanMatch', () => {
 		sessionStore.resolutionFailed.mockReturnValue(true);
 		offlineAccess.restore.mockResolvedValue(snapshot);
 
-		await router.navigateByUrl('/garage/car-1/photos');
+		await router.navigateByUrl('/garage/car-1/runs');
 
 		expect(loadPrivateFeature).not.toHaveBeenCalled();
 		expect(offlineWorkspace.openOffline).toHaveBeenCalledWith({ snapshot });
@@ -175,7 +175,7 @@ describe('ownerSessionCanMatch', () => {
 	it('checks outage-time admission even while a live session remains cached', async () => {
 		sessionStore.resolved.mockResolvedValue({ session: { id: 'session-1' } });
 		offlineWorkspace.networkUnavailable.mockReturnValue(true);
-		await router.navigateByUrl('/garage/car-1/photos');
+		await router.navigateByUrl('/garage/car-1/runs');
 		expect(router.url).toBe('/offline-unavailable');
 		expect(loadPrivateFeature).not.toHaveBeenCalled();
 		expect(offlineWorkspace.prepare).not.toHaveBeenCalled();

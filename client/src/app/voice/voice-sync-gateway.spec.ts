@@ -26,6 +26,14 @@ describe('VoiceSyncGateway', () => {
 		http.verify();
 		TestBed.resetTestingModule();
 	});
+	it('reads private original audio through the authenticated gateway', async () => {
+		const result = firstValueFrom(gateway.original('voice/id'));
+		const request = http.expectOne('/api/v1/voice-updates/voice%2Fid/audio');
+		expect(request.request.withCredentials).toBe(true);
+		const blob = new Blob(['audio'], { type: 'audio/webm' });
+		request.flush(blob);
+		await expect(result).resolves.toBe(blob);
+	});
 	it('loads metadata and uploads stable text context with credentials', async () => {
 		const read = firstValueFrom(gateway.load());
 		const request = http.expectOne('/api/v1/voice-updates');

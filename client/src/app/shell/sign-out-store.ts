@@ -25,6 +25,7 @@ import { OfflineConnectivity } from '../offline/offline-connectivity';
 import { OfflineGarageStorage } from '../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
+import { VoiceLegacyMigration } from '../voice/voice-legacy-migration';
 import type { SignOutGatewayFailure } from './sign-out-contract';
 import { SignOutGateway } from './sign-out-gateway';
 
@@ -53,10 +54,12 @@ export type SignOutOutcome =
 type SignOutState = {
 	outcome: SignOutOutcome;
 	pendingRemoteOperationId: string | null;
+	pendingRemoteSessionKey: string | null;
 };
 
 const initialState: SignOutState = {
 	pendingRemoteOperationId: null,
+	pendingRemoteSessionKey: null,
 	outcome: { status: 'idle', operation: 'sign-out', operationId: null },
 };
 
@@ -67,6 +70,9 @@ export const SignOutStore = signalStore(
 		const offlineCapabilities = inject(OfflineCapabilities);
 		return {
 			gateway: inject(SignOutGateway),
+			legacy: offlineCapabilities.storageAvailable
+				? inject(VoiceLegacyMigration)
+				: null,
 			connectivity: inject(OfflineConnectivity),
 			offline: inject(OfflineWorkspaceStore),
 			offlineStorage: offlineCapabilities.storageAvailable
@@ -88,28 +94,38 @@ export const SignOutStore = signalStore(
 	withMethods((store) => {
 		const clearOfflineSession = (operationId: string) => {
 			store.offline.clear();
+			patchState(store, {
+				pendingRemoteOperationId: operationId,
+				pendingRemoteSessionKey: store.session.sessionKey(),
+			});
 			store.session.signOutLocally();
-			patchState(store, { pendingRemoteOperationId: operationId });
 			store.connectivity.scheduleRetry();
 			return of({ success: true });
 		};
 		const revokeRemote = rxMethod<string>((operations) =>
 			operations.pipe(
 				exhaustMap((operationId) =>
-					store.gateway.signOut().pipe(
-						switchMap(() =>
-							from(
-								(store.offlineStorage as OfflineGarageStorage).completeSignOut(
-									operationId,
+					store.gateway
+						.resumeSignOut(store.pendingRemoteSessionKey() as string)
+						.pipe(
+							switchMap(() =>
+								from(
+									(
+										store.offlineStorage as OfflineGarageStorage
+									).completeSignOut(operationId),
 								),
 							),
+							tap(() =>
+								patchState(store, {
+									pendingRemoteOperationId: null,
+									pendingRemoteSessionKey: null,
+								}),
+							),
+							catchError(() => {
+								store.connectivity.scheduleRetry();
+								return EMPTY;
+							}),
 						),
-						tap(() => patchState(store, { pendingRemoteOperationId: null })),
-						catchError(() => {
-							store.connectivity.scheduleRetry();
-							return EMPTY;
-						}),
-					),
 				),
 			),
 		);
@@ -124,12 +140,25 @@ export const SignOutStore = signalStore(
 							operationId,
 						},
 					});
-					const cleanup = store.offlineStorage
-						? store.offlineStorage.requestSignOut(
-								store.session.sessionKey(),
-								command.discardPending === true,
-							)
-						: Promise.resolve(null);
+					const cleanup = (async () => {
+						if (!store.offlineStorage) return null;
+						const legacy = store.legacy as VoiceLegacyMigration;
+						const email =
+							store.offline.ownerEmail() || store.session.ownerEmail();
+						const legacyIds = await legacy.pendingForSignOut(email);
+						if (legacyIds.length > 0 && command.discardPending !== true)
+							return {
+								kind: 'confirmation',
+								count:
+									legacyIds.length +
+									(await store.offlineStorage.pendingWorkCount(legacyIds)),
+							} as const;
+						if (legacyIds.length > 0) await legacy.discardForSignOut(email);
+						return store.offlineStorage.requestSignOut(
+							store.session.sessionKey(),
+							command.discardPending === true,
+						);
+					})();
 					return from(cleanup).pipe(
 						catchError(() =>
 							throwError(
@@ -207,9 +236,23 @@ export const SignOutStore = signalStore(
 			),
 		);
 		return {
+			async restorePendingSignOut(): Promise<void> {
+				try {
+					const pending = await store.offlineStorage?.pendingSignOut();
+					if (!pending) return;
+					patchState(store, {
+						pendingRemoteOperationId: pending.operationId,
+						pendingRemoteSessionKey: pending.sessionKey,
+					});
+					revokeRemote(pending.operationId);
+				} catch {
+					store.connectivity.scheduleRetry();
+				}
+			},
 			retryRemoteSignOut(): void {
 				const operationId = store.pendingRemoteOperationId();
 				if (operationId) revokeRemote(operationId);
+				else void this.restorePendingSignOut();
 			},
 			cancelSignOut(): void {
 				if (store.outcome().status === 'confirmation')

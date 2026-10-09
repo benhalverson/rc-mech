@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
 import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
+import { OfflineSyncReviewStore } from '../offline/offline-sync-review-store';
+import { OfflineSyncStatusStore } from '../offline/offline-sync-status-store';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
@@ -105,6 +107,11 @@ describe('WorkspaceShell', () => {
 		await TestBed.configureTestingModule({
 			imports: [WorkspaceShell],
 			providers: [
+				{ provide: OfflineSyncReviewStore, useValue: { reviews: () => [] } },
+				{
+					provide: OfflineSyncStatusStore,
+					useValue: { message: signal('Pending sync: 2') },
+				},
 				{ provide: SettingsWorkspaceStore, useValue: {} },
 				{ provide: PhotoWorkspaceStore, useValue: {} },
 				{ provide: MaintenanceWorkspaceStore, useValue: {} },

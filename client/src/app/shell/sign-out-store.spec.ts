@@ -8,12 +8,14 @@ import { OfflineConnectivity } from '../offline/offline-connectivity';
 import { OfflineGarageStorage } from '../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
+import { VoiceLegacyMigration } from '../voice/voice-legacy-migration';
 import { type SignOutGatewayFailure } from './sign-out-contract';
 import { SignOutGateway } from './sign-out-gateway';
 import type { SignOutResponse } from './sign-out-response';
 import { type SignOutCommand, SignOutStore } from './sign-out-store';
 
 class FakeSignOutGateway {
+	readonly resumeSignOut = vi.fn((_key: string) => this.signOut());
 	private mutation = new Subject<SignOutResponse>();
 	readonly signOut = vi.fn(
 		(): Observable<SignOutResponse> => this.mutation.asObservable(),
@@ -56,24 +58,45 @@ describe('SignOutStore', () => {
 		TestBed.configureTestingModule({
 			providers: [
 				{
+					provide: VoiceLegacyMigration,
+					useValue: {
+						pendingForSignOut: vi.fn(async () => []),
+						discardForSignOut: vi.fn(async () => {}),
+					},
+				},
+				{
 					provide: OfflineConnectivity,
 					useValue: { retryHint: signal(0), scheduleRetry: vi.fn() },
 				},
 				{
 					provide: OfflineWorkspaceStore,
-					useValue: { networkUnavailable: signal(false), clear: vi.fn() },
+					useValue: {
+						ownerEmail: signal('owner@example.test'),
+						networkUnavailable: signal(false),
+						clear: vi.fn(),
+					},
 				},
 				SignOutStore,
 				{ provide: OfflineCapabilities, useValue: capabilities },
 				{ provide: SignOutGateway, useValue: gateway },
 				{
 					provide: OfflineGarageStorage,
-					useValue: { completeSignOut, requestSignOut: deactivate },
+					useValue: {
+						completeSignOut,
+						pendingWorkCount: vi.fn(async () => 2),
+						requestSignOut: deactivate,
+						pendingSignOut: vi.fn(async () => null),
+					},
 				},
 				{ provide: Router, useValue: { navigate } },
 				{
 					provide: OwnerSessionStore,
-					useValue: { expire, sessionKey, signOutLocally: vi.fn() },
+					useValue: {
+						ownerEmail: () => 'owner@example.test',
+						expire,
+						sessionKey,
+						signOutLocally: vi.fn(),
+					},
 				},
 			],
 		});
@@ -81,6 +104,56 @@ describe('SignOutStore', () => {
 	});
 
 	afterEach(() => TestBed.resetTestingModule());
+
+	it('restores deferred sign-out after restart and retries storage failures', async () => {
+		const storage = TestBed.inject(OfflineGarageStorage);
+		vi.mocked(storage.pendingSignOut).mockResolvedValueOnce({
+			operationId: 'restored',
+			sessionKey: 'old-session',
+		});
+		await store.restorePendingSignOut();
+		expect(gateway.resumeSignOut).toHaveBeenCalledWith('old-session');
+		expect(store.pendingRemoteOperationId()).toBe('restored');
+		gateway.succeed();
+		await vi.waitFor(() => expect(store.pendingRemoteOperationId()).toBeNull());
+		vi.mocked(storage.pendingSignOut).mockRejectedValueOnce(
+			new Error('storage'),
+		);
+		await store.restorePendingSignOut();
+		expect(
+			TestBed.inject(OfflineConnectivity).scheduleRetry,
+		).toHaveBeenCalled();
+	});
+
+	it('confirms unmigrated legacy Voice work before clearing either queue and keeps it when cleanup fails', async () => {
+		const legacy = TestBed.inject(VoiceLegacyMigration);
+		(
+			TestBed.inject(OfflineWorkspaceStore).ownerEmail as ReturnType<
+				typeof signal<string>
+			>
+		).set('');
+		vi.mocked(legacy.pendingForSignOut).mockResolvedValue(['legacy']);
+		store.signOut({ operation: 'sign-out' });
+		await vi.waitFor(() =>
+			expect(store.outcome()).toMatchObject({
+				status: 'confirmation',
+				count: 3,
+			}),
+		);
+		expect(deactivate).not.toHaveBeenCalled();
+		expect(legacy.discardForSignOut).not.toHaveBeenCalled();
+		vi.mocked(legacy.discardForSignOut).mockRejectedValueOnce(
+			new Error('storage'),
+		);
+		store.signOut({ operation: 'sign-out', discardPending: true });
+		await vi.waitFor(() => expect(store.outcome().status).toBe('failed'));
+		expect(deactivate).not.toHaveBeenCalled();
+		store.signOut({ operation: 'sign-out', discardPending: true });
+		await vi.waitFor(() => expect(gateway.signOut).toHaveBeenCalled());
+		expect(legacy.discardForSignOut).toHaveBeenCalledWith('owner@example.test');
+		gateway.succeed();
+		await vi.waitFor(() => expect(store.outcome().status).toBe('succeeded'));
+	});
 
 	it('starts idle with no loading or failure presentation', () => {
 		expect(store.outcome()).toEqual({
@@ -167,7 +240,11 @@ describe('SignOutStore', () => {
 				},
 				{
 					provide: OfflineWorkspaceStore,
-					useValue: { networkUnavailable: signal(false), clear: vi.fn() },
+					useValue: {
+						ownerEmail: signal('owner@example.test'),
+						networkUnavailable: signal(false),
+						clear: vi.fn(),
+					},
 				},
 				SignOutStore,
 				{ provide: OfflineCapabilities, useValue: capabilities },
@@ -181,7 +258,12 @@ describe('SignOutStore', () => {
 				{ provide: Router, useValue: { navigate } },
 				{
 					provide: OwnerSessionStore,
-					useValue: { expire, sessionKey, signOutLocally: vi.fn() },
+					useValue: {
+						ownerEmail: () => 'owner@example.test',
+						expire,
+						sessionKey,
+						signOutLocally: vi.fn(),
+					},
 				},
 			],
 		});
@@ -197,7 +279,12 @@ describe('SignOutStore', () => {
 		store.signOut({ operation: 'sign-out' });
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(store.outcome()).toMatchObject({ status: 'confirmation', count: 2 });
+		await vi.waitFor(() =>
+			expect(store.outcome()).toMatchObject({
+				status: 'confirmation',
+				count: 2,
+			}),
+		);
 		expect(gateway.signOut).not.toHaveBeenCalled();
 		expect(expire).not.toHaveBeenCalled();
 		store.cancelSignOut();

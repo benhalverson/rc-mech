@@ -39,6 +39,12 @@ const failure = (
 @Service()
 export class VoiceSyncGateway {
 	private readonly http = inject(HttpClient);
+	original(id: string) {
+		return this.http.get(
+			`/api/v1/voice-updates/${encodeURIComponent(id)}/audio`,
+			{ withCredentials: true, responseType: 'blob' },
+		);
+	}
 	load() {
 		return this.http
 			.get<unknown>('/api/v1/voice-updates', { withCredentials: true })

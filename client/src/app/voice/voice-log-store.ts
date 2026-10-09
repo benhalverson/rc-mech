@@ -188,6 +188,8 @@ export const VoiceLogStore = signalStore(
 		selectionGeneration: { value: 0 },
 	})),
 	withComputed((store) => ({
+		offlinePrepared: computed(() => store.workspace.available()),
+		media: computed(() => store.workspace.media()),
 		localCaptures: computed(() =>
 			store.workspace.available()
 				? store.workspace
@@ -809,6 +811,9 @@ export const VoiceLogStore = signalStore(
 				mutate('discard-server', id, () => store.gateway.discard(id), {
 					saved,
 				});
+			},
+			openOriginal(id: string): void {
+				store.workspace.openOriginal(id);
 			},
 			retryRead(): void {
 				if (store.workspace.available()) store.workspace.refresh();

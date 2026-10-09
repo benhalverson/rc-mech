@@ -205,6 +205,14 @@ describe('VoiceLogStore', () => {
 		await vi.waitFor(() => expect(queue.list).toHaveBeenCalled());
 	};
 
+	it('projects retained original media and sends playback intent to the shared workspace', () => {
+		const workspace = TestBed.inject(VoiceWorkspaceStore);
+		expect(store.offlinePrepared()).toBe(false);
+		expect(store.media()).toEqual({});
+		store.openOriginal('voice-1');
+		expect(workspace.openOriginal).toHaveBeenCalledWith('voice-1');
+	});
+
 	it('derives route-safe reads, active context cars, recorder state, and local captures', async () => {
 		expect(store.updates()).toEqual([]);
 		expect(store.cars()).toEqual([]);

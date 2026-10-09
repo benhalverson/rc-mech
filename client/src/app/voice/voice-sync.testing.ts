@@ -9,6 +9,8 @@ import type { VoiceCapture } from './voice-sync.models';
 import type { VoiceLocalOutcome } from './voice-workspace-store';
 export class FakeVoiceWorkspace {
 	readonly available = signal(false);
+	readonly media = signal<Readonly<Record<string, string | null>>>({});
+	readonly openOriginal = vi.fn();
 	readonly remoteAvailable = signal(true);
 	readonly captures = signal<readonly VoiceCapture[]>([]);
 	readonly updates = signal<readonly VoiceUpdate[]>([]);

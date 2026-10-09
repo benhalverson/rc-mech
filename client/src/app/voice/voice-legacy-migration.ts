@@ -9,6 +9,16 @@ import { VoiceOfflineQueue } from './voice-offline-queue';
 export class VoiceLegacyMigration {
 	private readonly legacy = inject(VoiceOfflineQueue);
 	private readonly storage = inject(OfflineGarageStorage);
+	async pendingForSignOut(email: string): Promise<readonly string[]> {
+		return (await this.legacy.list(email.trim().toLowerCase())).map(
+			(capture) => capture.id,
+		);
+	}
+	async discardForSignOut(email: string): Promise<void> {
+		for (const capture of await this.legacy.list(email.trim().toLowerCase()))
+			await this.legacy.remove(capture.id);
+	}
+
 	async migrate(email: string, fence: OfflineWorkspaceFence): Promise<void> {
 		const captures = await this.legacy.list(email.trim().toLowerCase());
 		await this.storage.importVoice(captures, fence);

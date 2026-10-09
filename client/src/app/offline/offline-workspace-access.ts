@@ -1,6 +1,10 @@
 import { InjectionToken, inject, Service } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { OfflineCapabilities } from './offline-capabilities';
+import {
+	hasCompleteOfflineContract,
+	OFFLINE_CONTRACT_VERSION,
+} from './offline-contract';
 import { OfflineGarageGateway } from './offline-garage-gateway';
 import {
 	type OfflineGarageSnapshot,
@@ -33,6 +37,7 @@ export class OfflineWorkspaceAccess {
 		await this.capabilities.prepareShell();
 		const collection = await firstValueFrom(this.gateway.load());
 		const snapshot: OfflineGarageSnapshot = {
+			contractVersion: OFFLINE_CONTRACT_VERSION,
 			ownerKey: owner.key,
 			ownerEmail: owner.email,
 			offlineUntil: owner.offlineUntil,
@@ -59,6 +64,7 @@ export class OfflineWorkspaceAccess {
 
 	async restore(): Promise<OfflineGarageSnapshot | null> {
 		if (!this.capabilities.supported) return null;
-		return this.storage.restoreCurrent(this.now());
+		const snapshot = await this.storage.restoreCurrent(this.now());
+		return snapshot && hasCompleteOfflineContract(snapshot) ? snapshot : null;
 	}
 }
