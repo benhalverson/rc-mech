@@ -61,6 +61,8 @@ describe('OwnerSessionStore', () => {
 
 		expect(await resolved).toBeNull();
 		expect(store.resolutionFailed()).toBe(true);
+		// Redirects and later offline navigations resolve the same failed resource.
+		expect(await store.resolved()).toBeNull();
 		expect(store.authenticated()).toBe(false);
 		expect(store.ownerEmail()).toBe('Owner');
 	});
