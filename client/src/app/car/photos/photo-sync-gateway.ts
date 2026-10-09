@@ -7,7 +7,7 @@ import {
 	carPhotoMutationSchema,
 	carPhotoSchema,
 } from '../car.models';
-import { parsePhotoCollection } from './car-photo-gateway';
+import { parsePhotoCollection, photoGatewayFailure } from './car-photo-gateway';
 import type {
 	PhotoCapture,
 	PhotoCaptureOutcome,
@@ -137,6 +137,7 @@ export class PhotoSyncGateway {
 				),
 			);
 	}
+	/** Preserves HTTP status and unexpected read errors for per-photo recovery. */
 	original(
 		photoId: string,
 	): Observable<Readonly<{ blob: Blob; revision: number }>> {
@@ -157,7 +158,11 @@ export class PhotoSyncGateway {
 					return { blob: response.body, revision };
 				}),
 				catchError((error: unknown) =>
-					throwError(() => photoSyncFailure(error)),
+					throwError(() =>
+						error instanceof HttpErrorResponse
+							? photoGatewayFailure(error)
+							: error,
+					),
 				),
 			);
 	}

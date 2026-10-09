@@ -1,7 +1,13 @@
-import { ApplicationRef, signal } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import {
+	HttpTestingController,
+	provideHttpClientTesting,
+} from '@angular/common/http/testing';
+import { ApplicationRef, ErrorHandler, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OfflineGarageStorage } from '../../offline/offline-garage-storage';
 import type {
 	CarPhoto,
 	PhotoGatewayFailure,
@@ -9,7 +15,7 @@ import type {
 } from '../car.models';
 import { CarPhotoGateway } from './car-photo-gateway';
 import { CarPhotoStore } from './car-photo-store';
-import { PhotoMediaAccess } from './photo-media-access';
+import { PHOTO_OBJECT_URL, PhotoMediaAccess } from './photo-media-access';
 import type { PhotoCapture } from './photo-sync.models';
 import {
 	type PhotoCaptureMutationOutcome,
@@ -161,6 +167,7 @@ describe('CarPhotoStore', () => {
 			networkUnavailable: signal(false),
 		},
 	};
+	const errorHandler = { handleError: vi.fn() };
 	const media = {
 		open: vi.fn().mockResolvedValue('blob:photo'),
 	};
@@ -169,6 +176,7 @@ describe('CarPhotoStore', () => {
 
 	beforeEach(() => {
 		workspace.available.set(false);
+		errorHandler.handleError.mockClear();
 		workspace.offline.ownerKey.set('owner');
 		workspace.offline.sessionKey.set('session');
 		media.open.mockReset().mockResolvedValue('blob:photo');
@@ -183,6 +191,7 @@ describe('CarPhotoStore', () => {
 		TestBed.configureTestingModule({
 			providers: [
 				{ provide: PhotoWorkspaceStore, useValue: workspace },
+				{ provide: ErrorHandler, useValue: errorHandler },
 				{ provide: PhotoMediaAccess, useValue: media },
 				CarPhotoStore,
 				{ provide: CarPhotoGateway, useValue: gateway },
@@ -445,7 +454,7 @@ describe('CarPhotoStore', () => {
 		workspace.offline.networkUnavailable.set(true);
 		store.mutate({ kind: 'delete', photo: photo() });
 		expect(gateway.delete).not.toHaveBeenCalled();
-		media.open.mockRejectedValueOnce(new Error('uncached'));
+		media.open.mockRejectedValueOnce({ kind: 'unavailable' });
 		store.mediaResource.reload();
 		TestBed.tick();
 		await TestBed.inject(ApplicationRef).whenStable();
@@ -464,6 +473,111 @@ describe('CarPhotoStore', () => {
 		await TestBed.inject(ApplicationRef).whenStable();
 		expect(store.media()['photo-1']).toBeUndefined();
 	});
+	it('shows cached originals while another original is still downloading', async () => {
+		TestBed.resetTestingModule();
+		const cached = new Blob(['cached']);
+		const urls = {
+			createObjectURL: vi.fn(() => 'blob:cached'),
+			revokeObjectURL: vi.fn(),
+		};
+		const storage = {
+			retainedPhoto: vi.fn(async (id: string) =>
+				id === 'cached' ? cached : null,
+			),
+			retainPhoto: vi.fn().mockResolvedValue(undefined),
+		};
+		TestBed.configureTestingModule({
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				CarPhotoStore,
+				{ provide: CarPhotoGateway, useValue: gateway },
+				{ provide: PhotoWorkspaceStore, useValue: workspace },
+				{ provide: ErrorHandler, useValue: errorHandler },
+				{ provide: OfflineGarageStorage, useValue: storage },
+				{ provide: PHOTO_OBJECT_URL, useValue: urls },
+			],
+		});
+		store = TestBed.inject(CarPhotoStore);
+		const http = TestBed.inject(HttpTestingController);
+		workspace.available.set(true);
+		workspace.photos.set([photo({ id: 'cached' }), photo({ id: 'remote' })]);
+		store.selectCar('car-1');
+		TestBed.tick();
+		// Do not await application stability: the second HTTP read stays pending.
+		for (let i = 0; i < 6; i++) await Promise.resolve();
+		const remote = http.expectOne('/api/v1/photos/remote');
+		expect(remote.cancelled).toBe(false);
+		expect(store.media()['cached']).toBe('blob:cached');
+		expect(store.media()['remote']).toBeUndefined();
+		expect(storage.retainPhoto).not.toHaveBeenCalled();
+		workspace.offline.ownerKey.set('other-owner');
+		workspace.available.set(false);
+		expect(store.media()).toEqual({});
+		TestBed.tick();
+		expect(remote.cancelled).toBe(true);
+		expect(urls.revokeObjectURL).toHaveBeenCalledWith('blob:cached');
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()).toEqual({});
+		http.verify();
+	});
+
+	it.each([
+		[{ kind: 'unavailable' }, '', false],
+		[{ kind: 'http', status: 404 }, '', false],
+		[{ kind: 'http', status: 503 }, '', false],
+		[{ kind: 'http', status: 401 }, 'Sign in again', false],
+		[{ kind: 'http', status: 403 }, 'Sign in again', false],
+		[{ kind: 'http', status: 400 }, 'could not be loaded', true],
+		[
+			new Error('unexpected storage or URL failure'),
+			'could not be loaded',
+			true,
+		],
+		[null, 'could not be loaded', true],
+	] as const)(
+		'keeps other images visible and classifies original failure %j',
+		async (failure, message, reported) => {
+			workspace.available.set(true);
+			workspace.photos.set([photo({ id: 'cached' }), photo({ id: 'failed' })]);
+			media.open
+				.mockResolvedValueOnce('blob:cached')
+				.mockRejectedValueOnce(failure);
+			store.selectCar('car-1');
+			TestBed.tick();
+			await TestBed.inject(ApplicationRef).whenStable();
+			expect(store.media()).toEqual({ cached: 'blob:cached', failed: null });
+			if (message) expect(store.error()).toContain(message);
+			else expect(store.error()).toBe('');
+			if (reported)
+				expect(errorHandler.handleError).toHaveBeenCalledWith(failure);
+			else expect(errorHandler.handleError).not.toHaveBeenCalled();
+			store.mediaResource.reload();
+			TestBed.tick();
+			await TestBed.inject(ApplicationRef).whenStable();
+			expect(store.error()).toBe('');
+		},
+	);
+	it('silently discards a rejected read after its resource was cancelled', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		let reject!: (error: Error) => void;
+		media.open.mockReturnValueOnce(
+			new Promise<string>((_, fail) => {
+				reject = fail;
+			}),
+		);
+		store.selectCar('car-1');
+		TestBed.tick();
+		workspace.available.set(false);
+		TestBed.tick();
+		reject(new Error('late cancellation'));
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.error()).toBe('');
+		expect(store.media()).toEqual({});
+		expect(errorHandler.handleError).not.toHaveBeenCalled();
+	});
+
 	it('cancels stale gallery reads on owner changes and destruction', async () => {
 		workspace.available.set(true);
 		workspace.photos.set([photo()]);
