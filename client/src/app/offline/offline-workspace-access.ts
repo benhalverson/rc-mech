@@ -38,6 +38,7 @@ export class OfflineWorkspaceAccess {
 			offlineUntil: owner.offlineUntil,
 			preparedAt: this.now().toISOString(),
 			cars: collection.cars,
+			photos: collection.photos,
 			setupCollections: collection.setupCollections,
 			buildCollections: collection.buildCollections,
 			driveCollections: collection.driveCollections,

@@ -3,8 +3,10 @@ import { inject, Service } from '@angular/core';
 import { forkJoin, map, type Observable } from 'rxjs';
 import type { BuildSyncCollection } from '../car/build-sync/build-sync.models';
 import { parseBuildSyncCollections } from '../car/build-sync/build-sync-gateway';
+import type { CarPhoto } from '../car/car.models';
 import type { DriveSyncCollection } from '../car/drive-sync/drive-sync.models';
 import { parseDriveSyncCollections } from '../car/drive-sync/drive-sync-gateway';
+import { parsePhotoCollection } from '../car/photos/car-photo-gateway';
 import { parseSetupSyncCollections } from '../car/setups/setup-snapshot';
 import type { SetupSyncCollection } from '../car/setups/setup-sync.models';
 import type { GarageCollection } from '../garage/garage.models';
@@ -20,6 +22,7 @@ export type OfflineGarageCollection = GarageCollection &
 		driveCollections: readonly DriveSyncCollection[];
 		setupCollections: readonly SetupSyncCollection[];
 		settings: SettingsSnapshot;
+		photos: readonly CarPhoto[];
 	}>;
 
 @Service()
@@ -28,6 +31,9 @@ export class OfflineGarageGateway {
 
 	load(): Observable<OfflineGarageCollection> {
 		return forkJoin({
+			photos: this.http.get<unknown>('/api/v1/photos', {
+				withCredentials: true,
+			}),
 			timezone: this.http.get<unknown>('/api/v1/preferences/timezone', {
 				withCredentials: true,
 			}),
@@ -48,11 +54,12 @@ export class OfflineGarageGateway {
 				withCredentials: true,
 			}),
 		}).pipe(
-			map(({ garage, setups, builds, drives, timezone, invites }) => ({
+			map(({ garage, setups, builds, drives, timezone, invites, photos }) => ({
 				settings: settingsSnapshotSchema.parse({
 					...Object(timezone),
 					invites,
 				}),
+				photos: parsePhotoCollection(photos),
 				...parseGarageCollection(garage),
 				setupCollections: parseSetupSyncCollections(setups),
 				buildCollections: parseBuildSyncCollections(builds),

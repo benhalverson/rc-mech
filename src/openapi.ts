@@ -432,6 +432,64 @@ export const openApi = {
 				},
 			},
 		},
+
+		'/api/v1/photos': {
+			get: {
+				summary: 'List owner-scoped photo metadata for offline preparation',
+				responses: {
+					200: {
+						description:
+							'Private photo metadata; original bytes are not downloaded',
+					},
+				},
+			},
+		},
+		'/api/v1/cars/{carId}/photos/captures/{operationId}': {
+			put: {
+				summary: 'Idempotently upload a locally retained photo capture',
+				parameters: [
+					{
+						name: 'carId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+					{
+						name: 'operationId',
+						in: 'path',
+						required: true,
+						schema: { type: 'string', format: 'uuid' },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						'multipart/form-data': {
+							schema: {
+								type: 'object',
+								required: ['file'],
+								properties: { file: { type: 'string', format: 'binary' } },
+							},
+						},
+					},
+				},
+				responses: {
+					200: {
+						description:
+							'Applied or replayed receipt with stable photo identity',
+					},
+					400: { description: 'Invalid capture identity' },
+					409: {
+						description: 'Canonical rejection or operation identity reuse',
+					},
+					422: { description: 'Invalid image metadata or multipart request' },
+					503: {
+						description:
+							'Retryable infrastructure failure; retain the local capture',
+					},
+				},
+			},
+		},
 		'/api/v1/cars/{carId}/photos': {
 			get: {
 				summary:

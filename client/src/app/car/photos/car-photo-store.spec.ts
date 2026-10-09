@@ -9,6 +9,12 @@ import type {
 } from '../car.models';
 import { CarPhotoGateway } from './car-photo-gateway';
 import { CarPhotoStore } from './car-photo-store';
+import { PhotoMediaAccess } from './photo-media-access';
+import type { PhotoCapture } from './photo-sync.models';
+import {
+	type PhotoCaptureMutationOutcome,
+	PhotoWorkspaceStore,
+} from './photo-workspace-store';
 
 const photo = (overrides: Partial<CarPhoto> = {}): CarPhoto => ({
 	id: 'photo-1',
@@ -136,12 +142,40 @@ class FakePhotoGateway {
 describe('CarPhotoStore', () => {
 	let gateway: FakePhotoGateway;
 	let store: InstanceType<typeof CarPhotoStore>;
+	const workspace = {
+		available: signal(false),
+		photos: signal<readonly CarPhoto[]>([]),
+		captures: signal<readonly PhotoCapture[]>([]),
+		outcome: signal<PhotoCaptureMutationOutcome>({
+			status: 'idle',
+			requestId: null,
+		}),
+		mutate: vi.fn(),
+		refresh: vi.fn(),
+		offline: {
+			ownerKey: signal('owner'),
+			sessionKey: signal('session'),
+			networkUnavailable: signal(false),
+		},
+	};
+	const media = {
+		clear: vi.fn(),
+		open: vi.fn().mockResolvedValue('blob:photo'),
+	};
+
 	const file = new File(['image'], 'car.webp', { type: 'image/webp' });
 
 	beforeEach(() => {
+		workspace.available.set(false);
+		workspace.photos.set([]);
+		workspace.captures.set([]);
+		workspace.outcome.set({ status: 'idle', requestId: null });
+		workspace.offline.networkUnavailable.set(false);
 		gateway = new FakePhotoGateway();
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: PhotoWorkspaceStore, useValue: workspace },
+				{ provide: PhotoMediaAccess, useValue: media },
 				CarPhotoStore,
 				{ provide: CarPhotoGateway, useValue: gateway },
 			],
@@ -357,5 +391,86 @@ describe('CarPhotoStore', () => {
 		expect(store.photos()[0].id).toBe('photo-2');
 		gateway.fail('reorder', { kind: 'unavailable' });
 		expect(store.photos()).toEqual([first, second]);
+	});
+	it('uses local metadata and publishes durable capture state with private original handles', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo(), photo({ id: 'other', carId: 'other' })]);
+		store.selectCar('car-1');
+		TestBed.tick();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(store.photos()).toEqual([photo()]);
+		expect(store.loading()).toBe(false);
+		expect(store.failure()).toBeNull();
+		expect(store.media()['photo-1']).toBe('blob:photo');
+		workspace.captures.set([
+			{
+				ownerKey: 'owner',
+				operationId: 'op',
+				carId: 'car-1',
+				fileName: 'car.jpg',
+				blob: file,
+				photo: photo(),
+				status: 'pending',
+			},
+		]);
+		expect(store.captureFeedback()).toBe('Pending sync');
+		workspace.captures.set([
+			{
+				...workspace.captures()[0],
+				status: 'needs-attention',
+				feedback: 'Archived',
+			},
+		]);
+		expect(store.captureFeedback()).toContain('Needs attention: Archived');
+		workspace.outcome.set({ status: 'pending', requestId: 'request' });
+		expect(store.action()).toBe('upload');
+		expect(store.captureOutcome().status).toBe('pending');
+		workspace.outcome.set({
+			status: 'failed',
+			requestId: 'request',
+			message: 'Quota',
+		});
+		expect(store.error()).toBe('Quota');
+		store.mutate({ kind: 'upload', file });
+		expect(workspace.mutate).toHaveBeenCalled();
+		expect(gateway.upload).not.toHaveBeenCalled();
+		workspace.offline.networkUnavailable.set(true);
+		store.mutate({ kind: 'delete', photo: photo() });
+		expect(gateway.delete).not.toHaveBeenCalled();
+		media.open.mockRejectedValueOnce(new Error('uncached'));
+		store.loadMedia();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(store.media()['photo-1']).toBeNull();
+		let finish: (value: string | null) => void = () => {};
+		media.open.mockReturnValueOnce(
+			new Promise<string | null>((resolve) => {
+				finish = resolve;
+			}),
+		);
+		store.loadMedia();
+		store.selectCar('other');
+		TestBed.tick();
+		finish('blob:late');
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(store.media()['photo-1']).toBeUndefined();
+	});
+	it('refreshes the shared metadata after online replacement, deletion, and ordering', () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		store.selectCar('car-1');
+		store.mutate({ kind: 'replace', photo: photo(), file });
+		gateway.succeed('replace', photo());
+		expect(workspace.refresh).toHaveBeenCalledWith('photo-1');
+		store.mutate({ kind: 'delete', photo: photo() });
+		gateway.succeed('delete', { deleted: true });
+		expect(workspace.refresh).toHaveBeenCalledWith('photo-1');
+		store.mutate({ kind: 'primary', photo: photo() });
+		gateway.succeed('primary', photo());
+		expect(workspace.refresh).toHaveBeenCalledWith(undefined);
+		store.retry();
+		expect(workspace.refresh).toHaveBeenCalled();
 	});
 });

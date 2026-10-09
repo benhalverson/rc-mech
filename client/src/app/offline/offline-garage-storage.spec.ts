@@ -1775,4 +1775,166 @@ describe('OfflineGarageStorage', () => {
 		expect(await storage.settingsSyncView()).toBeNull();
 		expect(await storage.read('user-a')).toBeNull();
 	});
+	const preparePhotos = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car-a', 'Buggy')],
+			},
+			'session-a',
+		);
+	};
+	const image = () => new File(['photo'], 'car.jpg', { type: 'image/jpeg' });
+	it('retains photo bytes and metadata atomically through restart and acknowledgement', async () => {
+		await preparePhotos();
+		const view = await storage.commitPhoto('car-a', image(), userAFence);
+		const capture = view.captures[0];
+		expect(view.photos).toHaveLength(1);
+		expect((await storage.readyPhotoCaptures(userAFence))[0].operationId).toBe(
+			capture.operationId,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect((await storage.restoreCurrent())?.sessionKey).toBe('session-a');
+		expect(
+			await storage.retainedPhoto(capture.operationId, userAFence),
+		).not.toBeNull();
+		await expect(
+			storage.recordPhotoOutcome(
+				{
+					operationId: capture.operationId,
+					outcome: 'applied',
+					photo: capture.photo,
+				},
+				[],
+				userAFence,
+			),
+		).rejects.toThrow('metadata');
+		expect((await storage.photoView(userAFence)).captures).toHaveLength(1);
+		const result = await storage.recordPhotoOutcome(
+			{
+				operationId: capture.operationId,
+				outcome: 'applied',
+				photo: capture.photo,
+			},
+			[capture.photo],
+			userAFence,
+		);
+		expect(result.captures).toEqual([]);
+		expect(result.photos).toEqual([capture.photo]);
+		await storage.retainPhoto(
+			capture.operationId,
+			new Blob(['retained']),
+			userAFence,
+		);
+		expect(
+			await storage.retainedPhoto(capture.operationId, userAFence),
+		).not.toBeNull();
+		await storage.refreshPhotos(
+			[capture.photo],
+			capture.operationId,
+			userAFence,
+		);
+		expect(
+			await storage.retainedPhoto(capture.operationId, userAFence),
+		).toBeNull();
+		expect(await storage.retainedPhoto('missing', userAFence)).toBeNull();
+		await expect(
+			storage.retainPhoto('missing', image(), userAFence),
+		).rejects.toThrow('metadata');
+		await storage.refreshPhotos([], undefined, userAFence);
+		expect((await storage.photoView(userAFence)).photos).toEqual([]);
+	});
+	it('preserves rejected photos, continues independent captures, and waits for Car changes', async () => {
+		await preparePhotos();
+		const first = await storage.commitPhoto('car-a', image(), userAFence);
+		const capture = first.captures[0];
+		await storage.recordPhotoOutcome(
+			{
+				operationId: capture.operationId,
+				outcome: 'rejected',
+				error: 'Archived',
+			},
+			[],
+			userAFence,
+		);
+		expect((await storage.photoView(userAFence)).captures[0]).toMatchObject({
+			status: 'needs-attention',
+			feedback: 'Archived',
+		});
+		const second = await storage.commitPhoto('car-a', image(), userAFence);
+		expect(second.photos).toHaveLength(2);
+		expect(second.photos[1].isPrimary).toBe(false);
+		expect(await storage.readyPhotoCaptures(userAFence)).toHaveLength(1);
+		await storage.recordPhotoOutcome(
+			{ operationId: 'unknown', outcome: 'rejected', error: 'No' },
+			[],
+			userAFence,
+		);
+		await storage.commitCar(
+			{ type: 'edit', carId: 'car-a', input: { name: 'Renamed' } },
+			userAFence,
+		);
+		expect(await storage.readyPhotoCaptures(userAFence)).toEqual([]);
+	});
+	it('rejects invalid photos and prevents writes or reads beyond the owner fence', async () => {
+		const capture = {
+			operationId: 'missing',
+			outcome: 'rejected' as const,
+			error: 'No',
+		};
+		await expect(storage.photoView(userAFence)).rejects.toThrow();
+		await expect(
+			storage.commitPhoto('car-a', image(), userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.recordPhotoOutcome(capture, [], userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.refreshPhotos([], undefined, userAFence),
+		).rejects.toThrow();
+		await preparePhotos();
+		await expect(
+			storage.commitPhoto('missing', image(), userAFence),
+		).rejects.toThrow('active Car');
+		for (const file of [
+			new File(['x'], 'bad.txt', { type: 'text/plain' }),
+			new File([], 'empty.jpg', { type: 'image/jpeg' }),
+			new File([new Uint8Array(10485761)], 'big.jpg', { type: 'image/jpeg' }),
+			new File(['x'], ' ', { type: 'image/jpeg' }),
+			new File(['x'], 'x'.repeat(256), { type: 'image/jpeg' }),
+		])
+			await expect(
+				storage.commitPhoto('car-a', file, userAFence),
+			).rejects.toThrow('valid photo');
+		await storage.replaceCars([
+			{ ...car('car-a', 'Buggy'), archivedAt: 'today' },
+		]);
+		await expect(
+			storage.commitPhoto('car-a', image(), userAFence),
+		).rejects.toThrow('active Car');
+	});
+	it.each(['sign-out', 'switch', 'invalidate'] as const)(
+		'removes owner photo bytes and captures on %s',
+		async (action) => {
+			await preparePhotos();
+			await storage.commitPhoto('car-a', image(), userAFence);
+			if (action === 'sign-out') await storage.deactivate();
+			else if (action === 'switch')
+				await storage.activate('user-b', 'session-b');
+			else {
+				fenceFailure = 'set';
+				await expect(storage.activate('user-b', 'session-b')).rejects.toThrow();
+			}
+			const inspect = new Dexie(databaseName);
+			await inspect.open();
+			expect(await inspect.table('photoCaptures').count()).toBe(0);
+			expect(await inspect.table('photoMedia').count()).toBe(0);
+			inspect.close();
+		},
+	);
 });
