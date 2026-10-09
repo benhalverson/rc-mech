@@ -1457,4 +1457,25 @@ describe('CarWorkspaceStore', () => {
 		await Promise.resolve();
 		expect(store.buildSyncFailure()).toBeNull();
 	});
+	it('retains a failed local acknowledgement without misreporting a network outage', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.readyBuildOperations.mockResolvedValueOnce([buildOperation]);
+		storage.recordBuildOutcome.mockRejectedValueOnce(
+			new Error('Local acknowledgement unavailable'),
+		);
+		buildGateway.apply.mockReturnValueOnce(
+			of({
+				operationId: buildOperation.operationId,
+				outcome: 'applied',
+				collection: buildCollection,
+			}),
+		);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() =>
+			expect(store.buildSyncFailure()).toMatchObject({ kind: 'local' }),
+		);
+		expect(offline.markOffline).not.toHaveBeenCalled();
+		expect(connectivity.markRequestSucceeded).toHaveBeenCalled();
+	});
 });
