@@ -9,6 +9,13 @@ import {
 	withState,
 } from '@ngrx/signals';
 import { firstValueFrom } from 'rxjs';
+import type {
+	DriveSyncCollection,
+	DriveSyncCommand,
+	DriveSyncRemoteOutcome,
+	DriveSyncView,
+} from '../../car/drive-sync/drive-sync.models';
+import { DriveSyncGateway } from '../../car/drive-sync/drive-sync-gateway';
 import type { SetupSnapshot } from '../../car/setups/setup-snapshot';
 import type {
 	SetupSyncCollection,
@@ -123,8 +130,38 @@ export type SetupWorkspaceMutationOutcome =
 			error: SetupWorkspaceMutationFailure;
 	  }>;
 
+export type DriveWorkspaceMutationOutcome =
+	| Readonly<{ status: 'idle'; requestId: null }>
+	| Readonly<{
+			status: 'pending';
+			requestId: number;
+			command: DriveSyncCommand;
+	  }>
+	| Readonly<{
+			status: 'succeeded';
+			requestId: number;
+			command: DriveSyncCommand;
+			operationId: string;
+			collection: DriveSyncCollection;
+	  }>
+	| Readonly<{
+			status: 'failed';
+			requestId: number;
+			command: DriveSyncCommand;
+			error: CarWorkspaceLocalFailure;
+	  }>;
+
+const emptyDriveView = (): DriveSyncView => ({
+	canonicalCollections: [],
+	collections: [],
+	operations: [],
+});
+
 type CarWorkspaceState = Readonly<{
 	view: CarSyncView;
+	driveView: DriveSyncView;
+	driveWorkspaceMutationOutcome: DriveWorkspaceMutationOutcome;
+	driveWorkspaceSyncFailure: CarWorkspaceSyncFailure | null;
 	setupView: SetupSyncView;
 	viewOwnerKey: string;
 	viewSessionKey: string;
@@ -263,6 +300,9 @@ export const CarWorkspaceStore = signalStore(
 	withState<CarWorkspaceState>({
 		view: emptyView(),
 		setupView: emptySetupView(),
+		driveView: emptyDriveView(),
+		driveWorkspaceMutationOutcome: { status: 'idle', requestId: null },
+		driveWorkspaceSyncFailure: null,
 		viewOwnerKey: '',
 		viewSessionKey: '',
 		workspaceOpened: false,
@@ -278,6 +318,7 @@ export const CarWorkspaceStore = signalStore(
 			storage: inject(OfflineGarageStorage),
 			gateway: inject(CarSyncGateway),
 			setupGateway: inject(SetupSyncGateway),
+			driveGateway: inject(DriveSyncGateway),
 			offline,
 			connectivity: inject(OfflineConnectivity),
 			nextOperationId: inject(OFFLINE_OPERATION_ID),
@@ -311,6 +352,20 @@ export const CarWorkspaceStore = signalStore(
 			operations,
 			setupCollections: computed(() =>
 				opened() ? store.setupView().collections : [],
+			),
+			driveCollections: computed(() =>
+				opened() ? store.driveView().collections : [],
+			),
+			driveOperations: computed(() =>
+				opened() ? store.driveView().operations : [],
+			),
+			driveMutationOutcome: computed<DriveWorkspaceMutationOutcome>(() =>
+				identityMatches()
+					? store.driveWorkspaceMutationOutcome()
+					: { status: 'idle', requestId: null },
+			),
+			driveSyncFailure: computed(() =>
+				identityMatches() ? store.driveWorkspaceSyncFailure() : null,
 			),
 			setupOperations,
 			mutationOutcome: computed<CarWorkspaceMutationOutcome>(() =>
@@ -388,6 +443,7 @@ export const CarWorkspaceStore = signalStore(
 				viewOwnerKey: store.offline.ownerKey(),
 				viewSessionKey: store.offline.sessionKey(),
 				workspaceSyncFailure: carWorkspaceLocalFailure(error),
+				driveWorkspaceSyncFailure: carWorkspaceLocalFailure(error),
 			});
 		};
 		const publishSetupLocalSyncFailure = (
@@ -403,6 +459,46 @@ export const CarWorkspaceStore = signalStore(
 					'The local Setup history could not be updated.',
 				),
 			});
+		};
+
+		const publishDriveView = (
+			view: DriveSyncView,
+			generation: number,
+		): void => {
+			if (!isCurrentGeneration(generation)) return;
+			patchState(store, { driveView: view, driveWorkspaceSyncFailure: null });
+		};
+		const syncDriveOnce = async (generation: number): Promise<boolean> => {
+			const [operation] = await store.storage.readyDriveOperations();
+			if (!operation || !isCurrentGeneration(generation)) return false;
+			patchState(store, {
+				syncingOperationIds: [operation.operationId],
+				driveWorkspaceSyncFailure: null,
+			});
+			let outcome: DriveSyncRemoteOutcome;
+			try {
+				outcome = await firstValueFrom(store.driveGateway.apply(operation));
+			} catch (error) {
+				if (!isCurrentGeneration(generation)) return false;
+				const failure = carWorkspaceGatewayFailure(error);
+				if (failure.kind === 'unavailable') {
+					store.offline.markOffline();
+					store.connectivity.scheduleRetry();
+				} else {
+					store.offline.markOnline();
+					store.connectivity.markRequestSucceeded();
+				}
+				patchState(store, { driveWorkspaceSyncFailure: failure });
+				return false;
+			}
+			if (!isCurrentGeneration(generation)) return false;
+			store.offline.markOnline();
+			store.connectivity.markRequestSucceeded();
+			publishDriveView(
+				await store.storage.recordDriveOutcome(outcome),
+				generation,
+			);
+			return true;
 		};
 
 		const runSync = async (
@@ -422,7 +518,10 @@ export const CarWorkspaceStore = signalStore(
 					if (!operation) {
 						const [setupOperation] = await store.storage.readySetupOperations();
 						if (!isCurrentGeneration(generation)) return;
-						if (!setupOperation) break;
+						if (!setupOperation) {
+							if (await syncDriveOnce(generation)) continue;
+							break;
+						}
 						patchState(store, {
 							syncingOperationIds: [setupOperation.operationId],
 							setupWorkspaceSyncFailure: null,
@@ -503,11 +602,13 @@ export const CarWorkspaceStore = signalStore(
 			const generation = store.identity.generation;
 			store.opening.value = true;
 			try {
-				const [view, setupView] = await Promise.all([
+				const [view, setupView, driveView] = await Promise.all([
 					store.storage.carSyncView(),
 					store.storage.setupSyncView(),
+					store.storage.driveSyncView(),
 				]);
-				if (view && setupView && isCurrentGeneration(generation)) {
+				if (view && setupView && driveView && isCurrentGeneration(generation)) {
+					publishDriveView(driveView, generation);
 					publishView(view, generation);
 					publishSetupView(setupView, generation);
 					void runSync(generation);
@@ -671,6 +772,44 @@ export const CarWorkspaceStore = signalStore(
 			}
 		};
 
+		const commitDriveDurable = async (
+			command: DriveSyncCommand,
+			requestId: number,
+			generation: number,
+		): Promise<void> => {
+			try {
+				const committed = await store.storage.commitDrive(command, {
+					ownerKey: store.identity.ownerKey,
+					sessionKey: store.identity.sessionKey,
+				});
+				if (!isCurrentGeneration(generation)) return;
+				publishDriveView(committed.view, generation);
+				patchState(store, {
+					driveWorkspaceMutationOutcome: {
+						status: 'succeeded',
+						requestId,
+						command,
+						operationId: committed.operation.operationId,
+						collection: committed.collection,
+					},
+				});
+				void runSync(generation);
+			} catch (error) {
+				if (isCurrentGeneration(generation))
+					patchState(store, {
+						driveWorkspaceMutationOutcome: {
+							status: 'failed',
+							requestId,
+							command,
+							error: carWorkspaceLocalFailure(
+								error,
+								'The Drive session could not be saved locally.',
+							),
+						},
+					});
+			}
+		};
+
 		return {
 			open(): void {
 				void open();
@@ -757,6 +896,47 @@ export const CarWorkspaceStore = signalStore(
 						workspaceMutationOutcome: { status: 'idle', requestId: null },
 					});
 			},
+			commitDrive(command: DriveSyncCommand): void {
+				if (
+					!isCurrentGeneration(store.identity.generation) ||
+					!store.offline.hasSnapshot() ||
+					!untracked(store.mutationsAvailable) ||
+					untracked(store.driveMutationOutcome).status === 'pending'
+				)
+					return;
+				const requestId = ++store.requestSequence.value;
+				patchState(store, {
+					driveWorkspaceMutationOutcome: {
+						status: 'pending',
+						requestId,
+						command,
+					},
+				});
+				void commitDriveDurable(command, requestId, store.identity.generation);
+			},
+			clearDriveMutationState(): void {
+				if (untracked(store.driveMutationOutcome).status !== 'pending')
+					patchState(store, {
+						driveWorkspaceMutationOutcome: { status: 'idle', requestId: null },
+					});
+			},
+			observeServerDriveCollection(collection: DriveSyncCollection): void {
+				if (!store.opened()) return;
+				const generation = store.identity.generation;
+				void store.storage
+					.mergeDriveCollection(collection, {
+						ownerKey: store.identity.ownerKey,
+						sessionKey: store.identity.sessionKey,
+					})
+					.then((view) => publishDriveView(view, generation))
+					.catch((error) => {
+						if (isCurrentGeneration(generation))
+							patchState(store, {
+								driveWorkspaceSyncFailure: carWorkspaceLocalFailure(error),
+							});
+					});
+			},
+
 			commitSetup(command: SetupSyncCommand): void {
 				if (
 					!isCurrentGeneration(store.identity.generation) ||
@@ -828,6 +1008,9 @@ export const CarWorkspaceStore = signalStore(
 				patchState(store, {
 					view: emptyView(),
 					setupView: emptySetupView(),
+					driveView: emptyDriveView(),
+					driveWorkspaceMutationOutcome: { status: 'idle', requestId: null },
+					driveWorkspaceSyncFailure: null,
 					viewOwnerKey: ownerKey,
 					viewSessionKey: sessionKey,
 					workspaceOpened: false,

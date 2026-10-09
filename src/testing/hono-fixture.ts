@@ -74,6 +74,11 @@ export type RecordedD1Query = {
 export class MockD1Controller {
 	readonly queries: RecordedD1Query[] = [];
 	readonly batches: string[][] = [];
+	readonly batchQueries: RecordedD1Query[][] = [];
+	private readonly valuesByStatement = new WeakMap<
+		D1PreparedStatement,
+		unknown[]
+	>();
 	readonly database: D1Database;
 	private steps: D1Step[] = [];
 	private readonly queryByStatement = new WeakMap<
@@ -111,6 +116,7 @@ export class MockD1Controller {
 		const statement: D1PreparedStatement = {
 			bind: (...nextValues) => {
 				values = nextValues;
+				this.valuesByStatement.set(statement, values);
 				return statement;
 			},
 			first: async <T = Record<string, unknown>>() => {
@@ -155,6 +161,13 @@ export class MockD1Controller {
 				statements.map(
 					(statement) => this.queryByStatement.get(statement) ?? '<unknown>',
 				),
+			);
+			this.batchQueries.push(
+				statements.map((statement) => ({
+					query: this.queryByStatement.get(statement) ?? '<unknown>',
+					values: this.valuesByStatement.get(statement) ?? [],
+					operation: 'batch',
+				})),
 			);
 			this.queries.push({ query: '<batch>', values: [], operation: 'batch' });
 			const step = this.take('batch');

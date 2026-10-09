@@ -51,6 +51,10 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.cars()).toEqual(snapshot.cars);
 		expect(store.hasSnapshot()).toBe(true);
 		expect(store.ownerEmail()).toBe('racer@example.test');
+		store.openOffline({
+			snapshot: { ...snapshot, sessionKey: 'restored-session' },
+		});
+		expect(store.sessionKey()).toBe('restored-session');
 
 		let finishPreparation!: (result: OfflinePreparationResult) => void;
 		access.prepare.mockImplementationOnce(

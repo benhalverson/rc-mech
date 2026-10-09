@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { driveSyncCommandInput } from './drive-sync-contract';
 import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 
 const carProperties = {
@@ -260,7 +262,7 @@ export const openApi = {
 			],
 			put: {
 				summary:
-					'Idempotently apply one owner-scoped, version-aware Car or Setup operation',
+					'Idempotently apply one owner-scoped, version-aware Car, Setup, or Drive-session operation',
 				requestBody: {
 					required: true,
 					content: {
@@ -272,6 +274,7 @@ export const openApi = {
 									contractVersion: { type: 'integer', enum: [1] },
 									command: {
 										oneOf: [
+											z.toJSONSchema(driveSyncCommandInput, { io: 'input' }),
 											{
 												type: 'object',
 												required: ['type', 'carId', 'car'],
@@ -408,7 +411,10 @@ export const openApi = {
 					},
 				},
 				responses: {
-					200: { description: 'Applied or exact terminal replay' },
+					200: {
+						description:
+							'Applied or exact terminal replay. Drive outcomes include a collection with carId, version, and complete sessions.',
+					},
 					400: { description: 'Malformed operation envelope or identifier' },
 					401: { description: 'Authentication required' },
 					404: { description: 'Owned Car or Setup is unavailable' },
@@ -667,6 +673,19 @@ export const openApi = {
 					400: { description: 'Unsupported, empty, or oversized photo' },
 					404: { description: 'Photo not found' },
 					409: { description: 'Car is archived' },
+				},
+			},
+		},
+		'/api/v1/drives': {
+			get: {
+				summary:
+					'Prepare the authenticated owner’s complete Drive-session history for offline use',
+				responses: {
+					200: {
+						description:
+							'Drive-session collections with carId, version, and complete Drive-session metadata; empty histories are included',
+					},
+					401: { description: 'Authentication required' },
 				},
 			},
 		},

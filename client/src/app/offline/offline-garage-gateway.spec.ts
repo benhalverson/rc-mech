@@ -31,6 +31,9 @@ describe('OfflineGarageGateway', () => {
 
 	it('loads and parses the complete authenticated Car snapshot', async () => {
 		const result = firstValueFrom(gateway.load());
+		const builds = http.expectOne('/api/v1/drives');
+		expect(builds.request.withCredentials).toBe(true);
+		builds.flush({ collections: [] });
 		const cars = http.expectOne(
 			(candidate) =>
 				candidate.url === '/api/v1/cars' &&
@@ -58,6 +61,7 @@ describe('OfflineGarageGateway', () => {
 			],
 		});
 		await expect(result).resolves.toEqual({
+			driveCollections: [],
 			cars: [{ id: 'car-1', name: 'Track buggy' }],
 			setupCollections: [
 				{
@@ -77,16 +81,23 @@ describe('OfflineGarageGateway', () => {
 		});
 
 		const malformed = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/drives').flush({ collections: [] });
 		http.expectOne('/api/v1/cars?archived=all').flush({ cars: [{ id: 4 }] });
 		http.expectOne('/api/v1/setups').flush({ setupCollections: [] });
 		await expect(malformed).rejects.toThrow();
 
 		const empty = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/drives').flush({ collections: [] });
 		http.expectOne('/api/v1/cars?archived=all').flush({ cars: [] });
 		http.expectOne('/api/v1/setups').flush({ setupCollections: [] });
-		await expect(empty).resolves.toEqual({ cars: [], setupCollections: [] });
+		await expect(empty).resolves.toEqual({
+			cars: [],
+			setupCollections: [],
+			driveCollections: [],
+		});
 
 		const malformedSetup = firstValueFrom(gateway.load());
+		http.expectOne('/api/v1/drives').flush({ collections: [] });
 		http
 			.expectOne('/api/v1/cars?archived=all')
 			.flush({ cars: [{ id: 'car-1', name: 'Track buggy' }] });
