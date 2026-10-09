@@ -2395,6 +2395,21 @@ describe('OfflineGarageStorage', () => {
 	});
 	it('retains Consumable identities and dependencies through restart, archive, restore, and duplicate acknowledgement', async () => {
 		await prepareMaintenance();
+		await storage.commitDrive(
+			{
+				action: 'save',
+				carId: 'car',
+				sessionId: null,
+				input: {
+					startedAt: '2026-08-11T12:00:00.000Z',
+					durationMinutes: null,
+					conditions: 'Unrelated pending Drive',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+
 		const committed = await storage.commitMaintenance(
 			{
 				kind: 'save',

@@ -87,9 +87,8 @@ export const buildMaintenanceOperation = (
 						.filter(
 							(value) =>
 								value.carId === carId &&
-								(value.command.entity === 'service' ||
-									(value.command.entity === 'consumable' &&
-										value.command.entryId === command.entryId)),
+								value.command.entity === 'consumable' &&
+								value.command.entryId === command.entryId,
 						)
 						.map((value) => value.operationId),
 				]),
