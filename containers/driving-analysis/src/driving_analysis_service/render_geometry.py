@@ -3,7 +3,7 @@
 import math
 from dataclasses import dataclass
 
-from driving_analysis_service.contracts import DirectedGate, NormalizedPoint
+from driving_analysis_service.geometry_contracts import DirectedGate, NormalizedPoint
 from driving_analysis_service.media import ProbeMetadata
 from driving_analysis_service.rendering_contracts import RenderSpecification
 from driving_analysis_service.tracking_contracts import TRACK_VIEW_HEIGHT, TRACK_VIEW_Y

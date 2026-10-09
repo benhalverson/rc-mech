@@ -1,4 +1,4 @@
-from driving_analysis_service.contracts import TrackingGap
+from driving_analysis_service.observation_contracts import TrackingGap
 from driving_analysis_service.ordered_intervals import OrderedGapCursor
 
 

@@ -4,7 +4,7 @@ Queries must have nondecreasing starts. Closed endpoints are deliberate: touchin
 an ambiguity boundary cannot supply a trusted observation or gate crossing.
 """
 
-from driving_analysis_service.contracts import TrackingGap
+from driving_analysis_service.observation_contracts import TrackingGap
 
 
 class OrderedGapCursor:

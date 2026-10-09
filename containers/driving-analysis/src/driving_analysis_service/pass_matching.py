@@ -10,7 +10,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from math import inf
 
-from driving_analysis_service.contracts import GroundTruthPass
+from driving_analysis_service.benchmark_contracts import GroundTruthPass
 
 
 @dataclass(frozen=True)
