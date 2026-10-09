@@ -8,12 +8,10 @@ from pydantic import TypeAdapter, ValidationError
 
 from driving_analysis_service import subject_benchmark, subject_benchmark_cli
 from driving_analysis_service.benchmark import (
-    CandidatePass,
     _candidate_passes,
     _crossing,
     _gap_counts,
     _intersection_over_union,
-    _matching_pass,
     _provenance_matches,
     evaluate_benchmark,
 )
@@ -41,6 +39,7 @@ from driving_analysis_service.contracts import (
     SubjectSeed,
     TrackingGap,
 )
+from driving_analysis_service.pass_matching import CandidatePass, OrderedPassMatcher
 from driving_analysis_service.subject_benchmark_cli import _read, _write, main
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "subject-benchmark"
@@ -648,13 +647,14 @@ def test_pass_matching_uses_timing_window_and_never_reuses_a_crossing() -> None:
     expected = GroundTruthPass(
         passId="second", cornerId="corner", entryTimestampMs=300, exitTimestampMs=400
     )
-    match = _matching_pass(expected, candidates, set(), 0)
-    assert match == (1, candidates[1])
-    assert _matching_pass(expected, candidates, {1}, 0) is None
+    matcher = OrderedPassMatcher(candidates)
+    match = matcher.match(expected, 0)
+    assert match == candidates[1]
+    assert matcher.match(expected, 0) is None
     missed = GroundTruthPass(
         passId="missed", cornerId="corner", entryTimestampMs=10, exitTimestampMs=20
     )
-    assert _matching_pass(missed, candidates, set(), 5) is None
+    assert matcher.match(missed, 5) is None
 
 
 def test_gap_metrics_distinguish_timely_missed_and_premature() -> None:

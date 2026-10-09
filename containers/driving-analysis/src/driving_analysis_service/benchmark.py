@@ -35,7 +35,6 @@ from driving_analysis_service.contracts import (
     GateTimingMetrics,
     GroundTruth,
     GroundTruthCase,
-    GroundTruthPass,
     IdentityMetrics,
     InferenceProvenance,
     NormalizedBox,
@@ -47,13 +46,8 @@ from driving_analysis_service.contracts import (
     SubjectProvenance,
     TrackingGap,
 )
+from driving_analysis_service.pass_matching import CandidatePass, OrderedPassMatcher
 from driving_analysis_service.tracking_artifacts import canonical_json
-
-
-@dataclass(frozen=True)
-class CandidatePass:
-    entry_ms: float
-    exit_ms: float
 
 
 @dataclass(frozen=True)
@@ -262,32 +256,6 @@ def _unflagged_switches(
     return switches
 
 
-def _matching_pass(
-    expected: GroundTruthPass,
-    candidates: tuple[CandidatePass, ...],
-    used: set[int],
-    tolerance_ms: int,
-    minimum_index: int = 0,
-) -> tuple[int, CandidatePass] | None:
-    possible = (
-        (index, candidate)
-        for index, candidate in enumerate(candidates)
-        if index not in used
-        and index >= minimum_index
-        and abs(candidate.entry_ms - expected.entry_timestamp_ms) <= tolerance_ms
-        and abs(candidate.exit_ms - expected.exit_timestamp_ms) <= tolerance_ms
-    )
-    return min(
-        possible,
-        key=lambda item: (
-            abs(item[1].entry_ms - expected.entry_timestamp_ms)
-            + abs(item[1].exit_ms - expected.exit_timestamp_ms),
-            item[0],
-        ),
-        default=None,
-    )
-
-
 def _gap_counts(
     truth_gaps: tuple[TrackingGap, ...],
     candidate_gaps: tuple[TrackingGap, ...],
@@ -325,34 +293,26 @@ def _case_result(
     continuation: TrackingContinuation,
 ) -> CaseResult:
     passes_by_corner = {
-        corner_id: _candidate_passes(
-            candidate,
-            gates,
-            provenance.identity_confidence_threshold,
-            provenance.maximum_observation_interval_ms,
-            continuation,
+        corner_id: OrderedPassMatcher(
+            _candidate_passes(
+                candidate,
+                gates,
+                provenance.identity_confidence_threshold,
+                provenance.maximum_observation_interval_ms,
+                continuation,
+            )
         )
         for corner_id, gates in truth.gates.items()
     }
-    used_by_corner: dict[str, set[int]] = {
-        corner_id: set() for corner_id in truth.gates
-    }
-    next_candidate_by_corner = dict.fromkeys(truth.gates, 0)
     timing_errors: list[float] = []
     eligible = 0
     for expected in truth.passes:
-        matched = _matching_pass(
+        candidate_pass = passes_by_corner[expected.corner_id].match(
             expected,
-            passes_by_corner[expected.corner_id],
-            used_by_corner[expected.corner_id],
             min(tolerance_ms, provenance.maximum_observation_interval_ms),
-            next_candidate_by_corner[expected.corner_id],
         )
-        if matched is None:
+        if candidate_pass is None:
             continue
-        index, candidate_pass = matched
-        used_by_corner[expected.corner_id].add(index)
-        next_candidate_by_corner[expected.corner_id] = index + 1
         eligible += 1
         timing_errors.extend(
             (

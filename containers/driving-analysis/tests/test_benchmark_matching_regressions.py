@@ -1,7 +1,5 @@
 from driving_analysis_service.benchmark import (
-    CandidatePass,
     _crossings,
-    _matching_pass,
     _unflagged_switches,
 )
 from driving_analysis_service.contracts import (
@@ -19,6 +17,7 @@ from driving_analysis_service.contracts import (
     SubjectObservation,
     SubjectProvenance,
 )
+from driving_analysis_service.pass_matching import CandidatePass, OrderedPassMatcher
 
 PROVENANCE = BenchmarkProvenance(
     dockerImageDigest="1" * 64,
@@ -151,7 +150,7 @@ def test_pass_matching_is_bounded_and_monotonic() -> None:
     )
     candidates = (CandidatePass(entry_ms=600, exit_ms=700),)
 
-    assert _matching_pass(expected, candidates, set(), 250) is None
+    assert OrderedPassMatcher(candidates).match(expected, 250) is None
 
     ordered = (
         CandidatePass(entry_ms=100, exit_ms=200),
@@ -160,8 +159,6 @@ def test_pass_matching_is_bounded_and_monotonic() -> None:
     later_expected = expected.model_copy(
         update={"entry_timestamp_ms": 300, "exit_timestamp_ms": 400}
     )
-    assert _matching_pass(later_expected, ordered, set(), 250, minimum_index=1) == (
-        1,
-        ordered[1],
-    )
-    assert _matching_pass(later_expected, ordered, set(), 250, minimum_index=2) is None
+    matcher = OrderedPassMatcher(ordered)
+    assert matcher.match(later_expected, 250) == ordered[1]
+    assert matcher.match(later_expected, 250) is None
