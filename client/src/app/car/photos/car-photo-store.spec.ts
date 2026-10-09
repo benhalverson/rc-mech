@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { ApplicationRef, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { type Observable, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -159,7 +159,6 @@ describe('CarPhotoStore', () => {
 		},
 	};
 	const media = {
-		clear: vi.fn(),
 		open: vi.fn().mockResolvedValue('blob:photo'),
 	};
 
@@ -167,6 +166,11 @@ describe('CarPhotoStore', () => {
 
 	beforeEach(() => {
 		workspace.available.set(false);
+		workspace.offline.ownerKey.set('owner');
+		workspace.offline.sessionKey.set('session');
+		media.open.mockReset().mockResolvedValue('blob:photo');
+		workspace.mutate.mockClear();
+		workspace.refresh.mockClear();
 		workspace.photos.set([]);
 		workspace.captures.set([]);
 		workspace.outcome.set({ status: 'idle', requestId: null });
@@ -397,8 +401,7 @@ describe('CarPhotoStore', () => {
 		workspace.photos.set([photo(), photo({ id: 'other', carId: 'other' })]);
 		store.selectCar('car-1');
 		TestBed.tick();
-		await Promise.resolve();
-		await Promise.resolve();
+		await TestBed.inject(ApplicationRef).whenStable();
 		expect(store.photos()).toEqual([photo()]);
 		expect(store.loading()).toBe(false);
 		expect(store.failure()).toBeNull();
@@ -439,9 +442,9 @@ describe('CarPhotoStore', () => {
 		store.mutate({ kind: 'delete', photo: photo() });
 		expect(gateway.delete).not.toHaveBeenCalled();
 		media.open.mockRejectedValueOnce(new Error('uncached'));
-		store.loadMedia();
-		await Promise.resolve();
-		await Promise.resolve();
+		store.mediaResource.reload();
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
 		expect(store.media()['photo-1']).toBeNull();
 		let finish: (value: string | null) => void = () => {};
 		media.open.mockReturnValueOnce(
@@ -449,14 +452,61 @@ describe('CarPhotoStore', () => {
 				finish = resolve;
 			}),
 		);
-		store.loadMedia();
+		store.mediaResource.reload();
+		TestBed.tick();
 		store.selectCar('other');
 		TestBed.tick();
 		finish('blob:late');
-		await Promise.resolve();
-		await Promise.resolve();
+		await TestBed.inject(ApplicationRef).whenStable();
 		expect(store.media()['photo-1']).toBeUndefined();
 	});
+	it('cancels stale gallery reads on owner changes and destruction', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		store.selectCar('car-1');
+		let finish!: (value: string) => void;
+		media.open.mockReturnValueOnce(
+			new Promise<string>((resolve) => {
+				finish = resolve;
+			}),
+		);
+		TestBed.tick();
+		const oldSignal = media.open.mock.calls[0][3] as AbortSignal;
+		workspace.offline.ownerKey.set('new-owner');
+		expect(store.media()).toEqual({});
+		TestBed.tick();
+		expect(oldSignal.aborted).toBe(true);
+		finish('blob:stale-owner');
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBe('blob:photo');
+		const activeSignal = media.open.mock.lastCall?.[3] as AbortSignal;
+		TestBed.resetTestingModule();
+		expect(activeSignal.aborted).toBe(true);
+		expect(store.media()).toEqual({});
+	});
+	it('reloads media after reconnect and clears it when preparation is lost', async () => {
+		workspace.available.set(true);
+		workspace.photos.set([photo()]);
+		workspace.offline.networkUnavailable.set(true);
+		media.open.mockResolvedValueOnce(null);
+		store.selectCar('car-1');
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBeNull();
+		expect(media.open.mock.lastCall?.[2]).toBe(true);
+		workspace.offline.networkUnavailable.set(false);
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(store.media()['photo-1']).toBe('blob:photo');
+		const load = media.open.mock.lastCall?.[3] as AbortSignal;
+		workspace.available.set(false);
+		expect(store.media()).toEqual({});
+		TestBed.tick();
+		await TestBed.inject(ApplicationRef).whenStable();
+		expect(load.aborted).toBe(true);
+		expect(store.media()).toEqual({});
+	});
+
 	it('refreshes the shared metadata after online replacement, deletion, and ordering', () => {
 		workspace.available.set(true);
 		workspace.photos.set([photo()]);

@@ -1,9 +1,8 @@
-import { computed, effect, inject, untracked } from '@angular/core';
+import { computed, inject, resource } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
-	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -105,19 +104,16 @@ const mutationError = (
 /**
  * Projects the selected Car gallery and translates gallery intents into workspace
  * commands, retaining the legacy HTTP path when local preparation is unavailable.
- * Owns route outcomes and rejects stale completions; PhotoMediaAccess owns the
- * private display URLs cleared on selection changes and route destruction.
+ * Owns route outcomes; resource() manages private-original reads as gallery inputs
+ * change. Its cancellation signal releases PhotoMediaAccess URLs and pending HTTP
+ * reads on replacement or route destruction. Durable mutations stay explicit.
  */
 export const CarPhotoStore = signalStore(
 	withState<{
 		carId: string;
-		media: Readonly<Record<string, string | null>>;
-		mediaGeneration: number;
 		localPhotos: CarPhoto[] | null;
 		outcome: PhotoMutationOutcome;
 	}>({
-		media: {},
-		mediaGeneration: 0,
 		carId: '',
 		localPhotos: null,
 		outcome: idleOutcome(),
@@ -182,6 +178,31 @@ export const CarPhotoStore = signalStore(
 				: '';
 		}),
 	})),
+	withProps((store) => ({
+		mediaResource: resource({
+			params: () => ({
+				photos: store.workspace.available() ? store.photos() : [],
+				fence: {
+					ownerKey: store.workspace.offline.ownerKey(),
+					sessionKey: store.workspace.offline.sessionKey(),
+				},
+				offline: store.offline(),
+			}),
+			defaultValue: {} as Readonly<Record<string, string | null>>,
+			loader: async ({ params, abortSignal }) =>
+				Object.fromEntries(
+					await Promise.all(
+						params.photos.map(async (photo) => [
+							photo.id,
+							await store.mediaAccess
+								.open(photo.id, params.fence, params.offline, abortSignal)
+								.catch(() => null),
+						]),
+					),
+				),
+		}),
+	})),
+	withComputed((store) => ({ media: store.mediaResource.value })),
 	withMethods((store) => {
 		const mutate = rxMethod<PhotoMutationCommand>((commands$) =>
 			commands$.pipe(
@@ -261,36 +282,7 @@ export const CarPhotoStore = signalStore(
 			),
 		);
 
-		const loadMedia = async (): Promise<void> => {
-			store.mediaAccess.clear();
-			const generation = store.mediaGeneration() + 1;
-			patchState(store, { media: {}, mediaGeneration: generation });
-			if (!store.workspace.available()) return;
-			const fence = {
-				ownerKey: store.workspace.offline.ownerKey(),
-				sessionKey: store.workspace.offline.sessionKey(),
-			};
-			await Promise.all(
-				store.photos().map(async (photo) => {
-					let url: string | null = null;
-					try {
-						url = await store.mediaAccess.open(
-							photo.id,
-							fence,
-							store.offline(),
-						);
-					} catch {
-						/* An unavailable original does not remove its metadata. */
-					}
-					if (generation === store.mediaGeneration())
-						patchState(store, { media: { ...store.media(), [photo.id]: url } });
-				}),
-			);
-		};
 		return {
-			loadMedia(): void {
-				void loadMedia();
-			},
 			selectCar(carId: string): void {
 				if (store.carId() === carId) return;
 				patchState(store, { carId, localPhotos: null, outcome: idleOutcome() });
@@ -299,6 +291,7 @@ export const CarPhotoStore = signalStore(
 			retry(): void {
 				patchState(store, { outcome: idleOutcome() });
 				store.gateway.refresh();
+				store.mediaResource.reload();
 				if (store.workspace.available()) store.workspace.refresh();
 			},
 			clearOutcome(): void {
@@ -318,19 +311,4 @@ export const CarPhotoStore = signalStore(
 			},
 		};
 	}),
-	withHooks((store) => ({
-		onInit() {
-			effect(() => {
-				store.photos();
-				store.workspace.offline.ownerKey();
-				store.workspace.offline.sessionKey();
-				store.offline();
-				untracked(() => store.loadMedia());
-			});
-		},
-		onDestroy() {
-			store.mediaAccess.clear();
-			patchState(store, { mediaGeneration: store.mediaGeneration() + 1 });
-		},
-	})),
 );

@@ -1,5 +1,5 @@
 import { InjectionToken, inject, Service } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, fromEvent, takeUntil } from 'rxjs';
 import {
 	OfflineGarageStorage,
 	type OfflineWorkspaceFence,
@@ -12,35 +12,41 @@ export const PHOTO_OBJECT_URL = new InjectionToken<
 /**
  * Turns photo bytes into display URLs for CarPhotoStore. Reads the owner-fenced
  * local original first and fetches/retains it through PhotoSyncGateway when online.
- * Keeps browser URL handles outside serializable store state: clear() revokes them
- * and invalidates in-flight opens when the gallery context changes or is destroyed.
+ * Each display URL belongs to the calling resource load: abort cancels HTTP and
+ * revokes that URL. Cache retention is idempotent and checks the owner/session
+ * transactionally; cancellation never queues a gallery mutation.
  */
 @Service()
 export class PhotoMediaAccess {
 	private readonly storage = inject(OfflineGarageStorage);
 	private readonly gateway = inject(PhotoSyncGateway);
 	private readonly urls = inject(PHOTO_OBJECT_URL);
-	private readonly handles = new Set<string>();
-	private generation = 0;
 	async open(
 		photoId: string,
 		fence: OfflineWorkspaceFence,
 		offline: boolean,
+		abortSignal: AbortSignal,
 	): Promise<string | null> {
-		const generation = this.generation;
 		let blob = await this.storage.retainedPhoto(photoId, fence);
+		if (abortSignal.aborted) return null;
 		if (!blob && !offline) {
-			blob = await firstValueFrom(this.gateway.original(photoId));
+			const original = await firstValueFrom(
+				this.gateway
+					.original(photoId)
+					.pipe(takeUntil(fromEvent(abortSignal, 'abort'))),
+				{ defaultValue: null },
+			);
+			if (!original || abortSignal.aborted) return null;
+			blob = original;
 			await this.storage.retainPhoto(photoId, blob, fence);
 		}
-		if (!blob || generation !== this.generation) return null;
+		if (!blob || abortSignal.aborted) return null;
 		const url = this.urls.createObjectURL(blob);
-		this.handles.add(url);
+		abortSignal.addEventListener(
+			'abort',
+			() => this.urls.revokeObjectURL(url),
+			{ once: true },
+		);
 		return url;
-	}
-	clear(): void {
-		this.generation++;
-		for (const url of this.handles) this.urls.revokeObjectURL(url);
-		this.handles.clear();
 	}
 }

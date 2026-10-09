@@ -1,4 +1,4 @@
-import { computed, effect, inject, untracked } from '@angular/core';
+import { computed, effect, inject, resource, untracked } from '@angular/core';
 import {
 	patchState,
 	signalStore,
@@ -15,7 +15,6 @@ import {
 	type OfflineWorkspaceFence,
 } from '../../offline/offline-garage-storage';
 import { OfflineWorkspaceStore } from '../../offline/offline-workspace-store';
-import type { PhotoView } from './photo-sync.models';
 import { PhotoSyncGateway } from './photo-sync-gateway';
 
 export type PhotoCaptureMutationOutcome =
@@ -26,22 +25,20 @@ export type PhotoCaptureMutationOutcome =
  * Application-wide coordinator for durable photo captures. Publishes the
  * owner/session-fenced working gallery and replays dependency-ready operations
  * through PhotoSyncGateway across route changes. Storage commits precede local
- * success, and rejected captures keep their bytes for recovery.
+ * success, and rejected captures keep their bytes for recovery. A resource owns
+ * local hydration and read errors; explicit mutations update it only after fenced
+ * transactions commit. Resource loaders never drain the command queue.
  */
 export const PhotoWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<{
-		view: PhotoView | null;
-		fence: OfflineWorkspaceFence | null;
 		outcome: PhotoCaptureMutationOutcome;
 		syncing: boolean;
-		failure: string;
+		syncFailure: string;
 	}>({
-		view: null,
-		fence: null,
 		outcome: { status: 'idle', requestId: null },
 		syncing: false,
-		failure: '',
+		syncFailure: '',
 	}),
 	withProps(() => ({
 		storage: inject(OfflineGarageStorage),
@@ -50,19 +47,30 @@ export const PhotoWorkspaceStore = signalStore(
 		connectivity: inject(OfflineConnectivity),
 		running: { value: false },
 	})),
+	withProps((store) => ({
+		view: resource({
+			params: () =>
+				store.offline.hasSnapshot()
+					? {
+							ownerKey: store.offline.ownerKey(),
+							sessionKey: store.offline.sessionKey(),
+						}
+					: undefined,
+			loader: ({ params }) => store.storage.photoView(params),
+		}),
+	})),
 	withComputed((store) => ({
 		available: computed(() => store.offline.hasSnapshot()),
 		photos: computed(() =>
-			store.fence()?.ownerKey === store.offline.ownerKey() &&
-			store.fence()?.sessionKey === store.offline.sessionKey()
-				? (store.view()?.photos ?? [])
-				: [],
+			store.view.hasValue() ? (store.view.value()?.photos ?? []) : [],
 		),
 		captures: computed(() =>
-			store.fence()?.ownerKey === store.offline.ownerKey() &&
-			store.fence()?.sessionKey === store.offline.sessionKey()
-				? (store.view()?.captures ?? [])
-				: [],
+			store.view.hasValue() ? (store.view.value()?.captures ?? []) : [],
+		),
+		failure: computed(() =>
+			store.view.error()
+				? 'Offline Photos could not be loaded.'
+				: store.syncFailure(),
 		),
 	})),
 	withMethods((store) => {
@@ -78,12 +86,9 @@ export const PhotoWorkspaceStore = signalStore(
 			if (store.running.value || !store.offline.hasSnapshot()) return;
 			const identity = fence();
 			store.running.value = true;
-			patchState(store, { syncing: true, failure: '' });
+			patchState(store, { syncing: true, syncFailure: '' });
 			try {
 				for (;;) {
-					const view = await store.storage.photoView(identity);
-					if (!matches(identity)) return;
-					patchState(store, { view, fence: identity });
 					const operation = (
 						await store.storage.readyPhotoCaptures(identity)
 					)[0];
@@ -103,7 +108,7 @@ export const PhotoWorkspaceStore = signalStore(
 						identity,
 					);
 					if (!matches(identity)) return;
-					patchState(store, { view: next });
+					store.view.set(next);
 				}
 			} catch (error: unknown) {
 				if (
@@ -114,7 +119,7 @@ export const PhotoWorkspaceStore = signalStore(
 				store.connectivity.scheduleRetry();
 				if (matches(identity))
 					patchState(store, {
-						failure:
+						syncFailure:
 							'Photos remain saved here. Synchronization will retry when the connection returns.',
 					});
 			} finally {
@@ -122,20 +127,6 @@ export const PhotoWorkspaceStore = signalStore(
 				if (matches(identity)) patchState(store, { syncing: false });
 				else if (store.offline.hasSnapshot())
 					store.connectivity.scheduleRetry();
-			}
-		};
-		const open = async (): Promise<void> => {
-			const identity = fence();
-			try {
-				const view = await store.storage.photoView(identity);
-				if (!matches(identity)) return;
-				patchState(store, { view, fence: identity });
-				await sync();
-			} catch {
-				if (matches(identity))
-					patchState(store, {
-						failure: 'Offline Photos could not be loaded.',
-					});
 			}
 		};
 		const mutate = async (
@@ -151,9 +142,8 @@ export const PhotoWorkspaceStore = signalStore(
 					identity,
 				);
 				if (!matches(identity)) return;
+				store.view.set(view);
 				patchState(store, {
-					view,
-					fence: identity,
 					outcome: { status: 'succeeded', requestId },
 				});
 				await sync();
@@ -179,11 +169,11 @@ export const PhotoWorkspaceStore = signalStore(
 					replacedPhotoId,
 					identity,
 				);
-				if (matches(identity)) patchState(store, { view, fence: identity });
+				if (matches(identity)) store.view.set(view);
 			} catch {
 				if (matches(identity))
 					patchState(store, {
-						failure:
+						syncFailure:
 							'Photo metadata could not be refreshed. Reopen the gallery when connected.',
 					});
 			}
@@ -194,7 +184,8 @@ export const PhotoWorkspaceStore = signalStore(
 				void refresh(replacedPhotoId);
 			},
 			open(): void {
-				void open();
+				store.view.reload();
+				void sync();
 			},
 			synchronize(): void {
 				void sync();
@@ -217,13 +208,11 @@ export const PhotoWorkspaceStore = signalStore(
 				const available = store.offline.hasSnapshot();
 				untracked(() => {
 					patchState(store, {
-						view: null,
-						fence: null,
 						outcome: { status: 'idle', requestId: null },
 						syncing: false,
-						failure: '',
+						syncFailure: '',
 					});
-					if (available) store.open();
+					if (available) store.synchronize();
 				});
 			});
 			effect(() => {
