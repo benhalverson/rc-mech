@@ -1,4 +1,10 @@
-"""Deterministic, provider-neutral Subject-observation benchmark mechanics."""
+"""Provider-neutral evaluation of saved Subject observations against annotations.
+
+Builds trusted gate crossings, candidate passes, identity/gap metrics, and
+digest-bound reports for the CLI. It consumes validated stored evidence and
+does not run inference or fetch media; cursor/matcher helpers own ordered
+search state while this module owns the scoring policy.
+"""
 
 # These messages are intentionally descriptive internal validation context; the
 # CLI replaces them with the contract's redacted public error.

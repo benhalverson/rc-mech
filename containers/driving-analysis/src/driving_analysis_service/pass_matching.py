@@ -15,11 +15,23 @@ from driving_analysis_service.contracts import GroundTruthPass
 
 @dataclass(frozen=True)
 class CandidatePass:
+    """Immutable entry/exit pair produced from trusted gate crossings.
+
+    The matcher compares these intervals with annotated passes without carrying
+    provider state or the full observation stream.
+    """
+
     entry_ms: float
     exit_ms: float
 
 
 class _RangeMinimum:
+    """Static range-minimum index for one linear timing-error region.
+
+    OrderedPassMatcher uses four instances to avoid scanning broad tolerance
+    windows. Tuple ordering preserves the earliest candidate on equal error.
+    """
+
     def __init__(self, values: tuple[float, ...]) -> None:
         self.size = len(values)
         self.tree = [(inf, -1)] * self.size + list(
@@ -45,6 +57,13 @@ class _RangeMinimum:
 
 
 class OrderedPassMatcher:
+    """Monotonic benchmark matcher that consumes each candidate at most once.
+
+    Requires increasing entry and exit times. Bisect bounds eligible candidates;
+    range-minimum indexes choose the least timing error without a tolerance-sized
+    scan. Matches advance the suffix cursor, preserving deterministic tie order.
+    """
+
     def __init__(self, candidates: tuple[CandidatePass, ...]) -> None:
         self.candidates = candidates
         self.entries = tuple(item.entry_ms for item in candidates)
