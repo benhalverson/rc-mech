@@ -1659,4 +1659,120 @@ describe('OfflineGarageStorage', () => {
 		await storage.activate('user-b', 'session-b');
 		expect(await storage.driveSyncView()).toBeNull();
 	});
+	it('retains settings through restart, applies acknowledgements once, and keeps rejected intent', async () => {
+		expect(await storage.isSessionRevoked('session-a')).toBe(false);
+		expect(await storage.settingsSyncView()).toBeNull();
+		const command = {
+			type: 'timezone' as const,
+			base: 'UTC',
+			timezone: 'Europe/London',
+		};
+		await expect(storage.commitSettings(command, userAFence)).rejects.toThrow(
+			'unavailable',
+		);
+		expect(
+			await storage.recordSettingsOutcome(
+				{ operationId: 'missing', outcome: 'applied', timezone: 'UTC' },
+				userAFence,
+			),
+		).toBeNull();
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [],
+				settings: {
+					timezone: 'UTC',
+					invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+				},
+			},
+			'session-a',
+		);
+		const committed = await storage.commitSettings(command, userAFence);
+		const operationId = committed.operations[0]?.operationId as string;
+		expect(committed.current.timezone).toBe('Europe/London');
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect((await storage.settingsSyncView())?.operations).toEqual(
+			committed.operations,
+		);
+		expect((await storage.restoreCurrent())?.sessionKey).toBe('session-a');
+		const acknowledged = await storage.recordSettingsOutcome(
+			{ operationId, outcome: 'applied', timezone: 'Europe/London' },
+			userAFence,
+		);
+		expect(acknowledged?.operations).toEqual([]);
+		expect(acknowledged?.current.timezone).toBe('Europe/London');
+		expect(
+			await storage.recordSettingsOutcome(
+				{ operationId, outcome: 'applied', timezone: 'UTC' },
+				userAFence,
+			),
+		).toEqual(acknowledged);
+		const second = await storage.commitSettings(
+			{ ...command, base: 'Europe/London', timezone: 'Asia/Tokyo' },
+			userAFence,
+		);
+		const secondId = second.operations[0]?.operationId as string;
+		const conflicted = await storage.recordSettingsOutcome(
+			{
+				operationId: secondId,
+				outcome: 'conflict',
+				error: 'Changed',
+				remote: 'UTC',
+			},
+			userAFence,
+		);
+		expect(conflicted?.current.timezone).toBe('Asia/Tokyo');
+		expect(conflicted?.operations[0]?.remote).toBe('UTC');
+		const invite = await storage.commitSettings(
+			{ type: 'invite-create', code: 'SETTINGS' },
+			userAFence,
+		);
+		const inviteId = invite.operations[1]?.operationId as string;
+		const rejected = await storage.recordSettingsOutcome(
+			{ operationId: inviteId, outcome: 'rejected', error: 'Reserved' },
+			userAFence,
+		);
+		expect(rejected?.operations[1]).toMatchObject({
+			status: 'needs-attention',
+			feedback: 'Reserved',
+		});
+		expect(await storage.requestSignOut('session-a', false)).toEqual({
+			kind: 'confirmation',
+			count: 2,
+		});
+		expect(await storage.settingsSyncView()).not.toBeNull();
+		expect((await storage.requestSignOut('session-a', true)).kind).toBe(
+			'cleared',
+		);
+		expect(await storage.settingsSyncView()).toBeNull();
+	});
+	it('clears only confirmed owner work and prevents another owner reading settings', async () => {
+		expect((await storage.requestSignOut(null, false)).kind).toBe('cleared');
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [],
+				settings: {
+					timezone: 'UTC',
+					invites: { allowance: 5, used: 0, remaining: 5, codes: [] },
+				},
+			},
+			'session-a',
+		);
+		expect((await storage.requestSignOut('session-a', false)).kind).toBe(
+			'cleared',
+		);
+		await storage.activate('user-b', 'session-b');
+		expect(await storage.settingsSyncView()).toBeNull();
+		expect(await storage.read('user-a')).toBeNull();
+	});
 });

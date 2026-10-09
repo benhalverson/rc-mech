@@ -35,6 +35,7 @@ import { FeatureFlags } from './feature-flags/feature-flags';
 import { InviteStore } from './invite-store';
 import { PasskeyStore } from './passkey-store';
 import { isValidTimezone, type Passkey } from './settings.models';
+import { SettingsWorkspaceStore } from './settings-workspace-store';
 import { TimezoneStore } from './timezone-store';
 
 @Component({
@@ -59,6 +60,7 @@ import { TimezoneStore } from './timezone-store';
 	templateUrl: './settings.html',
 })
 export class Settings {
+	protected readonly settingsWorkspace = inject(SettingsWorkspaceStore);
 	private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 	private readonly injector = inject(Injector);
 	protected readonly invites = inject(InviteStore);

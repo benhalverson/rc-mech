@@ -24,6 +24,7 @@ const owner: OfflineOwner = {
 
 class FakeCapabilities {
 	supported = true;
+	storageAvailable = true;
 	readonly prepareShell = vi.fn(async () => true);
 }
 
@@ -44,6 +45,7 @@ class FakeGateway {
 }
 
 class FakeStorage {
+	readonly isSessionRevoked = vi.fn(async (_sessionKey: string) => false);
 	readonly activate = vi.fn(
 		async (_ownerKey: string, _sessionKey: string) => true,
 	);
@@ -145,5 +147,12 @@ describe('OfflineWorkspaceAccess', () => {
 		expect(storage.activate).toHaveBeenCalledWith(owner.key, owner.sessionKey);
 		expect(storage.save).not.toHaveBeenCalled();
 		expect(gateway.load).not.toHaveBeenCalled();
+	});
+	it('checks durable revocation only when device storage is available', async () => {
+		expect(await access.isSessionRevoked('session')).toBe(false);
+		storage.isSessionRevoked.mockResolvedValueOnce(true);
+		expect(await access.isSessionRevoked('old')).toBe(true);
+		capabilities.storageAvailable = false;
+		expect(await access.isSessionRevoked('new')).toBe(false);
 	});
 });

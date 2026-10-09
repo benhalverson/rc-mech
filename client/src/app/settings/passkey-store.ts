@@ -17,6 +17,7 @@ import {
 	tap,
 	throwError,
 } from 'rxjs';
+import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { webAuthnError } from './passkey-credentials';
 import { PasskeyRegistrationCapability } from './passkey-registration-capability';
 import type { Passkey, SettingsGatewayFailure } from './settings.models';
@@ -92,6 +93,7 @@ export const PasskeyStore = signalStore(
 	withState<{ outcome: PasskeyOutcome }>({ outcome: idleOutcome() }),
 	withProps(() => ({
 		gateway: inject(SettingsGateway),
+		offline: inject(OfflineWorkspaceStore),
 		registration: inject(PasskeyRegistrationCapability),
 		nextOperationId: { value: 0 },
 	})),
@@ -105,7 +107,12 @@ export const PasskeyStore = signalStore(
 				? 'Passkeys could not be loaded. Try again.'
 				: '',
 		),
-		webAuthnAvailable: computed(() => store.registration.available),
+		administrationAvailable: computed(
+			() => !store.offline.networkUnavailable(),
+		),
+		webAuthnAvailable: computed(
+			() => store.registration.available && !store.offline.networkUnavailable(),
+		),
 		action: computed(() => {
 			const outcome = store.outcome();
 			if (outcome.status !== 'pending') return null;
@@ -171,21 +178,29 @@ export const PasskeyStore = signalStore(
 		);
 		return {
 			retry(): void {
-				store.gateway.passkeys.reload();
+				if (!store.offline.networkUnavailable())
+					store.gateway.passkeys.reload();
 			},
 			register(name: string): void {
 				if (
 					store.registration.available &&
+					!store.offline.networkUnavailable() &&
 					store.outcome().status !== 'pending'
 				)
 					mutate({ kind: 'register', name: name.trim() });
 			},
 			rename(passkey: Passkey, name: string): void {
-				if (store.outcome().status !== 'pending')
+				if (
+					!store.offline.networkUnavailable() &&
+					store.outcome().status !== 'pending'
+				)
 					mutate({ kind: 'rename', passkey, name: name.trim() });
 			},
 			revoke(passkey: Passkey): void {
-				if (store.outcome().status !== 'pending')
+				if (
+					!store.offline.networkUnavailable() &&
+					store.outcome().status !== 'pending'
+				)
 					mutate({ kind: 'revoke', passkey });
 			},
 		};

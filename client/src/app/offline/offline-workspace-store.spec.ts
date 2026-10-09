@@ -284,4 +284,14 @@ describe('OfflineWorkspaceStore', () => {
 		expect(store.networkUnavailable()).toBe(true);
 		expect(store.hasSnapshot()).toBe(false);
 	});
+	it('clears the in-memory owner working copy after explicit sign-out', () => {
+		store.openOffline({ snapshot: { ...snapshot, sessionKey: 'session' } });
+		expect(store.hasSnapshot()).toBe(true);
+		store.clear();
+		expect(store.ownerKey()).toBe('');
+		expect(store.ownerEmail()).toBe('');
+		expect(store.sessionKey()).toBe('');
+		expect(store.cars()).toEqual([]);
+		expect(store.hasSnapshot()).toBe(false);
+	});
 });

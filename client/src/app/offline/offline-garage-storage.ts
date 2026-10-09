@@ -56,6 +56,18 @@ import {
 	rebaseCarSyncOperation,
 } from '../garage/car-sync/car-sync-rules';
 import type { GarageCar } from '../garage/garage.models';
+import type {
+	SettingsCommand,
+	SettingsOperation,
+	SettingsRemoteOutcome,
+	SettingsSnapshot,
+	SettingsView,
+} from '../settings/settings-sync.models';
+import {
+	acknowledgeSettings,
+	settingsDependencies,
+	settingsView,
+} from '../settings/settings-sync-rules';
 
 export const offlineDatabaseName = (): string => 'chassis-notes-offline-v1';
 
@@ -114,6 +126,8 @@ export type OfflineGarageSnapshot = Readonly<{
 	sessionKey?: string;
 	ownerKey: string;
 	ownerEmail: string;
+	sessionKey?: string;
+	settings?: SettingsSnapshot;
 	offlineUntil: string;
 	preparedAt: string;
 	cars: readonly GarageCar[];
@@ -166,6 +180,7 @@ export class OfflineGarageStorage {
 	private readonly setupOperations: Table<SetupSyncOperation, string>;
 	private readonly buildOperations: Table<BuildSyncOperation, string>;
 	private readonly driveOperations: Table<DriveSyncOperation, string>;
+	private readonly settingsOperations: Table<SettingsOperation, string>;
 
 	constructor() {
 		this.database
@@ -190,11 +205,13 @@ export class OfflineGarageStorage {
 		this.database.version(5).stores({
 			buildOperations: '&operationId,ownerKey,carId,status,createdAt',
 		});
+		this.database.version(6).stores({
+			driveOperations: '&operationId,ownerKey,carId,status,createdAt',
+		});
 		this.database
-			.version(6)
-			.stores({
-				driveOperations: '&operationId,ownerKey,carId,status,createdAt',
-			});
+			.version(7)
+			.stores({ settingsOperations: '&operationId,ownerKey,status,createdAt' });
+		this.settingsOperations = this.database.table('settingsOperations');
 		this.driveOperations = this.database.table('driveOperations');
 		this.buildOperations = this.database.table('buildOperations');
 		this.snapshots = this.database.table('snapshots');
@@ -229,6 +246,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const signOut = await this.metadata.get('sign-out');
@@ -251,6 +269,10 @@ export class OfflineGarageStorage {
 							.equals(active.ownerKey)
 							.delete(),
 						this.driveOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.settingsOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
 							.delete(),
@@ -285,6 +307,53 @@ export class OfflineGarageStorage {
 		return activated;
 	}
 
+	async isSessionRevoked(sessionKey: string): Promise<boolean> {
+		return Boolean(await this.revokedSessions.get(sessionKey));
+	}
+	async requestSignOut(
+		sessionKey: string | null,
+		discardPending: boolean,
+	): Promise<
+		| Readonly<{ kind: 'confirmation'; count: number }>
+		| Readonly<{ kind: 'cleared'; operationId: string }>
+	> {
+		return this.database.transaction(
+			'rw',
+			[
+				this.snapshots,
+				this.metadata,
+				this.revokedSessions,
+				this.operations,
+				this.setupOperations,
+				this.settingsOperations,
+				this.buildOperations,
+				this.driveOperations,
+			],
+			async () => {
+				const active = await this.metadata.get('active-owner');
+				if (active?.key === 'active-owner' && !discardPending) {
+					const counts = await Promise.all(
+						[
+							this.operations,
+							this.setupOperations,
+							this.settingsOperations,
+							this.buildOperations,
+							this.driveOperations,
+						].map((table) =>
+							table.where('ownerKey').equals(active.ownerKey).count(),
+						),
+					);
+					const count = counts.reduce((total, value) => total + value, 0);
+					if (count > 0) return { kind: 'confirmation', count } as const;
+				}
+				return {
+					kind: 'cleared',
+					operationId: await this.deactivate(sessionKey),
+				} as const;
+			},
+		);
+	}
+
 	async deactivate(sessionKey?: string | null): Promise<string> {
 		const operationId = this.nextOperationId();
 		try {
@@ -302,6 +371,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
@@ -313,6 +383,10 @@ export class OfflineGarageStorage {
 							.equals(active.ownerKey)
 							.delete(),
 						this.driveOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.settingsOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
 							.delete(),
@@ -455,6 +529,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
@@ -850,6 +925,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot();
@@ -879,6 +955,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot();
@@ -962,6 +1039,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot();
@@ -1070,6 +1148,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
@@ -1120,6 +1199,87 @@ export class OfflineGarageStorage {
 		};
 	}
 
+	async settingsSyncView(): Promise<SettingsView | null> {
+		const current = await this.currentSnapshot();
+		if (!current?.settings) return null;
+		return settingsView(
+			current.settings,
+			await this.settingsOperations
+				.where('ownerKey')
+				.equals(current.ownerKey)
+				.sortBy('createdAt'),
+		);
+	}
+	async commitSettings(
+		command: SettingsCommand,
+		fence: OfflineWorkspaceFence,
+	): Promise<SettingsView> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.settingsOperations],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current?.settings)
+					throw new Error('Offline Settings are unavailable.');
+				const operations = await this.settingsOperations
+					.where('ownerKey')
+					.equals(current.ownerKey)
+					.sortBy('createdAt');
+				const operation: SettingsOperation = {
+					operationId: this.nextOperationId(),
+					ownerKey: current.ownerKey,
+					createdAt: new Date(this.now()).toISOString(),
+					command,
+					dependencies: settingsDependencies(command, operations),
+					status: 'pending',
+				};
+				await this.settingsOperations.add(operation);
+				return settingsView(current.settings, [...operations, operation]);
+			},
+		);
+	}
+	async recordSettingsOutcome(
+		outcome: SettingsRemoteOutcome,
+		fence: OfflineWorkspaceFence,
+	): Promise<SettingsView | null> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.settingsOperations],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current?.settings) return null;
+				const operation = await this.settingsOperations.get(
+					outcome.operationId,
+				);
+				let canonical = current.settings;
+				if (operation?.ownerKey === current.ownerKey) {
+					if (outcome.outcome === 'applied') {
+						canonical = acknowledgeSettings(canonical, outcome);
+						await this.snapshots.put({ ...current, settings: canonical });
+						await this.settingsOperations.delete(operation.operationId);
+					} else {
+						await this.settingsOperations.put({
+							...operation,
+							status:
+								outcome.outcome === 'conflict' ? 'conflict' : 'needs-attention',
+							feedback: outcome.error,
+							...(outcome.outcome === 'conflict'
+								? { remote: outcome.remote }
+								: {}),
+						});
+					}
+				}
+				return settingsView(
+					canonical,
+					await this.settingsOperations
+						.where('ownerKey')
+						.equals(current.ownerKey)
+						.sortBy('createdAt'),
+				);
+			},
+		);
+	}
+
 	close(): void {
 		this.database.close();
 	}
@@ -1135,6 +1295,7 @@ export class OfflineGarageStorage {
 				this.setupOperations,
 				this.buildOperations,
 				this.driveOperations,
+				this.settingsOperations,
 			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
@@ -1146,6 +1307,10 @@ export class OfflineGarageStorage {
 							.equals(active.ownerKey)
 							.delete(),
 						this.driveOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.settingsOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
 							.delete(),

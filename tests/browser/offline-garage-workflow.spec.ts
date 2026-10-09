@@ -464,3 +464,94 @@ test('records and edits Drive sessions after an offline restart and reconciles u
 		durationMinutes: 12,
 	});
 });
+
+test('retains Settings across offline restart and requires confirmation before discarding them', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	await page.goto('/settings');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	const offline = await reopenOffline(context, page, '/settings');
+	await expect(
+		offline.getByRole('heading', { name: 'Garage timezone', exact: true }),
+	).toBeVisible();
+	await offline.getByLabel('IANA timezone', { exact: true }).fill('Asia/Tokyo');
+	await offline.getByRole('button', { name: 'Save timezone' }).click();
+	await expect(
+		offline.getByRole('status', { name: 'Settings synchronization' }),
+	).toContainText('Pending sync');
+	await expect(
+		offline.getByText(
+			'Passkey registration, rename, and revocation are unavailable offline.',
+			{ exact: false },
+		),
+	).toBeVisible();
+	await offline.getByRole('button', { name: 'Sign out', exact: true }).click();
+	const confirmation = offline.getByRole('alertdialog');
+	await expect(confirmation).toContainText('permanently discarded');
+	await expectAxeClean(offline);
+	await confirmation.getByRole('button', { name: 'Keep working' }).click();
+	await expect(confirmation).toBeHidden();
+	await context.setOffline(false);
+	await expect(
+		offline.getByRole('status', { name: 'Settings synchronization' }),
+	).toContainText('Settings synchronized.');
+	const preference = await offline.request.get('/api/v1/preferences/timezone');
+	expect(await preference.json()).toEqual({ timezone: 'Asia/Tokyo' });
+	await expectAxeClean(offline);
+});
+
+test('confirmed offline sign-out clears the working copy and fences the old server cookie', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	await context.route('**/api/auth/sign-out', (route) => route.abort());
+	await page.goto('/settings');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page
+		.getByLabel('IANA timezone', { exact: true })
+		.fill('Pacific/Auckland');
+	await page.getByRole('button', { name: 'Save timezone' }).click();
+	await expect(
+		page.getByRole('status', { name: 'Settings synchronization' }),
+	).toContainText('Pending sync');
+	await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+	await page
+		.getByRole('button', { name: 'Discard changes and sign out' })
+		.click();
+	await expect(page).toHaveURL(/\/sign-in/);
+	const privateRecords = await page.evaluate(async () => {
+		const request = indexedDB.open('chassis-notes-offline-v1');
+		const database = await new Promise<IDBDatabase>((resolve, reject) => {
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+		const tables = [
+			'snapshots',
+			'operations',
+			'setupOperations',
+			'settingsOperations',
+		];
+		const counts = await Promise.all(
+			tables.map(
+				(name) =>
+					new Promise<number>((resolve, reject) => {
+						const count = database.transaction(name).objectStore(name).count();
+						count.onsuccess = () => resolve(count.result);
+						count.onerror = () => reject(count.error);
+					}),
+			),
+		);
+		database.close();
+		return counts;
+	});
+	expect(privateRecords).toEqual([0, 0, 0, 0]);
+	await context.setOffline(false);
+	await page.reload();
+	await page.goto('/settings');
+	await expect(page).toHaveURL(/\/sign-in\?reason=signed-out/);
+	await expectAxeClean(page);
+});

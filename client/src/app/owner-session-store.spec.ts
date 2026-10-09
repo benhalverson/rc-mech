@@ -127,4 +127,17 @@ describe('OwnerSessionStore', () => {
 		expect(store.hasResolvedSession).toBe(true);
 		expect(refresh).toHaveBeenCalledOnce();
 	});
+	it('keeps explicit local sign-out closed even if an old request supplies a server session', async () => {
+		store.signOutLocally();
+		store.session.set({
+			session: { id: 'old' },
+			user: { email: 'owner@test' },
+		});
+		expect(store.authenticated()).toBe(false);
+		expect(store.hasResolvedSession).toBe(true);
+		expect(await store.resolved()).toBeNull();
+		expect(await store.refresh()).toBeNull();
+		expect(store.ownerEmail()).toBe('Owner');
+		expect(store.sessionKey()).toBeNull();
+	});
 });
