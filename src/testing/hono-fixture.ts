@@ -71,6 +71,11 @@ export type RecordedD1Query = {
 	operation: Exclude<D1Step['kind'], 'error'>;
 };
 
+/**
+ * Scriptable D1 boundary for Hono request tests. Supplies selected rows and batch
+ * results while recording SQL/bindings, so synchronization races and ownership
+ * failures can be exercised without a live database or a new Worker emulator.
+ */
 export class MockD1Controller {
 	readonly queries: RecordedD1Query[] = [];
 	readonly batches: string[][] = [];

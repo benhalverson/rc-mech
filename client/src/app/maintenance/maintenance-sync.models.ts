@@ -1,3 +1,7 @@
+/**
+ * Maintenance editor intents and durable operation/view types, separating a captured local command from its canonical acknowledgement.
+ */
+
 import type {
 	MaintenanceChange,
 	MaintenanceCollection,

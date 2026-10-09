@@ -25,7 +25,11 @@ export const maintenanceBaseMatches = (
 				([key, value]) => current[key as keyof typeof current] === value,
 			);
 
-/** Apply already validated intent to a working copy without changing history identities. */
+/**
+ * Applies validated plan/service intent for both server admission and offline
+ * materialization. Stable history IDs and captured service baselines are preserved;
+ * callers supply time/usage and perform their own authorization and persistence.
+ */
 export const applyMaintenanceChange = (
 	collection: MaintenanceCollection,
 	change: MaintenanceChange,

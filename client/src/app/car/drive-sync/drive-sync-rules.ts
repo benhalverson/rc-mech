@@ -1,3 +1,9 @@
+/**
+ * Pure Drive-session working-copy and replay rules used by storage and the Car
+ * workspace. Keep optimistic materialization, dependency selection, and post-ack
+ * rebasing deterministic and independent of IndexedDB/HTTP side effects.
+ */
+
 import type {
 	DriveSyncCollection,
 	DriveSyncCommand,
@@ -45,6 +51,11 @@ export const materializeDriveCollections = (
 	}
 	return [...collections.values()];
 };
+/**
+ * Captures a Drive-session intent with stable identity, its current comparison base,
+ * and only the prerequisites that must acknowledge first. Storage persists this
+ * record before the route can report local success.
+ */
 export const buildDriveSyncOperation = (
 	command: DriveSyncCommand,
 	collections: readonly DriveSyncCollection[],
@@ -118,6 +129,11 @@ export const readyDriveSyncOperations = (
 				!operation.dependencies.some((id) => pendingIds.has(id)),
 		)
 		.sort((a, b) => a.sequence - b.sequence);
+/**
+ * Updates a queued dependent Drive-session command after an earlier acknowledgement.
+ * Uses the canonical collection while preserving the pending intent and identity;
+ * conflicting remote state is still checked by the server on replay.
+ */
 export const rebaseDriveSyncOperation = (
 	operation: DriveSyncOperation,
 	acknowledgedId: string,

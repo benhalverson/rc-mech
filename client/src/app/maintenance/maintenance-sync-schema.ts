@@ -1,3 +1,7 @@
+/**
+ * Canonical plan/service snapshot parsing used by Maintenance preparation and acknowledgement; transport data is checked before entering the working copy.
+ */
+
 import * as z from 'zod/mini';
 
 const identity = { id: z.string(), carId: z.string() };

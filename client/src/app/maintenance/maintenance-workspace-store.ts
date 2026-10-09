@@ -32,6 +32,12 @@ export type MaintenanceMutationOutcome =
 	| Readonly<{ status: 'pending'; requestId: string }>
 	| Readonly<{ status: 'succeeded'; requestId: string }>
 	| Readonly<{ status: 'failed'; requestId: string; message: string }>;
+/**
+ * Coordinates the shared Maintenance working copy across route changes. Persists
+ * plan/service intent with its usage baseline and prerequisites before publishing
+ * success, then replays ready work through MaintenanceSyncGateway. Owner/session
+ * fences and retained rejection/conflict state prevent late or failed work loss.
+ */
 export const MaintenanceWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<{
