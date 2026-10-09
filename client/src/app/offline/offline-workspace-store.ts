@@ -161,7 +161,7 @@ export const OfflineWorkspaceStore = signalStore(
 					networkUnavailable: true,
 					ownerKey: snapshot.ownerKey,
 					ownerEmail: snapshot.ownerEmail,
-					sessionKey: '',
+					sessionKey: snapshot.sessionKey ?? '',
 					cars: snapshot.cars,
 				});
 			},

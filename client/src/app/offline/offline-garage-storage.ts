@@ -1,5 +1,13 @@
 import { InjectionToken, inject, Service } from '@angular/core';
 import Dexie, { type Table } from 'dexie';
+import type { CarPhoto } from '../car/car.models';
+import {
+	materializePhotos,
+	type PhotoCapture,
+	type PhotoCaptureOutcome,
+	type PhotoMedia,
+	type PhotoView,
+} from '../car/photos/photo-sync.models';
 import type {
 	BuiltSetupSyncOperation,
 	SetupSyncCollection,
@@ -85,6 +93,8 @@ export const OFFLINE_OPERATION_ID = new InjectionToken<() => string>(
 export type OfflineGarageSnapshot = Readonly<{
 	ownerKey: string;
 	ownerEmail: string;
+	sessionKey?: string;
+	photos?: readonly CarPhoto[];
 	offlineUntil: string;
 	preparedAt: string;
 	cars: readonly GarageCar[];
@@ -133,6 +143,8 @@ export class OfflineGarageStorage {
 	private readonly revokedSessions: Table<RevokedOfflineSession, string>;
 	private readonly operations: Table<CarSyncOperation, string>;
 	private readonly setupOperations: Table<SetupSyncOperation, string>;
+	private readonly photoCaptures: Table<PhotoCapture, string>;
+	private readonly photoMedia: Table<PhotoMedia, [string, string]>;
 
 	constructor() {
 		this.database
@@ -154,6 +166,12 @@ export class OfflineGarageStorage {
 		this.database.version(4).stores({
 			setupOperations: '&operationId,ownerKey,carId,setupId,status,createdAt',
 		});
+		this.database.version(8).stores({
+			photoCaptures: '&operationId,ownerKey,carId,status',
+			photoMedia: '[ownerKey+photoId],ownerKey',
+		});
+		this.photoCaptures = this.database.table('photoCaptures');
+		this.photoMedia = this.database.table('photoMedia');
 		this.snapshots = this.database.table('snapshots');
 		this.metadata = this.database.table('metadata');
 		this.revokedSessions = this.database.table('revokedSessions');
@@ -178,11 +196,15 @@ export class OfflineGarageStorage {
 		}
 		const activated = await this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.revokedSessions,
-			this.operations,
-			this.setupOperations,
+			[
+				this.photoCaptures,
+				this.photoMedia,
+				this.snapshots,
+				this.metadata,
+				this.revokedSessions,
+				this.operations,
+				this.setupOperations,
+			],
 			async () => {
 				const signOut = await this.metadata.get('sign-out');
 				if (signOut?.key === 'sign-out') {
@@ -199,6 +221,11 @@ export class OfflineGarageStorage {
 				if (active?.key === 'active-owner' && active.ownerKey !== ownerKey) {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.photoCaptures
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.photoMedia.where('ownerKey').equals(active.ownerKey).delete(),
 						this.operations.where('ownerKey').equals(active.ownerKey).delete(),
 						this.setupOperations
 							.where('ownerKey')
@@ -239,16 +266,25 @@ export class OfflineGarageStorage {
 		}
 		await this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.revokedSessions,
-			this.operations,
-			this.setupOperations,
+			[
+				this.photoCaptures,
+				this.photoMedia,
+				this.snapshots,
+				this.metadata,
+				this.revokedSessions,
+				this.operations,
+				this.setupOperations,
+			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
 				if (active?.key === 'active-owner') {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.photoCaptures
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.photoMedia.where('ownerKey').equals(active.ownerKey).delete(),
 						this.operations.where('ownerKey').equals(active.ownerKey).delete(),
 						this.setupOperations
 							.where('ownerKey')
@@ -324,6 +360,171 @@ export class OfflineGarageStorage {
 
 	async read(ownerKey: string): Promise<OfflineGarageSnapshot | null> {
 		return (await this.snapshots.get(ownerKey)) ?? null;
+	}
+
+	async photoView(fence: OfflineWorkspaceFence): Promise<PhotoView> {
+		const current = await this.currentSnapshot(undefined, fence);
+		if (!current) throw new Error('The offline Garage is unavailable.');
+		const captures = await this.photoCaptures
+			.where('ownerKey')
+			.equals(current.ownerKey)
+			.toArray();
+		return {
+			photos: materializePhotos(current.photos ?? [], captures),
+			captures,
+		};
+	}
+	async commitPhoto(
+		carId: string,
+		file: File,
+		fence: OfflineWorkspaceFence,
+	): Promise<PhotoView> {
+		const operationId = this.nextOperationId();
+		return this.database.transaction(
+			'rw',
+			[
+				this.snapshots,
+				this.metadata,
+				this.operations,
+				this.photoCaptures,
+				this.photoMedia,
+			],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				const cars = materializeCars(
+					current.cars,
+					await this.ownerOperations(current.ownerKey),
+				);
+				const parent = cars.find((car) => car.id === carId);
+				if (!parent || parent.archivedAt)
+					throw new Error('An active Car is required.');
+				if (
+					!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) ||
+					file.size === 0 ||
+					file.size > 10 * 1024 * 1024 ||
+					!file.name.trim() ||
+					file.name.length > 255
+				)
+					throw new Error('Choose a valid photo.');
+				const view = await this.photoView(fence);
+				const photos = view.photos.filter((photo) => photo.carId === carId);
+				const photo: CarPhoto = {
+					id: operationId,
+					carId,
+					contentType: file.type,
+					createdAt: new Date(this.now()).toISOString(),
+					sortOrder: photos.length,
+					isPrimary: !photos.some((photo) => photo.isPrimary),
+				};
+				await this.photoCaptures.add({
+					ownerKey: current.ownerKey,
+					operationId,
+					carId,
+					fileName: file.name,
+					blob: file,
+					photo,
+					status: 'pending',
+				});
+				await this.photoMedia.put({
+					ownerKey: current.ownerKey,
+					photoId: operationId,
+					blob: file,
+				});
+				return this.photoView(fence);
+			},
+		);
+	}
+	async readyPhotoCaptures(
+		fence: OfflineWorkspaceFence,
+	): Promise<readonly PhotoCapture[]> {
+		const view = await this.photoView(fence);
+		const dependencies = await this.ownerOperations(fence.ownerKey);
+		return view.captures.filter(
+			(capture) =>
+				capture.status === 'pending' &&
+				!dependencies.some((operation) => operation.carId === capture.carId),
+		);
+	}
+	async recordPhotoOutcome(
+		outcome: PhotoCaptureOutcome,
+		photos: readonly CarPhoto[],
+		fence: OfflineWorkspaceFence,
+	): Promise<PhotoView> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.photoCaptures],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				const capture = await this.photoCaptures.get(outcome.operationId);
+				if (capture?.ownerKey === current.ownerKey) {
+					if (outcome.outcome === 'applied') {
+						if (
+							!photos.some(
+								(photo) =>
+									photo.id === capture.operationId &&
+									photo.carId === capture.carId,
+							)
+						)
+							throw new Error(
+								'The acknowledged photo metadata is unavailable.',
+							);
+						await this.snapshots.put({ ...current, photos });
+						await this.photoCaptures.delete(capture.operationId);
+					} else
+						await this.photoCaptures.put({
+							...capture,
+							status: 'needs-attention',
+							feedback: outcome.error,
+						});
+				}
+				return this.photoView(fence);
+			},
+		);
+	}
+	async refreshPhotos(
+		photos: readonly CarPhoto[],
+		replacedPhotoId: string | undefined,
+		fence: OfflineWorkspaceFence,
+	): Promise<PhotoView> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.photoCaptures, this.photoMedia],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				await this.snapshots.put({ ...current, photos });
+				if (replacedPhotoId)
+					await this.photoMedia.delete([fence.ownerKey, replacedPhotoId]);
+				return this.photoView(fence);
+			},
+		);
+	}
+
+	async retainPhoto(
+		photoId: string,
+		blob: Blob,
+		fence: OfflineWorkspaceFence,
+	): Promise<void> {
+		await this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.photoCaptures, this.photoMedia],
+			async () => {
+				const view = await this.photoView(fence);
+				if (!view.photos.some((photo) => photo.id === photoId))
+					throw new Error('Photo metadata is unavailable.');
+				await this.photoMedia.put({ ownerKey: fence.ownerKey, photoId, blob });
+			},
+		);
+	}
+	async retainedPhoto(
+		photoId: string,
+		fence: OfflineWorkspaceFence,
+	): Promise<Blob | null> {
+		const view = await this.photoView(fence);
+		if (!view.photos.some((photo) => photo.id === photoId)) return null;
+		return (await this.photoMedia.get([fence.ownerKey, photoId]))?.blob ?? null;
 	}
 
 	async carSyncView(): Promise<CarSyncView | null> {
@@ -672,7 +873,9 @@ export class OfflineGarageStorage {
 	async restoreCurrent(
 		now = new Date(this.now()),
 	): Promise<OfflineGarageSnapshot | null> {
-		const snapshot = await this.currentSnapshot(now);
+		const active = await this.metadata.get('active-owner');
+		if (active?.key !== 'active-owner') return null;
+		const snapshot = await this.currentSnapshot(now, active);
 		if (!snapshot) return null;
 		const [operations, setupOperations] = await Promise.all([
 			this.ownerOperations(snapshot.ownerKey),
@@ -680,6 +883,7 @@ export class OfflineGarageStorage {
 		]);
 		return {
 			...snapshot,
+			sessionKey: active.sessionKey,
 			cars: materializeCars(snapshot.cars, operations),
 			setupCollections: materializeSetupCollections(
 				snapshot.setupCollections ?? [],
@@ -695,16 +899,25 @@ export class OfflineGarageStorage {
 	private async invalidateActiveOwner(): Promise<void> {
 		await this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.revokedSessions,
-			this.operations,
-			this.setupOperations,
+			[
+				this.photoCaptures,
+				this.photoMedia,
+				this.snapshots,
+				this.metadata,
+				this.revokedSessions,
+				this.operations,
+				this.setupOperations,
+			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
 				if (active?.key === 'active-owner') {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.photoCaptures
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.photoMedia.where('ownerKey').equals(active.ownerKey).delete(),
 						this.operations.where('ownerKey').equals(active.ownerKey).delete(),
 						this.setupOperations
 							.where('ownerKey')

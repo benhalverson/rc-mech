@@ -51,6 +51,8 @@ export class CarPhotoGallery {
 		this.store.loading() ? 'loading' : this.store.failure() ? 'error' : 'ready',
 	);
 	protected readonly readFailure = this.store.failure;
+	protected readonly offline = this.store.offline;
+	protected readonly captureFeedback = this.store.captureFeedback;
 	protected readonly error = this.store.error;
 	protected readonly action = this.store.action;
 	protected readonly validationError = signal('');
@@ -69,7 +71,9 @@ export class CarPhotoGallery {
 		});
 	}
 
-	protected photoUrl(photo: CarPhoto): string {
+	protected photoUrl(photo: CarPhoto): string | null {
+		if (this.store.workspace.available())
+			return this.store.media()[photo.id] ?? null;
 		return photo.url || `/api/v1/photos/${encodeURIComponent(photo.id)}`;
 	}
 

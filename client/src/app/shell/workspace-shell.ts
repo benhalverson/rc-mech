@@ -9,6 +9,7 @@ import {
 	viewChild,
 } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
 import { OfflineStatus } from '../offline/offline-status';
 import { OwnerSessionStore } from '../owner-session-store';
@@ -28,6 +29,7 @@ import { SignOutStore } from './sign-out-store';
 	styleUrl: './workspace-shell.css',
 })
 export class WorkspaceShell {
+	protected readonly photoWorkspace = inject(PhotoWorkspaceStore);
 	protected readonly analysisVisibility = inject(VisibilityStore);
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly responsiveViewport = inject(ResponsiveViewport);

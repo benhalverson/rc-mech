@@ -6,6 +6,7 @@ import {
 	withDisabledInitialNavigation,
 } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
@@ -100,6 +101,7 @@ describe('WorkspaceShell', () => {
 		await TestBed.configureTestingModule({
 			imports: [WorkspaceShell],
 			providers: [
+				{ provide: PhotoWorkspaceStore, useValue: {} },
 				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([], withDisabledInitialNavigation()),
 				{ provide: OwnerSessionStore, useValue: session },

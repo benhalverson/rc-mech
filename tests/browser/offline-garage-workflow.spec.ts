@@ -316,3 +316,157 @@ test('does not restore the prior Garage after explicit sign-out', async ({
 	await expect(reopened.getByText('Signed-out private buggy')).toHaveCount(0);
 	await expectAxeClean(reopened);
 });
+
+test('retains photo originals and new captures through offline restart and idempotent reconnect', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const response = await page.request.post('/api/v1/cars', {
+		data: { name: 'Offline photo buggy' },
+	});
+	expect(response.ok()).toBe(true);
+	const { car } = (await response.json()) as { car: { id: string } };
+	const png = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXZkAAAAASUVORK5CYII=',
+		'base64',
+	);
+	const existing = await page.request.post(`/api/v1/cars/${car.id}/photos`, {
+		multipart: {
+			file: { name: 'original.png', mimeType: 'image/png', buffer: png },
+		},
+	});
+	expect(existing.ok()).toBe(true);
+	const path = `/garage/${car.id}/photos`;
+	await page.goto(path);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await expect(page.locator('.photo-grid img')).toHaveCount(1);
+	await expect(page.locator('.photo-grid img')).toHaveAttribute(
+		'src',
+		/^blob:/,
+	);
+	await context.setOffline(true);
+	await page.locator('.upload-button input').setInputFiles({
+		name: 'trackside.png',
+		mimeType: 'image/png',
+		buffer: png,
+	});
+	await expect(page.getByText('Pending sync', { exact: true })).toBeVisible();
+	await expect(page.locator('.photo-grid img')).toHaveCount(2);
+	const reopened = await reopenOffline(context, page, path);
+	await expect(reopened.locator('.photo-grid img')).toHaveCount(2);
+	await expect
+		.poll(() =>
+			reopened
+				.locator('.photo-grid img')
+				.evaluateAll((images) =>
+					images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+				),
+		)
+		.toBe(true);
+	await expect(
+		reopened.getByText('Pending sync', { exact: true }),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await context.setOffline(false);
+	await expect(reopened.getByText('Pending sync', { exact: true })).toHaveCount(
+		0,
+	);
+	const metadata = await reopened.request.get(`/api/v1/cars/${car.id}/photos`);
+	const canonical = (await metadata.json()) as {
+		photos: { id: string; fileName: string }[];
+	};
+	expect(canonical.photos).toHaveLength(2);
+	const captured = canonical.photos.find(
+		(photo) => photo.fileName === 'trackside.png',
+	);
+	expect(captured).toBeDefined();
+	const replay = await reopened.request.put(
+		`/api/v1/cars/${car.id}/photos/captures/${captured?.id}`,
+		{
+			multipart: {
+				file: { name: 'trackside.png', mimeType: 'image/png', buffer: png },
+			},
+		},
+	);
+	expect(replay.ok()).toBe(true);
+	const afterReplay = await reopened.request.get(
+		`/api/v1/cars/${car.id}/photos`,
+	);
+	expect(
+		((await afterReplay.json()) as { photos: unknown[] }).photos,
+	).toHaveLength(2);
+	await expect(reopened.locator('.photo-grid img')).toHaveCount(2);
+	await expectAxeClean(reopened);
+});
+
+test('describes uncached photo originals honestly and clears retained bytes on sign-out', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Photo metadata only' },
+	});
+	const { car } = (await created.json()) as { car: { id: string } };
+	const png = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXZkAAAAASUVORK5CYII=',
+		'base64',
+	);
+	expect(
+		(
+			await page.request.post(`/api/v1/cars/${car.id}/photos`, {
+				multipart: {
+					file: { name: 'original.png', mimeType: 'image/png', buffer: png },
+				},
+			})
+		).ok(),
+	).toBe(true);
+	await page.goto('/garage');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	const reopened = await reopenOffline(
+		context,
+		page,
+		`/garage/${car.id}/photos`,
+	);
+	await expect(
+		reopened.getByText('Original unavailable on this device.', {
+			exact: false,
+		}),
+	).toBeVisible();
+	await expect(reopened.locator('.photo-grid img')).toHaveCount(0);
+	await expectAxeClean(reopened);
+	await context.setOffline(false);
+	await reopened.reload();
+	await expect(reopened.locator('.photo-grid img')).toHaveAttribute(
+		'src',
+		/^blob:/,
+	);
+	await reopened.getByRole('button', { name: 'Sign out', exact: true }).click();
+	await expect(reopened).toHaveURL(/sign-in/);
+	const counts = await reopened.evaluate(async () => {
+		const database = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = indexedDB.open('chassis-notes-offline-v1');
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+		try {
+			return await Promise.all(
+				['photoCaptures', 'photoMedia'].map(
+					(name) =>
+						new Promise<number>((resolve, reject) => {
+							const request = database
+								.transaction(name)
+								.objectStore(name)
+								.count();
+							request.onsuccess = () => resolve(request.result);
+							request.onerror = () => reject(request.error);
+						}),
+				),
+			);
+		} finally {
+			database.close();
+		}
+	});
+	expect(counts).toEqual([0, 0]);
+});

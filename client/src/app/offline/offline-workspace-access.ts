@@ -38,6 +38,7 @@ export class OfflineWorkspaceAccess {
 			offlineUntil: owner.offlineUntil,
 			preparedAt: this.now().toISOString(),
 			cars: collection.cars,
+			photos: collection.photos,
 			setupCollections: collection.setupCollections,
 		};
 		if (!(await this.storage.save(snapshot, owner.sessionKey)))
