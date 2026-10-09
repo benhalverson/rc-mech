@@ -12,6 +12,7 @@ import { firstValueFrom } from 'rxjs';
 import type {
 	BuildSyncCollection,
 	BuildSyncCommand,
+	BuildSyncRemoteOutcome,
 	BuildSyncView,
 } from '../../car/build-sync/build-sync.models';
 import { BuildSyncGateway } from '../../car/build-sync/build-sync-gateway';
@@ -442,6 +443,7 @@ export const CarWorkspaceStore = signalStore(
 				viewOwnerKey: store.offline.ownerKey(),
 				viewSessionKey: store.offline.sessionKey(),
 				workspaceSyncFailure: carWorkspaceLocalFailure(error),
+				buildWorkspaceSyncFailure: carWorkspaceLocalFailure(error),
 			});
 		};
 		const publishSetupLocalSyncFailure = (
@@ -473,18 +475,9 @@ export const CarWorkspaceStore = signalStore(
 				syncingOperationIds: [operation.operationId],
 				buildWorkspaceSyncFailure: null,
 			});
+			let outcome: BuildSyncRemoteOutcome;
 			try {
-				const outcome = await firstValueFrom(
-					store.buildGateway.apply(operation),
-				);
-				if (!isCurrentGeneration(generation)) return false;
-				store.offline.markOnline();
-				store.connectivity.markRequestSucceeded();
-				publishBuildView(
-					await store.storage.recordBuildOutcome(outcome),
-					generation,
-				);
-				return true;
+				outcome = await firstValueFrom(store.buildGateway.apply(operation));
 			} catch (error) {
 				if (!isCurrentGeneration(generation)) return false;
 				const failure = carWorkspaceGatewayFailure(error);
@@ -498,6 +491,14 @@ export const CarWorkspaceStore = signalStore(
 				patchState(store, { buildWorkspaceSyncFailure: failure });
 				return false;
 			}
+			if (!isCurrentGeneration(generation)) return false;
+			store.offline.markOnline();
+			store.connectivity.markRequestSucceeded();
+			publishBuildView(
+				await store.storage.recordBuildOutcome(outcome),
+				generation,
+			);
+			return true;
 		};
 
 		const runSync = async (
