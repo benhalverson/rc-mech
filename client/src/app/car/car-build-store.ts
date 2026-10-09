@@ -1,14 +1,17 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, exhaustMap, of, tap } from 'rxjs';
+import { CarWorkspaceStore } from '../garage/car-sync/car-workspace-store';
+import type { BuildSyncCommand } from './build-sync/build-sync.models';
 import type {
 	BuildGatewayFailure,
 	BuildSaveOutcome,
@@ -31,20 +34,36 @@ const idleOutcome = (): BuildSaveOutcome => ({
 });
 
 export const CarBuildStore = signalStore(
-	withState({ carId: '', outcome: idleOutcome() }),
+	withState({
+		carId: '',
+		outcome: idleOutcome(),
+		localCommand: null as BuildSyncCommand | null,
+		localOperationId: '',
+	}),
 	withProps(() => ({
 		gateway: inject(CarBuildGateway),
+		workspace: inject(CarWorkspaceStore),
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => {
-		const components = computed(() =>
-			store.gateway.collection.hasValue()
-				? store.gateway.collection.value().components
-				: [],
+		const localCollection = computed(() =>
+			store.workspace.opened()
+				? store.workspace
+						.buildCollections()
+						.find((collection) => collection.carId === store.carId())
+				: undefined,
+		);
+		const components = computed(
+			() =>
+				localCollection()?.components ??
+				(store.gateway.collection.hasValue()
+					? store.gateway.collection.value().components
+					: []),
 		);
 		return {
 			components,
 			failure: computed(() => {
+				if (localCollection()) return null;
 				const failure = store.gateway.failure();
 				return carReadFailure(
 					failure?.kind === 'http' ? { status: failure.status } : failure,
@@ -69,7 +88,14 @@ export const CarBuildStore = signalStore(
 					};
 				});
 			}),
-			loading: computed(() => store.gateway.collection.isLoading()),
+			loading: computed(
+				() => !localCollection() && store.gateway.collection.isLoading(),
+			),
+			syncOperations: computed(() =>
+				store.workspace
+					.buildOperations()
+					.filter((operation) => operation.carId === store.carId()),
+			),
 			action: computed(() => {
 				const outcome = store.outcome();
 				return outcome.status === 'pending' ? outcome.mode : null;
@@ -85,10 +111,21 @@ export const CarBuildStore = signalStore(
 			}),
 			message: computed(() => {
 				const outcome = store.outcome();
+				if (
+					outcome.status === 'succeeded' &&
+					store.workspace
+						.buildOperations()
+						.some(
+							(operation) => operation.operationId === store.localOperationId(),
+						)
+				)
+					return 'Build change saved on this device. Pending sync.';
 				return outcome.status === 'succeeded'
-					? outcome.mode === 'replace'
-						? 'Component replaced; previous installation retained.'
-						: 'Build sheet saved.'
+					? outcome.mode === 'remove'
+						? 'Component removed; installation history retained.'
+						: outcome.mode === 'replace'
+							? 'Component replaced; previous installation retained.'
+							: 'Build sheet saved.'
 					: '';
 			}),
 		};
@@ -136,7 +173,12 @@ export const CarBuildStore = signalStore(
 		return {
 			selectCar(carId: string): void {
 				if (store.carId() === carId) return;
-				patchState(store, { carId, outcome: idleOutcome() });
+				patchState(store, {
+					carId,
+					outcome: idleOutcome(),
+					localCommand: null,
+					localOperationId: '',
+				});
 				store.gateway.selectCar(carId);
 			},
 			retry(): void {
@@ -151,8 +193,68 @@ export const CarBuildStore = signalStore(
 			save(command: Omit<SaveBuildCommand, 'carId'>): void {
 				const carId = store.carId();
 				if (!carId || store.outcome().status === 'pending') return;
-				save({ ...command, carId });
+				if (store.workspace.durableSetupMutationsAvailable()) {
+					const localCommand: BuildSyncCommand = {
+						action: command.mode === 'add' ? 'install' : command.mode,
+						carId,
+						componentId: command.componentId,
+						input: command.input,
+					};
+					patchState(store, {
+						localCommand,
+						localOperationId: '',
+						outcome: {
+							status: 'pending',
+							operationId: ++store.nextOperationId.value,
+							mode: command.mode,
+						},
+					});
+					store.workspace.commitBuild(localCommand);
+				} else save({ ...command, carId });
 			},
 		};
+	}),
+	withHooks({
+		onInit(store) {
+			effect(() => {
+				const collection = store.gateway.collection.hasValue()
+					? store.gateway.collection.value()
+					: undefined;
+				if (collection?.carId && collection.version !== undefined)
+					store.workspace.observeServerBuildCollection({
+						carId: collection.carId,
+						version: collection.version,
+						components: collection.components,
+					});
+			});
+			effect(() => {
+				const result = store.workspace.buildMutationOutcome();
+				const pending = store.outcome();
+				if (
+					pending.status !== 'pending' ||
+					result.status === 'idle' ||
+					result.command !== store.localCommand()
+				)
+					return;
+				if (result.status === 'succeeded')
+					patchState(store, {
+						localOperationId: result.operationId,
+						outcome: {
+							status: 'succeeded',
+							operationId: pending.operationId,
+							mode: pending.mode,
+						},
+					});
+				else if (result.status === 'failed')
+					patchState(store, {
+						outcome: {
+							status: 'failed',
+							operationId: pending.operationId,
+							mode: pending.mode,
+							error: { kind: 'unavailable' },
+						},
+					});
+			});
+		},
 	}),
 );

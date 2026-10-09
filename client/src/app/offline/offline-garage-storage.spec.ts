@@ -1289,4 +1289,173 @@ describe('OfflineGarageStorage', () => {
 		});
 		expect(view.collections).toEqual([]);
 	});
+	const prepareBuild = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car-a', 'Buggy')],
+			},
+			'session-a',
+		);
+	};
+	const buildCommand = {
+		action: 'install',
+		carId: 'car-a',
+		componentId: null,
+		input: { slot: 'motor', name: 'Motor' },
+	} as const;
+
+	it('retains build history through a database restart and acknowledges dependent work in order', async () => {
+		await prepareBuild();
+		const first = await storage.commitBuild(buildCommand, userAFence);
+		const second = await storage.commitBuild(
+			{
+				...buildCommand,
+				action: 'edit',
+				componentId: first.operation.command.componentId,
+				input: { name: 'Tuned' },
+			},
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(
+			(await storage.restoreCurrent())?.buildCollections?.[0]?.components[0]
+				?.name,
+		).toBe('Tuned');
+		expect(await storage.readyBuildOperations()).toEqual([first.operation]);
+		await storage.recordBuildOutcome({
+			operationId: first.operation.operationId,
+			outcome: 'applied',
+			collection: first.collection,
+		});
+		expect((await storage.readyBuildOperations())[0]?.operationId).toBe(
+			second.operation.operationId,
+		);
+		await storage.recordBuildOutcome({
+			operationId: second.operation.operationId,
+			outcome: 'applied',
+			collection: second.collection,
+		});
+		expect((await storage.buildSyncView())?.operations).toEqual([]);
+		await storage.mergeBuildCollection(
+			{ ...second.collection, version: 8 },
+			userAFence,
+		);
+		expect(
+			(await storage.buildSyncView())?.canonicalCollections[0]?.version,
+		).toBe(8);
+	});
+
+	it('waits for a locally created Car while retaining independent build work', async () => {
+		await prepareBuild();
+		const created = await storage.commitCar(
+			{ type: 'create', input: { name: 'New Car' } },
+			userAFence,
+		);
+		const dependent = await storage.commitBuild(
+			{ ...buildCommand, carId: created.car.id },
+			userAFence,
+		);
+		const independent = await storage.commitBuild(buildCommand, userAFence);
+		expect(await storage.readyBuildOperations()).toEqual([
+			independent.operation,
+		]);
+		await storage.recordCarOutcome({
+			operationId: created.operation.operationId,
+			outcome: 'applied',
+			car: { ...created.car, version: 1 },
+		});
+		expect(
+			(await storage.readyBuildOperations()).map(
+				(operation) => operation.operationId,
+			),
+		).toContain(dependent.operation.operationId);
+	});
+
+	it('retains rejection and remote conflict data without blocking independent work', async () => {
+		await prepareBuild();
+		const first = await storage.commitBuild(buildCommand, userAFence);
+		const independent = await storage.commitBuild(
+			{ ...buildCommand, input: { slot: 'esc', name: 'ESC' } },
+			userAFence,
+		);
+		const error = { code: 'INVALID', message: 'Correct the Component name.' };
+		await storage.recordBuildOutcome({
+			operationId: first.operation.operationId,
+			outcome: 'rejected',
+			error,
+		});
+		expect((await storage.buildSyncView())?.operations[0]).toMatchObject({
+			status: 'needs-attention',
+			feedback: error,
+		});
+		expect(await storage.readyBuildOperations()).toEqual([
+			independent.operation,
+		]);
+		await storage.recordBuildOutcome({
+			operationId: independent.operation.operationId,
+			outcome: 'conflict',
+			error,
+			remote: independent.collection,
+		});
+		expect((await storage.buildSyncView())?.operations[1]).toMatchObject({
+			status: 'conflict',
+			remote: independent.collection,
+		});
+		expect(
+			(
+				await storage.recordBuildOutcome({
+					operationId: 'unknown',
+					outcome: 'rejected',
+					error,
+				})
+			).operations,
+		).toHaveLength(2);
+		await storage.deactivate('session-a');
+		expect(await storage.buildSyncView()).toBeNull();
+		const inspection = new Dexie(databaseName);
+		await inspection.open();
+		expect(await inspection.table('buildOperations').count()).toBe(0);
+		inspection.close();
+	});
+
+	it('fails closed when local identity, storage, or Car availability prevents a durable build write', async () => {
+		expect(await storage.buildSyncView()).toBeNull();
+		expect(await storage.readyBuildOperations()).toEqual([]);
+		await expect(storage.commitBuild(buildCommand, userAFence)).rejects.toThrow(
+			'unavailable',
+		);
+		await expect(
+			storage.recordBuildOutcome({
+				operationId: 'unknown',
+				outcome: 'rejected',
+				error: { code: 'INVALID', message: 'Review' },
+			}),
+		).rejects.toThrow('unavailable');
+		await expect(
+			storage.mergeBuildCollection(
+				{ carId: 'car-a', version: 1, components: [] },
+				userAFence,
+			),
+		).rejects.toThrow('unavailable');
+		await prepareBuild();
+		await storage.mergeBuildCollection(
+			{ carId: 'car-a', version: 0, components: [] },
+			userAFence,
+		);
+		await expect(
+			storage.commitBuild({ ...buildCommand, carId: 'missing' }, userAFence),
+		).rejects.toThrow('Restore');
+		await storage.commitCar({ type: 'archive', carId: 'car-a' }, userAFence);
+		await expect(storage.commitBuild(buildCommand, userAFence)).rejects.toThrow(
+			'Restore',
+		);
+		await storage.activate('user-b', 'session-b');
+		expect(await storage.buildSyncView()).toBeNull();
+	});
 });

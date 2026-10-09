@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { buildSyncCommandInput } from './build-sync-contract';
 import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 
 const carProperties = {
@@ -260,7 +262,7 @@ export const openApi = {
 			],
 			put: {
 				summary:
-					'Idempotently apply one owner-scoped, version-aware Car or Setup operation',
+					'Idempotently apply one owner-scoped, version-aware Car, Setup, or Component operation',
 				requestBody: {
 					required: true,
 					content: {
@@ -272,6 +274,7 @@ export const openApi = {
 									contractVersion: { type: 'integer', enum: [1] },
 									command: {
 										oneOf: [
+											z.toJSONSchema(buildSyncCommandInput, { io: 'input' }),
 											{
 												type: 'object',
 												required: ['type', 'carId', 'car'],
@@ -408,7 +411,10 @@ export const openApi = {
 					},
 				},
 				responses: {
-					200: { description: 'Applied or exact terminal replay' },
+					200: {
+						description:
+							'Applied or exact terminal replay. Build outcomes include a collection with carId, version, and complete components.',
+					},
 					400: { description: 'Malformed operation envelope or identifier' },
 					401: { description: 'Authentication required' },
 					404: { description: 'Owned Car or Setup is unavailable' },
@@ -667,6 +673,19 @@ export const openApi = {
 					400: { description: 'Unsupported, empty, or oversized photo' },
 					404: { description: 'Photo not found' },
 					409: { description: 'Car is archived' },
+				},
+			},
+		},
+		'/api/v1/components': {
+			get: {
+				summary:
+					'Prepare the authenticated owner’s complete Component history for offline use',
+				responses: {
+					200: {
+						description:
+							'Build collections with carId, version, and complete Component metadata; empty builds are included',
+					},
+					401: { description: 'Authentication required' },
 				},
 			},
 		},

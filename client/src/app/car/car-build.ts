@@ -222,6 +222,19 @@ export class CarBuild {
 		this.editing.set(true);
 	}
 
+	protected remove(component: InstalledComponent): void {
+		if (this.carStore.car()?.archivedAt || this.action()) return;
+		this.buildStore.save({
+			mode: 'remove',
+			componentId: component.id,
+			input: {
+				name: component.name,
+				slot: component.slot,
+				slotType: componentSlotType(component),
+			},
+		});
+	}
+
 	protected cancel(): void {
 		if (this.action()) return;
 		this.editing.set(false);
