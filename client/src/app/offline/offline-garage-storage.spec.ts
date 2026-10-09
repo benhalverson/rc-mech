@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import Dexie from 'dexie';
 import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, assert, beforeEach, describe, expect, it } from 'vitest';
 import type { SetupSnapshot } from '../car/setups/setup-snapshot';
 import type {
 	SetupSyncCollection,
@@ -1308,6 +1308,20 @@ describe('OfflineGarageStorage', () => {
 		componentId: null,
 		input: { slot: 'motor', name: 'Motor' },
 	} as const;
+
+	it('restores the validated session fence for new writes after a restart', async () => {
+		await prepareBuild();
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		const restored = await storage.restoreCurrent();
+		expect(restored?.sessionKey).toBe('session-a');
+		assert(restored?.sessionKey);
+		const committed = await storage.commitBuild(buildCommand, {
+			ownerKey: restored.ownerKey,
+			sessionKey: restored.sessionKey,
+		});
+		expect(committed.collection.components[0]?.name).toBe('Motor');
+	});
 
 	it('retains build history through a database restart and acknowledges dependent work in order', async () => {
 		await prepareBuild();
