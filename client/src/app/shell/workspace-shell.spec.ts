@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
+import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
@@ -105,6 +106,7 @@ describe('WorkspaceShell', () => {
 			providers: [
 				{ provide: SettingsWorkspaceStore, useValue: {} },
 				{ provide: PhotoWorkspaceStore, useValue: {} },
+				{ provide: MaintenanceWorkspaceStore, useValue: {} },
 				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([], withDisabledInitialNavigation()),
 				{ provide: OwnerSessionStore, useValue: session },

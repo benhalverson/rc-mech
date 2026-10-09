@@ -709,3 +709,186 @@ test('describes uncached photo originals honestly and clears retained bytes on s
 	});
 	expect(counts).toEqual([0, 0]);
 });
+
+test('retains Maintenance plans and Service records across an offline restart and replays once', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const response = await page.request.post('/api/v1/cars', {
+		data: { name: 'Offline maintenance buggy' },
+	});
+	expect(response.ok()).toBe(true);
+	const { car } = (await response.json()) as { car: { id: string } };
+	await page.goto('/maintenance');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page
+		.getByRole('button', { name: /^(Create a plan|New plan)$/ })
+		.click();
+	await page
+		.getByRole('combobox', { name: 'Car', exact: true })
+		.selectOption(car.id);
+	await page.getByLabel('Plan name').fill('Trackside bearing care');
+	await page.locator('input[name$=".calendarValue"]').fill('7');
+	await page.getByRole('button', { name: 'Save plan', exact: true }).click();
+	let row = page
+		.locator('article.plan-row')
+		.filter({ hasText: 'Trackside bearing care' });
+	await expect(row).toBeVisible();
+	await row.getByRole('button', { name: 'Edit', exact: true }).click();
+	await page.getByLabel('Plan name').fill('Trackside bearing inspection');
+	await page.getByRole('button', { name: 'Save plan', exact: true }).click();
+	row = page
+		.locator('article.plan-row')
+		.filter({ hasText: 'Trackside bearing inspection' });
+	await row.getByRole('button', { name: 'Pause', exact: true }).click();
+	await page.getByRole('button', { name: 'Everything', exact: true }).click();
+	await row.getByRole('button', { name: 'Resume', exact: true }).click();
+	await row.getByRole('button', { name: 'Archive', exact: true }).click();
+	await row.getByRole('button', { name: 'Restore plan', exact: true }).click();
+	await row.getByRole('button', { name: 'Complete', exact: true }).click();
+	await page.getByLabel('Completed work').fill('Cleaned trackside bearings');
+	await page.getByRole('button', { name: 'Save service', exact: true }).click();
+	await expect(
+		page.getByText('Cleaned trackside bearings', { exact: true }).first(),
+	).toBeVisible();
+	await expect(page.getByText(/Pending sync/).first()).toBeVisible();
+	const reopened = await reopenOffline(context, page, '/maintenance');
+	await expect(
+		reopened.getByText('Trackside bearing inspection', { exact: true }),
+	).toBeVisible();
+	await expect(
+		reopened.getByText('Cleaned trackside bearings', { exact: true }).first(),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await context.setOffline(false);
+	await expect(reopened.getByText(/Pending sync/)).toHaveCount(0);
+	const snapshotResponse = await reopened.request.get(
+		'/api/v1/maintenance/sync/snapshot',
+	);
+	expect(snapshotResponse.ok()).toBe(true);
+	const snapshot = (await snapshotResponse.json()) as {
+		collections: Array<{
+			carId: string;
+			plans: Array<{ name: string; status: string }>;
+			records: Array<{ description: string; deletedAt: string | null }>;
+		}>;
+	};
+	const saved = snapshot.collections.find((item) => item.carId === car.id);
+	expect(saved?.plans).toEqual([
+		expect.objectContaining({
+			name: 'Trackside bearing inspection',
+			status: 'active',
+		}),
+	]);
+	expect(saved?.records).toEqual([
+		expect.objectContaining({
+			description: 'Cleaned trackside bearings',
+			deletedAt: null,
+		}),
+	]);
+	await reopened.reload();
+	await expect(
+		reopened.getByText('Cleaned trackside bearings', { exact: true }).first(),
+	).toBeVisible();
+});
+
+test('retains Maintenance conflicts and rejection feedback while independent service synchronizes', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const create = async (name: string) => {
+		const response = await page.request.post('/api/v1/cars', {
+			data: { name },
+		});
+		expect(response.ok()).toBe(true);
+		return ((await response.json()) as { car: { id: string } }).car;
+	};
+	const car = await create('Maintenance conflict buggy');
+	const archived = await create('Maintenance rejected buggy');
+	const response = await page.request.post('/api/v1/maintenance-plans', {
+		data: {
+			carId: car.id,
+			name: 'Conflict baseline',
+			intervalDays: 7,
+			baselineAt: '2026-10-01T12:00:00.000Z',
+		},
+	});
+	expect(response.ok()).toBe(true);
+	const { maintenancePlan: plan } = (await response.json()) as {
+		maintenancePlan: { id: string };
+	};
+	await page.goto('/maintenance');
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	await page
+		.locator('article.plan-row')
+		.filter({ hasText: 'Conflict baseline' })
+		.getByRole('button', { name: 'Edit', exact: true })
+		.click();
+	await page.getByLabel('Plan name').fill('Local conflict intent');
+	await page.getByRole('button', { name: 'Save plan', exact: true }).click();
+	for (const [carId, description] of [
+		[archived.id, 'Rejected service retained'],
+		[car.id, 'Independent service retained'],
+	]) {
+		await page.getByRole('button', { name: 'Log ad hoc service' }).click();
+		await page
+			.getByRole('combobox', { name: 'Car', exact: true })
+			.selectOption(carId);
+		await page.getByLabel('Completed work').fill(description);
+		await page
+			.getByRole('button', { name: 'Save service', exact: true })
+			.click();
+		await expect(
+			page.getByText(description, { exact: true }).first(),
+		).toBeVisible();
+	}
+	expect(
+		(
+			await page.request.patch(`/api/v1/maintenance-plans/${plan.id}`, {
+				data: { name: 'Remote conflict decision' },
+			})
+		).ok(),
+	).toBe(true);
+	expect(
+		(await page.request.post(`/api/v1/cars/${archived.id}/archive`)).ok(),
+	).toBe(true);
+	await context.setOffline(false);
+	await expect(
+		page.getByText(/Sync conflict: This maintenance record changed/),
+	).toBeVisible();
+	await expect(
+		page.getByText(/Needs attention: Restore this Car/),
+	).toBeVisible();
+	await expect(page.getByText(/Pending sync/)).toHaveCount(0);
+	await expect(
+		page.getByText('Local conflict intent', { exact: true }),
+	).toBeVisible();
+	await expect(
+		page.getByText('Rejected service retained', { exact: true }).first(),
+	).toBeVisible();
+	const snapshot = (await (
+		await page.request.get('/api/v1/maintenance/sync/snapshot')
+	).json()) as {
+		collections: Array<{
+			carId: string;
+			plans: Array<{ name: string }>;
+			records: Array<{ description: string }>;
+		}>;
+	};
+	expect(
+		snapshot.collections.find((item) => item.carId === car.id)?.plans,
+	).toEqual([expect.objectContaining({ name: 'Remote conflict decision' })]);
+	expect(
+		snapshot.collections.find((item) => item.carId === car.id)?.records,
+	).toEqual([
+		expect.objectContaining({ description: 'Independent service retained' }),
+	]);
+	expect(
+		snapshot.collections.find((item) => item.carId === archived.id)?.records,
+	).toEqual([]);
+	await expectAxeClean(page);
+});

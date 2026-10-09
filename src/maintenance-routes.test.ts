@@ -1278,6 +1278,7 @@ describe('maintenance plans and service records', () => {
 		for (const [action, before, after] of [
 			['pause', plan(), plan({ status: 'paused' })],
 			['resume', plan({ status: 'paused' }), plan()],
+			['restore', plan({ status: 'archived' }), plan()],
 			['archive', plan(), plan({ status: 'archived' })],
 		] as const) {
 			d1.queue(

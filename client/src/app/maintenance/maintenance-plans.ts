@@ -39,6 +39,7 @@ export class MaintenancePlans {
 	protected readonly timezone = this.store.timezone;
 	protected readonly components = this.store.components;
 	protected readonly action = this.store.action;
+	protected readonly syncMessage = this.store.syncMessage;
 	protected readonly filterOptions: Array<'all' | PlanState> = [
 		'all',
 		'overdue',
@@ -68,9 +69,15 @@ export class MaintenancePlans {
 
 	protected transition(
 		plan: MaintenancePlan,
-		action: 'pause' | 'resume' | 'archive',
+		action: 'pause' | 'resume' | 'archive' | 'restore',
 	): void {
-		if (this.isReadOnly(plan) || this.action()) return;
+		if (
+			this.action() ||
+			(action === 'restore'
+				? this.garage().some((car) => car.id === plan.carId && car.archivedAt)
+				: this.isReadOnly(plan))
+		)
+			return;
 		this.store.mutate({ kind: 'transition-plan', planId: plan.id, action });
 	}
 

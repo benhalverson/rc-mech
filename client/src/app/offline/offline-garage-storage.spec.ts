@@ -10,6 +10,10 @@ import type {
 import type { CarSyncRemoteOutcome } from '../garage/car-sync/car-sync.models';
 import type { GarageCar } from '../garage/garage.models';
 import {
+	maintenancePlanFixture,
+	maintenanceSnapshotFixture,
+} from '../maintenance/maintenance-sync.testing';
+import {
 	OFFLINE_CURRENT_TIME,
 	OFFLINE_DATABASE_NAME,
 	OFFLINE_OPERATION_ID,
@@ -1934,6 +1938,251 @@ describe('OfflineGarageStorage', () => {
 			await inspect.open();
 			expect(await inspect.table('photoCaptures').count()).toBe(0);
 			expect(await inspect.table('photoMedia').count()).toBe(0);
+			inspect.close();
+		},
+	);
+	const prepareMaintenance = async () => {
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [car('car', 'Buggy')],
+				maintenance: maintenanceSnapshotFixture,
+			},
+			'session-a',
+		);
+	};
+	const maintenanceCommand = {
+		kind: 'save-plan' as const,
+		mode: 'create' as const,
+		id: null,
+		plan: {
+			carId: 'car',
+			name: 'New plan',
+			intervalUnit: 'days' as const,
+			intervalValue: 7,
+			baselineSessionCount: 0,
+		},
+	};
+	it('retains maintenance intent across restart, rebases dependencies, and avoids stale acknowledgements', async () => {
+		await prepareMaintenance();
+		const committed = await storage.commitMaintenance(
+			maintenanceCommand,
+			userAFence,
+		);
+		const operation = committed.operations[0];
+		expect(committed.current.collections[0].plans).toHaveLength(2);
+		const plan = committed.current.collections[0].plans[1];
+		await storage.commitMaintenance(
+			{ kind: 'transition-plan', planId: plan.id, action: 'pause' },
+			userAFence,
+		);
+		storage.close();
+		storage = TestBed.runInInjectionContext(() => new OfflineGarageStorage());
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: operation.operationId,
+				outcome: 'applied',
+				collection: { ...committed.current.collections[0], version: 3 },
+			},
+			userAFence,
+		);
+		const next = (await storage.readyMaintenanceOperations(userAFence))[0];
+		expect(next.command.base).toMatchObject({ id: plan.id });
+		await storage.refreshMaintenance(
+			{
+				...maintenanceSnapshotFixture,
+				collections: [{ ...committed.current.collections[0], version: 5 }],
+			},
+			userAFence,
+		);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: next.operationId,
+				outcome: 'applied',
+				collection: { ...committed.current.collections[0], version: 4 },
+			},
+			userAFence,
+		);
+		expect(
+			(await storage.maintenanceSyncView(userAFence)).canonical.collections[0]
+				.version,
+		).toBe(5);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: 'missing',
+				outcome: 'rejected',
+				error: { code: 'NO', message: 'Unavailable' },
+			},
+			userAFence,
+		);
+		await storage.refreshMaintenance(
+			{
+				...maintenanceSnapshotFixture,
+				collections: [
+					{ ...committed.current.collections[0], version: 1 },
+					{ carId: 'other', version: 1, plans: [], records: [] },
+				],
+			},
+			userAFence,
+		);
+		expect(
+			(await storage.maintenanceSyncView(userAFence)).canonical.collections[0]
+				.version,
+		).toBe(5);
+	});
+	it('waits for pending Car and Drive work while retaining service usage exactly once', async () => {
+		await prepareMaintenance();
+		const drive = await storage.commitDrive(
+			{
+				action: 'save',
+				carId: 'car',
+				sessionId: null,
+				input: {
+					startedAt: '2026-08-11T12:00:00Z',
+					durationMinutes: null,
+					conditions: '',
+					notes: '',
+				},
+			},
+			userAFence,
+		);
+		const view = await storage.commitMaintenance(
+			{
+				kind: 'save-service',
+				mode: 'complete',
+				carId: 'car',
+				id: 'plan',
+				service: {
+					performedAt: '2026-08-11T12:00:00Z',
+					description: 'Completed',
+				},
+			},
+			userAFence,
+		);
+		expect(view.operations[0].sessionCount).toBe(1);
+		expect(view.current.collections[0].plans[0].baselineSessionCount).toBe(1);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toEqual([]);
+		await storage.recordDriveOutcome({
+			operationId: drive.operation.operationId,
+			outcome: 'applied',
+			collection: drive.collection,
+		});
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+		await storage.commitCar(
+			{ type: 'edit', carId: 'car', input: { name: 'Renamed' } },
+			userAFence,
+		);
+		await storage.commitMaintenance(maintenanceCommand, userAFence);
+		expect(await storage.readyMaintenanceOperations(userAFence)).toHaveLength(
+			1,
+		);
+	});
+	it('keeps rejection and conflicts durable without blocking independent maintenance', async () => {
+		await prepareMaintenance();
+		const first = await storage.commitMaintenance(
+			maintenanceCommand,
+			userAFence,
+		);
+		const operation = first.operations[0];
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: operation.operationId,
+				outcome: 'rejected',
+				error: { code: 'NO', message: 'Archived' },
+			},
+			userAFence,
+		);
+		await storage.commitMaintenance(maintenanceCommand, userAFence);
+		const ready = await storage.readyMaintenanceOperations(userAFence);
+		expect(ready).toHaveLength(1);
+		await storage.recordMaintenanceOutcome(
+			{
+				operationId: ready[0].operationId,
+				outcome: 'conflict',
+				error: { code: 'CONFLICT', message: 'Remote edit' },
+				remote: {
+					carId: 'car',
+					version: 3,
+					plans: [maintenancePlanFixture],
+					records: [],
+				},
+			},
+			userAFence,
+		);
+		const view = await storage.maintenanceSyncView(userAFence);
+		expect(view.operations.map((operation) => operation.status)).toEqual([
+			'needs-attention',
+			'conflict',
+		]);
+		expect(view.operations[1].remote?.version).toBe(3);
+	});
+	it('fails closed without a valid owner, and prepares missing maintenance metadata safely', async () => {
+		await expect(storage.maintenanceSyncView(userAFence)).rejects.toThrow();
+		await expect(
+			storage.commitMaintenance(maintenanceCommand, userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.refreshMaintenance(maintenanceSnapshotFixture, userAFence),
+		).rejects.toThrow();
+		await expect(
+			storage.recordMaintenanceOutcome(
+				{
+					operationId: 'missing',
+					outcome: 'rejected',
+					error: { code: 'NO', message: 'No' },
+				},
+				userAFence,
+			),
+		).rejects.toThrow();
+		await storage.activate('user-a', 'session-a');
+		await storage.save(
+			{
+				ownerKey: 'user-a',
+				ownerEmail: 'a@example.test',
+				offlineUntil: '2026-08-12T12:00:00Z',
+				preparedAt: '2026-08-11T12:00:00Z',
+				cars: [],
+			},
+			'session-a',
+		);
+		expect(
+			(await storage.maintenanceSyncView(userAFence)).current.collections,
+		).toEqual([]);
+		await expect(
+			storage.commitMaintenance(maintenanceCommand, userAFence),
+		).rejects.toThrow('active Car');
+		await storage.refreshMaintenance(maintenanceSnapshotFixture, userAFence);
+		await storage.replaceCars([
+			{ ...car('car', 'Buggy'), archivedAt: 'today' },
+		]);
+		await expect(
+			storage.commitMaintenance(maintenanceCommand, userAFence),
+		).rejects.toThrow('active Car');
+	});
+	it.each(['sign-out', 'switch', 'invalidate'] as const)(
+		'clears maintenance commands on %s',
+		async (action) => {
+			await prepareMaintenance();
+			await storage.commitMaintenance(maintenanceCommand, userAFence);
+			if (action === 'sign-out') await storage.deactivate();
+			else if (action === 'switch')
+				await storage.activate('user-b', 'session-b');
+			else {
+				fenceFailure = 'set';
+				await expect(storage.activate('user-b', 'session-b')).rejects.toThrow();
+			}
+			const inspect = new Dexie(databaseName);
+			await inspect.open();
+			expect(await inspect.table('maintenanceOperations').count()).toBe(0);
 			inspect.close();
 		},
 	);

@@ -11,6 +11,8 @@ import { parseSetupSyncCollections } from '../car/setups/setup-snapshot';
 import type { SetupSyncCollection } from '../car/setups/setup-sync.models';
 import type { GarageCollection } from '../garage/garage.models';
 import { parseGarageCollection } from '../garage/garage-gateway';
+import type { MaintenanceSnapshot } from '../maintenance/maintenance-sync.models';
+import { maintenanceSnapshotSchema } from '../maintenance/maintenance-sync-schema';
 import {
 	type SettingsSnapshot,
 	settingsSnapshotSchema,
@@ -22,6 +24,7 @@ export type OfflineGarageCollection = GarageCollection &
 		driveCollections: readonly DriveSyncCollection[];
 		setupCollections: readonly SetupSyncCollection[];
 		settings: SettingsSnapshot;
+		maintenance: MaintenanceSnapshot;
 		photos: readonly CarPhoto[];
 	}>;
 
@@ -31,6 +34,9 @@ export class OfflineGarageGateway {
 
 	load(): Observable<OfflineGarageCollection> {
 		return forkJoin({
+			maintenance: this.http.get<unknown>('/api/v1/maintenance/sync/snapshot', {
+				withCredentials: true,
+			}),
 			photos: this.http.get<unknown>('/api/v1/photos', {
 				withCredentials: true,
 			}),
@@ -54,17 +60,29 @@ export class OfflineGarageGateway {
 				withCredentials: true,
 			}),
 		}).pipe(
-			map(({ garage, setups, builds, drives, timezone, invites, photos }) => ({
-				settings: settingsSnapshotSchema.parse({
-					...Object(timezone),
+			map(
+				({
+					garage,
+					setups,
+					builds,
+					drives,
+					timezone,
 					invites,
+					photos,
+					maintenance,
+				}) => ({
+					settings: settingsSnapshotSchema.parse({
+						...Object(timezone),
+						invites,
+					}),
+					photos: parsePhotoCollection(photos),
+					maintenance: maintenanceSnapshotSchema.parse(maintenance),
+					...parseGarageCollection(garage),
+					setupCollections: parseSetupSyncCollections(setups),
+					buildCollections: parseBuildSyncCollections(builds),
+					driveCollections: parseDriveSyncCollections(drives),
 				}),
-				photos: parsePhotoCollection(photos),
-				...parseGarageCollection(garage),
-				setupCollections: parseSetupSyncCollections(setups),
-				buildCollections: parseBuildSyncCollections(builds),
-				driveCollections: parseDriveSyncCollections(drives),
-			})),
+			),
 		);
 	}
 }

@@ -1,8 +1,9 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -22,6 +23,7 @@ import type {
 	ServiceRecordDraft,
 } from './maintenance.models';
 import { MaintenanceGateway } from './maintenance-gateway';
+import { MaintenanceWorkspaceStore } from './maintenance-workspace-store';
 
 export type ServiceRecordCommand =
 	| {
@@ -106,30 +108,67 @@ const resourceMessage = (failure: MaintenanceGatewayFailure | null): string => {
 export const ServiceRecordStore = signalStore(
 	withState<{
 		outcome: ServiceRecordOutcome;
-		components: MaintenanceComponent[];
-	}>({ outcome: idleOutcome(), components: [] }),
+		loadedComponents: MaintenanceComponent[];
+		selectedCarId: string;
+		localFailure: string;
+	}>({
+		outcome: idleOutcome(),
+		loadedComponents: [],
+		selectedCarId: '',
+		localFailure: '',
+	}),
 	withProps(() => ({
 		gateway: inject(MaintenanceGateway),
+		workspace: inject(MaintenanceWorkspaceStore),
+		localRequest: {
+			value: null as null | Readonly<{
+				requestId: string;
+				operationId: number;
+				command: ServiceRecordCommand;
+			}>,
+		},
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => {
 		const records = computed(() =>
-			store.gateway.services.hasValue() ? store.gateway.services.value() : [],
+			store.workspace.available()
+				? store.workspace.records()
+				: store.gateway.services.hasValue()
+					? store.gateway.services.value()
+					: [],
 		);
 		return {
+			components: computed(() =>
+				store.workspace.available()
+					? [
+							...store.workspace
+								.components()
+								.filter(
+									(component) => component.carId === store.selectedCarId(),
+								),
+						]
+					: store.loadedComponents(),
+			),
 			cars: computed(() =>
-				store.gateway.cars.hasValue() ? store.gateway.cars.value() : [],
+				store.workspace.available()
+					? [...store.workspace.cars()]
+					: store.gateway.cars.hasValue()
+						? store.gateway.cars.value()
+						: [],
 			),
 			timezone: computed(() =>
-				store.gateway.timezone.hasValue()
-					? store.gateway.timezone.value()
-					: 'UTC',
+				store.workspace.available()
+					? store.workspace.timezone()
+					: store.gateway.timezone.hasValue()
+						? store.gateway.timezone.value()
+						: 'UTC',
 			),
 			records,
 			activity: computed(() => {
-				const activity = store.gateway.plans.hasValue()
-					? store.gateway.plans.value().activity
-					: [];
+				const activity =
+					!store.workspace.available() && store.gateway.plans.hasValue()
+						? store.gateway.plans.value().activity
+						: [];
 				if (activity.length) return activity;
 				return records()
 					.filter((record) => !record.deletedAt)
@@ -143,11 +182,18 @@ export const ServiceRecordStore = signalStore(
 			}),
 			loading: computed(
 				() =>
+					!store.workspace.available() &&
 					store.gateway.services.isLoading() &&
 					!store.gateway.services.hasValue(),
 			),
-			error: computed(() =>
-				resourceMessage(store.gateway.failure(store.gateway.services.error())),
+			error: computed(
+				() =>
+					store.localFailure() ||
+					(store.workspace.available()
+						? ''
+						: resourceMessage(
+								store.gateway.failure(store.gateway.services.error()),
+							)),
 			),
 			action: computed(() => {
 				const outcome = store.outcome();
@@ -159,8 +205,9 @@ export const ServiceRecordStore = signalStore(
 							? `${command.action === 'archive' ? 'delete' : 'restore'}:${command.recordId}`
 							: `undo:${command.recordId}`;
 				}
-				return store.gateway.services.isLoading() ||
-					store.gateway.plans.isLoading()
+				return !store.workspace.available() &&
+					(store.gateway.services.isLoading() ||
+						store.gateway.plans.isLoading())
 					? 'refresh'
 					: null;
 			}),
@@ -202,32 +249,88 @@ export const ServiceRecordStore = signalStore(
 				switchMap((carId) =>
 					carId
 						? store.gateway.components(carId).pipe(
-								tap((components) => patchState(store, { components })),
+								tap((components) =>
+									patchState(store, { loadedComponents: components }),
+								),
 								catchError(() => {
-									patchState(store, { components: [] });
+									patchState(store, { loadedComponents: [] });
 									return of([]);
 								}),
 							)
-						: of([]).pipe(tap(() => patchState(store, { components: [] }))),
+						: of([]).pipe(
+								tap(() => patchState(store, { loadedComponents: [] })),
+							),
 				),
 			),
 		);
 		return {
 			retry(): void {
+				store.workspace.synchronize();
+				if (store.workspace.available()) store.workspace.refresh();
 				store.gateway.services.reload();
 			},
 			refresh(): void {
+				if (store.workspace.available()) store.workspace.refresh();
 				store.gateway.services.reload();
 			},
 			clearOutcome(): void {
+				store.localRequest.value = null;
+				patchState(store, { localFailure: '' });
 				patchState(store, { outcome: idleOutcome() });
 			},
 			mutate(command: ServiceRecordCommand): void {
-				if (store.outcome().status !== 'pending') mutate(command);
+				if (store.outcome().status === 'pending') return;
+				patchState(store, { localFailure: '' });
+				if (store.workspace.available()) {
+					const operationId = ++store.nextOperationId.value;
+					const requestId = `service:${operationId}`;
+					store.localRequest.value = { requestId, operationId, command };
+					patchState(store, {
+						outcome: { status: 'pending', operationId, command },
+					});
+					store.workspace.mutate({ requestId, change: command });
+					return;
+				}
+				mutate(command);
 			},
 			loadComponents(carId: string): void {
-				loadComponents(carId);
+				patchState(store, { selectedCarId: carId });
+				if (!store.workspace.available()) loadComponents(carId);
 			},
 		};
 	}),
+	withHooks((store) => ({
+		onInit() {
+			effect(() => {
+				const result = store.workspace.outcome();
+				const request = store.localRequest.value;
+				if (
+					!request ||
+					result.requestId !== request.requestId ||
+					result.status === 'pending'
+				)
+					return;
+				if (result.status === 'succeeded')
+					patchState(store, {
+						outcome: {
+							status: 'succeeded',
+							operationId: request.operationId,
+							command: request.command,
+						},
+					});
+				else
+					patchState(store, {
+						localFailure: result.message,
+						outcome: {
+							status: 'failed',
+							operationId: request.operationId,
+							command: request.command,
+							failure: mutationFailure(request.command, {
+								kind: 'unavailable',
+							}),
+						},
+					});
+			});
+		},
+	})),
 );

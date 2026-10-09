@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { buildSyncCommandInput } from './build-sync-contract';
 import { driveSyncCommandInput } from './drive-sync-contract';
+import { maintenanceSyncCommandInput } from './maintenance-sync-contract';
 import { settingsSyncEnvelope } from './settings-sync-contract';
 import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 
@@ -278,6 +279,9 @@ export const openApi = {
 										oneOf: [
 											z.toJSONSchema(buildSyncCommandInput, { io: 'input' }),
 											z.toJSONSchema(driveSyncCommandInput, { io: 'input' }),
+											...maintenanceSyncCommandInput.options.map((command) =>
+												z.toJSONSchema(command, { io: 'input' }),
+											),
 											{
 												type: 'object',
 												required: ['type', 'carId', 'car'],
@@ -486,6 +490,17 @@ export const openApi = {
 					503: {
 						description:
 							'Retryable infrastructure failure; retain the local capture',
+					},
+				},
+			},
+		},
+		'/api/v1/maintenance/sync/snapshot': {
+			get: {
+				summary: 'Read the owner-scoped maintenance working copy',
+				responses: {
+					200: {
+						description:
+							'Raw versioned plans and service history, component metadata, and timezone',
 					},
 				},
 			},

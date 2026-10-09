@@ -39,6 +39,9 @@ describe('OfflineGarageGateway', () => {
 			http.expectOne('/api/v1/invite-codes').flush(settings.invites);
 		};
 		const result = firstValueFrom(gateway.load());
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
 		http.expectOne('/api/v1/photos').flush({ photos: [] });
 		flushSettings();
 		const drives = http.expectOne('/api/v1/drives');
@@ -75,6 +78,7 @@ describe('OfflineGarageGateway', () => {
 		});
 		await expect(result).resolves.toEqual({
 			buildCollections: [],
+			maintenance: { collections: [], components: [], timezone: 'UTC' },
 			photos: [],
 			settings,
 			driveCollections: [],
@@ -97,6 +101,9 @@ describe('OfflineGarageGateway', () => {
 		});
 
 		const malformed = firstValueFrom(gateway.load());
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
 		http.expectOne('/api/v1/photos').flush({ photos: [] });
 		flushSettings();
 		http.expectOne('/api/v1/components').flush({ collections: [] });
@@ -106,6 +113,9 @@ describe('OfflineGarageGateway', () => {
 		await expect(malformed).rejects.toThrow();
 
 		const empty = firstValueFrom(gateway.load());
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
 		http.expectOne('/api/v1/photos').flush({ photos: [] });
 		flushSettings();
 		http.expectOne('/api/v1/components').flush({ collections: [] });
@@ -116,12 +126,16 @@ describe('OfflineGarageGateway', () => {
 			cars: [],
 			setupCollections: [],
 			buildCollections: [],
+			maintenance: { collections: [], components: [], timezone: 'UTC' },
 			photos: [],
 			settings,
 			driveCollections: [],
 		});
 
 		const malformedSetup = firstValueFrom(gateway.load());
+		http
+			.expectOne('/api/v1/maintenance/sync/snapshot')
+			.flush({ collections: [], components: [], timezone: 'UTC' });
 		http.expectOne('/api/v1/photos').flush({ photos: [] });
 		flushSettings();
 		http.expectOne('/api/v1/components').flush({ collections: [] });

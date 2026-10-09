@@ -12,6 +12,7 @@ import {
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { PhotoWorkspaceStore } from '../car/photos/photo-workspace-store';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
+import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
 import { OfflineStatus } from '../offline/offline-status';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
@@ -33,6 +34,7 @@ import { SignOutStore } from './sign-out-store';
 export class WorkspaceShell {
 	protected readonly settingsWorkspace = inject(SettingsWorkspaceStore);
 	protected readonly photoWorkspace = inject(PhotoWorkspaceStore);
+	protected readonly maintenanceWorkspace = inject(MaintenanceWorkspaceStore);
 	protected readonly analysisVisibility = inject(VisibilityStore);
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly responsiveViewport = inject(ResponsiveViewport);

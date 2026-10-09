@@ -15,6 +15,7 @@ import { applySetupSyncOperation } from '../setups/setup-sync';
 import { applyBuildSyncOperation } from './build-sync';
 import { ownedCar, publicCar } from './car-records';
 import { applyDriveSyncOperation } from './drive-sync';
+import { applyMaintenanceSyncOperation } from './maintenance-sync';
 
 const canonicalJson = (value: unknown): string => {
 	if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -101,6 +102,7 @@ export const createCarSyncRoutes = () => {
 		const setupId = command['setupId'];
 		const isBuildCommand = command.type === 'build.change';
 		const isDriveCommand = command.type === 'drive.change';
+		const isMaintenanceCommand = command.type === 'maintenance.change';
 		const now = new Date().toISOString();
 		const database = db(c.env);
 		const requestHash = await requestDigest(parsed.data);
@@ -134,7 +136,9 @@ export const createCarSyncRoutes = () => {
 						? 'build'
 						: isDriveCommand
 							? 'drive'
-							: 'car',
+							: isMaintenanceCommand
+								? 'maintenance'
+								: 'car',
 				entityId:
 					isSetupCommand && typeof setupId === 'string'
 						? setupId
@@ -265,6 +269,14 @@ export const createCarSyncRoutes = () => {
 				requireTerminalReceipt,
 			});
 
+		if (isMaintenanceCommand)
+			return applyMaintenanceSyncOperation(c, {
+				command,
+				operationId: operationId.data,
+				requestHash,
+				now,
+				requireTerminalReceipt,
+			});
 		if (isDriveCommand)
 			return applyDriveSyncOperation(c, {
 				command,

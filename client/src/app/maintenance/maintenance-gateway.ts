@@ -236,7 +236,7 @@ export class MaintenanceGateway {
 
 	transitionPlan(
 		planId: string,
-		action: 'pause' | 'resume' | 'archive',
+		action: 'pause' | 'resume' | 'archive' | 'restore',
 	): Observable<MaintenancePlan> {
 		return this.http
 			.post<unknown>(

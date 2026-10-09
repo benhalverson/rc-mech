@@ -193,6 +193,8 @@ test('OpenAPI documents invite and workspace aggregate endpoints', async () => {
 	).toEqual([
 		'build.change',
 		'drive.change',
+		'maintenance.change',
+		'maintenance.change',
 		'car.create',
 		'car.edit',
 		'car.archive',

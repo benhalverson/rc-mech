@@ -43,6 +43,7 @@ export class OfflineWorkspaceAccess {
 			buildCollections: collection.buildCollections,
 			driveCollections: collection.driveCollections,
 			settings: collection.settings,
+			maintenance: collection.maintenance,
 		};
 		if (!(await this.storage.save(snapshot, owner.sessionKey)))
 			throw new Error('Offline preparation was superseded by another User.');
