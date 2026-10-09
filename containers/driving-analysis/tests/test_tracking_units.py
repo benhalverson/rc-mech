@@ -427,7 +427,7 @@ def test_preparation_recovers_a_concurrent_identical_publication(
     assert isinstance(duplicate, PrepareStageAccepted)
     assert duplicate.prepared == prepared.prepared
     assert durable == [
-        artifact_module.bundle_path(
+        artifact_module.artifact_path(
             configured,
             PREPARED_MEDIA_ID,
             PREPARED_BUNDLE_SUFFIX,
@@ -506,7 +506,7 @@ def test_tracking_recovers_a_concurrent_identical_publication(
     assert isinstance(duplicate, TrackStageAccepted)
     assert duplicate.segment == first.segment
     assert durable == [
-        artifact_module.bundle_path(
+        artifact_module.artifact_path(
             configured,
             SEGMENT_ID,
             artifact_module.OBSERVATION_BUNDLE_SUFFIX,
@@ -583,7 +583,7 @@ def test_incomplete_tracking_bundle_is_an_immutable_id_conflict(
     settings: ServiceSettings,
 ) -> None:
     settings.prepare_roots()
-    artifact_module.bundle_path(
+    artifact_module.artifact_path(
         settings,
         SEGMENT_ID,
         artifact_module.OBSERVATION_BUNDLE_SUFFIX,
