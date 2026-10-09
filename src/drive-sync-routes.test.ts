@@ -111,6 +111,11 @@ describe('Drive session synchronization', () => {
 				},
 			},
 		);
+		expect(d1.queries[0]?.values.slice(3, 6)).toEqual([
+			'drive.change',
+			'drive',
+			carId,
+		]);
 		expect(d1.batches[0]).toHaveLength(3);
 		expect(d1.batches[0]?.[1]).toContain('exists');
 		expect(d1.batches[0]?.[2]).toContain('request_hash');

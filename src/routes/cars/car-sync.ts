@@ -126,7 +126,7 @@ export const createCarSyncRoutes = () => {
 				operationId: operationId.data,
 				contractVersion: parsed.data.contractVersion,
 				kind: command.type,
-				entityType: isSetupCommand ? 'setup' : isDriveCommand ? 'build' : 'car',
+				entityType: isSetupCommand ? 'setup' : isDriveCommand ? 'drive' : 'car',
 				entityId:
 					isSetupCommand && typeof setupId === 'string'
 						? setupId
