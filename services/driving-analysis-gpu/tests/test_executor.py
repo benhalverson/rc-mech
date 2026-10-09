@@ -3,8 +3,13 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from driving_analysis_service.contracts import SubjectProvenance, SubjectSeed
+from driving_analysis_service.geometry_contracts import (
+    SubjectSeed,
+)
 from driving_analysis_service.inference import InferenceFrame
+from driving_analysis_service.observation_contracts import (
+    SubjectProvenance,
+)
 from driving_analysis_service.tracking_artifacts import (
     FRAME_MANIFEST_SUFFIX,
     MAX_COMPRESSED_MANIFEST_BYTES,

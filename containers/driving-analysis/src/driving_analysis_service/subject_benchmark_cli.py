@@ -17,8 +17,7 @@ from driving_analysis_service.benchmark import (
     evaluate_benchmark,
     evaluate_representative_benchmark,
 )
-from driving_analysis_service.contracts import (
-    AcceptedSubjectObservations,
+from driving_analysis_service.benchmark_contracts import (
     BenchmarkObservationSetV2,
     BenchmarkReport,
     CorpusManifest,
@@ -26,6 +25,9 @@ from driving_analysis_service.contracts import (
     RepresentativeBenchmarkReportV2,
     RepresentativeCorpusManifestV2,
     RepresentativeGroundTruthV2,
+)
+from driving_analysis_service.observation_contracts import (
+    AcceptedSubjectObservations,
 )
 
 MAX_BENCHMARK_INPUT_BYTES = 16 * 1024 * 1024

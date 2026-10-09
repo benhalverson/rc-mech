@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 
-from driving_analysis_service.contracts import ErrorCode, ErrorStage, SafeError
+from driving_analysis_service.media_contracts import (
+    ErrorCode,
+    ErrorStage,
+    SafeError,
+)
 
 
 @dataclass(frozen=True)

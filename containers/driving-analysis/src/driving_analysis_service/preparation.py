@@ -13,9 +13,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from driving_analysis_service.contracts import RationalValue
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.ffmpeg_tools import probe_ffmpeg_version
+from driving_analysis_service.geometry_contracts import RationalValue
 from driving_analysis_service.media import (
     ProbeMetadata,
     claim_staged_media,

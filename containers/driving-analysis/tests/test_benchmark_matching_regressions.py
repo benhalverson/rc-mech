@@ -2,18 +2,22 @@ from driving_analysis_service.benchmark import (
     _crossings,
     _unflagged_switches,
 )
-from driving_analysis_service.contracts import (
-    AcceptedSubjectObservations,
+from driving_analysis_service.benchmark_contracts import (
     BenchmarkProvenance,
-    CornerGates,
     CorpusRecording,
-    DirectedGate,
     GroundTruthCase,
     GroundTruthPass,
+    SubjectIdentityAnnotation,
+)
+from driving_analysis_service.geometry_contracts import (
+    CornerGates,
+    DirectedGate,
     NormalizedBox,
     NormalizedPoint,
     RationalValue,
-    SubjectIdentityAnnotation,
+)
+from driving_analysis_service.observation_contracts import (
+    AcceptedSubjectObservations,
     SubjectObservation,
     SubjectProvenance,
 )

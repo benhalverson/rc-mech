@@ -12,11 +12,13 @@ from driving_analysis_service.benchmark import (
     benchmark_generation_digest,
     evaluate_representative_benchmark,
 )
-from driving_analysis_service.contracts import (
+from driving_analysis_service.benchmark_contracts import (
     BenchmarkObservationSetV2,
     GroundTruthPass,
     RepresentativeCorpusManifestV2,
     RepresentativeGroundTruthV2,
+)
+from driving_analysis_service.observation_contracts import (
     SubjectObservation,
 )
 from driving_analysis_service.subject_benchmark_cli import main

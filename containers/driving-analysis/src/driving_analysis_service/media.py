@@ -15,20 +15,24 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Protocol, cast
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     CONTRACT_VERSION,
+)
+from driving_analysis_service.errors import MediaValidationError
+from driving_analysis_service.geometry_contracts import (
+    RationalValue,
+)
+from driving_analysis_service.local_storage import reserve_file_capacity
+from driving_analysis_service.media_contracts import (
     AcceptedValidationResponse,
     ErrorStage,
     MediaFacts,
     MediaValidationRequest,
-    RationalValue,
     RejectedValidationResponse,
     SafeError,
     StagedMediaInput,
     ValidationResponse,
 )
-from driving_analysis_service.errors import MediaValidationError
-from driving_analysis_service.local_storage import reserve_file_capacity
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessStreams,

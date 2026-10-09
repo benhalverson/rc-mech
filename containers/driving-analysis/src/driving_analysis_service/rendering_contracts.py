@@ -5,16 +5,20 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     MAX_BENCHMARK_TIMESTAMP_MS,
     SHA256_PATTERN,
+    SafeFreeFormIdentifier,
+    StrictContract,
+    UuidV4String,
+)
+from driving_analysis_service.geometry_contracts import (
     DirectedGate,
     NormalizedBox,
     NormalizedPoint,
-    SafeFreeFormIdentifier,
+)
+from driving_analysis_service.media_contracts import (
     StagedMediaInput,
-    StrictContract,
-    UuidV4String,
 )
 
 RENDER_CONTRACT_VERSION: Literal["corner-render.v1"] = "corner-render.v1"

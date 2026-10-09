@@ -6,20 +6,26 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     MAX_BENCHMARK_FRAME_COUNT,
     MAX_BENCHMARK_TIMESTAMP_MS,
     MAX_SUBJECT_OBSERVATIONS,
     SHA256_PATTERN,
+    SafeFreeFormIdentifier,
+    StrictContract,
+    UuidV4String,
+)
+from driving_analysis_service.geometry_contracts import (
     NormalizedBox,
     RationalValue,
-    SafeFreeFormIdentifier,
+    SubjectSeed,
+)
+from driving_analysis_service.media_contracts import (
     StagedMediaInput,
-    StrictContract,
+)
+from driving_analysis_service.observation_contracts import (
     SubjectObservation,
     SubjectProvenance,
-    SubjectSeed,
-    UuidV4String,
 )
 
 PROCESSING_CONTRACT_VERSION: Literal["subject-tracking.v1"] = "subject-tracking.v1"

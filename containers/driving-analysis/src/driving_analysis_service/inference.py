@@ -15,12 +15,16 @@ from typing import Protocol, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     SUBJECT_CONTRACT_VERSION,
-    NormalizedBox,
     StrictContract,
-    SubjectProvenance,
+)
+from driving_analysis_service.geometry_contracts import (
+    NormalizedBox,
     SubjectSeed,
+)
+from driving_analysis_service.observation_contracts import (
+    SubjectProvenance,
 )
 from driving_analysis_service.settings import InferenceSettings
 from driving_analysis_service.tracking_contracts import (

@@ -6,25 +6,33 @@ from typing import cast
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from driving_analysis_service.contracts import (
-    MAX_BENCHMARK_FRAME_COUNT,
-    MAX_BENCHMARK_TIMESTAMP_MS,
-    MIN_NORMALIZED_BOX_AREA,
+from driving_analysis_service.benchmark_contracts import (
     BenchmarkCase,
     CorpusRecording,
     GateTimingMetrics,
     GroundTruthPass,
+)
+from driving_analysis_service.contract_primitives import (
+    MAX_BENCHMARK_FRAME_COUNT,
+    MAX_BENCHMARK_TIMESTAMP_MS,
+    MIN_NORMALIZED_BOX_AREA,
+    SafeFreeFormIdentifier,
+)
+from driving_analysis_service.geometry_contracts import (
     NormalizedBox,
     RationalValue,
+    SubjectSeed,
+)
+from driving_analysis_service.media_contracts import (
     SafeError,
-    SafeFreeFormIdentifier,
+    ValidationResponse,
+)
+from driving_analysis_service.observation_contracts import (
     SubjectErrorCode,
     SubjectErrorMessage,
     SubjectErrorStage,
     SubjectSafeError,
-    SubjectSeed,
     TrackingGap,
-    ValidationResponse,
 )
 
 VALIDATION_FIXTURES = Path(__file__).parent / "fixtures" / "race-video-validation"

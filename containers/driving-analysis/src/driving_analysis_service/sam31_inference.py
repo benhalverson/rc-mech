@@ -8,9 +8,8 @@ from typing import Protocol, Self
 
 from pydantic import ValidationError
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.geometry_contracts import (
     NormalizedBox,
-    SubjectProvenance,
     SubjectSeed,
 )
 from driving_analysis_service.inference import (
@@ -18,6 +17,9 @@ from driving_analysis_service.inference import (
     InferenceFrame,
     InferenceUnavailableError,
     configuration_provenance,
+)
+from driving_analysis_service.observation_contracts import (
+    SubjectProvenance,
 )
 from driving_analysis_service.settings import InferenceSettings
 from driving_analysis_service.tracking_contracts import ProviderCandidate

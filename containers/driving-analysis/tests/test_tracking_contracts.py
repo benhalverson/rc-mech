@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from driving_analysis_service.contracts import MAX_SUBJECT_OBSERVATIONS
+from driving_analysis_service.contract_primitives import (
+    MAX_SUBJECT_OBSERVATIONS,
+)
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings
 from driving_analysis_service.tracking_contracts import (
     FixedTrackView,

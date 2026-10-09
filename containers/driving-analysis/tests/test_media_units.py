@@ -10,9 +10,11 @@ from typing import cast
 import pytest
 
 import driving_analysis_service.media as media_module
-from driving_analysis_service.contracts import MediaValidationRequest
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.media import MediaValidationService
+from driving_analysis_service.media_contracts import (
+    MediaValidationRequest,
+)
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,
     ProcessResult,
