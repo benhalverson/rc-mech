@@ -1,4 +1,4 @@
-import { computed, inject, resource } from '@angular/core';
+import { computed, inject, resource, signal } from '@angular/core';
 import {
 	patchState,
 	signalStore,
@@ -19,6 +19,8 @@ import { carReadFailure } from '../car-read-failure';
 import { CarPhotoGateway } from './car-photo-gateway';
 import { PhotoMediaAccess } from './photo-media-access';
 import { PhotoWorkspaceStore } from './photo-workspace-store';
+
+type PhotoMedia = Readonly<Record<string, string | null>>;
 
 type PhotoMutationResult =
 	| { readonly kind: 'upload'; readonly photo: CarPhoto }
@@ -105,8 +107,9 @@ const mutationError = (
  * Projects the selected Car gallery and translates gallery intents into workspace
  * commands, retaining the legacy HTTP path when local preparation is unavailable.
  * Owns route outcomes; resource() manages private-original reads as gallery inputs
- * change. Its cancellation signal releases PhotoMediaAccess URLs and pending HTTP
- * reads on replacement or route destruction. Durable mutations stay explicit.
+ * change, streaming each result so slow downloads never block cached originals.
+ * Its cancellation signal releases PhotoMediaAccess URLs and pending HTTP reads
+ * on replacement or route destruction. Durable mutations stay explicit.
  */
 export const CarPhotoStore = signalStore(
 	withState<{
@@ -188,18 +191,22 @@ export const CarPhotoStore = signalStore(
 				},
 				offline: store.offline(),
 			}),
-			defaultValue: {} as Readonly<Record<string, string | null>>,
-			loader: async ({ params, abortSignal }) =>
-				Object.fromEntries(
-					await Promise.all(
-						params.photos.map(async (photo) => [
-							photo.id,
-							await store.mediaAccess
-								.open(photo.id, params.fence, params.offline, abortSignal)
-								.catch(() => null),
-						]),
-					),
-				),
+			defaultValue: {} as PhotoMedia,
+			stream: ({ params, abortSignal }) => {
+				const media = signal({ value: {} as PhotoMedia });
+				for (const photo of params.photos) {
+					void store.mediaAccess
+						.open(photo.id, params.fence, params.offline, abortSignal)
+						.catch(() => null)
+						.then((url) => {
+							if (!abortSignal.aborted)
+								media.update(({ value }) => ({
+									value: { ...value, [photo.id]: url },
+								}));
+						});
+				}
+				return media;
+			},
 		}),
 	})),
 	withComputed((store) => ({ media: store.mediaResource.value })),
