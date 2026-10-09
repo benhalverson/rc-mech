@@ -9,6 +9,13 @@ import type {
 	BuildSyncView,
 } from '../../car/build-sync/build-sync.models';
 import { BuildSyncGateway } from '../../car/build-sync/build-sync-gateway';
+import type {
+	DriveSyncCommand,
+	DriveSyncOperation,
+	DriveSyncRemoteOutcome,
+	DriveSyncView,
+} from '../../car/drive-sync/drive-sync.models';
+import { DriveSyncGateway } from '../../car/drive-sync/drive-sync-gateway';
 import type { SetupSnapshot } from '../../car/setups/setup-snapshot';
 import type {
 	SetupSyncCollection,
@@ -162,6 +169,52 @@ const buildView: BuildSyncView = {
 	collections: [buildCollection],
 	operations: [buildOperation],
 };
+const driveCommand: DriveSyncCommand = {
+	action: 'save',
+	carId: 'car-1',
+	sessionId: null,
+	input: {
+		startedAt: '2026-10-09T12:00:00Z',
+		durationMinutes: null,
+		conditions: 'Dry',
+		notes: '',
+	},
+};
+const driveOperation: DriveSyncOperation = {
+	operationId: 'build-op',
+	ownerKey: 'owner-1',
+	carId: 'car-1',
+	command: {
+		type: 'drive.change',
+		action: 'save',
+		carId: 'car-1',
+		sessionId: 'motor',
+		baseVersion: 1,
+		base: null,
+		input: {
+			startedAt: '2026-10-09T12:00:00Z',
+			durationMinutes: null,
+			conditions: 'Dry',
+			notes: '',
+		},
+	},
+	dependencies: [],
+	status: 'pending',
+	createdAt: '2026-08-11T12:00:00Z',
+	sequence: 1,
+};
+const driveCollection = {
+	carId: 'car-1',
+	version: 2,
+	sessions: [
+		{ id: 'motor', carId: 'car-1', ...driveCommand.input, deletedAt: null },
+	],
+};
+const driveView: DriveSyncView = {
+	canonicalCollections: [driveCollection],
+	collections: [driveCollection],
+	operations: [driveOperation],
+};
 const deferred = <T>() => {
 	let resolve!: (value: T) => void;
 	let reject!: (reason?: unknown) => void;
@@ -173,6 +226,28 @@ const deferred = <T>() => {
 };
 
 class FakeStorage {
+	readonly driveSyncView = vi.fn(
+		async (): Promise<DriveSyncView> => ({
+			canonicalCollections: [],
+			collections: [],
+			operations: [],
+		}),
+	);
+	readonly readyDriveOperations = vi.fn(
+		async (): Promise<readonly DriveSyncOperation[]> => [],
+	);
+	readonly commitDrive = vi.fn(async () => ({
+		operation: driveOperation,
+		collection: driveCollection,
+		view: driveView,
+	}));
+	readonly recordDriveOutcome = vi.fn(
+		async (): Promise<DriveSyncView> => ({ ...driveView, operations: [] }),
+	);
+	readonly mergeDriveCollection = vi.fn(
+		async (): Promise<DriveSyncView> => driveView,
+	);
+
 	readonly buildSyncView = vi.fn(
 		async (): Promise<BuildSyncView> => ({
 			canonicalCollections: [],
@@ -324,10 +399,18 @@ describe('CarWorkspaceStore', () => {
 			>
 		>;
 	};
+	let driveGateway: {
+		apply: ReturnType<
+			typeof vi.fn<
+				(operation: DriveSyncOperation) => Observable<DriveSyncRemoteOutcome>
+			>
+		>;
+	};
 	let store: InstanceType<typeof CarWorkspaceStore>;
 
 	beforeEach(() => {
 		storage = new FakeStorage();
+		driveGateway = { apply: vi.fn() };
 		buildGateway = { apply: vi.fn() };
 		gateway = new FakeGateway();
 		setupGateway = new FakeSetupGateway();
@@ -340,6 +423,7 @@ describe('CarWorkspaceStore', () => {
 				{ provide: OfflineGarageStorage, useValue: storage },
 				{ provide: CarSyncGateway, useValue: gateway },
 				{ provide: SetupSyncGateway, useValue: setupGateway },
+				{ provide: DriveSyncGateway, useValue: driveGateway },
 				{ provide: BuildSyncGateway, useValue: buildGateway },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 				{ provide: OfflineConnectivity, useValue: connectivity },
@@ -1232,6 +1316,7 @@ describe('CarWorkspaceStore', () => {
 				{ provide: OfflineGarageStorage, useValue: storage },
 				{ provide: CarSyncGateway, useValue: gateway },
 				{ provide: SetupSyncGateway, useValue: setupGateway },
+				{ provide: DriveSyncGateway, useValue: driveGateway },
 				{ provide: BuildSyncGateway, useValue: buildGateway },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 				{ provide: OfflineConnectivity, useValue: connectivity },
@@ -1474,6 +1559,204 @@ describe('CarWorkspaceStore', () => {
 		offline.status.set('ready');
 		await vi.waitFor(() =>
 			expect(store.buildSyncFailure()).toMatchObject({ kind: 'local' }),
+		);
+		expect(offline.markOffline).not.toHaveBeenCalled();
+		expect(connectivity.markRequestSucceeded).toHaveBeenCalled();
+	});
+	it('commits Drive intent durably and publishes only the matching owner result', async () => {
+		store.commitDrive(driveCommand);
+		expect(storage.commitDrive).not.toHaveBeenCalled();
+		store.clearDriveMutationState();
+		storage.carSyncView.mockResolvedValue(syncedView);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.opened()).toBe(true));
+		const pending = deferred<Awaited<ReturnType<FakeStorage['commitDrive']>>>();
+		storage.commitDrive.mockReturnValueOnce(pending.promise);
+		store.commitDrive(driveCommand);
+		store.commitDrive(driveCommand);
+		store.clearDriveMutationState();
+		expect(storage.commitDrive).toHaveBeenCalledOnce();
+		expect(store.driveMutationOutcome().status).toBe('pending');
+		pending.resolve({
+			operation: driveOperation,
+			collection: driveCollection,
+			view: driveView,
+		});
+		await vi.waitFor(() =>
+			expect(store.driveMutationOutcome().status).toBe('succeeded'),
+		);
+		expect(store.driveCollections()).toEqual([driveCollection]);
+		expect(store.driveOperations()).toEqual([driveOperation]);
+		store.clearDriveMutationState();
+		expect(store.driveMutationOutcome().status).toBe('idle');
+		storage.commitDrive.mockRejectedValueOnce(new Error('Quota reached'));
+		store.commitDrive(driveCommand);
+		await vi.waitFor(() =>
+			expect(store.driveMutationOutcome()).toMatchObject({
+				status: 'failed',
+				error: { message: 'Quota reached' },
+			}),
+		);
+	});
+
+	it.each(['success', 'failure'] as const)(
+		'drops stale Drive commit %s after an owner switch',
+		async (result) => {
+			storage.carSyncView.mockResolvedValue(syncedView);
+			offline.hasSnapshot.set(true);
+			offline.status.set('ready');
+			await vi.waitFor(() => expect(store.opened()).toBe(true));
+			const pending =
+				deferred<Awaited<ReturnType<FakeStorage['commitDrive']>>>();
+			storage.commitDrive.mockReturnValueOnce(pending.promise);
+			store.commitDrive(driveCommand);
+			offline.hasSnapshot.set(false);
+			offline.ownerKey.set('new-owner');
+			offline.sessionKey.set('new-session');
+			TestBed.tick();
+			if (result === 'success')
+				pending.resolve({
+					operation: driveOperation,
+					collection: driveCollection,
+					view: driveView,
+				});
+			else pending.reject(new Error('stale'));
+			await Promise.resolve();
+			expect(store.driveMutationOutcome().status).toBe('idle');
+			expect(store.driveCollections()).toEqual([]);
+			expect(store.driveOperations()).toEqual([]);
+			expect(store.driveSyncFailure()).toBeNull();
+		},
+	);
+
+	it('synchronizes Drive work through the shared queue and records acknowledgement', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.readyDriveOperations.mockResolvedValueOnce([driveOperation]);
+		storage.driveSyncView.mockResolvedValue(driveView);
+		driveGateway.apply.mockReturnValueOnce(
+			of({
+				operationId: driveOperation.operationId,
+				outcome: 'applied',
+				collection: driveCollection,
+			}),
+		);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() =>
+			expect(storage.recordDriveOutcome).toHaveBeenCalledOnce(),
+		);
+		expect(store.driveSyncFailure()).toBeNull();
+		expect(store.driveOperations()).toEqual([]);
+	});
+
+	it.each([
+		{ kind: 'unavailable' },
+		{ kind: 'http', status: 401 },
+		{ kind: 'invalid-response' },
+	])('retains a failed Drive request: %j', async (failure) => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.readyDriveOperations.mockResolvedValueOnce([driveOperation]);
+		driveGateway.apply.mockReturnValueOnce(throwError(() => failure));
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.driveSyncFailure()).toEqual(failure));
+		expect(storage.recordDriveOutcome).not.toHaveBeenCalled();
+		if (failure.kind === 'unavailable')
+			expect(connectivity.scheduleRetry).toHaveBeenCalled();
+	});
+
+	it('fences queue reads and provider completion across an owner switch', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		const ready = deferred<readonly DriveSyncOperation[]>();
+		storage.readyDriveOperations.mockReturnValueOnce(ready.promise);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() =>
+			expect(storage.readyDriveOperations).toHaveBeenCalledOnce(),
+		);
+		offline.hasSnapshot.set(false);
+		offline.ownerKey.set('other');
+		TestBed.tick();
+		ready.resolve([driveOperation]);
+		await Promise.resolve();
+		expect(driveGateway.apply).not.toHaveBeenCalled();
+	});
+
+	it.each(['success', 'failure'] as const)(
+		'fences stale Drive transport %s',
+		async (result) => {
+			storage.carSyncView.mockResolvedValue(syncedView);
+			storage.readyDriveOperations.mockResolvedValueOnce([driveOperation]);
+			const response = new Subject<DriveSyncRemoteOutcome>();
+			driveGateway.apply.mockReturnValueOnce(response);
+			offline.hasSnapshot.set(true);
+			offline.status.set('ready');
+			await vi.waitFor(() => expect(driveGateway.apply).toHaveBeenCalledOnce());
+			offline.hasSnapshot.set(false);
+			offline.ownerKey.set('other');
+			TestBed.tick();
+			if (result === 'success')
+				response.next({
+					operationId: driveOperation.operationId,
+					outcome: 'applied',
+					collection: driveCollection,
+				});
+			else response.error(new Error('stale'));
+			await Promise.resolve();
+			expect(storage.recordDriveOutcome).not.toHaveBeenCalled();
+		},
+	);
+
+	it('merges refreshed Drive data and retains local-storage failures', async () => {
+		store.observeServerDriveCollection(driveCollection);
+		expect(storage.mergeDriveCollection).not.toHaveBeenCalled();
+		storage.carSyncView.mockResolvedValue(syncedView);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.opened()).toBe(true));
+		store.observeServerDriveCollection(driveCollection);
+		await vi.waitFor(() =>
+			expect(store.driveCollections()).toEqual([driveCollection]),
+		);
+		storage.mergeDriveCollection.mockRejectedValueOnce(
+			new Error('Storage unavailable'),
+		);
+		store.observeServerDriveCollection(driveCollection);
+		await vi.waitFor(() =>
+			expect(store.driveSyncFailure()).toMatchObject({ kind: 'local' }),
+		);
+		const staleSuccess = deferred<DriveSyncView>();
+		storage.mergeDriveCollection.mockReturnValueOnce(staleSuccess.promise);
+		store.observeServerDriveCollection(driveCollection);
+		const stale = deferred<DriveSyncView>();
+		storage.mergeDriveCollection.mockReturnValueOnce(stale.promise);
+		store.observeServerDriveCollection(driveCollection);
+		offline.hasSnapshot.set(false);
+		offline.ownerKey.set('other');
+		TestBed.tick();
+		staleSuccess.resolve(driveView);
+		stale.reject(new Error('stale'));
+		await Promise.resolve();
+		expect(store.driveSyncFailure()).toBeNull();
+	});
+	it('retains a failed local acknowledgement without misreporting a network outage', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.readyDriveOperations.mockResolvedValueOnce([driveOperation]);
+		storage.recordDriveOutcome.mockRejectedValueOnce(
+			new Error('Local acknowledgement unavailable'),
+		);
+		driveGateway.apply.mockReturnValueOnce(
+			of({
+				operationId: driveOperation.operationId,
+				outcome: 'applied',
+				collection: driveCollection,
+			}),
+		);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() =>
+			expect(store.driveSyncFailure()).toMatchObject({ kind: 'local' }),
 		);
 		expect(offline.markOffline).not.toHaveBeenCalled();
 		expect(connectivity.markRequestSucceeded).toHaveBeenCalled();

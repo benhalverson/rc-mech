@@ -1,15 +1,18 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, exhaustMap, Subject, takeUntil, tap } from 'rxjs';
+import { CarWorkspaceStore } from '../../garage/car-sync/car-workspace-store';
 import type { CarReadFailure } from '../car-read-failure';
+import type { DriveSyncCommand } from '../drive-sync/drive-sync.models';
 import {
 	type ArchiveDriveSessionCommand,
 	type DriveSessionGatewayFailure,
@@ -23,6 +26,8 @@ import { resolveTimezone } from './drive-session-time';
 type DriveSessionState = {
 	carId: string;
 	outcome: DriveSessionOutcome;
+	localCommand: DriveSyncCommand | null;
+	localOperationId: string;
 };
 
 type MutationCommand =
@@ -76,30 +81,62 @@ const mutationFailureMessage = (
 };
 
 export const DriveSessionStore = signalStore(
-	withState<DriveSessionState>({ carId: '', outcome: idleOutcome() }),
+	withState<DriveSessionState>({
+		carId: '',
+		outcome: idleOutcome(),
+		localCommand: null,
+		localOperationId: '',
+	}),
 	withProps(() => ({
 		gateway: inject(DriveSessionGateway),
+		workspace: inject(CarWorkspaceStore),
 		nextOperationId: { value: 0 },
 		selectionGeneration: { value: 0 },
 		cancelMutations: new Subject<void>(),
 	})),
 	withComputed((store) => ({
-		sessions: computed(() =>
-			store.gateway.collection.hasValue()
-				? store.gateway.collection.value().sessions
-				: [],
+		sessions: computed(
+			() =>
+				store.workspace
+					.driveCollections()
+					.find((collection) => collection.carId === store.carId())?.sessions ??
+				(store.gateway.collection.hasValue()
+					? store.gateway.collection.value().sessions
+					: []),
 		),
 		timezone: computed(() => {
-			const collectionTimezone = store.gateway.collection.hasValue()
-				? store.gateway.collection.value().timezone
-				: null;
+			const collectionTimezone =
+				store.workspace
+					.driveCollections()
+					.find((collection) => collection.carId === store.carId())?.timezone ??
+				(store.gateway.collection.hasValue()
+					? store.gateway.collection.value().timezone
+					: null);
 			const preferenceTimezone = store.gateway.timezone.hasValue()
 				? store.gateway.timezone.value().timezone
 				: null;
 			return resolveTimezone(collectionTimezone, preferenceTimezone);
 		}),
-		loading: computed(() => store.gateway.collection.isLoading()),
-		failure: computed(() => readFailure(store.gateway.collectionFailure())),
+		loading: computed(
+			() => !store.workspace.opened() && store.gateway.collection.isLoading(),
+		),
+		failure: computed(() =>
+			store.workspace.opened()
+				? null
+				: readFailure(store.gateway.collectionFailure()),
+		),
+		syncOperations: computed(() =>
+			store.workspace
+				.driveOperations()
+				.filter((operation) => operation.carId === store.carId()),
+		),
+		localPending: computed(() =>
+			store.workspace
+				.driveOperations()
+				.some(
+					(operation) => operation.operationId === store.localOperationId(),
+				),
+		),
 		pending: computed(() => store.outcome().status === 'pending'),
 		error: computed(() => {
 			const outcome = store.outcome();
@@ -107,12 +144,10 @@ export const DriveSessionStore = signalStore(
 				? mutationFailureMessage(outcome.error, outcome.operation)
 				: '';
 		}),
-		activeCount: computed(() =>
-			store.gateway.collection.hasValue()
-				? store.gateway.collection
-						.value()
-						.sessions.filter((session) => !session.deletedAt).length
-				: 0,
+	})),
+	withComputed((store) => ({
+		activeCount: computed(
+			() => store.sessions().filter((session) => !session.deletedAt).length,
 		),
 	})),
 	withMethods((store) => {
@@ -167,15 +202,50 @@ export const DriveSessionStore = signalStore(
 			),
 		);
 
+		const commitLocal = (
+			command: DriveSyncCommand,
+			operation: DriveSessionOperation,
+		): void => {
+			if (!command.carId || command.carId !== store.carId() || store.pending())
+				return;
+			patchState(store, {
+				localCommand: command,
+				localOperationId: '',
+				outcome: {
+					status: 'pending',
+					operation,
+					operationId: ++store.nextOperationId.value,
+				},
+			});
+			store.workspace.commitDrive(command);
+		};
+
 		return {
 			selectCar(carId: string): void {
 				if (store.carId() === carId) return;
 				store.selectionGeneration.value += 1;
 				store.cancelMutations.next();
-				patchState(store, { carId, outcome: idleOutcome() });
+				patchState(store, {
+					carId,
+					outcome: idleOutcome(),
+					localCommand: null,
+					localOperationId: '',
+				});
 				store.gateway.selectCar(carId);
 			},
 			saveDriveSession(command: SaveDriveSessionCommand): void {
+				if (store.workspace.durableSetupMutationsAvailable()) {
+					commitLocal(
+						{
+							action: 'save',
+							carId: command.carId,
+							sessionId: command.sessionId,
+							input: command.draft,
+						},
+						'save-drive-session',
+					);
+					return;
+				}
 				mutate({
 					operation: 'save-drive-session',
 					command,
@@ -183,6 +253,27 @@ export const DriveSessionStore = signalStore(
 				});
 			},
 			archiveDriveSession(command: ArchiveDriveSessionCommand): void {
+				if (store.workspace.durableSetupMutationsAvailable()) {
+					const session = store
+						.sessions()
+						.find((value) => value.id === command.sessionId);
+					if (!session) return;
+					commitLocal(
+						{
+							action: 'archive',
+							carId: command.carId,
+							sessionId: command.sessionId,
+							input: {
+								startedAt: session.startedAt,
+								durationMinutes: session.durationMinutes,
+								conditions: session.conditions ?? '',
+								notes: session.notes ?? '',
+							},
+						},
+						'archive-drive-session',
+					);
+					return;
+				}
 				mutate({
 					operation: 'archive-drive-session',
 					command,
@@ -196,5 +287,50 @@ export const DriveSessionStore = signalStore(
 				store.gateway.refresh();
 			},
 		};
+	}),
+
+	withHooks({
+		onInit(store) {
+			effect(() => {
+				const result = store.workspace.driveMutationOutcome();
+				const pending = store.outcome();
+				if (
+					pending.status !== 'pending' ||
+					result.status === 'idle' ||
+					result.command !== store.localCommand()
+				)
+					return;
+				if (result.status === 'succeeded') {
+					const session = result.collection.sessions.find(
+						(value) =>
+							value.id ===
+							(result.command.sessionId ??
+								result.collection.sessions.at(-1)?.id),
+					);
+					if (!session) return;
+					patchState(store, {
+						localOperationId: result.operationId,
+						outcome: {
+							status: 'succeeded',
+							operation: pending.operation,
+							operationId: pending.operationId,
+							session,
+						},
+					});
+				} else if (result.status === 'failed')
+					patchState(store, {
+						outcome: {
+							status: 'failed',
+							operation: pending.operation,
+							operationId: pending.operationId,
+							error: {
+								kind: 'rejected-response',
+								status: 0,
+								message: result.error.message,
+							},
+						},
+					});
+			});
+		},
 	}),
 );

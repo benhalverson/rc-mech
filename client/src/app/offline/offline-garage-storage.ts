@@ -15,6 +15,20 @@ import {
 	rebaseBuildSyncOperation,
 } from '../car/build-sync/build-sync-rules';
 import type {
+	DriveSyncCollection,
+	DriveSyncCommand,
+	DriveSyncOperation,
+	DriveSyncRemoteOutcome,
+	DriveSyncView,
+} from '../car/drive-sync/drive-sync.models';
+import {
+	buildDriveSyncOperation,
+	materializeDriveCollections,
+	mergeDriveCollection,
+	readyDriveSyncOperations,
+	rebaseDriveSyncOperation,
+} from '../car/drive-sync/drive-sync-rules';
+import type {
 	BuiltSetupSyncOperation,
 	SetupSyncCollection,
 	SetupSyncCommand,
@@ -105,6 +119,7 @@ export type OfflineGarageSnapshot = Readonly<{
 	cars: readonly GarageCar[];
 	setupCollections?: readonly SetupSyncCollection[];
 	buildCollections?: readonly BuildSyncCollection[];
+	driveCollections?: readonly DriveSyncCollection[];
 }>;
 
 type OfflineMetadata =
@@ -150,6 +165,7 @@ export class OfflineGarageStorage {
 	private readonly operations: Table<CarSyncOperation, string>;
 	private readonly setupOperations: Table<SetupSyncOperation, string>;
 	private readonly buildOperations: Table<BuildSyncOperation, string>;
+	private readonly driveOperations: Table<DriveSyncOperation, string>;
 
 	constructor() {
 		this.database
@@ -174,6 +190,12 @@ export class OfflineGarageStorage {
 		this.database.version(5).stores({
 			buildOperations: '&operationId,ownerKey,carId,status,createdAt',
 		});
+		this.database
+			.version(6)
+			.stores({
+				driveOperations: '&operationId,ownerKey,carId,status,createdAt',
+			});
+		this.driveOperations = this.database.table('driveOperations');
 		this.buildOperations = this.database.table('buildOperations');
 		this.snapshots = this.database.table('snapshots');
 		this.metadata = this.database.table('metadata');
@@ -206,6 +228,7 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const signOut = await this.metadata.get('sign-out');
@@ -224,6 +247,10 @@ export class OfflineGarageStorage {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
 						this.buildOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.driveOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
 							.delete(),
@@ -274,6 +301,7 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
@@ -281,6 +309,10 @@ export class OfflineGarageStorage {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
 						this.buildOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.driveOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
 							.delete(),
@@ -422,6 +454,7 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
@@ -631,6 +664,177 @@ export class OfflineGarageStorage {
 		);
 	}
 
+	private driveView(
+		canonicalCollections: readonly DriveSyncCollection[],
+		operations: readonly DriveSyncOperation[],
+	): DriveSyncView {
+		return {
+			canonicalCollections,
+			collections: materializeDriveCollections(
+				canonicalCollections,
+				operations,
+			),
+			operations,
+		};
+	}
+
+	private ownerDriveOperations(
+		ownerKey: string,
+	): Promise<DriveSyncOperation[]> {
+		return this.driveOperations.where('ownerKey').equals(ownerKey).toArray();
+	}
+
+	async driveSyncView(): Promise<DriveSyncView | null> {
+		const current = await this.currentSnapshot();
+		if (!current) return null;
+		return this.driveView(
+			current.driveCollections ?? [],
+			await this.ownerDriveOperations(current.ownerKey),
+		);
+	}
+
+	async commitDrive(
+		command: DriveSyncCommand,
+		fence: OfflineWorkspaceFence,
+	): Promise<
+		Readonly<{
+			operation: DriveSyncOperation;
+			collection: DriveSyncCollection;
+			view: DriveSyncView;
+		}>
+	> {
+		const operationId = this.nextOperationId();
+		const sessionId = this.nextOperationId();
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.operations, this.driveOperations],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				const operations = await this.ownerDriveOperations(current.ownerKey);
+				const carOperations = await this.ownerOperations(current.ownerKey);
+				const cars = materializeCars(current.cars, carOperations);
+				if (!cars.some((car) => car.id === command.carId && !car.archivedAt))
+					throw new Error('Restore this Car before recording Drive sessions.');
+				const canonical = current.driveCollections ?? [];
+				const built = buildDriveSyncOperation(
+					command,
+					materializeDriveCollections(canonical, operations),
+					operations,
+					{
+						ownerKey: current.ownerKey,
+						operationId,
+						sessionId,
+						createdAt: new Date(this.now()).toISOString(),
+						carDependencies: carOperations
+							.filter((operation) => operation.carId === command.carId)
+							.map((operation) => operation.operationId),
+					},
+				);
+				await this.driveOperations.add(built.operation);
+				return {
+					...built,
+					view: this.driveView(canonical, [...operations, built.operation]),
+				};
+			},
+		);
+	}
+
+	async readyDriveOperations(): Promise<readonly DriveSyncOperation[]> {
+		return this.database.transaction(
+			'r',
+			[this.snapshots, this.metadata, this.operations, this.driveOperations],
+			async () => {
+				const current = await this.currentSnapshot();
+				if (!current) return [];
+				const operations = await this.ownerDriveOperations(current.ownerKey);
+				const carOperations = await this.ownerOperations(current.ownerKey);
+				return readyDriveSyncOperations(
+					operations,
+					new Set(
+						[...operations, ...carOperations].map(
+							(operation) => operation.operationId,
+						),
+					),
+				);
+			},
+		);
+	}
+
+	async recordDriveOutcome(
+		outcome: DriveSyncRemoteOutcome,
+	): Promise<DriveSyncView> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.driveOperations],
+			async () => {
+				const current = await this.currentSnapshot();
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				let canonical = current.driveCollections ?? [];
+				const operation = await this.driveOperations.get(outcome.operationId);
+				if (operation?.ownerKey === current.ownerKey) {
+					if (outcome.outcome === 'applied') {
+						canonical = mergeDriveCollection(canonical, outcome.collection);
+						await this.snapshots.put({
+							...current,
+							driveCollections: canonical,
+						});
+						await this.driveOperations.delete(operation.operationId);
+						const dependents = await this.ownerDriveOperations(
+							current.ownerKey,
+						);
+						await this.driveOperations.bulkPut(
+							dependents.map((candidate) =>
+								rebaseDriveSyncOperation(
+									candidate,
+									operation.operationId,
+									outcome.collection,
+								),
+							),
+						);
+					} else {
+						await this.driveOperations.put({
+							...operation,
+							status:
+								outcome.outcome === 'rejected' ? 'needs-attention' : 'conflict',
+							feedback: outcome.error,
+							...(outcome.outcome === 'conflict'
+								? { remote: outcome.remote }
+								: {}),
+						});
+					}
+				}
+				return this.driveView(
+					canonical,
+					await this.ownerDriveOperations(current.ownerKey),
+				);
+			},
+		);
+	}
+
+	async mergeDriveCollection(
+		collection: DriveSyncCollection,
+		fence: OfflineWorkspaceFence,
+	): Promise<DriveSyncView> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.driveOperations],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				const canonical = mergeDriveCollection(
+					current.driveCollections ?? [],
+					collection,
+				);
+				await this.snapshots.put({ ...current, driveCollections: canonical });
+				return this.driveView(
+					canonical,
+					await this.ownerDriveOperations(current.ownerKey),
+				);
+			},
+		);
+	}
+
 	async readyCarOperations(): Promise<readonly CarSyncOperation[]> {
 		const view = await this.carSyncView();
 		return view ? readyCarSyncOperations(view.operations) : [];
@@ -645,6 +849,7 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot();
@@ -673,6 +878,7 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot();
@@ -755,6 +961,7 @@ export class OfflineGarageStorage {
 				this.metadata,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot();
@@ -862,6 +1069,7 @@ export class OfflineGarageStorage {
 				this.metadata,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
@@ -897,6 +1105,10 @@ export class OfflineGarageStorage {
 			...snapshot,
 			sessionKey: active.sessionKey,
 			cars: materializeCars(snapshot.cars, operations),
+			driveCollections: materializeDriveCollections(
+				snapshot.driveCollections ?? [],
+				await this.ownerDriveOperations(snapshot.ownerKey),
+			),
 			buildCollections: materializeBuildCollections(
 				snapshot.buildCollections ?? [],
 				await this.ownerBuildOperations(snapshot.ownerKey),
@@ -922,6 +1134,7 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.buildOperations,
+				this.driveOperations,
 			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
@@ -929,6 +1142,10 @@ export class OfflineGarageStorage {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
 						this.buildOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
+						this.driveOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
 							.delete(),

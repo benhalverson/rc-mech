@@ -401,3 +401,66 @@ test('retains Component edits, replacements, and removals across an offline rest
 		body.components.every((component) => component.removedAt !== null),
 	).toBe(true);
 });
+
+test('records and edits Drive sessions after an offline restart and reconciles usage once', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Offline drive buggy' },
+	});
+	expect(created.ok()).toBe(true);
+	const { car } = (await created.json()) as { car: { id: string } };
+	await page.goto(`/garage/${car.id}/drive-sessions`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await context.setOffline(true);
+	const reopened = await reopenOffline(
+		context,
+		page,
+		`/garage/${car.id}/drive-sessions`,
+	);
+	await reopened
+		.getByRole('button', { name: 'Record the first drive session' })
+		.click();
+	await reopened
+		.getByLabel('Started', { exact: false })
+		.fill('2026-10-09T12:00');
+	await reopened.getByLabel('Duration (minutes)', { exact: false }).fill('12');
+	await reopened.getByLabel('Conditions', { exact: false }).fill('Dry carpet');
+	await reopened
+		.getByRole('button', { name: 'Save session', exact: true })
+		.click();
+	await expect(
+		reopened.getByText('Drive session saved on this device. Pending sync.'),
+	).toBeVisible();
+	await expect(reopened.getByText('Dry carpet', { exact: true })).toBeVisible();
+	await reopened
+		.getByRole('button', { name: 'Edit drive session 1', exact: true })
+		.click();
+	await reopened.getByLabel('Notes', { exact: false }).fill('More rear grip');
+	await reopened
+		.getByRole('button', { name: 'Save session', exact: true })
+		.click();
+	await expect(
+		reopened.getByText('More rear grip', { exact: true }),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await context.setOffline(false);
+	await expect(
+		reopened.getByText('Drive session saved on this device. Pending sync.'),
+	).toHaveCount(0);
+	const response = await reopened.request.get(
+		`/api/v1/cars/${car.id}/drives?history=true`,
+	);
+	const result = (await response.json()) as {
+		driveSessions: Array<{ notes: string; durationMinutes: number }>;
+		count: number;
+	};
+	expect(result.count).toBe(1);
+	expect(result.driveSessions).toHaveLength(1);
+	expect(result.driveSessions[0]).toMatchObject({
+		notes: 'More rear grip',
+		durationMinutes: 12,
+	});
+});

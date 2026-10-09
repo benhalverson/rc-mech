@@ -3,6 +3,8 @@ import { inject, Service } from '@angular/core';
 import { forkJoin, map, type Observable } from 'rxjs';
 import type { BuildSyncCollection } from '../car/build-sync/build-sync.models';
 import { parseBuildSyncCollections } from '../car/build-sync/build-sync-gateway';
+import type { DriveSyncCollection } from '../car/drive-sync/drive-sync.models';
+import { parseDriveSyncCollections } from '../car/drive-sync/drive-sync-gateway';
 import { parseSetupSyncCollections } from '../car/setups/setup-snapshot';
 import type { SetupSyncCollection } from '../car/setups/setup-sync.models';
 import type { GarageCollection } from '../garage/garage.models';
@@ -11,6 +13,7 @@ import { parseGarageCollection } from '../garage/garage-gateway';
 export type OfflineGarageCollection = GarageCollection &
 	Readonly<{
 		buildCollections: readonly BuildSyncCollection[];
+		driveCollections: readonly DriveSyncCollection[];
 		setupCollections: readonly SetupSyncCollection[];
 	}>;
 
@@ -20,6 +23,9 @@ export class OfflineGarageGateway {
 
 	load(): Observable<OfflineGarageCollection> {
 		return forkJoin({
+			drives: this.http.get<unknown>('/api/v1/drives', {
+				withCredentials: true,
+			}),
 			builds: this.http.get<unknown>('/api/v1/components', {
 				withCredentials: true,
 			}),
@@ -31,10 +37,11 @@ export class OfflineGarageGateway {
 				withCredentials: true,
 			}),
 		}).pipe(
-			map(({ garage, setups, builds }) => ({
+			map(({ garage, setups, builds, drives }) => ({
 				...parseGarageCollection(garage),
 				setupCollections: parseSetupSyncCollections(setups),
 				buildCollections: parseBuildSyncCollections(builds),
+				driveCollections: parseDriveSyncCollections(drives),
 			})),
 		);
 	}
