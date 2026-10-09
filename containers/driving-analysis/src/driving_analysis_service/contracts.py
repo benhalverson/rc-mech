@@ -1,3 +1,13 @@
+"""Wire contracts shared by media validation, observations, and benchmarks.
+
+InferenceProvenance owns the inference identity fields common to each saved
+observation and its benchmark report. SubjectProvenance carries that identity
+on observations; BenchmarkProvenance adds report/runtime and evaluation policy.
+Their inheritance retains flat serialized aliases while the benchmark compares
+the shared field set. Model class docstrings are left unchanged because
+Pydantic exposes them in generated schemas, including provider request schemas.
+"""
+
 # Pydantic uses these messages as validation context; the service never emits
 # them as public errors.
 # ruff: noqa: EM101, TRY003
