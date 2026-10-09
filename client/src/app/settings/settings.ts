@@ -31,7 +31,7 @@ import {
 	LucideX,
 } from '@lucide/angular';
 import { AppearanceSelector } from './appearance-selector';
-import { FeatureFlags } from './feature-flags/feature-flags';
+import { DrivingAnalysisFlagSettings } from './driving-analysis-flag/driving-analysis-flag-settings';
 import { InviteStore } from './invite-store';
 import { PasskeyStore } from './passkey-store';
 import { isValidTimezone, type Passkey } from './settings.models';
@@ -41,7 +41,7 @@ import { TimezoneStore } from './timezone-store';
 	selector: 'app-settings',
 	host: { class: 'block min-w-0' },
 	imports: [
-		FeatureFlags,
+		DrivingAnalysisFlagSettings,
 		AppearanceSelector,
 		DatePipe,
 		FormField,

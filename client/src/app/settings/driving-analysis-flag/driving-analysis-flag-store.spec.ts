@@ -4,15 +4,15 @@ import { Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VisibilityStore } from '../../driving-analysis-visibility/visibility-store';
 import { OwnerSessionStore } from '../../owner-session-store';
-import { FeatureFlagGateway } from './feature-flag-gateway';
-import { FeatureFlagStore } from './feature-flag-store';
+import { DrivingAnalysisFlagGateway } from './driving-analysis-flag-gateway';
+import { DrivingAnalysisFlagStore } from './driving-analysis-flag-store';
 
-describe('FeatureFlagStore', () => {
+describe('DrivingAnalysisFlagStore', () => {
 	const sessionKey = signal<string | null>('owner');
 	const isOwner = signal(true);
 	const setting = signal<boolean | null>(false);
 	let response: Subject<{ enabled: boolean }>;
-	let store: InstanceType<typeof FeatureFlagStore>;
+	let store: InstanceType<typeof DrivingAnalysisFlagStore>;
 	const save = vi.fn();
 	beforeEach(() => {
 		sessionKey.set('owner');
@@ -22,13 +22,13 @@ describe('FeatureFlagStore', () => {
 		save.mockReset().mockReturnValue(response);
 		TestBed.configureTestingModule({
 			providers: [
-				FeatureFlagStore,
+				DrivingAnalysisFlagStore,
 				{ provide: OwnerSessionStore, useValue: { sessionKey } },
 				{ provide: VisibilityStore, useValue: { isOwner, setting } },
-				{ provide: FeatureFlagGateway, useValue: { save } },
+				{ provide: DrivingAnalysisFlagGateway, useValue: { save } },
 			],
 		});
-		store = TestBed.inject(FeatureFlagStore);
+		store = TestBed.inject(DrivingAnalysisFlagStore);
 	});
 	afterEach(() => TestBed.resetTestingModule());
 	it('retains confirmed data while saving and publishes acknowledgement without changing visibility', () => {

@@ -1,10 +1,10 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FeatureFlagStore } from './feature-flag-store';
-import { FeatureFlags } from './feature-flags';
+import { DrivingAnalysisFlagSettings } from './driving-analysis-flag-settings';
+import { DrivingAnalysisFlagStore } from './driving-analysis-flag-store';
 
-describe('FeatureFlags', () => {
+describe('DrivingAnalysisFlagSettings', () => {
 	afterEach(() => TestBed.resetTestingModule());
 	it('renders Owner-only confirmed state and accessible save feedback', () => {
 		const isOwner = signal(false);
@@ -14,12 +14,12 @@ describe('FeatureFlags', () => {
 		TestBed.configureTestingModule({
 			providers: [
 				{
-					provide: FeatureFlagStore,
+					provide: DrivingAnalysisFlagStore,
 					useValue: { isOwner, enabled, status, save },
 				},
 			],
 		});
-		const fixture = TestBed.createComponent(FeatureFlags);
+		const fixture = TestBed.createComponent(DrivingAnalysisFlagSettings);
 		const root: HTMLElement = fixture.nativeElement;
 		fixture.detectChanges();
 		expect(root.querySelector('section')).toBeNull();

@@ -4,13 +4,15 @@ import { map } from 'rxjs';
 import type * as z from 'zod/mini';
 import { boolean, object } from 'zod/mini';
 
+import type { SaveDrivingAnalysisFlagCommand } from './driving-analysis-flag.models';
+
 const flagSchema = object({ enabled: boolean() });
 type DrivingAnalysisFlag = z.infer<typeof flagSchema>;
 
 @Injectable()
-export class FeatureFlagGateway {
+export class DrivingAnalysisFlagGateway {
 	private readonly http = inject(HttpClient);
-	save(command: Readonly<DrivingAnalysisFlag>) {
+	save(command: SaveDrivingAnalysisFlagCommand) {
 		return this.http
 			.put<DrivingAnalysisFlag>(
 				'/api/v1/feature-flags/driving-analysis',

@@ -12,7 +12,8 @@ import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { catchError, EMPTY, filter, switchMap, takeUntil, tap } from 'rxjs';
 import { VisibilityStore } from '../../driving-analysis-visibility/visibility-store';
 import { OwnerSessionStore } from '../../owner-session-store';
-import { FeatureFlagGateway } from './feature-flag-gateway';
+import type { SaveDrivingAnalysisFlagCommand } from './driving-analysis-flag.models';
+import { DrivingAnalysisFlagGateway } from './driving-analysis-flag-gateway';
 
 type Outcome =
 	| { status: 'idle'; operationId: null }
@@ -21,7 +22,7 @@ type Outcome =
 			operationId: number;
 			key: string;
 	  };
-export const FeatureFlagStore = signalStore(
+export const DrivingAnalysisFlagStore = signalStore(
 	withState<{
 		saved: { key: string; enabled: boolean } | null;
 		outcome: Outcome;
@@ -29,7 +30,7 @@ export const FeatureFlagStore = signalStore(
 	withProps(() => ({
 		_visibility: inject(VisibilityStore),
 		_session: inject(OwnerSessionStore),
-		_gateway: inject(FeatureFlagGateway),
+		_gateway: inject(DrivingAnalysisFlagGateway),
 	})),
 	withComputed((store) => ({
 		isOwner: store._visibility.isOwner,
@@ -51,7 +52,7 @@ export const FeatureFlagStore = signalStore(
 	withMethods((store) => {
 		let operationId = 0;
 		const sessions = toObservable(store._session.sessionKey);
-		const save = rxMethod<Readonly<{ enabled: boolean }>>((commands) =>
+		const save = rxMethod<SaveDrivingAnalysisFlagCommand>((commands) =>
 			commands.pipe(
 				switchMap((command) => {
 					const key = store._session.sessionKey();
@@ -84,7 +85,7 @@ export const FeatureFlagStore = signalStore(
 			),
 		);
 		return {
-			save(command: Readonly<{ enabled: boolean }>): void {
+			save(command: SaveDrivingAnalysisFlagCommand): void {
 				if (store.status() === 'pending') return;
 				save(command);
 			},

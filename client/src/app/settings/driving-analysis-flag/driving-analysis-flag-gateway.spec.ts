@@ -6,19 +6,19 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FeatureFlagGateway } from './feature-flag-gateway';
+import { DrivingAnalysisFlagGateway } from './driving-analysis-flag-gateway';
 
-describe('FeatureFlagGateway', () => {
+describe('DrivingAnalysisFlagGateway', () => {
 	afterEach(() => TestBed.resetTestingModule());
 	it('sends authenticated desired values and validates acknowledgements', async () => {
 		TestBed.configureTestingModule({
 			providers: [
 				provideHttpClient(),
 				provideHttpClientTesting(),
-				FeatureFlagGateway,
+				DrivingAnalysisFlagGateway,
 			],
 		});
-		const gateway = TestBed.inject(FeatureFlagGateway);
+		const gateway = TestBed.inject(DrivingAnalysisFlagGateway);
 		const http = TestBed.inject(HttpTestingController);
 		const success = firstValueFrom(gateway.save({ enabled: true }));
 		const request = http.expectOne('/api/v1/feature-flags/driving-analysis');
