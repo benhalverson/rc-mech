@@ -362,11 +362,11 @@ test('retains Component edits, replacements, and removals across an offline rest
 	await expect(page.getByText('Stock motor', { exact: true })).toBeVisible();
 	await context.setOffline(true);
 	await page.getByRole('button', { name: 'Edit', exact: true }).click();
-	await page.getByLabel('Name', { exact: true }).fill('Tuned motor');
+	await page.getByLabel('Name').fill('Tuned motor');
 	await page.getByRole('button', { name: 'Save component' }).click();
 	await expect(page.getByText('Tuned motor', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Replace', exact: true }).click();
-	await page.getByLabel('Name', { exact: true }).fill('Race motor');
+	await page.getByLabel('Name').fill('Race motor');
 	await page.getByRole('button', { name: 'Save component' }).click();
 	await expect(page.getByText('Race motor', { exact: true })).toBeVisible();
 	const reopened = await reopenOffline(

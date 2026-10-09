@@ -97,6 +97,7 @@ export const OFFLINE_OPERATION_ID = new InjectionToken<() => string>(
 );
 
 export type OfflineGarageSnapshot = Readonly<{
+	sessionKey?: string;
 	ownerKey: string;
 	ownerEmail: string;
 	offlineUntil: string;
@@ -884,7 +885,9 @@ export class OfflineGarageStorage {
 	async restoreCurrent(
 		now = new Date(this.now()),
 	): Promise<OfflineGarageSnapshot | null> {
-		const snapshot = await this.currentSnapshot(now);
+		const active = await this.metadata.get('active-owner');
+		if (active?.key !== 'active-owner') return null;
+		const snapshot = await this.currentSnapshot(now, active);
 		if (!snapshot) return null;
 		const [operations, setupOperations] = await Promise.all([
 			this.ownerOperations(snapshot.ownerKey),
@@ -892,6 +895,7 @@ export class OfflineGarageStorage {
 		]);
 		return {
 			...snapshot,
+			sessionKey: active.sessionKey,
 			cars: materializeCars(snapshot.cars, operations),
 			buildCollections: materializeBuildCollections(
 				snapshot.buildCollections ?? [],
