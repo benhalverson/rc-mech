@@ -21,6 +21,19 @@ export const applyDriveSyncOperation = async (
 		context;
 	const database = db(c.env);
 	const ownerId = c.get('userId');
+	const receiptPending = exists(
+		database
+			.select({ operationId: syncOperation.operationId })
+			.from(syncOperation)
+			.where(
+				and(
+					eq(syncOperation.ownerId, ownerId),
+					eq(syncOperation.operationId, operationId),
+					eq(syncOperation.requestHash, requestHash),
+					eq(syncOperation.outcome, 'pending'),
+				),
+			),
+	);
 	const receiptWhere = and(
 		eq(syncOperation.ownerId, ownerId),
 		eq(syncOperation.operationId, operationId),
@@ -145,19 +158,22 @@ export const applyDriveSyncOperation = async (
 		outcome: 'applied',
 		collection: { carId: parent.id, version, sessions: nextSessions },
 	};
-	const witness = exists(
-		database
-			.select({ id: car.id })
-			.from(car)
-			.where(
-				and(
-					eq(car.id, parent.id),
-					eq(car.ownerId, ownerId),
-					eq(car.version, version),
-					eq(car.lastOperationId, operationId),
-					isNull(car.archivedAt),
+	const witness = and(
+		receiptPending,
+		exists(
+			database
+				.select({ id: car.id })
+				.from(car)
+				.where(
+					and(
+						eq(car.id, parent.id),
+						eq(car.ownerId, ownerId),
+						eq(car.version, version),
+						eq(car.lastOperationId, operationId),
+						isNull(car.archivedAt),
+					),
 				),
-			),
+		),
 	);
 	const mutation = current
 		? database
@@ -197,6 +213,7 @@ export const applyDriveSyncOperation = async (
 					eq(car.id, parent.id),
 					eq(car.ownerId, ownerId),
 					eq(car.version, parent.version),
+					receiptPending,
 					isNull(car.archivedAt),
 				),
 			),

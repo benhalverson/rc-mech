@@ -27,6 +27,19 @@ export const applyConsumableSyncOperation = async (
 	const { operationId, requestHash, now, requireTerminalReceipt } = context;
 	const database = db(c.env);
 	const ownerId = c.get('userId');
+	const receiptPending = exists(
+		database
+			.select({ operationId: syncOperation.operationId })
+			.from(syncOperation)
+			.where(
+				and(
+					eq(syncOperation.ownerId, ownerId),
+					eq(syncOperation.operationId, operationId),
+					eq(syncOperation.requestHash, requestHash),
+					eq(syncOperation.outcome, 'pending'),
+				),
+			),
+	);
 	const pending = and(
 		eq(syncOperation.ownerId, ownerId),
 		eq(syncOperation.operationId, operationId),
@@ -178,19 +191,22 @@ export const applyConsumableSyncOperation = async (
 	const saved = next.consumables?.find(
 		(value) => value.id === change.entryId,
 	) as ConsumableRecord;
-	const witness = exists(
-		database
-			.select({ id: car.id })
-			.from(car)
-			.where(
-				and(
-					eq(car.id, parent.id),
-					eq(car.ownerId, ownerId),
-					eq(car.version, version),
-					eq(car.lastOperationId, operationId),
-					isNull(car.archivedAt),
+	const witness = and(
+		receiptPending,
+		exists(
+			database
+				.select({ id: car.id })
+				.from(car)
+				.where(
+					and(
+						eq(car.id, parent.id),
+						eq(car.ownerId, ownerId),
+						eq(car.version, version),
+						eq(car.lastOperationId, operationId),
+						isNull(car.archivedAt),
+					),
 				),
-			),
+		),
 	);
 	const columns = getTableColumns(entry);
 	const unchanged = current
@@ -263,6 +279,7 @@ export const applyConsumableSyncOperation = async (
 					eq(car.id, parent.id),
 					eq(car.ownerId, ownerId),
 					eq(car.version, parent.version),
+					receiptPending,
 					isNull(car.archivedAt),
 					unchanged,
 				),
