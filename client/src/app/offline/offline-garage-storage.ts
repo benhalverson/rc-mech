@@ -42,6 +42,11 @@ import {
 	rebaseCarSyncOperation,
 } from '../garage/car-sync/car-sync-rules';
 import type { GarageCar } from '../garage/garage.models';
+import type { PendingVoiceCapture, VoiceUpdate } from '../voice/voice.models';
+import type {
+	VoiceCapture,
+	VoiceWorkingCopy,
+} from '../voice/voice-sync.models';
 
 export const offlineDatabaseName = (): string => 'chassis-notes-offline-v1';
 
@@ -105,6 +110,7 @@ export type OfflineGarageSnapshot = Readonly<{
 	cars: readonly GarageCar[];
 	setupCollections?: readonly SetupSyncCollection[];
 	driveCollections?: readonly DriveSyncCollection[];
+	voiceUpdates?: readonly VoiceUpdate[];
 }>;
 
 type OfflineMetadata =
@@ -150,6 +156,7 @@ export class OfflineGarageStorage {
 	private readonly operations: Table<CarSyncOperation, string>;
 	private readonly setupOperations: Table<SetupSyncOperation, string>;
 	private readonly driveOperations: Table<DriveSyncOperation, string>;
+	private readonly voiceCaptures: Table<VoiceCapture, string>;
 
 	constructor() {
 		this.database
@@ -174,12 +181,225 @@ export class OfflineGarageStorage {
 		this.database.version(6).stores({
 			driveOperations: '&operationId,ownerKey,carId,status,createdAt',
 		});
+		this.database
+			.version(10)
+			.stores({ voiceCaptures: '&id,ownerKey,carId,status,phase,createdAt' });
+		this.voiceCaptures = this.database.table('voiceCaptures');
 		this.driveOperations = this.database.table('driveOperations');
 		this.snapshots = this.database.table('snapshots');
 		this.metadata = this.database.table('metadata');
 		this.revokedSessions = this.database.table('revokedSessions');
 		this.operations = this.database.table('operations');
 		this.setupOperations = this.database.table('setupOperations');
+	}
+
+	async voiceView(fence: OfflineWorkspaceFence): Promise<VoiceWorkingCopy> {
+		const snapshot = await this.currentSnapshot(undefined, fence);
+		if (!snapshot) throw new Error('The offline Garage is unavailable.');
+		const captures = await this.voiceCaptures
+			.where('ownerKey')
+			.equals(snapshot.ownerKey)
+			.sortBy('createdAt');
+		const updates = new Map(
+			(snapshot.voiceUpdates ?? []).map((update) => [update.id, update]),
+		);
+		for (const capture of captures)
+			if (
+				capture.remote &&
+				(!updates.has(capture.id) ||
+					(updates.get(capture.id) as VoiceUpdate).updatedAt <=
+						capture.remote.updatedAt)
+			)
+				updates.set(capture.id, capture.remote);
+		return { captures, updates: [...updates.values()] };
+	}
+	async keepVoice(
+		capture: PendingVoiceCapture,
+		fence: OfflineWorkspaceFence,
+	): Promise<VoiceWorkingCopy> {
+		await this.database.transaction(
+			'rw',
+			[
+				this.snapshots,
+				this.metadata,
+				this.operations,
+				this.driveOperations,
+				this.voiceCaptures,
+			],
+			async () => {
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				if (!snapshot) throw new Error('The offline Garage is unavailable.');
+				const carView = this.view(
+					snapshot.cars,
+					await this.ownerOperations(snapshot.ownerKey),
+				);
+				if (
+					!carView.cars.some(
+						(car) => car.id === capture.carId && !car.archivedAt,
+					)
+				)
+					throw new Error('An active Car is required.');
+				const drives = this.driveView(
+					snapshot.driveCollections ?? [],
+					await this.ownerDriveOperations(snapshot.ownerKey),
+				);
+				if (
+					capture.driveSessionId &&
+					!drives.collections.some(
+						(collection) =>
+							collection.carId === capture.carId &&
+							collection.sessions.some(
+								(session) =>
+									session.id === capture.driveSessionId && !session.deletedAt,
+							),
+					)
+				)
+					throw new Error('A matching Drive session is required.');
+				const existing = await this.voiceCaptures.get(capture.id);
+				if (existing) {
+					if (existing.ownerKey !== snapshot.ownerKey)
+						throw new Error('Capture identity is unavailable.');
+					return;
+				}
+				const dependencies = [...carView.operations, ...drives.operations]
+					.filter((operation) => operation.carId === capture.carId)
+					.map((operation) => operation.operationId);
+				await this.voiceCaptures.add({
+					...capture,
+					ownerKey: snapshot.ownerKey,
+					phase: 'upload',
+					dependencies,
+					status: 'queued',
+					error: null,
+				});
+			},
+		);
+		return this.voiceView(fence);
+	}
+	async importVoice(
+		captures: readonly PendingVoiceCapture[],
+		fence: OfflineWorkspaceFence,
+	): Promise<void> {
+		await this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.voiceCaptures],
+			async () => {
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				if (!snapshot) throw new Error('The offline Garage is unavailable.');
+				for (const capture of captures) {
+					if (capture.ownerKey !== snapshot.ownerEmail.trim().toLowerCase())
+						throw new Error('Voice capture belongs to another User.');
+					const existing = await this.voiceCaptures.get(capture.id);
+					if (existing && existing.ownerKey !== snapshot.ownerKey)
+						throw new Error('Capture identity is unavailable.');
+					if (!existing)
+						await this.voiceCaptures.add({
+							...capture,
+							ownerKey: snapshot.ownerKey,
+							phase: 'upload',
+							dependencies: [],
+							status: capture.status === 'failed' ? 'failed' : 'queued',
+						});
+				}
+			},
+		);
+	}
+	async readyVoice(
+		fence: OfflineWorkspaceFence,
+	): Promise<readonly VoiceCapture[]> {
+		return this.database.transaction(
+			'r',
+			[
+				this.snapshots,
+				this.metadata,
+				this.voiceCaptures,
+				this.operations,
+				this.driveOperations,
+			],
+			async () => {
+				const view = await this.voiceView(fence);
+				const cars = await this.operations
+					.where('ownerKey')
+					.equals(fence.ownerKey)
+					.toArray();
+				const drives = await this.driveOperations
+					.where('ownerKey')
+					.equals(fence.ownerKey)
+					.toArray();
+				const pending = new Set(
+					[...cars, ...drives].map((operation) => operation.operationId),
+				);
+				return view.captures.filter(
+					(capture) =>
+						capture.phase !== 'retained' &&
+						capture.status !== 'failed' &&
+						!capture.dependencies.some((id) => pending.has(id)),
+				);
+			},
+		);
+	}
+	async changeVoice(
+		id: string,
+		change:
+			| Readonly<{
+					phase?: VoiceCapture['phase'];
+					status?: VoiceCapture['status'];
+					error?: string | null;
+					remote?: VoiceUpdate;
+			  }>
+			| 'discard',
+		fence: OfflineWorkspaceFence,
+	): Promise<VoiceWorkingCopy> {
+		await this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.voiceCaptures],
+			async () => {
+				if (!(await this.currentSnapshot(undefined, fence)))
+					throw new Error('The offline Garage is unavailable.');
+				const existing = await this.voiceCaptures.get(id);
+				if (existing?.ownerKey !== fence.ownerKey) return;
+				if (change === 'discard') await this.voiceCaptures.delete(id);
+				else await this.voiceCaptures.put({ ...existing, ...change });
+			},
+		);
+		return this.voiceView(fence);
+	}
+	async refreshVoice(
+		updates: readonly VoiceUpdate[],
+		fence: OfflineWorkspaceFence,
+	): Promise<VoiceWorkingCopy> {
+		await this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.voiceCaptures],
+			async () => {
+				const snapshot = await this.currentSnapshot(undefined, fence);
+				if (!snapshot) throw new Error('The offline Garage is unavailable.');
+				const canonical = new Map(
+					(snapshot.voiceUpdates ?? []).map((update) => [update.id, update]),
+				);
+				for (const update of updates) {
+					const previous = canonical.get(update.id);
+					if (previous && previous.updatedAt > update.updatedAt) continue;
+					canonical.set(update.id, update);
+					if (update.artifactDeletedAt) {
+						const capture = await this.voiceCaptures.get(update.id);
+						if (capture?.ownerKey === fence.ownerKey && capture.remote)
+							await this.voiceCaptures.put({
+								...capture,
+								blob: undefined,
+								phase: 'retained',
+								remote: update,
+								error: null,
+							});
+					}
+				}
+				await this.snapshots.put({
+					...snapshot,
+					voiceUpdates: [...canonical.values()],
+				});
+			},
+		);
+		return this.voiceView(fence);
 	}
 
 	async activate(ownerKey: string, sessionKey: string): Promise<boolean> {
@@ -206,6 +426,7 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.driveOperations,
+				this.voiceCaptures,
 			],
 			async () => {
 				const signOut = await this.metadata.get('sign-out');
@@ -223,6 +444,10 @@ export class OfflineGarageStorage {
 				if (active?.key === 'active-owner' && active.ownerKey !== ownerKey) {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.voiceCaptures
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.driveOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
@@ -274,12 +499,17 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.driveOperations,
+				this.voiceCaptures,
 			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
 				if (active?.key === 'active-owner') {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.voiceCaptures
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.driveOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)
@@ -922,12 +1152,17 @@ export class OfflineGarageStorage {
 				this.operations,
 				this.setupOperations,
 				this.driveOperations,
+				this.voiceCaptures,
 			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
 				if (active?.key === 'active-owner') {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.voiceCaptures
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.driveOperations
 							.where('ownerKey')
 							.equals(active.ownerKey)

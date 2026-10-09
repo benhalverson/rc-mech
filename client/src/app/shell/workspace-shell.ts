@@ -13,6 +13,7 @@ import { VisibilityStore } from '../driving-analysis-visibility/visibility-store
 import { OfflineStatus } from '../offline/offline-status';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
+import { VoiceWorkspaceStore } from '../voice/voice-workspace-store';
 import { ResponsiveViewport } from './responsive-viewport';
 import { ShellCarStore } from './shell-car-store';
 import {
@@ -28,6 +29,7 @@ import { SignOutStore } from './sign-out-store';
 	styleUrl: './workspace-shell.css',
 })
 export class WorkspaceShell {
+	protected readonly voiceWorkspace = inject(VoiceWorkspaceStore);
 	protected readonly analysisVisibility = inject(VisibilityStore);
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly responsiveViewport = inject(ResponsiveViewport);

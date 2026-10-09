@@ -11,6 +11,7 @@ import {
 import type { SourceFrameCommand } from '../driving-analysis/race-recording/subject-frame-contracts';
 import { subjectFrames } from '../driving-analysis/race-recording/subject-frames';
 import { createWorker } from '../index';
+import { VoiceProcessingError } from '../voice-processing';
 
 const browserReferenceFrame = Uint8Array.from(
 	atob(
@@ -113,6 +114,30 @@ const publishBrowserValidation = async (
 
 export default createWorker({
 	...defaultAppDependencies,
+	// Browser acceptance exercises the real HTTP/persistence path with offline AI fixtures.
+	voiceProcessor: () => ({
+		process: async (request) => {
+			if (request.text === 'Fixture processing rejection')
+				throw new VoiceProcessingError(
+					'Fixture transcription needs review',
+					'transcription',
+					1,
+				);
+			return {
+				transcript: request.text ?? 'Offline audio fixture',
+				draft: {
+					setupChanges: [],
+					problems: [],
+					conditions: [],
+					driveSessionNotes: [],
+					consumables: [],
+					unmappedNotes: [request.text ?? 'Offline audio fixture'],
+					unresolvedNotes: [],
+				},
+				clarificationPrompt: null,
+			};
+		},
+	}),
 	raceRecordingAuthority: (env) =>
 		new RaceRecordingAuthority(env.DB, env.ANALYSIS_MEDIA, {
 			startValidation: (payload) =>

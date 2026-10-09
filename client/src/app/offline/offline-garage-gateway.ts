@@ -7,10 +7,13 @@ import { parseSetupSyncCollections } from '../car/setups/setup-snapshot';
 import type { SetupSyncCollection } from '../car/setups/setup-sync.models';
 import type { GarageCollection } from '../garage/garage.models';
 import { parseGarageCollection } from '../garage/garage-gateway';
+import type { VoiceUpdate } from '../voice/voice.models';
+import { parseVoiceUpdates } from '../voice/voice-gateway';
 
 export type OfflineGarageCollection = GarageCollection &
 	Readonly<{
 		driveCollections: readonly DriveSyncCollection[];
+		voiceUpdates: readonly VoiceUpdate[];
 		setupCollections: readonly SetupSyncCollection[];
 	}>;
 
@@ -20,6 +23,9 @@ export class OfflineGarageGateway {
 
 	load(): Observable<OfflineGarageCollection> {
 		return forkJoin({
+			voice: this.http.get<unknown>('/api/v1/voice-updates', {
+				withCredentials: true,
+			}),
 			drives: this.http.get<unknown>('/api/v1/drives', {
 				withCredentials: true,
 			}),
@@ -31,7 +37,8 @@ export class OfflineGarageGateway {
 				withCredentials: true,
 			}),
 		}).pipe(
-			map(({ garage, setups, drives }) => ({
+			map(({ garage, setups, drives, voice }) => ({
+				voiceUpdates: parseVoiceUpdates(voice),
 				...parseGarageCollection(garage),
 				setupCollections: parseSetupSyncCollections(setups),
 				driveCollections: parseDriveSyncCollections(drives),
