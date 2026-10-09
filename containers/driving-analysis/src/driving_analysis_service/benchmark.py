@@ -18,30 +18,34 @@ from itertools import pairwise
 from statistics import mean, median
 
 from driving_analysis_service import ordered_intervals
-from driving_analysis_service.contracts import (
-    AcceptedSubjectObservations,
+from driving_analysis_service.benchmark_contracts import (
     BenchmarkCase,
     BenchmarkEvaluationPolicyV1,
     BenchmarkEvidenceV2,
     BenchmarkObservationSetV2,
     BenchmarkProvenance,
     BenchmarkReport,
-    CornerGates,
     CorpusManifest,
     CorpusRecording,
     CoverageMetrics,
-    DirectedGate,
     GapMetrics,
     GateTimingMetrics,
     GroundTruth,
     GroundTruthCase,
     IdentityMetrics,
-    InferenceProvenance,
-    NormalizedBox,
-    NormalizedPoint,
     RepresentativeBenchmarkReportV2,
     RepresentativeCorpusManifestV2,
     RepresentativeGroundTruthV2,
+)
+from driving_analysis_service.geometry_contracts import (
+    CornerGates,
+    DirectedGate,
+    NormalizedBox,
+    NormalizedPoint,
+)
+from driving_analysis_service.observation_contracts import (
+    AcceptedSubjectObservations,
+    InferenceProvenance,
     SubjectObservation,
     SubjectProvenance,
     TrackingGap,

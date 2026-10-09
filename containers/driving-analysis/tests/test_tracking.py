@@ -9,12 +9,17 @@ from typing import Literal
 from fastapi.testclient import TestClient
 
 from driving_analysis_service.api import create_app
-from driving_analysis_service.contracts import SubjectProvenance, SubjectSeed
+from driving_analysis_service.geometry_contracts import (
+    SubjectSeed,
+)
 from driving_analysis_service.inference import (
     FakeInferenceProvider,
     FixtureInferenceProvider,
     InferenceFrame,
     configuration_provenance,
+)
+from driving_analysis_service.observation_contracts import (
+    SubjectProvenance,
 )
 from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.settings import InferenceSettings, ServiceSettings

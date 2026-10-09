@@ -10,7 +10,10 @@ import pytest
 from pydantic import ValidationError
 
 import driving_analysis_service.inference as inference_module
-from driving_analysis_service.contracts import NormalizedBox, SubjectSeed
+from driving_analysis_service.geometry_contracts import (
+    NormalizedBox,
+    SubjectSeed,
+)
 from driving_analysis_service.inference import (
     MAX_FIXTURE_BYTES,
     MAX_FRAME_BYTES,

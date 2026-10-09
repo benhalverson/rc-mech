@@ -1,6 +1,6 @@
 import random
 
-from driving_analysis_service.contracts import GroundTruthPass
+from driving_analysis_service.benchmark_contracts import GroundTruthPass
 from driving_analysis_service.pass_matching import CandidatePass, OrderedPassMatcher
 
 

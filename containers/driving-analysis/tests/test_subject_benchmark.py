@@ -15,28 +15,34 @@ from driving_analysis_service.benchmark import (
     _provenance_matches,
     evaluate_benchmark,
 )
-from driving_analysis_service.contracts import (
-    AcceptedSubjectObservations,
+from driving_analysis_service.benchmark_contracts import (
     BenchmarkCase,
     BenchmarkProvenance,
     BenchmarkReport,
-    CornerGates,
     CorpusManifest,
     CorpusRecording,
-    DirectedGate,
     GroundTruth,
     GroundTruthCase,
     GroundTruthPass,
-    InferenceProvenance,
+    SubjectIdentityAnnotation,
+)
+from driving_analysis_service.geometry_contracts import (
+    CornerGates,
+    DirectedGate,
     NormalizedBox,
     NormalizedPoint,
     RationalValue,
+    SubjectSeed,
+)
+from driving_analysis_service.media_contracts import (
     SafeError,
-    SubjectIdentityAnnotation,
+)
+from driving_analysis_service.observation_contracts import (
+    AcceptedSubjectObservations,
+    InferenceProvenance,
     SubjectObservation,
     SubjectObservationEnvelope,
     SubjectProvenance,
-    SubjectSeed,
     TrackingGap,
 )
 from driving_analysis_service.pass_matching import CandidatePass, OrderedPassMatcher

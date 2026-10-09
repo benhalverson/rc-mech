@@ -13,12 +13,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from driving_analysis_service.api import create_app
-from driving_analysis_service.contracts import (
+from driving_analysis_service.geometry_contracts import (
+    RationalValue,
+)
+from driving_analysis_service.media_contracts import (
     AcceptedValidationResponse,
     HealthResponse,
     MediaFacts,
     MediaValidationRequest,
-    RationalValue,
     RejectedValidationResponse,
     SafeError,
     StagedMediaInput,

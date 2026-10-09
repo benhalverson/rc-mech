@@ -10,7 +10,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from driving_analysis_service.contracts import StrictContract, UuidV4String
+from driving_analysis_service.contract_primitives import (
+    StrictContract,
+    UuidV4String,
+)
 from pydantic import Field, ValidationError
 
 from chassis_notes_gpu_worker.contracts import (

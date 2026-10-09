@@ -1,1023 +1,179 @@
-"""Wire contracts shared by media validation, observations, and benchmarks.
+"""Compatibility import surface for pre-split media and benchmark consumers.
 
-InferenceProvenance owns the inference identity fields common to each saved
-observation and its benchmark report. SubjectProvenance carries that identity
-on observations; BenchmarkProvenance adds report/runtime and evaluation policy.
-Their inheritance retains flat serialized aliases while the benchmark compares
-the shared field set. Model class docstrings are left unchanged because
-Pydantic exposes them in generated schemas, including provider request schemas.
+Re-exports the original model objects from their owning domain modules so
+existing imports keep identity and wire behavior. Production consumers in this
+change import their domain directly; removal of this facade is a separate
+consumer-migration decision, not a second set of contract definitions.
 """
 
-# Pydantic uses these messages as validation context; the service never emits
-# them as public errors.
-# ruff: noqa: EM101, TRY003
-
-import re
-from typing import Annotated, Literal
-
-from pydantic import (
-    AfterValidator,
-    BaseModel,
-    ConfigDict,
-    Field,
-    StringConstraints,
-    model_validator,
+from driving_analysis_service.benchmark_contracts import (
+    AnnotationProvenanceV1,
+    BenchmarkCase,
+    BenchmarkEvaluationPolicyV1,
+    BenchmarkEvidenceV2,
+    BenchmarkObservationSetV2,
+    BenchmarkProvenance,
+    BenchmarkReport,
+    CorpusManifest,
+    CorpusRecording,
+    CorpusRecordingManifest,
+    CoverageMetrics,
+    FixedCameraFramingV1,
+    GapMetrics,
+    GateTimingMetrics,
+    GroundTruth,
+    GroundTruthCase,
+    GroundTruthPass,
+    IdentityMetrics,
+    PermittedUseV1,
+    RepresentativeBenchmarkCaseV2,
+    RepresentativeBenchmarkReportV2,
+    RepresentativeCaseFactsV1,
+    RepresentativeCorpusManifestV2,
+    RepresentativeCorpusRecordingV2,
+    RepresentativeGroundTruthCaseV2,
+    RepresentativeGroundTruthV2,
+    SubjectIdentityAnnotation,
+)
+from driving_analysis_service.contract_primitives import (
+    BENCHMARK_CONTRACT_VERSION,
+    CENTER_TOLERANCE,
+    CONTRACT_VERSION,
+    CONTROL_CHARACTER_LIMIT,
+    DELETE_CONTROL_CHARACTER,
+    MAX_BENCHMARK_FRAME_COUNT,
+    MAX_BENCHMARK_TIMESTAMP_MS,
+    MAX_DECLARED_BYTES,
+    MAX_SUBJECT_OBSERVATIONS,
+    MIN_NORMALIZED_BOX_AREA,
+    MIN_REPRESENTATIVE_FIELD_COUNTS,
+    MIN_REPRESENTATIVE_RECORDINGS,
+    REPRESENTATIVE_BENCHMARK_CONTRACT_VERSION,
+    SERVICE_NAME,
+    SHA256_PATTERN,
+    SUBJECT_CONTRACT_VERSION,
+    UUID_V4_PATTERN,
+    ModelIdentifier,
+    ProviderIdentifier,
+    SafeFreeFormIdentifier,
+    StrictContract,
+    UuidV4String,
+)
+from driving_analysis_service.geometry_contracts import (
+    CornerGates,
+    DirectedGate,
+    NormalizedBox,
+    NormalizedPoint,
+    RationalValue,
+    SubjectSeed,
+)
+from driving_analysis_service.media_contracts import (
+    AcceptedValidationResponse,
+    ErrorCode,
+    ErrorStage,
+    HealthResponse,
+    MediaFacts,
+    MediaValidationRequest,
+    RejectedValidationResponse,
+    SafeError,
+    StagedMediaInput,
+    ValidationResponse,
+)
+from driving_analysis_service.observation_contracts import (
+    AcceptedSubjectObservationEnvelope,
+    AcceptedSubjectObservations,
+    CandidateObservations,
+    InferenceProvenance,
+    RejectedSubjectObservationEnvelope,
+    RejectedSubjectObservations,
+    SubjectErrorCode,
+    SubjectErrorMessage,
+    SubjectErrorStage,
+    SubjectObservation,
+    SubjectObservationEnvelope,
+    SubjectProvenance,
+    SubjectSafeError,
+    TrackingGap,
 )
 
-CONTRACT_VERSION: Literal["race-video-validation.v1"] = "race-video-validation.v1"
-SERVICE_NAME: Literal["driving-analysis-media"] = "driving-analysis-media"
-UUID_V4_PATTERN = (
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
-    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-)
-SHA256_PATTERN = r"^[0-9a-f]{64}$"
-MAX_DECLARED_BYTES = 50 * 1024 * 1024 * 1024
-# Benchmark timestamps are limited to one day and frame indices/counts to ten
-# million.  These finite bounds keep interpolation and report statistics away
-# from Python float conversion overflow while leaving practical race videos far
-# below the limit.
-MAX_BENCHMARK_TIMESTAMP_MS = 86_400_000
-MAX_BENCHMARK_FRAME_COUNT = 10_000_000
-MAX_SUBJECT_OBSERVATIONS = 100_000
-MIN_REPRESENTATIVE_RECORDINGS = 3
-MIN_REPRESENTATIVE_FIELD_COUNTS = 2
-# This is deliberately much larger than ordinary normalized detections, but it
-# prevents IEEE-754 subnormal dimensions from producing a zero-area box.
-MIN_NORMALIZED_BOX_AREA = 1e-12
-CONTROL_CHARACTER_LIMIT = 0x20
-DELETE_CONTROL_CHARACTER = 0x7F
-
-
-def _contains_control_character(value: str) -> bool:
-    return any(
-        ord(character) < CONTROL_CHARACTER_LIMIT
-        or ord(character) == DELETE_CONTROL_CHARACTER
-        for character in value
-    )
-
-
-def _safe_free_form_identifier(value: str) -> str:
-    if _contains_control_character(value):
-        raise ValueError("free-form identifier contains a control character")
-    if "/" in value or "\\" in value:
-        raise ValueError("free-form identifier contains a path separator")
-    if re.search(r"(?i)(?:[a-z][a-z0-9+.-]*://|www\.)", value):
-        raise ValueError("free-form identifier must not be URL-shaped")
-    return value
-
-
-SafeFreeFormIdentifier = Annotated[
-    str,
-    StringConstraints(min_length=1, max_length=128, strict=True),
-    AfterValidator(_safe_free_form_identifier),
+__all__ = [
+    "BENCHMARK_CONTRACT_VERSION",
+    "CENTER_TOLERANCE",
+    "CONTRACT_VERSION",
+    "CONTROL_CHARACTER_LIMIT",
+    "DELETE_CONTROL_CHARACTER",
+    "MAX_BENCHMARK_FRAME_COUNT",
+    "MAX_BENCHMARK_TIMESTAMP_MS",
+    "MAX_DECLARED_BYTES",
+    "MAX_SUBJECT_OBSERVATIONS",
+    "MIN_NORMALIZED_BOX_AREA",
+    "MIN_REPRESENTATIVE_FIELD_COUNTS",
+    "MIN_REPRESENTATIVE_RECORDINGS",
+    "REPRESENTATIVE_BENCHMARK_CONTRACT_VERSION",
+    "SERVICE_NAME",
+    "SHA256_PATTERN",
+    "SUBJECT_CONTRACT_VERSION",
+    "UUID_V4_PATTERN",
+    "AcceptedSubjectObservationEnvelope",
+    "AcceptedSubjectObservations",
+    "AcceptedValidationResponse",
+    "AnnotationProvenanceV1",
+    "BenchmarkCase",
+    "BenchmarkEvaluationPolicyV1",
+    "BenchmarkEvidenceV2",
+    "BenchmarkObservationSetV2",
+    "BenchmarkProvenance",
+    "BenchmarkReport",
+    "CandidateObservations",
+    "CornerGates",
+    "CorpusManifest",
+    "CorpusRecording",
+    "CorpusRecordingManifest",
+    "CoverageMetrics",
+    "DirectedGate",
+    "ErrorCode",
+    "ErrorStage",
+    "FixedCameraFramingV1",
+    "GapMetrics",
+    "GateTimingMetrics",
+    "GroundTruth",
+    "GroundTruthCase",
+    "GroundTruthPass",
+    "HealthResponse",
+    "IdentityMetrics",
+    "InferenceProvenance",
+    "MediaFacts",
+    "MediaValidationRequest",
+    "ModelIdentifier",
+    "NormalizedBox",
+    "NormalizedPoint",
+    "PermittedUseV1",
+    "ProviderIdentifier",
+    "RationalValue",
+    "RejectedSubjectObservationEnvelope",
+    "RejectedSubjectObservations",
+    "RejectedValidationResponse",
+    "RepresentativeBenchmarkCaseV2",
+    "RepresentativeBenchmarkReportV2",
+    "RepresentativeCaseFactsV1",
+    "RepresentativeCorpusManifestV2",
+    "RepresentativeCorpusRecordingV2",
+    "RepresentativeGroundTruthCaseV2",
+    "RepresentativeGroundTruthV2",
+    "SafeError",
+    "SafeFreeFormIdentifier",
+    "StagedMediaInput",
+    "StrictContract",
+    "SubjectErrorCode",
+    "SubjectErrorMessage",
+    "SubjectErrorStage",
+    "SubjectIdentityAnnotation",
+    "SubjectObservation",
+    "SubjectObservationEnvelope",
+    "SubjectProvenance",
+    "SubjectSafeError",
+    "SubjectSeed",
+    "TrackingGap",
+    "UuidV4String",
+    "ValidationResponse",
 ]
-
-
-def _provider_identifier(value: str) -> str:
-    if (
-        re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,127}", value) is None
-        or value.casefold() == "localhost"
-    ):
-        raise ValueError("provider identifier must be endpoint-free")
-    return value
-
-
-ProviderIdentifier = Annotated[
-    str,
-    StringConstraints(min_length=1, max_length=128, strict=True),
-    AfterValidator(_provider_identifier),
-]
-
-
-def _model_identifier(value: str) -> str:
-    if re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value
-    ) is None or value.endswith("."):
-        raise ValueError("model identifier must be endpoint-free")
-    endpoint = re.fullmatch(
-        r"(?i)(?:"
-        r"[a-z0-9.-]+:\d+|"
-        r"\[[0-9a-f:]+\](?::\d+)?|"
-        r"(?:\d{1,3}\.){3}\d{1,3}|"
-        r"(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*"
-        r")",
-        value,
-    )
-    legacy_ipv4 = (
-        "." in value and re.fullmatch(r"(?i)[0-9][0-9a-fx.]*", value) is not None
-    )
-    tagged_endpoint = False
-    if value.count(":") == 1:
-        prefix, tag = value.split(":", maxsplit=1)
-        tagged_endpoint = (
-            "." in prefix
-            or prefix.casefold().rstrip(".") == "localhost"
-            or re.fullmatch(r"(?:latest|[0-9][A-Za-z0-9_.-]*)", tag) is None
-        )
-    if (
-        endpoint is not None
-        or legacy_ipv4
-        or tagged_endpoint
-        or value.count(":") > 1
-        or value.casefold().rstrip(".") == "localhost"
-        or re.fullmatch(r"(?i)(?:\d+|0x[0-9a-f]+)", value) is not None
-    ):
-        raise ValueError("model identifier must be endpoint-free")
-    return value
-
-
-ModelIdentifier = Annotated[
-    str,
-    StringConstraints(min_length=1, max_length=128, strict=True),
-    AfterValidator(_safe_free_form_identifier),
-    AfterValidator(_model_identifier),
-]
-type ErrorCode = Literal[
-    "INVALID_REQUEST",
-    "SERVICE_UNAVAILABLE",
-    "STAGED_MEDIA_NOT_FOUND",
-    "STAGED_MEDIA_MISMATCH",
-    "CORRUPT_MEDIA",
-    "UNSUPPORTED_MEDIA",
-    "MEDIA_OVER_LIMIT",
-    "PROCESS_TIMEOUT",
-    "INCOMPATIBLE_LAYOUT",
-    "INTERNAL_ERROR",
-    "SERVICE_BUSY",
-]
-type ErrorStage = Literal[
-    "request",
-    "claim",
-    "inspect",
-    "probe",
-    "decode",
-    "cleanup",
-    "admission",
-]
-
-UuidV4String = Annotated[
-    str,
-    StringConstraints(
-        min_length=36,
-        max_length=36,
-        pattern=UUID_V4_PATTERN,
-        strict=True,
-    ),
-]
-
-
-class StrictContract(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-
-class HealthResponse(StrictContract):
-    contract_version: Literal["race-video-validation.v1"] = Field(
-        alias="contractVersion"
-    )
-    service: Literal["driving-analysis-media"]
-    status: Literal["ready"]
-
-
-class StagedMediaInput(StrictContract):
-    staged_media_id: UuidV4String = Field(alias="stagedMediaId")
-    expected_byte_count: Annotated[
-        int,
-        Field(alias="expectedByteCount", ge=1, le=MAX_DECLARED_BYTES, strict=True),
-    ]
-
-
-class MediaValidationRequest(StrictContract):
-    contract_version: Literal["race-video-validation.v1"] = Field(
-        alias="contractVersion"
-    )
-    correlation_id: UuidV4String = Field(alias="correlationId")
-    input: StagedMediaInput
-
-
-class RationalValue(StrictContract):
-    numerator: int
-    denominator: Annotated[int, Field(gt=0, strict=True)]
-
-
-class MediaFacts(StrictContract):
-    byte_count: Annotated[int, Field(alias="byteCount", gt=0, strict=True)]
-    duration_ms: Annotated[int, Field(alias="durationMs", gt=0, strict=True)]
-    width: Annotated[int, Field(gt=0, strict=True)]
-    height: Annotated[int, Field(gt=0, strict=True)]
-    video_codec: Annotated[
-        str,
-        StringConstraints(min_length=1, max_length=32, strict=True),
-        Field(alias="videoCodec"),
-    ]
-    audio_codecs: Annotated[
-        tuple[Annotated[str, StringConstraints(min_length=1, max_length=32)], ...],
-        Field(alias="audioCodecs", max_length=8),
-    ]
-    container_formats: Annotated[
-        tuple[Annotated[str, StringConstraints(min_length=1, max_length=32)], ...],
-        Field(alias="containerFormats", min_length=1, max_length=8),
-    ]
-    decoded_frame_count: Annotated[
-        int,
-        Field(alias="decodedFrameCount", gt=0, strict=True),
-    ]
-    average_frame_rate: RationalValue = Field(alias="averageFrameRate")
-    time_base: RationalValue = Field(alias="timeBase")
-    sample_aspect_ratio: RationalValue = Field(alias="sampleAspectRatio")
-    display_aspect_ratio: RationalValue = Field(alias="displayAspectRatio")
-    start_time_ms: int = Field(alias="startTimeMs")
-    checksum_sha256: Annotated[
-        str,
-        StringConstraints(pattern=SHA256_PATTERN, strict=True),
-        Field(alias="checksumSha256"),
-    ]
-
-
-class SafeError(StrictContract):
-    code: ErrorCode
-    stage: ErrorStage
-    message: Annotated[str, StringConstraints(min_length=1, max_length=160)]
-
-    @model_validator(mode="after")
-    def contains_no_sensitive_detail(self) -> "SafeError":
-        lowered = self.message.lower()
-        if any(
-            value in lowered
-            for value in (
-                "://",
-                "www.",
-            )
-        ) or _contains_control_character(self.message):
-            raise ValueError("safe error contains disallowed detail")
-        return self
-
-
-class AcceptedValidationResponse(StrictContract):
-    contract_version: Literal["race-video-validation.v1"] = Field(
-        alias="contractVersion"
-    )
-    correlation_id: UuidV4String = Field(alias="correlationId")
-    outcome: Literal["accepted"]
-    media: MediaFacts
-
-
-class RejectedValidationResponse(StrictContract):
-    contract_version: Literal["race-video-validation.v1"] = Field(
-        alias="contractVersion"
-    )
-    correlation_id: UuidV4String | None = Field(alias="correlationId")
-    outcome: Literal["rejected"]
-    error: SafeError
-
-
-ValidationResponse = Annotated[
-    AcceptedValidationResponse | RejectedValidationResponse,
-    Field(discriminator="outcome"),
-]
-
-# Subject-observation contracts are deliberately colocated with the media
-# contract: both are wire contracts owned by this service, while benchmark
-# calculations live in ``benchmark.py``.
-SUBJECT_CONTRACT_VERSION: Literal["subject-observation.v1"] = "subject-observation.v1"
-BENCHMARK_CONTRACT_VERSION: Literal["subject-benchmark.v1"] = "subject-benchmark.v1"
-REPRESENTATIVE_BENCHMARK_CONTRACT_VERSION: Literal["subject-benchmark.v2"] = (
-    "subject-benchmark.v2"
-)
-CENTER_TOLERANCE = 1e-6
-
-
-class NormalizedPoint(StrictContract):
-    x: float = Field(ge=0.0, le=1.0, strict=True)
-    y: float = Field(ge=0.0, le=1.0, strict=True)
-
-
-class NormalizedBox(StrictContract):
-    x: float = Field(ge=0.0, lt=1.0, strict=True)
-    y: float = Field(ge=0.0, lt=1.0, strict=True)
-    width: float = Field(gt=0.0, le=1.0, strict=True)
-    height: float = Field(gt=0.0, le=1.0, strict=True)
-
-    @model_validator(mode="after")
-    def fits_in_frame(self) -> "NormalizedBox":
-        if self.x + self.width > 1.0 or self.y + self.height > 1.0:
-            raise ValueError("box must fit in normalized frame")
-        if self.width * self.height < MIN_NORMALIZED_BOX_AREA:
-            raise ValueError("box area is below the normalized minimum")
-        return self
-
-
-class InferenceProvenance(StrictContract):
-    """Shared inference identity; flat aliases preserve versioned wire contracts."""
-
-    provider: ProviderIdentifier
-    model: ModelIdentifier
-    model_version: SafeFreeFormIdentifier = Field(alias="modelVersion")
-    pipeline_version: SafeFreeFormIdentifier = Field(alias="pipelineVersion")
-    configuration_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="configurationDigest")
-    model_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="modelDigest")
-    identity_confidence_threshold: float = Field(
-        alias="identityConfidenceThreshold", ge=0.0, le=1.0, strict=True
-    )
-    confidence_calibration: SafeFreeFormIdentifier = Field(
-        alias="confidenceCalibration"
-    )
-
-
-class SubjectProvenance(InferenceProvenance):
-    """Inference identity attached to each Subject observation."""
-
-
-class SubjectObservation(StrictContract):
-    timestamp_ms: int = Field(
-        alias="timestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    frame_index: int = Field(
-        alias="frameIndex", ge=0, lt=MAX_BENCHMARK_FRAME_COUNT, strict=True
-    )
-    box: NormalizedBox
-    center: NormalizedPoint
-    visibility: Literal["visible", "occluded", "uncertain"]
-    identity_confidence: float = Field(
-        alias="identityConfidence", ge=0.0, le=1.0, strict=True
-    )
-    origin: Literal["detected", "user-reidentified-point", "user-reidentified-box"]
-    provenance: SubjectProvenance
-
-    @model_validator(mode="after")
-    def center_matches_box(self) -> "SubjectObservation":
-        expected_x = self.box.x + self.box.width / 2
-        expected_y = self.box.y + self.box.height / 2
-        if (
-            abs(self.center.x - expected_x) > CENTER_TOLERANCE
-            or abs(self.center.y - expected_y) > CENTER_TOLERANCE
-        ):
-            raise ValueError("center must match box center")
-        return self
-
-
-class TrackingGap(StrictContract):
-    start_timestamp_ms: int = Field(
-        alias="startTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    end_timestamp_ms: int = Field(
-        alias="endTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    reason: Literal["ambiguous-identity", "occluded", "missing"]
-
-    @model_validator(mode="after")
-    def ordered(self) -> "TrackingGap":
-        if self.end_timestamp_ms <= self.start_timestamp_ms:
-            raise ValueError("tracking gap must have positive duration")
-        return self
-
-
-class AcceptedSubjectObservations(StrictContract):
-    contract_version: Literal["subject-observation.v1"] = Field(alias="contractVersion")
-    outcome: Literal["accepted"]
-    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
-    observations: tuple[SubjectObservation, ...] = Field(
-        min_length=1, max_length=MAX_SUBJECT_OBSERVATIONS, strict=False
-    )
-    gaps: tuple[TrackingGap, ...] = Field(
-        default=(), max_length=MAX_SUBJECT_OBSERVATIONS, strict=False
-    )
-
-    @model_validator(mode="after")
-    def observations_are_ordered(self) -> "AcceptedSubjectObservations":
-        if any(
-            current.timestamp_ms <= previous.timestamp_ms
-            or current.frame_index <= previous.frame_index
-            for previous, current in zip(
-                self.observations, self.observations[1:], strict=False
-            )
-        ):
-            raise ValueError("observations must be strictly ordered")
-        if any(
-            current.start_timestamp_ms < previous.end_timestamp_ms
-            for previous, current in zip(self.gaps, self.gaps[1:], strict=False)
-        ):
-            raise ValueError("tracking gaps must be ordered and non-overlapping")
-        gap_index = 0
-        for observation in self.observations:
-            while (
-                gap_index < len(self.gaps)
-                and self.gaps[gap_index].end_timestamp_ms < observation.timestamp_ms
-            ):
-                gap_index += 1
-            if (
-                gap_index < len(self.gaps)
-                and self.gaps[gap_index].start_timestamp_ms
-                <= observation.timestamp_ms
-                <= self.gaps[gap_index].end_timestamp_ms
-            ):
-                raise ValueError("tracking gaps must not contain observations")
-        for index, observation in enumerate(self.observations):
-            if observation.origin == "detected":
-                continue
-            if index == 0 or not any(
-                self.observations[index - 1].timestamp_ms < gap.start_timestamp_ms
-                and gap.end_timestamp_ms < observation.timestamp_ms
-                for gap in self.gaps
-            ):
-                raise ValueError("user re-identification must follow a tracking gap")
-        return self
-
-
-class RejectedSubjectObservations(StrictContract):
-    contract_version: Literal["subject-observation.v1"] = Field(alias="contractVersion")
-    outcome: Literal["rejected"]
-    case_id: SafeFreeFormIdentifier | None = Field(alias="caseId")
-    error: "SubjectSafeError"
-
-
-type SubjectErrorCode = Literal[
-    "INVALID_OBSERVATION",
-    "INFERENCE_UNAVAILABLE",
-    "INFERENCE_FAILED",
-    "RESOURCE_LIMIT",
-]
-type SubjectErrorStage = Literal["request", "initialize", "track", "serialize"]
-type SubjectErrorMessage = Literal[
-    "observation contract rejected",
-    "inference provider unavailable",
-    "inference failed safely",
-    "inference resource limit exceeded",
-]
-
-
-class SubjectSafeError(StrictContract):
-    code: SubjectErrorCode
-    stage: SubjectErrorStage
-    message: SubjectErrorMessage
-
-    @model_validator(mode="after")
-    def fields_are_canonical(self) -> "SubjectSafeError":
-        expected = {
-            "INVALID_OBSERVATION": ("request", "observation contract rejected"),
-            "INFERENCE_UNAVAILABLE": (
-                "initialize",
-                "inference provider unavailable",
-            ),
-            "INFERENCE_FAILED": ("track", "inference failed safely"),
-            "RESOURCE_LIMIT": ("serialize", "inference resource limit exceeded"),
-        }[self.code]
-        if (self.stage, self.message) != expected:
-            raise ValueError("subject error fields must be canonical")
-        return self
-
-
-SubjectObservationEnvelope = Annotated[
-    AcceptedSubjectObservations | RejectedSubjectObservations,
-    Field(discriminator="outcome"),
-]
-AcceptedSubjectObservationEnvelope = AcceptedSubjectObservations
-RejectedSubjectObservationEnvelope = RejectedSubjectObservations
-CandidateObservations = AcceptedSubjectObservations
-
-
-class DirectedGate(StrictContract):
-    entry: NormalizedPoint
-    exit: NormalizedPoint
-    direction: Literal["positive", "negative"]
-
-    @model_validator(mode="after")
-    def non_degenerate(self) -> "DirectedGate":
-        if self.entry == self.exit:
-            raise ValueError("gate must have two distinct points")
-        return self
-
-
-class CornerGates(StrictContract):
-    entry: DirectedGate
-    exit: DirectedGate
-
-
-class SubjectSeed(StrictContract):
-    timestamp_ms: int = Field(
-        alias="timestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    frame_index: int = Field(
-        alias="frameIndex", ge=0, lt=MAX_BENCHMARK_FRAME_COUNT, strict=True
-    )
-    identity: SafeFreeFormIdentifier
-    box: NormalizedBox
-
-
-class CorpusRecording(StrictContract):
-    recording_id: SafeFreeFormIdentifier = Field(alias="recordingId")
-    checksum_sha256: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="checksumSha256")
-    byte_count: int = Field(alias="byteCount", gt=0, strict=True)
-    duration_ms: int = Field(
-        alias="durationMs", gt=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    decoded_frame_count: int = Field(
-        alias="decodedFrameCount", gt=0, le=MAX_BENCHMARK_FRAME_COUNT, strict=True
-    )
-    width: int = Field(gt=0, strict=True)
-    height: int = Field(gt=0, strict=True)
-    video_codec: SafeFreeFormIdentifier = Field(alias="videoCodec")
-    container_formats: tuple[SafeFreeFormIdentifier, ...] = Field(
-        alias="containerFormats", min_length=1, max_length=8, strict=False
-    )
-    average_frame_rate: RationalValue = Field(alias="averageFrameRate")
-
-    @model_validator(mode="after")
-    def average_frame_rate_is_positive(self) -> "CorpusRecording":
-        if self.average_frame_rate.numerator <= 0:
-            raise ValueError("average frame rate must be positive")
-        return self
-
-
-class PermittedUseV1(StrictContract):
-    statement_version: Literal["private-benchmark-use.v1"] = Field(
-        alias="statementVersion"
-    )
-    basis: Literal["user-owned", "user-authorized", "licensed"]
-    manual_annotation: Literal["permitted"] = Field(alias="manualAnnotation")
-    candidate_generation: Literal["permitted"] = Field(alias="candidateGeneration")
-    benchmark_evaluation: Literal["permitted"] = Field(alias="benchmarkEvaluation")
-    remote_processing: Literal["prohibited", "separately-authorized"] = Field(
-        alias="remoteProcessing"
-    )
-    redistribution: Literal["prohibited"]
-    checksum_publication: Literal["permitted"] = Field(alias="checksumPublication")
-    authorization_evidence: Literal["retained-outside-repository"] = Field(
-        alias="authorizationEvidence"
-    )
-
-
-class FixedCameraFramingV1(StrictContract):
-    framing_version: Literal["fixed-16:9-main-camera.v1"] = Field(
-        alias="framingVersion"
-    )
-    camera_position: Literal["fixed"] = Field(alias="cameraPosition")
-    camera_zoom: Literal["fixed"] = Field(alias="cameraZoom")
-    track_view_x: float = Field(alias="trackViewX", strict=True)
-    track_view_y: float = Field(alias="trackViewY", strict=True)
-    track_view_width: float = Field(alias="trackViewWidth", strict=True)
-    track_view_height: float = Field(alias="trackViewHeight", strict=True)
-    coordinate_space: Literal["normalized-track-view.v1"] = Field(
-        alias="coordinateSpace"
-    )
-
-    @model_validator(mode="after")
-    def track_view_is_fixed(self) -> "FixedCameraFramingV1":
-        if (
-            self.track_view_x,
-            self.track_view_y,
-            self.track_view_width,
-            self.track_view_height,
-        ) != (0.0, 1 / 3, 1.0, 2 / 3):
-            raise ValueError("Track view must be the fixed bottom two-thirds")
-        return self
-
-
-class RepresentativeCorpusRecordingV2(CorpusRecording):
-    permitted_use: PermittedUseV1 = Field(alias="permittedUse")
-    framing: FixedCameraFramingV1
-
-    @model_validator(mode="after")
-    def dimensions_are_16_by_9(self) -> "RepresentativeCorpusRecordingV2":
-        if self.width * 9 != self.height * 16:
-            raise ValueError("representative recording must be exactly 16:9")
-        return self
-
-
-class BenchmarkCase(StrictContract):
-    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
-    recording_id: SafeFreeFormIdentifier = Field(alias="recordingId")
-    window_start_ms: int = Field(
-        alias="windowStartMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    window_end_ms: int = Field(
-        alias="windowEndMs", gt=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    subject_seed: SubjectSeed = Field(alias="subjectSeed")
-
-    @model_validator(mode="after")
-    def window_is_ordered(self) -> "BenchmarkCase":
-        if self.window_end_ms <= self.window_start_ms:
-            raise ValueError("benchmark window must be ordered")
-        if (
-            not self.window_start_ms
-            <= self.subject_seed.timestamp_ms
-            <= self.window_end_ms
-        ):
-            raise ValueError("subject seed must be inside benchmark window")
-        return self
-
-
-class RepresentativeCaseFactsV1(StrictContract):
-    complete_race_window: Literal[True] = Field(alias="completeRaceWindow")
-    field_car_count: int = Field(alias="fieldCarCount", ge=2, le=100, strict=True)
-    similar_looking_competitor_count: int = Field(
-        alias="similarLookingCompetitorCount", ge=0, le=99, strict=True
-    )
-    identity_challenges: tuple[Literal["occlusion", "identity-ambiguity"], ...] = Field(
-        alias="identityChallenges", min_length=1, max_length=2, strict=False
-    )
-
-    @model_validator(mode="after")
-    def facts_are_consistent(self) -> "RepresentativeCaseFactsV1":
-        if self.similar_looking_competitor_count >= self.field_car_count:
-            raise ValueError("similar-looking competitors must be fewer than the field")
-        if len(set(self.identity_challenges)) != len(self.identity_challenges):
-            raise ValueError("identity challenges must be unique")
-        return self
-
-
-class RepresentativeBenchmarkCaseV2(BenchmarkCase):
-    representative_facts: RepresentativeCaseFactsV1 = Field(alias="representativeFacts")
-
-
-class BenchmarkProvenance(InferenceProvenance):
-    docker_image_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="dockerImageDigest")
-    python_lockfile_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="pythonLockfileDigest")
-    ffmpeg_version: SafeFreeFormIdentifier = Field(alias="ffmpegVersion")
-    identity_match_iou_threshold: float = Field(
-        alias="identityMatchIouThreshold", gt=0.0, le=1.0, strict=True
-    )
-    identity_annotation_tolerance_ms: int = Field(
-        alias="identityAnnotationToleranceMs", ge=0, le=1_000, strict=True
-    )
-    maximum_observation_interval_ms: int = Field(
-        alias="maximumObservationIntervalMs", gt=0, le=10_000, strict=True
-    )
-    pass_match_tolerance_ms: int = Field(
-        alias="passMatchToleranceMs", ge=0, le=10_000, strict=True
-    )
-    ambiguity_gap_coverage_tolerance_ms: int = Field(
-        alias="ambiguityGapCoverageToleranceMs", ge=0, le=10_000, strict=True
-    )
-
-
-class BenchmarkEvaluationPolicyV1(StrictContract):
-    identity_match_iou_threshold: float = Field(
-        alias="identityMatchIouThreshold", gt=0.0, le=1.0, strict=True
-    )
-    identity_annotation_tolerance_ms: int = Field(
-        alias="identityAnnotationToleranceMs", ge=0, le=1_000, strict=True
-    )
-    maximum_observation_interval_ms: int = Field(
-        alias="maximumObservationIntervalMs", gt=0, le=10_000, strict=True
-    )
-    pass_match_tolerance_ms: int = Field(
-        alias="passMatchToleranceMs", ge=0, le=10_000, strict=True
-    )
-    ambiguity_gap_coverage_tolerance_ms: int = Field(
-        alias="ambiguityGapCoverageToleranceMs", ge=0, le=10_000, strict=True
-    )
-
-    @classmethod
-    def from_provenance(
-        cls, provenance: BenchmarkProvenance
-    ) -> "BenchmarkEvaluationPolicyV1":
-        return cls(
-            identityMatchIouThreshold=provenance.identity_match_iou_threshold,
-            identityAnnotationToleranceMs=provenance.identity_annotation_tolerance_ms,
-            maximumObservationIntervalMs=provenance.maximum_observation_interval_ms,
-            passMatchToleranceMs=provenance.pass_match_tolerance_ms,
-            ambiguityGapCoverageToleranceMs=(
-                provenance.ambiguity_gap_coverage_tolerance_ms
-            ),
-        )
-
-
-class CorpusRecordingManifest(StrictContract):
-    contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
-    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
-    recordings: tuple[CorpusRecording, ...] = Field(
-        min_length=1, max_length=100, strict=False
-    )
-
-    @model_validator(mode="after")
-    def recording_ids_are_unique(self) -> "CorpusRecordingManifest":
-        if len({item.recording_id for item in self.recordings}) != len(self.recordings):
-            raise ValueError("benchmark recording IDs must be unique")
-        return self
-
-
-class CorpusManifest(CorpusRecordingManifest):
-    cases: tuple[BenchmarkCase, ...] = Field(min_length=1, max_length=100, strict=False)
-    required_coverage: float = Field(
-        default=0.8, alias="requiredCoverage", ge=0.8, le=1.0, strict=True
-    )
-    pass_match_tolerance_ms: int = Field(
-        default=500, alias="passMatchToleranceMs", ge=0, le=10_000, strict=True
-    )
-    frame_timestamp_tolerance_ms: int = Field(
-        alias="frameTimestampToleranceMs", ge=0, strict=True
-    )
-    provenance: BenchmarkProvenance
-
-    @model_validator(mode="after")
-    def case_ids_are_unique(self) -> "CorpusManifest":
-        if len({case.case_id for case in self.cases}) != len(self.cases):
-            raise ValueError("benchmark case IDs must be unique")
-        recording_ids = {recording.recording_id for recording in self.recordings}
-        recordings = {
-            recording.recording_id: recording for recording in self.recordings
-        }
-        if any(case.recording_id not in recording_ids for case in self.cases):
-            raise ValueError("benchmark case references an unknown recording")
-        if any(
-            case.window_end_ms > recordings[case.recording_id].duration_ms
-            for case in self.cases
-            if case.recording_id in recordings
-        ):
-            raise ValueError("benchmark case window exceeds recording duration")
-        return self
-
-
-class RepresentativeCorpusManifestV2(CorpusRecordingManifest):
-    contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
-        alias="contractVersion"
-    )
-    recordings: tuple[RepresentativeCorpusRecordingV2, ...] = Field(
-        min_length=3, max_length=100, strict=False
-    )
-    cases: tuple[RepresentativeBenchmarkCaseV2, ...] = Field(
-        min_length=3, max_length=100, strict=False
-    )
-    required_coverage: float = Field(
-        default=0.8, alias="requiredCoverage", ge=0.8, le=1.0, strict=True
-    )
-    frame_timestamp_tolerance_ms: int = Field(
-        alias="frameTimestampToleranceMs",
-        ge=0,
-        le=1_000,
-        strict=True,
-    )
-    evaluation_policy: BenchmarkEvaluationPolicyV1 = Field(alias="evaluationPolicy")
-
-    @model_validator(mode="after")
-    def corpus_is_representative(self) -> "RepresentativeCorpusManifestV2":
-        if len({case.case_id for case in self.cases}) != len(self.cases):
-            raise ValueError("benchmark case IDs must be unique")
-        recordings = {
-            recording.recording_id: recording for recording in self.recordings
-        }
-        if any(case.recording_id not in recordings for case in self.cases):
-            raise ValueError("benchmark case references an unknown recording")
-        if any(
-            case.window_end_ms > recordings[case.recording_id].duration_ms
-            for case in self.cases
-            if case.recording_id in recordings
-        ):
-            raise ValueError("benchmark case window exceeds recording duration")
-        if (
-            len({case.recording_id for case in self.cases})
-            < MIN_REPRESENTATIVE_RECORDINGS
-        ):
-            raise ValueError("representative corpus requires three recording windows")
-        identities = {case.subject_seed.identity for case in self.cases}
-        if len(identities) != len(self.cases):
-            raise ValueError("representative Subject identities must be distinct")
-        facts = tuple(case.representative_facts for case in self.cases)
-        if (
-            len({item.field_car_count for item in facts})
-            < MIN_REPRESENTATIVE_FIELD_COUNTS
-        ):
-            raise ValueError("representative field densities must differ")
-        if not any(item.similar_looking_competitor_count > 0 for item in facts):
-            raise ValueError(
-                "representative corpus requires a similar-looking competitor"
-            )
-        challenges = {
-            challenge for item in facts for challenge in item.identity_challenges
-        }
-        if challenges != {"occlusion", "identity-ambiguity"}:
-            raise ValueError("representative corpus requires both identity challenges")
-        if any(
-            2
-            * self.frame_timestamp_tolerance_ms
-            * recording.average_frame_rate.numerator
-            > 1_000 * recording.average_frame_rate.denominator
-            for recording in self.recordings
-        ):
-            raise ValueError(
-                "representative frame timestamp tolerance exceeds half a frame"
-            )
-        return self
-
-
-class GroundTruthPass(StrictContract):
-    pass_id: SafeFreeFormIdentifier = Field(alias="passId")
-    corner_id: SafeFreeFormIdentifier = Field(alias="cornerId")
-    entry_timestamp_ms: int = Field(
-        alias="entryTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    exit_timestamp_ms: int = Field(
-        alias="exitTimestampMs", gt=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-
-    @model_validator(mode="after")
-    def ordered(self) -> "GroundTruthPass":
-        if self.exit_timestamp_ms <= self.entry_timestamp_ms:
-            raise ValueError("ground-truth pass must be ordered")
-        return self
-
-
-class SubjectIdentityAnnotation(StrictContract):
-    timestamp_ms: int = Field(
-        alias="timestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
-    )
-    frame_index: int = Field(
-        alias="frameIndex", ge=0, lt=MAX_BENCHMARK_FRAME_COUNT, strict=True
-    )
-    box: NormalizedBox
-
-
-class GroundTruthCase(StrictContract):
-    case_id: SafeFreeFormIdentifier = Field(alias="caseId")
-    subject_identity: SafeFreeFormIdentifier = Field(alias="subjectIdentity")
-    ambiguous_spans: tuple[TrackingGap, ...] = Field(
-        default=(), alias="ambiguousSpans", max_length=100_000, strict=False
-    )
-    identity_annotations: tuple[SubjectIdentityAnnotation, ...] = Field(
-        alias="identityAnnotations", min_length=1, max_length=100_000, strict=False
-    )
-    gates: Annotated[
-        dict[
-            SafeFreeFormIdentifier,
-            CornerGates,
-        ],
-        Field(min_length=1, max_length=256),
-    ]
-    passes: tuple[GroundTruthPass, ...] = Field(
-        default=(), max_length=10_000, strict=False
-    )
-
-    @model_validator(mode="after")
-    def pass_corners_exist(self) -> "GroundTruthCase":
-        if any(item.corner_id not in self.gates for item in self.passes):
-            raise ValueError("ground-truth pass references an unknown corner")
-        if len({item.pass_id for item in self.passes}) != len(self.passes):
-            raise ValueError("ground-truth pass IDs must be unique")
-        if any(
-            current.entry_timestamp_ms <= previous.entry_timestamp_ms
-            for previous, current in zip(self.passes, self.passes[1:], strict=False)
-        ):
-            raise ValueError("ground-truth passes must be strictly ordered")
-        if any(
-            current.timestamp_ms <= previous.timestamp_ms
-            or current.frame_index <= previous.frame_index
-            for previous, current in zip(
-                self.identity_annotations,
-                self.identity_annotations[1:],
-                strict=False,
-            )
-        ):
-            raise ValueError("identity annotations must be strictly ordered")
-        if any(
-            current.start_timestamp_ms < previous.end_timestamp_ms
-            for previous, current in zip(
-                self.ambiguous_spans, self.ambiguous_spans[1:], strict=False
-            )
-        ):
-            raise ValueError("ambiguous spans must be ordered and non-overlapping")
-        return self
-
-
-class AnnotationProvenanceV1(StrictContract):
-    annotation_version: SafeFreeFormIdentifier = Field(alias="annotationVersion")
-    guideline_version: SafeFreeFormIdentifier = Field(alias="guidelineVersion")
-    source_checksum_sha256: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="sourceChecksumSha256")
-    method: Literal["manual-frame-review"]
-    coordinate_space: Literal["normalized-track-view.v1"] = Field(
-        alias="coordinateSpace"
-    )
-    timestamp_convention: Literal["absolute-source-milliseconds"] = Field(
-        alias="timestampConvention"
-    )
-    frame_index_convention: Literal["zero-based-decoded-frame"] = Field(
-        alias="frameIndexConvention"
-    )
-    tool: SafeFreeFormIdentifier
-    tool_version: SafeFreeFormIdentifier = Field(alias="toolVersion")
-    reviewer_count: int = Field(alias="reviewerCount", ge=1, le=8, strict=True)
-    adjudication: Literal["single-reviewer", "consensus", "independent-adjudication"]
-
-
-class RepresentativeGroundTruthCaseV2(GroundTruthCase):
-    annotation_provenance: AnnotationProvenanceV1 = Field(alias="annotationProvenance")
-
-
-class GroundTruth(StrictContract):
-    contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
-    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
-    cases: tuple[GroundTruthCase, ...] = Field(
-        min_length=1, max_length=100, strict=False
-    )
-
-    @model_validator(mode="after")
-    def case_ids_are_unique(self) -> "GroundTruth":
-        if len({case.case_id for case in self.cases}) != len(self.cases):
-            raise ValueError("ground-truth case IDs must be unique")
-        return self
-
-
-class RepresentativeGroundTruthV2(GroundTruth):
-    contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
-        alias="contractVersion"
-    )
-    cases: tuple[RepresentativeGroundTruthCaseV2, ...] = Field(
-        min_length=3, max_length=100, strict=False
-    )
-
-
-class CoverageMetrics(StrictContract):
-    eligible_passes: int = Field(alias="eligiblePasses", ge=0, strict=True)
-    ground_truth_passes: int = Field(alias="groundTruthPasses", ge=0, strict=True)
-    ratio: float = Field(ge=0.0, le=1.0, strict=True)
-
-
-class GapMetrics(StrictContract):
-    timely: int = Field(ge=0, strict=True)
-    missed: int = Field(ge=0, strict=True)
-    premature: int = Field(ge=0, strict=True)
-
-
-class IdentityMetrics(StrictContract):
-    unflagged_switches: int = Field(alias="unflaggedSwitches", ge=0, strict=True)
-
-
-class GateTimingMetrics(StrictContract):
-    count: int = Field(ge=0, strict=True)
-    mean_ms: float | None = Field(alias="meanMs", strict=True, allow_inf_nan=False)
-    median_ms: float | None = Field(alias="medianMs", strict=True, allow_inf_nan=False)
-    max_absolute_ms: float | None = Field(
-        alias="maxAbsoluteMs", ge=0.0, strict=True, allow_inf_nan=False
-    )
-
-
-class BenchmarkReport(StrictContract):
-    contract_version: Literal["subject-benchmark.v1"] = Field(alias="contractVersion")
-    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
-    provenance: BenchmarkProvenance
-    passed: bool
-    coverage: CoverageMetrics
-    gaps: GapMetrics
-    identity: IdentityMetrics
-    timing: GateTimingMetrics
-
-
-class BenchmarkObservationSetV2(StrictContract):
-    contract_version: Literal["subject-benchmark-observations.v1"] = Field(
-        alias="contractVersion"
-    )
-    corpus_id: SafeFreeFormIdentifier = Field(alias="corpusId")
-    manifest_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="manifestDigest")
-    ground_truth_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="groundTruthDigest")
-    generation_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="generationDigest")
-    provenance: BenchmarkProvenance
-    cases: tuple[AcceptedSubjectObservations, ...] = Field(
-        min_length=3, max_length=100, strict=False
-    )
-
-    @model_validator(mode="after")
-    def case_ids_are_unique(self) -> "BenchmarkObservationSetV2":
-        if len({case.case_id for case in self.cases}) != len(self.cases):
-            raise ValueError("observation set case IDs must be unique")
-        return self
-
-
-class BenchmarkEvidenceV2(StrictContract):
-    manifest_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="manifestDigest")
-    ground_truth_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="groundTruthDigest")
-    observations_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="observationsDigest")
-    generation_digest: Annotated[
-        str, StringConstraints(pattern=SHA256_PATTERN, strict=True)
-    ] = Field(alias="generationDigest")
-
-
-class RepresentativeBenchmarkReportV2(BenchmarkReport):
-    contract_version: Literal["subject-benchmark.v2"] = Field(  # type: ignore[assignment]
-        alias="contractVersion"
-    )
-    initial_seed_coverage: CoverageMetrics = Field(alias="initialSeedCoverage")
-    evidence: BenchmarkEvidenceV2

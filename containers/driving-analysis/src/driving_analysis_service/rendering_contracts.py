@@ -1,3 +1,25 @@
+"""Immutable Corner-render requests and accepted clip descriptors used by Worker/media
+stages.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+RenderPadding: Bounds requested time before and after the accepted Corner pass.
+RenderOverlay: Captures immutable gate/label overlay intent alongside the rendered
+    clip.
+RenderSpecification: Binds source, pass window, normalized view, padding, and
+    overlay
+    into a reproducible render request.
+RenderStageRequest: Pairs the render specification with staged input and correlation
+    identity.
+RenderArtifact: Describes private clip bytes and runtime provenance without exposing
+    the local artifact path.
+RenderStageAccepted: Returns the request-bound rendered artifact only after
+    successful
+    publication.
+RenderSafeError: Canonical code/stage/message triple for safe render rejection.
+RenderStageRejected: Returns a bounded render failure without an accepted clip
+    descriptor.
+"""
+
 # Strict, provider-neutral contracts for immutable Corner-clip rendering.
 # ruff: noqa: EM101, TRY003
 
@@ -5,16 +27,20 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     MAX_BENCHMARK_TIMESTAMP_MS,
     SHA256_PATTERN,
+    SafeFreeFormIdentifier,
+    StrictContract,
+    UuidV4String,
+)
+from driving_analysis_service.geometry_contracts import (
     DirectedGate,
     NormalizedBox,
     NormalizedPoint,
-    SafeFreeFormIdentifier,
+)
+from driving_analysis_service.media_contracts import (
     StagedMediaInput,
-    StrictContract,
-    UuidV4String,
 )
 
 RENDER_CONTRACT_VERSION: Literal["corner-render.v1"] = "corner-render.v1"

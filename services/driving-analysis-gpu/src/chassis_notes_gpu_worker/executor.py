@@ -5,10 +5,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
-from driving_analysis_service.contracts import SubjectProvenance, SubjectSeed
+from driving_analysis_service.geometry_contracts import (
+    SubjectSeed,
+)
 from driving_analysis_service.inference import (
     InferenceFrame,
     InferenceProvider,
+)
+from driving_analysis_service.observation_contracts import (
+    SubjectProvenance,
 )
 from driving_analysis_service.sam31_inference import Sam31InferenceProvider
 from driving_analysis_service.settings import (

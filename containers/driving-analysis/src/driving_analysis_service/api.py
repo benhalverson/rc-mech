@@ -5,16 +5,18 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     CONTRACT_VERSION,
     SERVICE_NAME,
+)
+from driving_analysis_service.media import MediaValidationService
+from driving_analysis_service.media_contracts import (
     HealthResponse,
     MediaValidationRequest,
     RejectedValidationResponse,
     SafeError,
     ValidationResponse,
 )
-from driving_analysis_service.media import MediaValidationService
 from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.rendering import CornerRenderService
 from driving_analysis_service.rendering_contracts import (

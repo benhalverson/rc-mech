@@ -3,8 +3,10 @@ from collections.abc import Awaitable, Callable
 from fastapi.responses import JSONResponse
 from starlette.types import Message, Receive, Scope, Send
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     CONTRACT_VERSION,
+)
+from driving_analysis_service.media_contracts import (
     RejectedValidationResponse,
     SafeError,
 )

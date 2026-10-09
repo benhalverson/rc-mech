@@ -3,7 +3,10 @@ import json
 import struct
 from typing import Annotated, Literal
 
-from driving_analysis_service.contracts import SHA256_PATTERN, StrictContract
+from driving_analysis_service.contract_primitives import (
+    SHA256_PATTERN,
+    StrictContract,
+)
 from pydantic import Field, StringConstraints
 
 Sha256 = Annotated[str, StringConstraints(pattern=SHA256_PATTERN, strict=True)]

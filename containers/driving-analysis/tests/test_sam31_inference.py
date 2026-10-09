@@ -7,7 +7,9 @@ import pytest
 
 import driving_analysis_service.sam31_inference as sam31_module
 import driving_analysis_service.sam31_runtime as runtime_module
-from driving_analysis_service.contracts import SubjectSeed
+from driving_analysis_service.geometry_contracts import (
+    SubjectSeed,
+)
 from driving_analysis_service.inference import (
     InferenceFailureError,
     InferenceFrame,

@@ -5,13 +5,15 @@ from typing import Annotated, Literal
 from fastapi.responses import JSONResponse
 from pydantic import Field, StringConstraints
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     SHA256_PATTERN,
-    StagedMediaInput,
     StrictContract,
 )
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.media import claim_staged_media, inspect_and_probe_media
+from driving_analysis_service.media_contracts import (
+    StagedMediaInput,
+)
 from driving_analysis_service.preparation import _source_frames
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,

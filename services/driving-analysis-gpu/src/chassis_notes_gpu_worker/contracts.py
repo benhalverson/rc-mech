@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     SHA256_PATTERN,
     StrictContract,
     UuidV4String,

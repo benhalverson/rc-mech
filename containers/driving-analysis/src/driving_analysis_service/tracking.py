@@ -8,18 +8,22 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from driving_analysis_service.contracts import (
+from driving_analysis_service.contract_primitives import (
     MAX_SUBJECT_OBSERVATIONS,
+)
+from driving_analysis_service.geometry_contracts import (
     NormalizedBox,
     NormalizedPoint,
-    SubjectObservation,
-    SubjectProvenance,
 )
 from driving_analysis_service.inference import (
     InferenceFailureError,
     InferenceFrame,
     InferenceProvider,
     InferenceUnavailableError,
+)
+from driving_analysis_service.observation_contracts import (
+    SubjectObservation,
+    SubjectProvenance,
 )
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,

@@ -18,7 +18,6 @@ import driving_analysis_service.processing_deadline as deadline_module
 import driving_analysis_service.tracking as tracking_module
 import driving_analysis_service.tracking_artifacts as artifact_module
 from driving_analysis_service import ffmpeg_tools
-from driving_analysis_service.contracts import SubjectProvenance
 from driving_analysis_service.errors import MediaValidationError
 from driving_analysis_service.inference import (
     DisabledInferenceProvider,
@@ -27,6 +26,9 @@ from driving_analysis_service.inference import (
     InferenceUnavailableError,
 )
 from driving_analysis_service.media import ProbeMetadata
+from driving_analysis_service.observation_contracts import (
+    SubjectProvenance,
+)
 from driving_analysis_service.preparation import RaceWindowPreparationService
 from driving_analysis_service.processes import (
     ProcessOutputLimitError,

@@ -5,15 +5,12 @@ from driving_analysis_service.benchmark import (
     evaluate_benchmark,
     evaluate_representative_benchmark,
 )
-from driving_analysis_service.contracts import (
-    AcceptedSubjectObservationEnvelope,
-    AcceptedSubjectObservations,
+from driving_analysis_service.benchmark_contracts import (
     BenchmarkCase,
     BenchmarkEvidenceV2,
     BenchmarkObservationSetV2,
     BenchmarkProvenance,
     BenchmarkReport,
-    CandidateObservations,
     CorpusManifest,
     CorpusRecording,
     CorpusRecordingManifest,
@@ -24,7 +21,6 @@ from driving_analysis_service.contracts import (
     GroundTruthCase,
     GroundTruthPass,
     IdentityMetrics,
-    RejectedSubjectObservationEnvelope,
     RepresentativeBenchmarkCaseV2,
     RepresentativeBenchmarkReportV2,
     RepresentativeCorpusManifestV2,
@@ -32,6 +28,12 @@ from driving_analysis_service.contracts import (
     RepresentativeGroundTruthCaseV2,
     RepresentativeGroundTruthV2,
     SubjectIdentityAnnotation,
+)
+from driving_analysis_service.observation_contracts import (
+    AcceptedSubjectObservationEnvelope,
+    AcceptedSubjectObservations,
+    CandidateObservations,
+    RejectedSubjectObservationEnvelope,
     SubjectObservation,
     SubjectObservationEnvelope,
     SubjectProvenance,
