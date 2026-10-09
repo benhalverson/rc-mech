@@ -474,7 +474,12 @@ export class OfflineGarageStorage {
 								.length,
 						]),
 					),
-					dependencies: [...carOperations, ...driveOperations],
+					// Consumables do not reference Drive usage or Service records.
+					// Only their Car and earlier intent for the same entry are prerequisites.
+					dependencies:
+						command.kind === 'save' || command.kind === 'change'
+							? carOperations
+							: [...carOperations, ...driveOperations],
 				});
 				const parent = materializeCars(current.cars, carOperations).find(
 					(car) => car.id === built.carId,

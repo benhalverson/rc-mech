@@ -113,7 +113,7 @@ describe('Consumable working-copy rules', () => {
 				.combined,
 		).toBe(30);
 	});
-	it('waits for related Service work while unrelated Cars and records remain independent', () => {
+	it('waits for the same Consumable record while unrelated Service work and Cars remain independent', () => {
 		const service = {
 			...maintenanceOperationFixture,
 			command: {
@@ -150,7 +150,7 @@ describe('Consumable working-copy rules', () => {
 			]),
 			context,
 		);
-		expect(result.dependencies).toContain(service.operationId);
+		expect(result.dependencies).not.toContain(service.operationId);
 		expect(result.dependencies).not.toContain('other');
 		const plan = buildMaintenanceOperation(
 			{
