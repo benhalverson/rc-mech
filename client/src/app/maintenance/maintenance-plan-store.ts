@@ -1,8 +1,9 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -22,6 +23,7 @@ import type {
 	MaintenancePlanDraft,
 } from './maintenance.models';
 import { MaintenanceGateway } from './maintenance-gateway';
+import { MaintenanceWorkspaceStore } from './maintenance-workspace-store';
 
 export type MaintenancePlanCommand =
 	| {
@@ -33,7 +35,7 @@ export type MaintenancePlanCommand =
 	| {
 			readonly kind: 'transition-plan';
 			readonly planId: string;
-			readonly action: 'pause' | 'resume' | 'archive';
+			readonly action: 'pause' | 'resume' | 'archive' | 'restore';
 	  };
 
 export type MaintenancePlanFailure =
@@ -97,10 +99,25 @@ const resourceMessage = (
 export const MaintenancePlanStore = signalStore(
 	withState<{
 		outcome: MaintenancePlanOutcome;
-		components: MaintenanceComponent[];
-	}>({ outcome: idleOutcome(), components: [] }),
+		loadedComponents: MaintenanceComponent[];
+		selectedCarId: string;
+		localFailure: string;
+	}>({
+		outcome: idleOutcome(),
+		loadedComponents: [],
+		selectedCarId: '',
+		localFailure: '',
+	}),
 	withProps(() => ({
 		gateway: inject(MaintenanceGateway),
+		workspace: inject(MaintenanceWorkspaceStore),
+		localRequest: {
+			value: null as null | Readonly<{
+				requestId: string;
+				operationId: number;
+				command: MaintenancePlanCommand;
+			}>,
+		},
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => {
@@ -112,25 +129,53 @@ export const MaintenancePlanStore = signalStore(
 			].map((error) => store.gateway.failure(error)),
 		);
 		return {
+			components: computed(() =>
+				store.workspace.available()
+					? [
+							...store.workspace
+								.components()
+								.filter(
+									(component) => component.carId === store.selectedCarId(),
+								),
+						]
+					: store.loadedComponents(),
+			),
 			cars: computed(() =>
-				store.gateway.cars.hasValue() ? store.gateway.cars.value() : [],
+				store.workspace.available()
+					? [...store.workspace.cars()]
+					: store.gateway.cars.hasValue()
+						? store.gateway.cars.value()
+						: [],
 			),
 			timezone: computed(() =>
-				store.gateway.timezone.hasValue()
-					? store.gateway.timezone.value()
-					: 'UTC',
+				store.workspace.available()
+					? store.workspace.timezone()
+					: store.gateway.timezone.hasValue()
+						? store.gateway.timezone.value()
+						: 'UTC',
 			),
 			plans: computed(() =>
-				store.gateway.plans.hasValue() ? store.gateway.plans.value().plans : [],
+				store.workspace.available()
+					? store.workspace.plans()
+					: store.gateway.plans.hasValue()
+						? store.gateway.plans.value().plans
+						: [],
 			),
 			loading: computed(
 				() =>
-					(store.gateway.cars.isLoading() && !store.gateway.cars.hasValue()) ||
-					(store.gateway.timezone.isLoading() &&
-						!store.gateway.timezone.hasValue()) ||
-					(store.gateway.plans.isLoading() && !store.gateway.plans.hasValue()),
+					!store.workspace.available() &&
+					((store.gateway.cars.isLoading() && !store.gateway.cars.hasValue()) ||
+						(store.gateway.timezone.isLoading() &&
+							!store.gateway.timezone.hasValue()) ||
+						(store.gateway.plans.isLoading() &&
+							!store.gateway.plans.hasValue())),
 			),
-			error: computed(() => resourceMessage(failures())),
+			error: computed(
+				() =>
+					store.localFailure() ||
+					(store.workspace.available() ? '' : resourceMessage(failures())),
+			),
+			syncMessage: computed(() => store.workspace.syncMessage()),
 			action: computed(() => {
 				const outcome = store.outcome();
 				if (outcome.status === 'pending') {
@@ -139,7 +184,9 @@ export const MaintenancePlanStore = signalStore(
 						? command.mode
 						: `${command.action}:${command.planId}`;
 				}
-				return store.gateway.plans.isLoading() ? 'refresh' : null;
+				return !store.workspace.available() && store.gateway.plans.isLoading()
+					? 'refresh'
+					: null;
 			}),
 		};
 	}),
@@ -178,34 +225,90 @@ export const MaintenancePlanStore = signalStore(
 				switchMap((carId) =>
 					carId
 						? store.gateway.components(carId).pipe(
-								tap((components) => patchState(store, { components })),
+								tap((components) =>
+									patchState(store, { loadedComponents: components }),
+								),
 								catchError(() => {
-									patchState(store, { components: [] });
+									patchState(store, { loadedComponents: [] });
 									return of([]);
 								}),
 							)
-						: of([]).pipe(tap(() => patchState(store, { components: [] }))),
+						: of([]).pipe(
+								tap(() => patchState(store, { loadedComponents: [] })),
+							),
 				),
 			),
 		);
 		return {
 			retry(): void {
+				store.workspace.synchronize();
+				if (store.workspace.available()) store.workspace.refresh();
 				store.gateway.cars.reload();
 				store.gateway.timezone.reload();
 				store.gateway.plans.reload();
 			},
 			refresh(): void {
+				if (store.workspace.available()) store.workspace.refresh();
 				store.gateway.plans.reload();
 			},
 			clearOutcome(): void {
+				store.localRequest.value = null;
+				patchState(store, { localFailure: '' });
 				patchState(store, { outcome: idleOutcome() });
 			},
 			mutate(command: MaintenancePlanCommand): void {
-				if (store.outcome().status !== 'pending') mutate(command);
+				if (store.outcome().status === 'pending') return;
+				patchState(store, { localFailure: '' });
+				if (store.workspace.available()) {
+					const operationId = ++store.nextOperationId.value;
+					const requestId = `plan:${operationId}`;
+					store.localRequest.value = { requestId, operationId, command };
+					patchState(store, {
+						outcome: { status: 'pending', operationId, command },
+					});
+					store.workspace.mutate({ requestId, change: command });
+					return;
+				}
+				mutate(command);
 			},
 			loadComponents(carId: string): void {
-				loadComponents(carId);
+				patchState(store, { selectedCarId: carId });
+				if (!store.workspace.available()) loadComponents(carId);
 			},
 		};
 	}),
+	withHooks((store) => ({
+		onInit() {
+			effect(() => {
+				const result = store.workspace.outcome();
+				const request = store.localRequest.value;
+				if (
+					!request ||
+					result.requestId !== request.requestId ||
+					result.status === 'pending'
+				)
+					return;
+				if (result.status === 'succeeded')
+					patchState(store, {
+						outcome: {
+							status: 'succeeded',
+							operationId: request.operationId,
+							command: request.command,
+						},
+					});
+				else
+					patchState(store, {
+						localFailure: result.message,
+						outcome: {
+							status: 'failed',
+							operationId: request.operationId,
+							command: request.command,
+							failure: mutationFailure(request.command, {
+								kind: 'unavailable',
+							}),
+						},
+					});
+			});
+		},
+	})),
 );

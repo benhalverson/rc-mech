@@ -233,7 +233,7 @@ export const createMaintenancePlanRoutes = () => {
 
 	const transitionMaintenancePlan = async (
 		c: AppContext,
-		action: 'pause' | 'resume' | 'archive',
+		action: 'pause' | 'resume' | 'archive' | 'restore',
 	) => {
 		const existing = await carPlan(c, c.req.param('planId'));
 		if (!existing) return c.json({ error: 'Maintenance plan not found' }, 404);
@@ -242,7 +242,7 @@ export const createMaintenancePlanRoutes = () => {
 				existing.status as MaintenanceStatus,
 				action === 'pause'
 					? 'paused'
-					: action === 'resume'
+					: action === 'resume' || action === 'restore'
 						? 'active'
 						: 'archived',
 			)
@@ -251,7 +251,7 @@ export const createMaintenancePlanRoutes = () => {
 		const nextStatus =
 			action === 'pause'
 				? 'paused'
-				: action === 'resume'
+				: action === 'resume' || action === 'restore'
 					? 'active'
 					: 'archived';
 		try {
@@ -284,6 +284,9 @@ export const createMaintenancePlanRoutes = () => {
 	);
 	routes.post('/maintenance-plans/:planId/resume', (c) =>
 		transitionMaintenancePlan(c, 'resume'),
+	);
+	routes.post('/maintenance-plans/:planId/restore', (c) =>
+		transitionMaintenancePlan(c, 'restore'),
 	);
 	routes.post('/maintenance-plans/:planId/archive', (c) =>
 		transitionMaintenancePlan(c, 'archive'),

@@ -7,6 +7,7 @@ import {
 } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
+import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
 import { OfflineWorkspaceStore } from '../offline/offline-workspace-store';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
@@ -100,6 +101,7 @@ describe('WorkspaceShell', () => {
 		await TestBed.configureTestingModule({
 			imports: [WorkspaceShell],
 			providers: [
+				{ provide: MaintenanceWorkspaceStore, useValue: {} },
 				{ provide: VisibilityStore, useValue: { visible } },
 				provideRouter([], withDisabledInitialNavigation()),
 				{ provide: OwnerSessionStore, useValue: session },

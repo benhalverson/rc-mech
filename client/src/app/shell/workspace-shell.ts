@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { VisibilityStore } from '../driving-analysis-visibility/visibility-store';
+import { MaintenanceWorkspaceStore } from '../maintenance/maintenance-workspace-store';
 import { OfflineStatus } from '../offline/offline-status';
 import { OwnerSessionStore } from '../owner-session-store';
 import { RouteTransitionAnnouncer } from '../route-transition-announcer';
@@ -28,6 +29,7 @@ import { SignOutStore } from './sign-out-store';
 	styleUrl: './workspace-shell.css',
 })
 export class WorkspaceShell {
+	protected readonly maintenanceWorkspace = inject(MaintenanceWorkspaceStore);
 	protected readonly analysisVisibility = inject(VisibilityStore);
 	protected readonly sessionStore = inject(OwnerSessionStore);
 	private readonly responsiveViewport = inject(ResponsiveViewport);

@@ -14,6 +14,7 @@ import {
 import { applySetupSyncOperation } from '../setups/setup-sync';
 import { ownedCar, publicCar } from './car-records';
 import { applyDriveSyncOperation } from './drive-sync';
+import { applyMaintenanceSyncOperation } from './maintenance-sync';
 
 const canonicalJson = (value: unknown): string => {
 	if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -99,6 +100,7 @@ export const createCarSyncRoutes = () => {
 		const isSetupCommand = command.type.startsWith('setup.');
 		const setupId = command['setupId'];
 		const isDriveCommand = command.type === 'drive.change';
+		const isMaintenanceCommand = command.type === 'maintenance.change';
 		const now = new Date().toISOString();
 		const database = db(c.env);
 		const requestHash = await requestDigest(parsed.data);
@@ -126,7 +128,13 @@ export const createCarSyncRoutes = () => {
 				operationId: operationId.data,
 				contractVersion: parsed.data.contractVersion,
 				kind: command.type,
-				entityType: isSetupCommand ? 'setup' : isDriveCommand ? 'drive' : 'car',
+				entityType: isSetupCommand
+					? 'setup'
+					: isDriveCommand
+						? 'drive'
+						: isMaintenanceCommand
+							? 'maintenance'
+							: 'car',
 				entityId:
 					isSetupCommand && typeof setupId === 'string'
 						? setupId
@@ -248,6 +256,14 @@ export const createCarSyncRoutes = () => {
 			return c.json(response, 404);
 		};
 
+		if (isMaintenanceCommand)
+			return applyMaintenanceSyncOperation(c, {
+				command,
+				operationId: operationId.data,
+				requestHash,
+				now,
+				requireTerminalReceipt,
+			});
 		if (isDriveCommand)
 			return applyDriveSyncOperation(c, {
 				command,

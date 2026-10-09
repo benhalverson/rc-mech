@@ -9,11 +9,13 @@ import { createCornerEvidenceRoutes } from './maintenance/corner-evidence';
 import { createDriveSessionRoutes } from './maintenance/drive-sessions';
 import { createDrivingAnalysisRoutes } from './maintenance/driving-analyses';
 import { createMaintenancePlanRoutes } from './maintenance/maintenance-plans';
+import { createMaintenanceSnapshotRoutes } from './maintenance/maintenance-snapshot';
 import { createRaceRecordingRoutes } from './maintenance/race-recordings';
 import { createServiceRecordRoutes } from './maintenance/service-records';
 
 export const createMaintenanceRoutes = (dependencies: AppDependencies) =>
 	new Hono<AppEnv>()
+		.route('/', createMaintenanceSnapshotRoutes())
 		.route('/', createConsumableRoutes())
 		.route('/', createConsumableMaintenanceRoutes())
 		.route('/', createDriveSessionRoutes())

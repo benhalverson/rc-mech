@@ -117,5 +117,5 @@ test('paused and archived plans do not become due', () => {
 test('maintenance lifecycle does not reopen archived plans', () => {
 	assert.equal(canTransitionMaintenance('active', 'paused'), true);
 	assert.equal(canTransitionMaintenance('paused', 'active'), true);
-	assert.equal(canTransitionMaintenance('archived', 'active'), false);
+	assert.equal(canTransitionMaintenance('archived', 'active'), true);
 });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { driveSyncCommandInput } from './drive-sync-contract';
+import { maintenanceSyncCommandInput } from './maintenance-sync-contract';
 import { VOICE_CORRECTION_MAX_LENGTH } from './types';
 
 const carProperties = {
@@ -275,6 +276,9 @@ export const openApi = {
 									command: {
 										oneOf: [
 											z.toJSONSchema(driveSyncCommandInput, { io: 'input' }),
+											...maintenanceSyncCommandInput.options.map((command) =>
+												z.toJSONSchema(command, { io: 'input' }),
+											),
 											{
 												type: 'object',
 												required: ['type', 'carId', 'car'],
@@ -425,6 +429,17 @@ export const openApi = {
 					422: { description: 'Stable Needs-attention validation rejection' },
 					503: {
 						description: 'Transient synchronization infrastructure failure',
+					},
+				},
+			},
+		},
+		'/api/v1/maintenance/sync/snapshot': {
+			get: {
+				summary: 'Read the owner-scoped maintenance working copy',
+				responses: {
+					200: {
+						description:
+							'Raw versioned plans and service history, component metadata, and timezone',
 					},
 				},
 			},

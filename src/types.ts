@@ -31,6 +31,7 @@ export const carSyncEnvelopeInput = z
 					'setup.correct',
 					'setup.select-current',
 					'drive.change',
+					'maintenance.change',
 				]),
 				carId: z.string().uuid(),
 			})
