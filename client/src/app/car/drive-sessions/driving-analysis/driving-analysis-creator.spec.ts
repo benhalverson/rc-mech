@@ -8,6 +8,7 @@ import type { DrivingAnalysis } from './driving-analysis.models';
 import { DrivingAnalysisCreator } from './driving-analysis-creator';
 import type { ApprovedTrackMapOption } from './driving-analysis-store';
 import { DrivingAnalysisStore } from './driving-analysis-store';
+import { PrivateVideoPlayerCapability } from './private-video-player';
 import type { RaceRecording } from './race-recording.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
@@ -144,6 +145,7 @@ describe('DrivingAnalysisCreator', () => {
 			imports: [DrivingAnalysisCreator],
 			providers: [
 				provideRouter([]),
+				PrivateVideoPlayerCapability,
 				{ provide: DrivingAnalysisStore, useValue: store },
 			],
 		});
@@ -152,6 +154,57 @@ describe('DrivingAnalysisCreator', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		TestBed.resetTestingModule();
+	});
+
+	it('pauses before frame selection and disposes the creator native handle', () => {
+		const fixture = TestBed.createComponent(DrivingAnalysisCreator);
+		fixture.componentRef.setInput('carId', 'car-1');
+		fixture.componentRef.setInput('driveSessionId', 'drive-1');
+		fixture.componentRef.setInput('recording', recording);
+		fixture.detectChanges();
+		const root = fixture.nativeElement as HTMLElement;
+		const video = root.querySelector('video');
+		if (!video) throw new Error('Missing player');
+		const pause = vi.spyOn(video, 'pause');
+		store.selectSubjectFrame.mockImplementation(() =>
+			expect(pause).toHaveBeenCalled(),
+		);
+		root.querySelector<HTMLButtonElement>('[data-mark-seed]')?.click();
+		const previous = pause.mock.calls.length;
+		fixture.destroy();
+		expect(pause.mock.calls.length).toBeGreaterThan(previous);
+		video.dispatchEvent(new Event('play'));
+	});
+
+	it('preserves playback on equivalent recording refresh and resets on source replacement', () => {
+		const fixture = TestBed.createComponent(DrivingAnalysisCreator);
+		fixture.componentRef.setInput('carId', 'car-1');
+		fixture.componentRef.setInput('driveSessionId', 'drive-1');
+		fixture.componentRef.setInput('recording', recording);
+		fixture.detectChanges();
+		const root = fixture.nativeElement as HTMLElement;
+		const video = root.querySelector('video');
+		if (!video) throw new Error('Missing player');
+		video.currentTime = 250;
+		video.dispatchEvent(new Event('timeupdate'));
+		video.dispatchEvent(new Event('play'));
+		fixture.detectChanges();
+		const pause = vi.spyOn(video, 'pause');
+		fixture.componentRef.setInput('recording', { ...recording });
+		fixture.detectChanges();
+		expect(pause).not.toHaveBeenCalled();
+		expect(root.querySelector('output')?.textContent).toContain('250000 ms');
+		expect(root.querySelector('[data-toggle-playback]')?.textContent).toContain(
+			'Pause recording',
+		);
+		fixture.componentRef.setInput('recording', {
+			...recording,
+			playbackUrl: '/replacement.mp4',
+		});
+		fixture.detectChanges();
+		expect(pause).toHaveBeenCalled();
+		expect(root.querySelector('output')?.textContent).toContain('0 ms');
+		fixture.destroy();
 	});
 
 	it('resolves an actual frame before enabling the frozen Subject box', async () => {

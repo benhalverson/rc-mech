@@ -41,6 +41,7 @@ const record: ServiceRecord = {
 const planStore = {
 	cars: signal<MaintenanceCar[]>([car]),
 	plans: signal<MaintenancePlan[]>([plan]),
+	syncMessage: signal(''),
 	timezone: signal('UTC'),
 	components: signal([]),
 	loading: signal(false),
@@ -73,6 +74,7 @@ const serviceStore = {
 };
 
 const consumableStore = {
+	syncMessage: signal(''),
 	cars: planStore.cars,
 	timezone: planStore.timezone,
 	entries: signal([]),

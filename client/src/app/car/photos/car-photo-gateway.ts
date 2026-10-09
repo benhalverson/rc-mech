@@ -43,6 +43,12 @@ export const photoGatewayFailure = (error: unknown): PhotoGatewayFailure => {
 		: { kind: 'unavailable' };
 };
 
+/**
+ * Route-scoped HTTP resource and legacy mutation transport for CarPhotoStore.
+ * Retains the online path when no prepared offline workspace is available; the
+ * root PhotoSyncGateway serves durable replay instead. This resource owns the
+ * selected-car request, not the local queue or retained original URLs.
+ */
 @Injectable()
 export class CarPhotoGateway {
 	private readonly http = inject(HttpClient);

@@ -144,6 +144,50 @@ describe('TrackMapEditor', () => {
 		fixture.detectChanges();
 	});
 	afterEach(() => TestBed.resetTestingModule());
+	it('highlights the selected endpoint without changing the corner draft', () => {
+		const before = (component as unknown as { corners(): unknown }).corners();
+		const marker = (): SVGCircleElement =>
+			fixture.nativeElement.querySelector('[data-active-geometry-point]');
+		expect(marker().getAttribute('cx')).toBe('64');
+		const target = fixture.nativeElement.querySelector(
+			'select[aria-label="Geometry target"]',
+		) as HTMLSelectElement;
+		choose(target, 'exitEnd');
+		expect(marker().getAttribute('cx')).toBe('256');
+		expect(marker().getAttribute('cy')).toBe('144');
+		expect((component as unknown as { corners(): unknown }).corners()).toEqual(
+			before,
+		);
+		choose(target, 'viewPosition');
+		expect(marker()).toBeNull();
+	});
+
+	it('marks both ends of entry and exit lines through the numbered actions', () => {
+		const saved = savedCommands();
+		setCanvasBounds(0, 0, 400, 200);
+		for (const [name, target, x, y] of [
+			['1. Entry line start', 'entryStart', 0.2, 0.4],
+			['2. Entry line end', 'entryEnd', 0.4, 0.4],
+			['3. Exit line start', 'exitStart', 0.6, 0.7],
+			['4. Exit line end', 'exitEnd', 0.8, 0.7],
+		] as const) {
+			const action = button(name);
+			action.click();
+			fixture.detectChanges();
+			expect(action.getAttribute('aria-pressed')).toBe('true');
+			expect(
+				(fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+					'select[aria-label="Geometry target"]',
+				)?.value,
+			).toBe(target);
+			clickCanvas(x * 400, y * 200);
+		}
+		button('Save draft').click();
+		expect(saved[0]?.corners[0]).toMatchObject({
+			entryGate: { start: { x: 0.2, y: 0.4 }, end: { x: 0.4, y: 0.4 } },
+			exitGate: { start: { x: 0.6, y: 0.7 }, end: { x: 0.8, y: 0.7 } },
+		});
+	});
 
 	it('edits identity and directions through rendered Signal Form controls', () => {
 		const saved = savedCommands();
@@ -304,7 +348,9 @@ describe('TrackMapEditor', () => {
 			),
 			'exitStart',
 		);
-		expect(fixture.nativeElement.textContent).toContain('Drawing: Exit gate');
+		expect(fixture.nativeElement.textContent).toContain(
+			'Drawing: the start of the exit line',
+		);
 		choose(
 			fixture.nativeElement.querySelector(
 				'select[aria-label="Geometry target"]',

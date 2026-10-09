@@ -124,6 +124,32 @@ const crossing = (
 	};
 };
 
+type CornerPassFields = Pick<
+	CornerPassEvidence,
+	'entry' | 'exit' | 'durationMs' | 'eligibility' | 'exclusionReason'
+>;
+
+/** Construct an unranked pass with stable field order and explicit traversal fields. */
+const createCornerPass = (
+	corner: EvidenceCorner,
+	ordinal: number,
+	fields: CornerPassFields,
+): CornerPassEvidence => ({
+	cornerId: corner.id,
+	cornerKey: corner.key,
+	cornerOrder: corner.order,
+	ordinal,
+	entry: fields.entry,
+	exit: fields.exit,
+	durationMs: fields.durationMs,
+	eligibility: fields.eligibility,
+	exclusionReason: fields.exclusionReason,
+	rank: null,
+	tieGroup: null,
+	best: false,
+});
+
+/** Measure traversals in event order, sharing the append budget across corners. */
 const measureCorner = (
 	corner: EvidenceCorner,
 	segment: SubjectObservationSegment,
@@ -150,72 +176,52 @@ const measureCorner = (
 	for (const event of events) {
 		if (event.kind === 'entry') {
 			if (entry)
-				appendPass(passes, passBudget, () => ({
-					cornerId: corner.id,
-					cornerKey: corner.key,
-					cornerOrder: corner.order,
-					ordinal: passes.length + 1,
-					entry,
-					exit: null,
-					durationMs: null,
-					eligibility: 'ineligible',
-					exclusionReason: 'gate-order',
-					rank: null,
-					tieGroup: null,
-					best: false,
-				}));
+				appendPass(passes, passBudget, () =>
+					createCornerPass(corner, passes.length + 1, {
+						entry,
+						exit: null,
+						durationMs: null,
+						eligibility: 'ineligible',
+						exclusionReason: 'gate-order',
+					}),
+				);
 			entry = event.crossing;
 			continue;
 		}
 		if (!entry) {
-			appendPass(passes, passBudget, () => ({
-				cornerId: corner.id,
-				cornerKey: corner.key,
-				cornerOrder: corner.order,
-				ordinal: passes.length + 1,
-				entry: null,
-				exit: event.crossing,
-				durationMs: null,
-				eligibility: 'ineligible',
-				exclusionReason: 'gate-order',
-				rank: null,
-				tieGroup: null,
-				best: false,
-			}));
+			appendPass(passes, passBudget, () =>
+				createCornerPass(corner, passes.length + 1, {
+					entry: null,
+					exit: event.crossing,
+					durationMs: null,
+					eligibility: 'ineligible',
+					exclusionReason: 'gate-order',
+				}),
+			);
 			continue;
 		}
-		appendPass(passes, passBudget, () => ({
-			cornerId: corner.id,
-			cornerKey: corner.key,
-			cornerOrder: corner.order,
-			ordinal: passes.length + 1,
-			entry,
-			exit: event.crossing,
-			durationMs: event.crossing.timestampMs - entry.timestampMs,
-			eligibility: 'eligible',
-			exclusionReason: null,
-			rank: null,
-			tieGroup: null,
-			best: false,
-		}));
+		appendPass(passes, passBudget, () =>
+			createCornerPass(corner, passes.length + 1, {
+				entry,
+				exit: event.crossing,
+				durationMs: event.crossing.timestampMs - entry.timestampMs,
+				eligibility: 'eligible',
+				exclusionReason: null,
+			}),
+		);
 		entry = null;
 	}
 	if (entry) {
-		appendPass(passes, passBudget, () => ({
-			cornerId: corner.id,
-			cornerKey: corner.key,
-			cornerOrder: corner.order,
-			ordinal: passes.length + 1,
-			entry,
-			exit: null,
-			durationMs: null,
-			eligibility: 'ineligible',
-			exclusionReason:
-				segment.openGap === null ? 'race-window' : 'tracking-gap',
-			rank: null,
-			tieGroup: null,
-			best: false,
-		}));
+		appendPass(passes, passBudget, () =>
+			createCornerPass(corner, passes.length + 1, {
+				entry,
+				exit: null,
+				durationMs: null,
+				eligibility: 'ineligible',
+				exclusionReason:
+					segment.openGap === null ? 'race-window' : 'tracking-gap',
+			}),
+		);
 	}
 	return rankCornerPasses(passes, tieToleranceMs);
 };

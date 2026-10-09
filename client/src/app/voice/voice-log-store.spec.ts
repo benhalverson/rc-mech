@@ -15,6 +15,8 @@ import { VoiceGateway } from './voice-gateway';
 import { VoiceLogStore } from './voice-log-store';
 import { VoiceOfflineQueue } from './voice-offline-queue';
 import { VoiceRecorder } from './voice-recorder';
+import { FakeVoiceWorkspace } from './voice-sync.testing';
+import { VoiceWorkspaceStore } from './voice-workspace-store';
 
 const draft = {
 	setupChanges: [],
@@ -166,16 +168,19 @@ describe('VoiceLogStore', () => {
 	let store: InstanceType<typeof VoiceLogStore>;
 	let gateway: FakeGateway;
 	let queue: FakeQueue;
+	let workspace: FakeVoiceWorkspace;
 	let recorder: FakeRecorder;
 	let connectivity: { isOnline: ReturnType<typeof vi.fn> };
 
 	beforeEach(() => {
 		gateway = new FakeGateway();
 		queue = new FakeQueue();
+		workspace = new FakeVoiceWorkspace();
 		recorder = new FakeRecorder();
 		connectivity = { isOnline: vi.fn(() => true) };
 		TestBed.configureTestingModule({
 			providers: [
+				{ provide: VoiceWorkspaceStore, useValue: workspace },
 				VoiceLogStore,
 				{ provide: VoiceGateway, useValue: gateway },
 				{ provide: VoiceOfflineQueue, useValue: queue },
@@ -199,6 +204,14 @@ describe('VoiceLogStore', () => {
 		store.selectCar('car-1');
 		await vi.waitFor(() => expect(queue.list).toHaveBeenCalled());
 	};
+
+	it('projects retained original media and sends playback intent to the shared workspace', () => {
+		const workspace = TestBed.inject(VoiceWorkspaceStore);
+		expect(store.offlinePrepared()).toBe(false);
+		expect(store.media()).toEqual({});
+		store.openOriginal('voice-1');
+		expect(workspace.openOriginal).toHaveBeenCalledWith('voice-1');
+	});
 
 	it('derives route-safe reads, active context cars, recorder state, and local captures', async () => {
 		expect(store.updates()).toEqual([]);
@@ -1049,5 +1062,128 @@ describe('VoiceLogStore', () => {
 		rejectRemove?.(new Error('stale remove'));
 		await Promise.resolve();
 		expect(store.outcome().status).toBe('idle');
+	});
+	it('projects shared owner-scoped captures and history during offline route reuse', () => {
+		TestBed.tick();
+		workspace.available.set(true);
+		workspace.remoteAvailable.set(false);
+		workspace.captures.set([
+			{ ...capture('local'), phase: 'upload', dependencies: [] },
+			{
+				...capture('other', { carId: 'other' }),
+				phase: 'upload',
+				dependencies: [],
+			},
+		]);
+		workspace.updates.set([update(), update({ id: 'other', carId: 'other' })]);
+		workspace.cars.set([{ id: 'car-1', name: 'Buggy', archivedAt: null }]);
+		workspace.failure.set('Storage needs attention');
+		store.selectCar('car-1');
+		expect(store.localCaptures()).toHaveLength(1);
+		expect(store.updates()).toHaveLength(1);
+		expect(store.cars()).toHaveLength(1);
+		expect(store.remoteAvailable()).toBe(false);
+		expect(store.readError()).toBe('Storage needs attention');
+		expect(store.loading()).toBe(false);
+		expect(queue.list).not.toHaveBeenCalled();
+		store.retryQueued();
+		store.retryRead();
+		expect(workspace.retry).toHaveBeenCalledOnce();
+		expect(workspace.refresh).toHaveBeenCalledOnce();
+	});
+	it('reports text capture only after the shared durable outcome and ignores unrelated outcomes', () => {
+		TestBed.tick();
+		workspace.available.set(true);
+		store.selectCar('car-1');
+		store.captureText({
+			text: 'Offline rear slide',
+			driveSessionId: 'local-drive',
+		});
+		const command = workspace.keep.mock.calls[0][0];
+		expect(command.capture).toMatchObject({
+			text: 'Offline rear slide',
+			driveSessionId: 'local-drive',
+		});
+		expect(store.outcome().status).toBe('pending');
+		expect(queue.put).not.toHaveBeenCalled();
+		workspace.outcome.set({ status: 'pending', requestId: command.requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+		workspace.outcome.set({ status: 'succeeded', requestId: 'other' });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('pending');
+		workspace.outcome.set({
+			status: 'succeeded',
+			requestId: command.requestId,
+		});
+		TestBed.tick();
+		expect(store.outcome().status).toBe('succeeded');
+		expect(store.message()).toContain('Pending sync');
+		expect(gateway.upload).not.toHaveBeenCalled();
+		store.discardLocal(command.capture.id);
+		const discard = workspace.discard.mock.calls[0][0];
+		workspace.outcome.set({
+			status: 'succeeded',
+			requestId: discard.requestId,
+		});
+		TestBed.tick();
+		expect(store.message()).toBe('Pending recording discarded.');
+	});
+	it('keeps local storage failures visible and fences outcomes after route changes', () => {
+		TestBed.tick();
+		workspace.available.set(true);
+		store.selectCar('car-1');
+		store.captureText({ text: 'Do not lose this', driveSessionId: null });
+		const request = workspace.keep.mock.calls[0][0];
+		workspace.outcome.set({
+			status: 'failed',
+			requestId: request.requestId,
+			message: 'Disk full',
+		});
+		TestBed.tick();
+		expect(store.outcome().status).toBe('failed');
+		expect(store.error()).toContain('stored safely');
+		store.captureText({ text: 'Later', driveSessionId: null });
+		const later = workspace.keep.mock.calls[1][0];
+		store.selectCar('other');
+		workspace.outcome.set({ status: 'succeeded', requestId: later.requestId });
+		TestBed.tick();
+		expect(store.outcome().status).toBe('idle');
+		store.selectCar('car-1');
+		workspace.outcome.set({
+			status: 'failed',
+			requestId: later.requestId,
+			message: 'Late',
+		});
+		TestBed.tick();
+		expect(store.outcome().status).toBe('idle');
+	});
+	it('defers remote-only processing, corrections, and confirmation when offline', () => {
+		workspace.remoteAvailable.set(false);
+		store.process('voice-1');
+		expect(store.error()).toContain('waiting for connectivity');
+		expect(gateway.process).not.toHaveBeenCalled();
+		store.clearFeedback();
+		store.startRecording({ kind: 'correction', id: 'voice-1' });
+		expect(store.error()).toContain('waiting for connectivity');
+		expect(recorder.start).not.toHaveBeenCalled();
+	});
+	it('refreshes shared provenance after a successful online remote mutation', async () => {
+		workspace.available.set(true);
+		store.selectCar('car-1');
+		store.confirm('voice-1', false);
+		await vi.waitFor(() => expect(store.outcome().status).toBe('succeeded'));
+		expect(workspace.refresh).toHaveBeenCalledOnce();
+	});
+	it('refreshes retained provenance after an online audio correction', async () => {
+		workspace.available.set(true);
+		store.selectCar('car-1');
+		store.startRecording({ kind: 'correction', id: 'voice-1' });
+		await vi.waitFor(() => expect(store.outcome().status).toBe('succeeded'));
+		store.stopRecording({ driveSessionId: null });
+		await vi.waitFor(() =>
+			expect(store.message()).toContain('Draft corrected'),
+		);
+		expect(workspace.refresh).toHaveBeenCalledOnce();
 	});
 });

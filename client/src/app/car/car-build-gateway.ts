@@ -17,7 +17,7 @@ class InvalidBuildResponse extends Error {}
 
 export const parseBuildCollection = (
 	value: unknown,
-): { components: InstalledComponent[] } => {
+): { components: InstalledComponent[]; carId?: string; version?: number } => {
 	const parsed = installedComponentCollectionSchema.safeParse(value);
 	if (!parsed.success) throw new InvalidBuildResponse();
 	return parsed.data;
@@ -39,12 +39,21 @@ export const buildGatewayFailure = (error: unknown): BuildGatewayFailure => {
 		: { kind: 'unavailable' };
 };
 
+/**
+ * Selected-car HTTP resource and legacy Component mutation transport used by
+ * CarBuildStore when the shared workspace is unavailable. Response parsing stays
+ * here; the root BuildSyncGateway handles stable-operation replay separately.
+ */
 @Injectable()
 export class CarBuildGateway {
 	private readonly http = inject(HttpClient);
 	private readonly carId = signal('');
 
-	readonly collection = httpResource<{ components: InstalledComponent[] }>(
+	readonly collection = httpResource<{
+		components: InstalledComponent[];
+		carId?: string;
+		version?: number;
+	}>(
 		() => {
 			const carId = this.carId();
 			return carId
@@ -68,17 +77,23 @@ export class CarBuildGateway {
 			? `${collectionUrl}/${encodeURIComponent(command.componentId)}`
 			: collectionUrl;
 		const request =
-			command.mode === 'edit'
-				? this.http.patch<unknown>(componentUrl, command.input, {
-						withCredentials: true,
-					})
-				: this.http.post<unknown>(
-						command.mode === 'replace'
-							? `${componentUrl}/replace`
-							: collectionUrl,
-						command.input,
+			command.mode === 'remove'
+				? this.http.post<unknown>(
+						`${componentUrl}/remove`,
+						{},
 						{ withCredentials: true },
-					);
+					)
+				: command.mode === 'edit'
+					? this.http.patch<unknown>(componentUrl, command.input, {
+							withCredentials: true,
+						})
+					: this.http.post<unknown>(
+							command.mode === 'replace'
+								? `${componentUrl}/replace`
+								: collectionUrl,
+							command.input,
+							{ withCredentials: true },
+						);
 		return request.pipe(
 			map(parseBuildMutation),
 			catchError((error: unknown) =>

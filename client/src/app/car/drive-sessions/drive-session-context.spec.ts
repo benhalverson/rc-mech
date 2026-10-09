@@ -1,6 +1,8 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CarWorkspaceStore } from '../../garage/car-sync/car-workspace-store';
+import { OfflineWorkspaceStore } from '../../offline/offline-workspace-store';
 import type { DriveSessionCollection } from './drive-session.models';
 import { DriveSessionContextStore } from './drive-session-context';
 import { DriveSessionGateway } from './drive-session-gateway';
@@ -40,6 +42,14 @@ describe('DriveSessionContextStore', () => {
 		gateway = new FakeDriveSessionGateway();
 		TestBed.configureTestingModule({
 			providers: [
+				{
+					provide: OfflineWorkspaceStore,
+					useValue: { hasSnapshot: signal(false) },
+				},
+				{
+					provide: CarWorkspaceStore,
+					useValue: { available: signal(false), driveCollections: signal([]) },
+				},
 				DriveSessionContextStore,
 				{ provide: DriveSessionGateway, useValue: gateway },
 			],
@@ -81,5 +91,41 @@ describe('DriveSessionContextStore', () => {
 		gateway.setCollection({ sessions: [], timezone: null });
 		gateway.setTimezone('invalid');
 		expect(store.timezone()).toBe(browserTimezone());
+	});
+	it('uses pending Drive sessions from the prepared working copy', () => {
+		const offline = TestBed.inject(OfflineWorkspaceStore) as unknown as {
+			hasSnapshot: ReturnType<typeof signal<boolean>>;
+		};
+		const workspace = TestBed.inject(CarWorkspaceStore) as unknown as {
+			driveCollections: ReturnType<
+				typeof signal<
+					readonly import('../drive-sync/drive-sync.models').DriveSyncCollection[]
+				>
+			>;
+		};
+		offline.hasSnapshot.set(true);
+		expect(store.sessions()).toEqual([]);
+		expect(store.timezone()).toBeTruthy();
+		workspace.driveCollections.set([
+			{
+				carId: 'car-1',
+				version: 1,
+				timezone: 'America/New_York',
+				sessions: [
+					{
+						id: 'pending',
+						carId: 'car-1',
+						startedAt: '2026-08-09T12:00:00Z',
+						durationMinutes: null,
+						conditions: null,
+						notes: null,
+						deletedAt: null,
+					},
+				],
+			},
+		]);
+		store.selectCar('car-1');
+		expect(store.sessions()[0].id).toBe('pending');
+		expect(store.timezone()).toBe('America/New_York');
 	});
 });

@@ -1,8 +1,9 @@
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
@@ -15,6 +16,7 @@ import type {
 	MaintenanceGatewayFailure,
 } from '../maintenance.models';
 import { MaintenanceGateway } from '../maintenance-gateway';
+import { MaintenanceWorkspaceStore } from '../maintenance-workspace-store';
 
 export type ConsumableSaveCommand = {
 	readonly kind: 'save';
@@ -91,13 +93,32 @@ const mutationFailure = (
 	return 'save-failed';
 };
 
+/**
+ * Projects tire/fluid history and reports for the Consumable editor. Prepared
+ * changes enter MaintenanceWorkspaceStore with stable identities before success;
+ * the route keeps editor outcomes and the existing online fallback, not a second
+ * durable queue or independent service-association model.
+ */
 export const ConsumableStore = signalStore(
 	withState<{
 		outcome: ConsumableOutcome;
 		tireLookup: TireLookupOutcome;
-	}>({ outcome: idleOutcome(), tireLookup: { status: 'idle', carId: null } }),
+		localFailure: string;
+	}>({
+		localFailure: '',
+		outcome: idleOutcome(),
+		tireLookup: { status: 'idle', carId: null },
+	}),
 	withProps(() => ({
 		gateway: inject(MaintenanceGateway),
+		workspace: inject(MaintenanceWorkspaceStore),
+		localRequest: {
+			value: null as null | Readonly<{
+				requestId: string;
+				operationId: number;
+				command: ConsumableCommand;
+			}>,
+		},
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => {
@@ -110,28 +131,48 @@ export const ConsumableStore = signalStore(
 		);
 		return {
 			cars: computed(() =>
-				store.gateway.cars.hasValue() ? store.gateway.cars.value() : [],
+				store.workspace.available()
+					? store.workspace.cars()
+					: store.gateway.cars.hasValue()
+						? store.gateway.cars.value()
+						: [],
 			),
 			timezone: computed(() =>
-				store.gateway.timezone.hasValue()
-					? store.gateway.timezone.value()
-					: 'UTC',
+				store.workspace.available()
+					? store.workspace.timezone()
+					: store.gateway.timezone.hasValue()
+						? store.gateway.timezone.value()
+						: 'UTC',
 			),
 			entries: computed(() =>
-				store.gateway.consumables.hasValue()
-					? store.gateway.consumables.value()
-					: [],
+				store.workspace.available()
+					? store.workspace.consumables()
+					: store.gateway.consumables.hasValue()
+						? store.gateway.consumables.value()
+						: [],
 			),
 			report: computed(() =>
-				store.gateway.report.hasValue() ? store.gateway.report.value() : null,
+				!store.workspace.available() && store.gateway.report.hasValue()
+					? store.gateway.report.value()
+					: null,
 			),
 			loading: computed(
 				() =>
-					store.gateway.cars.isLoading() ||
-					store.gateway.timezone.isLoading() ||
-					store.gateway.consumables.isLoading(),
+					!store.workspace.available() &&
+					(store.gateway.cars.isLoading() ||
+						store.gateway.timezone.isLoading() ||
+						store.gateway.consumables.isLoading()),
 			),
-			error: computed(() => resourceError(failures())),
+			error: computed(() =>
+				store.workspace.available() ? '' : resourceError(failures()),
+			),
+			syncMessage: computed(
+				() =>
+					store.localFailure() ||
+					(store.workspace.available()
+						? store.workspace.consumableSyncMessage()
+						: ''),
+			),
 			action: computed(() => {
 				const outcome = store.outcome();
 				if (outcome.status !== 'pending') return null;
@@ -203,20 +244,75 @@ export const ConsumableStore = signalStore(
 		);
 		return {
 			retry(): void {
+				if (store.workspace.available()) store.workspace.refresh();
 				store.gateway.cars.reload();
 				store.gateway.timezone.reload();
 				store.gateway.consumables.reload();
 				store.gateway.report.reload();
 			},
 			clearOutcome(): void {
-				patchState(store, { outcome: idleOutcome() });
+				store.localRequest.value = null;
+				patchState(store, { outcome: idleOutcome(), localFailure: '' });
 			},
 			mutate(command: ConsumableCommand): void {
-				if (store.outcome().status !== 'pending') mutate(command);
+				if (store.outcome().status === 'pending') return;
+				if (store.workspace.available()) {
+					const operationId = ++store.nextOperationId.value;
+					const requestId = crypto.randomUUID();
+					store.localRequest.value = { requestId, operationId, command };
+					patchState(store, {
+						outcome: { status: 'pending', operationId, command },
+						localFailure: '',
+					});
+					store.workspace.mutate({ requestId, change: command });
+				} else mutate(command);
 			},
 			loadTires(carId: string): void {
-				if (carId) loadTires(carId);
+				if (!carId) return;
+				if (store.workspace.available())
+					patchState(store, {
+						tireLookup: {
+							status: 'succeeded',
+							carId,
+							tires: store.workspace.tireSetups().get(carId) ?? null,
+						},
+					});
+				else loadTires(carId);
 			},
 		};
 	}),
+	withHooks((store) => ({
+		onInit() {
+			effect(() => {
+				const result = store.workspace.outcome();
+				const request = store.localRequest.value;
+				if (
+					!request ||
+					result.requestId !== request.requestId ||
+					result.status === 'pending'
+				)
+					return;
+				if (result.status === 'succeeded')
+					patchState(store, {
+						outcome: {
+							status: 'succeeded',
+							operationId: request.operationId,
+							command: request.command,
+						},
+					});
+				else
+					patchState(store, {
+						localFailure: result.message,
+						outcome: {
+							status: 'failed',
+							operationId: request.operationId,
+							command: request.command,
+							failure: mutationFailure(request.command, {
+								kind: 'unavailable',
+							}),
+						},
+					});
+			});
+		},
+	})),
 );

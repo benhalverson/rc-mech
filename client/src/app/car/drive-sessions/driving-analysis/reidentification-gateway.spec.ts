@@ -31,6 +31,33 @@ const command: ReidentifySubjectCommand = {
 afterEach(() => TestBed.resetTestingModule());
 
 describe('ReidentificationGateway', () => {
+	it('enriches exact correction frames with encoded checksum-bound content URLs without mutation', () => {
+		TestBed.configureTestingModule({
+			providers: [provideHttpClient(), ReidentificationGateway],
+		});
+		const gateway = TestBed.inject(ReidentificationGateway);
+		const context = structuredClone(command.context);
+		Object.freeze(context.frames[0]);
+		Object.freeze(context.frames);
+		Object.freeze(context);
+		const identity = Object.freeze({
+			recordingId: 'video/one ?#',
+			checksumSha256: 'checksum/ ?#',
+		});
+		expect(gateway.frames(context, identity)).toEqual([
+			{
+				frameIndex: 2,
+				timestampMs: 200,
+				contentUrl:
+					'/api/v1/race-videos/video%2Fone%20%3F%23/subject-frames/2/content?checksum=checksum%2F%20%3F%23',
+			},
+		]);
+		expect(gateway.frames(context, null)).toEqual([
+			{ frameIndex: 2, timestampMs: 200, contentUrl: null },
+		]);
+		expect(gateway.frames(null, identity)).toEqual([]);
+		expect(context).toEqual(command.context);
+	});
 	it('reads owner-authenticated gap context and sends a stable correction identity', async () => {
 		TestBed.configureTestingModule({
 			providers: [

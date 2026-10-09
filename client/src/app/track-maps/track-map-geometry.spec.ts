@@ -36,6 +36,25 @@ describe('TrackMapGeometry', () => {
 		TestBed.resetTestingModule();
 	});
 
+	it('marks only the currently selected endpoint over the frame', () => {
+		fixture.componentRef.setInput('overlay', true);
+		fixture.componentRef.setInput('activeCorner', corner);
+		fixture.componentRef.setInput('activePoint', corner.entryGate.start);
+		fixture.detectChanges();
+		const marker = fixture.nativeElement.querySelector(
+			'[data-active-geometry-point]',
+		);
+		expect(marker.getAttribute('cx')).toBe('64');
+		expect(marker.getAttribute('cy')).toBe('72');
+		fixture.componentRef.setInput('activePoint', corner.exitGate.end);
+		fixture.detectChanges();
+		expect(marker.getAttribute('cx')).toBe('256');
+		expect(marker.getAttribute('cy')).toBe('144');
+		expect(
+			fixture.nativeElement.querySelectorAll('[data-active-geometry-point]'),
+		).toHaveLength(1);
+	});
+
 	it('renders canonical gates, Corner views, labels, and active handles', () => {
 		fixture.componentRef.setInput('activeCorner', corner);
 		fixture.detectChanges();

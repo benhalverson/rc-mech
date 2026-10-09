@@ -1,4 +1,10 @@
-import { computed, inject } from '@angular/core';
+import {
+	computed,
+	ErrorHandler,
+	inject,
+	resource,
+	signal,
+} from '@angular/core';
 import {
 	patchState,
 	signalStore,
@@ -17,6 +23,14 @@ import type {
 } from '../car.models';
 import { carReadFailure } from '../car-read-failure';
 import { CarPhotoGateway } from './car-photo-gateway';
+import { PhotoMediaAccess } from './photo-media-access';
+import type { PhotoCapture } from './photo-sync.models';
+import { PhotoWorkspaceStore } from './photo-workspace-store';
+
+type PhotoMedia = Readonly<{
+	urls: Readonly<Record<string, string | null>>;
+	error: string;
+}>;
 
 type PhotoMutationResult =
 	| { readonly kind: 'upload'; readonly photo: CarPhoto }
@@ -99,26 +113,80 @@ const mutationError = (
 					: 'The photo order could not be saved.';
 };
 
+/**
+ * Projects the selected Car gallery and translates gallery intents into workspace
+ * commands, retaining the legacy HTTP path when local preparation is unavailable.
+ * Owns route outcomes; resource() manages private-original reads as gallery inputs
+ * change, streaming each result so slow downloads never block cached originals.
+ * Its cancellation signal releases PhotoMediaAccess URLs and pending HTTP reads
+ * on replacement or route destruction. Expected missing originals remain local to
+ * each photo; access and unexpected failures surface without hiding other images.
+ * Durable mutations stay explicit.
+ */
 export const CarPhotoStore = signalStore(
 	withState<{
 		carId: string;
 		localPhotos: CarPhoto[] | null;
 		outcome: PhotoMutationOutcome;
-	}>({ carId: '', localPhotos: null, outcome: idleOutcome() }),
+	}>({
+		carId: '',
+		localPhotos: null,
+		outcome: idleOutcome(),
+	}),
 	withProps(() => ({
 		gateway: inject(CarPhotoGateway),
+		workspace: inject(PhotoWorkspaceStore),
+		mediaAccess: inject(PhotoMediaAccess),
+		errorHandler: inject(ErrorHandler),
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => ({
 		photos: computed(
 			() =>
+				(store.workspace.available()
+					? [
+							...store.workspace
+								.photos()
+								.filter((photo) => photo.carId === store.carId()),
+						]
+					: null) ??
 				store.localPhotos() ??
 				(store.gateway.collection.hasValue()
 					? store.gateway.collection.value().photos
 					: []),
 		),
-		loading: computed(() => store.gateway.collection.isLoading()),
+		loading: computed(
+			() =>
+				!store.workspace.available() && store.gateway.collection.isLoading(),
+		),
+		offline: computed(() => store.workspace.offline.networkUnavailable()),
+		captureFailures: computed(() =>
+			store.workspace
+				.captures()
+				.filter(
+					(capture) =>
+						capture.carId === store.carId() &&
+						capture.status === 'needs-attention',
+				),
+		),
+		captureFeedback: computed(() =>
+			[
+				...store.workspace.captures(),
+				...store.workspace
+					.changes()
+					.map((change) => ({ ...change, feedback: change.feedback?.message })),
+			]
+				.filter((capture) => capture.carId === store.carId())
+				.map((capture) =>
+					capture.status === 'pending'
+						? 'Pending sync'
+						: `${capture.status === 'conflict' ? 'Sync conflict' : 'Needs attention'}: ${capture.feedback}`,
+				)
+				.join('; '),
+		),
+		captureOutcome: computed(() => store.workspace.outcome()),
 		failure: computed(() => {
+			if (store.workspace.available()) return null;
 			const failure = store.gateway.failure();
 			return carReadFailure(
 				failure?.kind === 'http' ? { status: failure.status } : failure,
@@ -126,14 +194,77 @@ export const CarPhotoStore = signalStore(
 			);
 		}),
 		action: computed(() => {
+			if (store.workspace.outcome().status === 'pending') return 'upload';
 			const outcome = store.outcome();
 			return outcome.status === 'pending' ? actionName(outcome.command) : null;
 		}),
+	})),
+	withProps((store) => ({
+		mediaResource: resource({
+			params: () => ({
+				photos: store.workspace.available() ? store.photos() : [],
+				fence: {
+					ownerKey: store.workspace.offline.ownerKey(),
+					sessionKey: store.workspace.offline.sessionKey(),
+				},
+				offline: store.offline(),
+			}),
+			defaultValue: { urls: {}, error: '' } as PhotoMedia,
+			stream: ({ params, abortSignal }) => {
+				const media = signal({ value: { urls: {}, error: '' } as PhotoMedia });
+				for (const photo of params.photos) {
+					void (async () => {
+						let url: string | null = null;
+						let message = '';
+						try {
+							url = await store.mediaAccess.open(
+								photo.id,
+								params.fence,
+								params.offline,
+								abortSignal,
+							);
+						} catch (error: unknown) {
+							if (abortSignal.aborted) return;
+							const failure = error as PhotoGatewayFailure | null;
+							if (
+								failure?.kind === 'http' &&
+								[401, 403].includes(failure.status)
+							) {
+								message =
+									'Your garage session cannot access a photo original. Sign in again to continue.';
+							} else if (
+								failure?.kind !== 'unavailable' &&
+								!(
+									failure?.kind === 'http' &&
+									(failure.status === 404 || failure.status >= 500)
+								)
+							) {
+								message = 'A photo original could not be loaded. Try again.';
+								store.errorHandler.handleError(error);
+							}
+						}
+						if (!abortSignal.aborted)
+							media.update(({ value }) => ({
+								value: {
+									urls: { ...value.urls, [photo.id]: url },
+									error: message || value.error,
+								},
+							}));
+					})();
+				}
+				return media;
+			},
+		}),
+	})),
+	withComputed((store) => ({
+		media: computed(() => store.mediaResource.value().urls),
 		error: computed(() => {
+			const capture = store.workspace.outcome();
+			if (capture.status === 'failed') return capture.message;
 			const outcome = store.outcome();
 			return outcome.status === 'failed'
 				? mutationError(outcome.error, outcome.command)
-				: '';
+				: store.mediaResource.value().error;
 		}),
 	})),
 	withMethods((store) => {
@@ -192,6 +323,14 @@ export const CarPhotoStore = signalStore(
 								outcome: { status: 'succeeded', operationId, command },
 							});
 							store.gateway.refresh();
+							if (store.workspace.available())
+								store.workspace.refresh(
+									result.kind === 'replace'
+										? result.photo.id
+										: result.kind === 'delete'
+											? result.photoId
+											: undefined,
+								);
 						}),
 						catchError((error: PhotoGatewayFailure) => {
 							if (store.carId() === carId)
@@ -206,7 +345,25 @@ export const CarPhotoStore = signalStore(
 				}),
 			),
 		);
+
 		return {
+			resolveCapture(
+				command: Readonly<{
+					capture: PhotoCapture;
+					decision: 'retry' | 'discard';
+				}>,
+			): void {
+				if (
+					command.capture.carId !== store.carId() ||
+					store.action() ||
+					!store.workspace.available()
+				)
+					return;
+				store.workspace.mutate({
+					requestId: String(++store.nextOperationId.value),
+					change: { carId: store.carId(), ...command },
+				});
+			},
 			selectCar(carId: string): void {
 				if (store.carId() === carId) return;
 				patchState(store, { carId, localPhotos: null, outcome: idleOutcome() });
@@ -215,12 +372,25 @@ export const CarPhotoStore = signalStore(
 			retry(): void {
 				patchState(store, { outcome: idleOutcome() });
 				store.gateway.refresh();
+				store.mediaResource.reload();
+				if (store.workspace.available()) store.workspace.refresh();
 			},
 			clearOutcome(): void {
 				patchState(store, { outcome: idleOutcome() });
 			},
 			mutate(command: PhotoMutationCommand): void {
-				if (!store.carId() || store.outcome().status === 'pending') return;
+				if (!store.carId() || store.action()) return;
+				if (store.workspace.available()) {
+					store.workspace.mutate({
+						requestId: String(++store.nextOperationId.value),
+						change:
+							command.kind === 'upload'
+								? { carId: store.carId(), file: command.file }
+								: { carId: store.carId(), edit: command },
+					});
+					return;
+				}
+				if (store.offline()) return;
 				mutate(command);
 			},
 		};

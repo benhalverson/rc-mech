@@ -4,7 +4,6 @@ import {
 	effect,
 	inject,
 	input,
-	linkedSignal,
 	signal,
 } from '@angular/core';
 import { FormField, form } from '@angular/forms/signals';
@@ -15,9 +14,14 @@ import {
 	type SubjectBox,
 } from './driving-analysis.models';
 import { DrivingAnalysisStore } from './driving-analysis-store';
+import {
+	PrivateVideoPlayerBinding,
+	PrivateVideoPlayerCapability,
+} from './private-video-player';
 import type { RaceRecording } from './race-recording.models';
 import { SubjectBoxEditor } from './subject-box-editor';
 import { SubjectReidentification } from './subject-reidentification';
+import { verifiedFrameImage } from './verified-frame-image';
 
 type CreationForm = {
 	approvedTrackMapVersionId: string;
@@ -33,8 +37,10 @@ const DEFAULT_BOX: SubjectBox = {
 	height: 0.08,
 };
 
+/** Validate an absolute timestamp without accepting fractional or infinite values. */
 const finiteInteger = (value: number): boolean =>
 	Number.isFinite(value) && Number.isInteger(value);
+/** Format a workflow stage for presentation. */
 const titleCase = (value: string): string =>
 	`${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 
@@ -46,6 +52,7 @@ const titleCase = (value: string): string =>
 		SubjectReidentification,
 		TrackMapGeometry,
 		RouterLink,
+		PrivateVideoPlayerBinding,
 	],
 	templateUrl: './driving-analysis-creator.html',
 	host: { class: 'block' },
@@ -56,8 +63,9 @@ export class DrivingAnalysisCreator {
 	readonly recording = input.required<RaceRecording>();
 	protected readonly store = inject(DrivingAnalysisStore);
 	private readonly initializedRecording = signal('');
-	protected readonly currentTimestampMs = signal(0);
-	protected readonly playing = signal(false);
+	protected readonly playback = inject(PrivateVideoPlayerCapability).create();
+	protected readonly currentTimestampMs = this.playback.currentTimestampMs;
+	protected readonly playing = this.playback.playing;
 	protected readonly box = signal<SubjectBox>(DEFAULT_BOX);
 	protected readonly boxValid = signal(true);
 	protected readonly form = signal<CreationForm>({
@@ -95,21 +103,18 @@ export class DrivingAnalysisCreator {
 			return null;
 		return frame;
 	});
-	protected readonly loadedFrameUrl = linkedSignal({
-		source: this.selectedFrame,
-		computation: () => '',
-	});
-	protected readonly failedFrameUrl = linkedSignal({
-		source: this.selectedFrame,
-		computation: () => '',
-	});
-	protected readonly frameReady = computed(() => {
-		const frame = this.selectedFrame();
-		return (
-			frame !== null &&
-			this.loadedFrameUrl() === frame.contentUrl &&
-			this.failedFrameUrl() !== frame.contentUrl
-		);
+	protected readonly frameImage = verifiedFrameImage(
+		computed(() => {
+			const frame = this.selectedFrame();
+			return frame
+				? { contentUrl: frame.contentUrl, identity: JSON.stringify(frame) }
+				: null;
+		}),
+	);
+	protected readonly frameReady = this.frameImage.ready;
+	protected readonly playbackSource = computed(() => {
+		const recording = this.recording();
+		return JSON.stringify([recording.id, recording.playbackUrl]);
 	});
 	protected readonly durationMs = computed(
 		() => this.recording().media?.durationMs ?? 0,
@@ -163,6 +168,7 @@ export class DrivingAnalysisCreator {
 		return errors;
 	});
 
+	/** Synchronize presentation and the native player binding with rendered inputs. */
 	constructor() {
 		effect(() => {
 			if (this.selectedFrame()) {
@@ -194,35 +200,17 @@ export class DrivingAnalysisCreator {
 			});
 			this.box.set(DEFAULT_BOX);
 			this.boxValid.set(true);
-			this.currentTimestampMs.set(0);
-			this.playing.set(false);
 			this.formError.set('');
 			this.store.selectTrackMap(firstMap?.id ?? null);
 		});
 	}
 
-	protected updateCurrentTime(currentTimeSeconds: number): void {
-		this.currentTimestampMs.set(
-			Math.min(
-				this.durationMs(),
-				Math.max(0, Math.round(currentTimeSeconds * 1000)),
-			),
-		);
+	/** Forward an absolute timestamp intent to the native playback capability. */
+	protected seek(event: Event): void {
+		this.playback.seek((event.target as HTMLInputElement).valueAsNumber);
 	}
 
-	protected seek(event: Event, player: HTMLVideoElement): void {
-		const timestamp = Math.round(
-			(event.target as HTMLInputElement).valueAsNumber,
-		);
-		player.currentTime = timestamp / 1000;
-		this.currentTimestampMs.set(timestamp);
-	}
-
-	protected togglePlayback(player: HTMLVideoElement): void {
-		if (player.paused) void player.play().catch(() => this.playing.set(false));
-		else player.pause();
-	}
-
+	/** Mark the current absolute playback position in the local Race window. */
 	protected mark(field: 'startTimestampMs' | 'endTimestampMs'): void {
 		const timestampMs = this.currentTimestampMs();
 		this.form.update((current) => ({
@@ -232,8 +220,9 @@ export class DrivingAnalysisCreator {
 		this.formError.set('');
 	}
 
-	protected selectFrame(player: HTMLVideoElement): void {
-		player.pause();
+	/** Pause playback before requesting an exact verified Subject frame. */
+	protected selectFrame(): void {
+		this.playback.pause();
 		const form = this.form();
 		const timestampMs = this.currentTimestampMs();
 		this.selectionWindow.set({
@@ -249,10 +238,12 @@ export class DrivingAnalysisCreator {
 		this.formError.set('');
 	}
 
+	/** Render the workflow stage in readable presentation text. */
 	protected stageLabel(stage: string): string {
 		return titleCase(stage.replace('-', ' '));
 	}
 
+	/** Validate the local form and submit one immutable analysis command. */
 	protected submit(event: Event): void {
 		event.preventDefault();
 		this.fields().markAsTouched();

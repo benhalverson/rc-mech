@@ -16,6 +16,7 @@ export const ownedPhoto = async (c: AppContext, photoId: string) => {
 
 export const publicPhoto = (value: typeof photo.$inferSelect) => ({
 	id: value.id,
+	revision: value.revision,
 	carId: value.carId,
 	fileName: value.fileName,
 	contentType: value.contentType,

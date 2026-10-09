@@ -7,7 +7,7 @@ export default defineConfig({
 		exclude: ['src/driving-analysis/gpu-lease-coordinator.test.ts'],
 		coverage: {
 			provider: 'v8',
-			include: ['src/**/*.ts'],
+			include: ['src/**/*.ts', 'shared/**/*.ts'],
 			exclude: [
 				'src/**/*.test.ts',
 				'src/testing/**',
