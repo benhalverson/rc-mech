@@ -1,4 +1,10 @@
-import { computed, inject, resource, signal } from '@angular/core';
+import {
+	computed,
+	ErrorHandler,
+	inject,
+	resource,
+	signal,
+} from '@angular/core';
 import {
 	patchState,
 	signalStore,
@@ -21,7 +27,10 @@ import { PhotoMediaAccess } from './photo-media-access';
 import type { PhotoCapture } from './photo-sync.models';
 import { PhotoWorkspaceStore } from './photo-workspace-store';
 
-type PhotoMedia = Readonly<Record<string, string | null>>;
+type PhotoMedia = Readonly<{
+	urls: Readonly<Record<string, string | null>>;
+	error: string;
+}>;
 
 type PhotoMutationResult =
 	| { readonly kind: 'upload'; readonly photo: CarPhoto }
@@ -110,7 +119,9 @@ const mutationError = (
  * Owns route outcomes; resource() manages private-original reads as gallery inputs
  * change, streaming each result so slow downloads never block cached originals.
  * Its cancellation signal releases PhotoMediaAccess URLs and pending HTTP reads
- * on replacement or route destruction. Durable mutations stay explicit.
+ * on replacement or route destruction. Expected missing originals remain local to
+ * each photo; access and unexpected failures surface without hiding other images.
+ * Durable mutations stay explicit.
  */
 export const CarPhotoStore = signalStore(
 	withState<{
@@ -126,6 +137,7 @@ export const CarPhotoStore = signalStore(
 		gateway: inject(CarPhotoGateway),
 		workspace: inject(PhotoWorkspaceStore),
 		mediaAccess: inject(PhotoMediaAccess),
+		errorHandler: inject(ErrorHandler),
 		nextOperationId: { value: 0 },
 	})),
 	withComputed((store) => ({
@@ -186,14 +198,6 @@ export const CarPhotoStore = signalStore(
 			const outcome = store.outcome();
 			return outcome.status === 'pending' ? actionName(outcome.command) : null;
 		}),
-		error: computed(() => {
-			const capture = store.workspace.outcome();
-			if (capture.status === 'failed') return capture.message;
-			const outcome = store.outcome();
-			return outcome.status === 'failed'
-				? mutationError(outcome.error, outcome.command)
-				: '';
-		}),
 	})),
 	withProps((store) => ({
 		mediaResource: resource({
@@ -205,25 +209,64 @@ export const CarPhotoStore = signalStore(
 				},
 				offline: store.offline(),
 			}),
-			defaultValue: {} as PhotoMedia,
+			defaultValue: { urls: {}, error: '' } as PhotoMedia,
 			stream: ({ params, abortSignal }) => {
-				const media = signal({ value: {} as PhotoMedia });
+				const media = signal({ value: { urls: {}, error: '' } as PhotoMedia });
 				for (const photo of params.photos) {
-					void store.mediaAccess
-						.open(photo.id, params.fence, params.offline, abortSignal)
-						.catch(() => null)
-						.then((url) => {
-							if (!abortSignal.aborted)
-								media.update(({ value }) => ({
-									value: { ...value, [photo.id]: url },
-								}));
-						});
+					void (async () => {
+						let url: string | null = null;
+						let message = '';
+						try {
+							url = await store.mediaAccess.open(
+								photo.id,
+								params.fence,
+								params.offline,
+								abortSignal,
+							);
+						} catch (error: unknown) {
+							if (abortSignal.aborted) return;
+							const failure = error as PhotoGatewayFailure | null;
+							if (
+								failure?.kind === 'http' &&
+								[401, 403].includes(failure.status)
+							) {
+								message =
+									'Your garage session cannot access a photo original. Sign in again to continue.';
+							} else if (
+								failure?.kind !== 'unavailable' &&
+								!(
+									failure?.kind === 'http' &&
+									(failure.status === 404 || failure.status >= 500)
+								)
+							) {
+								message = 'A photo original could not be loaded. Try again.';
+								store.errorHandler.handleError(error);
+							}
+						}
+						if (!abortSignal.aborted)
+							media.update(({ value }) => ({
+								value: {
+									urls: { ...value.urls, [photo.id]: url },
+									error: message || value.error,
+								},
+							}));
+					})();
 				}
 				return media;
 			},
 		}),
 	})),
-	withComputed((store) => ({ media: store.mediaResource.value })),
+	withComputed((store) => ({
+		media: computed(() => store.mediaResource.value().urls),
+		error: computed(() => {
+			const capture = store.workspace.outcome();
+			if (capture.status === 'failed') return capture.message;
+			const outcome = store.outcome();
+			return outcome.status === 'failed'
+				? mutationError(outcome.error, outcome.command)
+				: store.mediaResource.value().error;
+		}),
+	})),
 	withMethods((store) => {
 		const mutate = rxMethod<PhotoMutationCommand>((commands$) =>
 			commands$.pipe(

@@ -207,7 +207,7 @@ describe('PhotoSyncGateway', () => {
 			const rejected =
 				revision === '2'
 					? null
-					: expect(result).rejects.toEqual({ kind: 'invalid-response' });
+					: expect(result).rejects.toThrow('Invalid photo revision.');
 			http.expectOne('/api/v1/photos/capture').flush(new Blob(['image']), {
 				headers: { 'X-Photo-Revision': revision },
 			});
@@ -215,10 +215,19 @@ describe('PhotoSyncGateway', () => {
 			else expect(await result).toMatchObject({ revision: 2 });
 		}
 		const result = firstValueFrom(gateway.original('capture'));
-		const rejected = expect(result).rejects.toEqual({
-			kind: 'invalid-response',
-		});
+		const rejected = expect(result).rejects.toThrow('Invalid photo revision.');
 		http.expectOne('/api/v1/photos/capture').flush(null);
 		await rejected;
 	});
+	it.each([401, 403, 404, 503])(
+		'preserves original HTTP failure status %s',
+		async (status) => {
+			const result = firstValueFrom(gateway.original('capture'));
+			const rejected = expect(result).rejects.toEqual({ kind: 'http', status });
+			http
+				.expectOne('/api/v1/photos/capture')
+				.flush(null, { status, statusText: 'Error' });
+			await rejected;
+		},
+	);
 });
