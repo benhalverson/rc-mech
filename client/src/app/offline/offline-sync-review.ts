@@ -8,6 +8,11 @@ import {
 } from './offline-sync-review-presenter';
 import { OfflineSyncReviewStore } from './offline-sync-review-store';
 
+/**
+ * Renders device and saved versions with explicit retry/discard actions. Keeps
+ * details/focus presentation local and sends the exact displayed review to the
+ * review coordinator; it does not reconstruct concurrency evidence in the UI.
+ */
 @Component({
 	selector: 'app-offline-sync-review',
 	imports: [TitleCasePipe],

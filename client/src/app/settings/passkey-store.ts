@@ -89,6 +89,11 @@ const failureMessage = (failure: PasskeyFailure): string =>
 			? failure.message
 			: 'The passkey request could not be completed. Try again or use a magic link.';
 
+/**
+ * Coordinates Settings passkey list and management operations through the passkey
+ * gateway/browser capability. Publishes operation outcomes and rejects offline
+ * administration, whose server challenge cannot be replayed as a local command.
+ */
 export const PasskeyStore = signalStore(
 	withState<{ outcome: PasskeyOutcome }>({ outcome: idleOutcome() }),
 	withProps(() => ({

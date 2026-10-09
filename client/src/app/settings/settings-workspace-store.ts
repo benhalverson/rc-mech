@@ -26,6 +26,12 @@ export type SettingsMutationOutcome =
 	| Readonly<{ status: 'idle'; requestId: null }>
 	| Readonly<{ status: 'pending' | 'succeeded'; requestId: string }>
 	| Readonly<{ status: 'failed'; requestId: string; message: string }>;
+/**
+ * Retains and replays timezone/invite intent independently of the Settings route.
+ * Publishes an owner/session-fenced local view, commits commands before success,
+ * and leaves terminal rejection/conflict available for review while unrelated
+ * operations continue through SettingsSyncGateway.
+ */
 export const SettingsWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<{

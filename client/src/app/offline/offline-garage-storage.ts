@@ -212,6 +212,13 @@ export type OfflineWorkspaceFence = Readonly<{
 	sessionKey: string;
 }>;
 
+/**
+ * Owns the shared IndexedDB working copy and durable operation/media records.
+ * Workspace coordinators use its transactions to commit intent before reporting
+ * success and to acknowledge work without losing dependents. Every owner-scoped
+ * read/write is fenced by the active owner/session; cleanup and owner switches
+ * must invalidate late work rather than expose another User's retained data.
+ */
 @Service()
 export class OfflineGarageStorage {
 	private readonly databaseName = inject(OFFLINE_DATABASE_NAME);

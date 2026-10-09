@@ -157,6 +157,12 @@ const successMessage = (
 	}
 };
 
+/**
+ * Route workflow for Voice capture, provenance, corrections, and confirmation.
+ * Delegates prepared captures to VoiceWorkspaceStore while retaining the legacy
+ * online path; server-dependent processing remains explicit rather than being
+ * reported as completed by a local save.
+ */
 export const VoiceLogStore = signalStore(
 	withState<VoiceLogState>({
 		carId: '',

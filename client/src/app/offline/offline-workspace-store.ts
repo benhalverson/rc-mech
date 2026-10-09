@@ -39,6 +39,12 @@ type OpenOfflineWorkspaceCommand = Readonly<{
 	snapshot: OfflineGarageSnapshot;
 }>;
 
+/**
+ * Publishes the active offline session, preparation status, and prepared snapshot
+ * for the shell and feature coordinators. Delegates shell/storage work to
+ * OfflineWorkspaceAccess and fences asynchronous results by session identity,
+ * so an old preparation cannot restore data after sign-out or an owner change.
+ */
 export const OfflineWorkspaceStore = signalStore(
 	{ providedIn: 'root' },
 	withState<OfflineWorkspaceState>({

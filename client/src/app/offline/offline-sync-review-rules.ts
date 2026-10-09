@@ -3,7 +3,12 @@ import { setupDraftFromSnapshot } from '../car/setups/setup-sync-rules';
 import type { CarEditableField } from '../garage/car-sync/car-sync.models';
 import type { ReviewOperation, SyncReview } from './offline-sync-review.models';
 
-/** A resolution is a new command against exactly the remote evidence reviewed. */
+/**
+ * Builds a fresh retry identity against the exact remote evidence shown in a
+ * SyncReview. Called inside storage's fenced recovery transaction after matching
+ * the stored review; preserves local intent and rejects missing photo/setup
+ * targets rather than guessing a new base that could overwrite unseen changes.
+ */
 export const retryReviewedOperation = (
 	review: SyncReview,
 	operationId: string,

@@ -19,6 +19,11 @@ import { required } from '../invariant';
 import { ownerTimezone, sessionCountsForCars } from './drive-records';
 import { carPlan, planDue, planSessionCount } from './plan-records';
 
+/**
+ * Online plan mutations used by the existing Maintenance API. These writers
+ * advance the shared Car version so commands prepared offline can detect plan
+ * changes made outside the durable synchronization endpoint.
+ */
 export const createMaintenancePlanRoutes = () => {
 	const routes = new Hono<AppEnv>();
 

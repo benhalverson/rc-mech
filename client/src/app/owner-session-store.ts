@@ -18,6 +18,12 @@ export const ownerSessionKey = (
 	return typeof id === 'string' && id.trim() ? id.trim() : null;
 };
 
+/**
+ * Shared session resource used by route admission and owner-scoped workflows.
+ * Provides a stable session key and distinguishes a settled server response from
+ * an errored/unavailable resource, allowing offline admission without treating
+ * transport failure as proof that a different User is signed in.
+ */
 @Service()
 export class OwnerSessionStore {
 	private resolvedOnce = false;

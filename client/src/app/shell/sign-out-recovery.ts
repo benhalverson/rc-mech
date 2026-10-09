@@ -6,7 +6,11 @@ export const SIGN_OUT_RECOVERY_LOADER = new InjectionToken<
 	typeof loadSignOutRecovery
 >('SIGN_OUT_RECOVERY_LOADER', { factory: () => loadSignOutRecovery });
 
-/** Public entry checks durable cleanup without loading the private workspace eagerly. */
+/**
+ * Lightweight public-entry bootstrap for deferred sign-out. App creates it before
+ * the authenticated shell exists; it loads the recovery action lazily only when
+ * storage is available, keeping private workspace code out of the initial bundle.
+ */
 @Service()
 export class SignOutRecovery {
 	private readonly injector = inject(Injector);

@@ -14,6 +14,11 @@ import {
 import { MaintenancePlanStore } from './maintenance-plan-store';
 import { maintenancePlanIsReadOnly } from './maintenance-read-only.rules';
 
+/**
+ * Owns plan forms and accessible plan-list actions. Sends validated immutable
+ * intents to MaintenancePlanStore; due calculations, persistence, and request
+ * ordering stay outside the rendered editor.
+ */
 @Component({
 	selector: 'app-maintenance-plans',
 	imports: [

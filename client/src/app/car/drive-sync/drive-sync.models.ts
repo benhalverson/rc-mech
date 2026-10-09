@@ -1,3 +1,7 @@
+/**
+ * Drive history and stable queued-operation shapes shared by local usage, storage, and replay.
+ */
+
 import type { CarSyncFeedback } from '../../garage/car-sync/car-sync.models';
 import type {
 	DriveSession,

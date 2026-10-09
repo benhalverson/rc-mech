@@ -1,3 +1,10 @@
+/**
+ * Pure gallery edit and concurrency rules shared by the browser working copy and
+ * photo-change route. Revisions identify the saved evidence a change reviewed;
+ * record edits affect one photo while primary/order changes depend on gallery
+ * membership. This module performs no blob IO or authorization.
+ */
+
 export type PhotoRecord = Readonly<{
 	id: string;
 	carId: string;

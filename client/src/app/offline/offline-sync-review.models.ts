@@ -1,3 +1,7 @@
+/**
+ * Typed review union passed unchanged from retained queue state to the UI and fenced recovery transaction.
+ */
+
 import type { BuildSyncOperation } from '../car/build-sync/build-sync.models';
 import type { DriveSyncOperation } from '../car/drive-sync/drive-sync.models';
 import type { SetupSyncOperation } from '../car/setups/setup-sync.models';

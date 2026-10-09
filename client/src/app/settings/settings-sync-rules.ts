@@ -1,3 +1,9 @@
+/**
+ * Pure timezone/invite projection and dependency rules for the shared Settings
+ * workspace. Pending intent overlays canonical data locally; acknowledgements
+ * update only their affected setting, and unrelated invites can progress separately.
+ */
+
 import type {
 	SettingsCommand,
 	SettingsOperation,

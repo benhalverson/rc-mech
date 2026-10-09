@@ -22,6 +22,11 @@ import {
 	publicDriveSession,
 } from './drive-records';
 
+/**
+ * Online Drive-session endpoints plus owner-scoped preparation reads. Mutations
+ * participate in the Car version witness used by durable Drive replay, keeping
+ * legacy writers visible to offline conflict detection and usage calculations.
+ */
 export const createDriveSessionRoutes = () => {
 	const routes = new Hono<AppEnv>();
 

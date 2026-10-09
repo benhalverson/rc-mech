@@ -85,6 +85,11 @@ const tireSpend = (
 				0,
 			) / 100;
 };
+/**
+ * Derives tire history/report totals from the supplied working-copy entries.
+ * Stable date/ID ordering and integer-cent arithmetic keep pending and acknowledged
+ * history consistent; mixed currencies are not silently added into one total.
+ */
 export const buildTireReport = (entries: ConsumableEntry[]): TireReport => {
 	const tires = entries.filter(
 		(entry) => entry.kind === 'tires' && !entry.deletedAt,

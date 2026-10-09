@@ -25,6 +25,11 @@ import type { PhotoCapture } from './photo-sync.models';
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
+/**
+ * Gallery presentation and file-selection boundary. Sends validated photo intents
+ * to CarPhotoStore and renders its local, pending, and failure states; persistence,
+ * HTTP sequencing, and object-URL lifetime stay outside the component.
+ */
 @Component({
 	selector: 'app-car-photo-gallery',
 	host: { class: 'block' },

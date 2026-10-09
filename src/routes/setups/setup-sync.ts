@@ -125,6 +125,12 @@ const setupUpdateValues = (
 	lastOperationId: operationId,
 });
 
+/**
+ * Setup command branch of Car synchronization. Separates snapshot correction from
+ * current-Setup selection and atomically records their outcomes under the caller
+ * receipt. Version/selection witnesses and pending-receipt checks fence concurrent
+ * edits and retries before they can mutate saved Setup state.
+ */
 export const applySetupSyncOperation = async (
 	c: AppContext,
 	context: SetupSyncContext,

@@ -52,6 +52,12 @@ const storedReceiptResponse = (
 	});
 };
 
+/**
+ * Registers stable-operation Car synchronization and dispatches related command
+ * families. Receipts bind owner, operation ID, and request hash; conditional writes
+ * and stored terminal responses make retries safe without treating an old request
+ * as authority to overwrite a newer Car version.
+ */
 export const createCarSyncRoutes = () => {
 	const routes = new Hono<AppEnv>();
 	routes.onError((error, c) => {

@@ -92,6 +92,11 @@ export const addCalendarInterval = (
 	);
 };
 
+/**
+ * Shared calendar/usage due calculation for server responses and local Maintenance
+ * projections. Accepts the evaluation time and session count so an offline view
+ * uses the same baseline rules without reading clocks or databases internally.
+ */
 export const calculateMaintenanceDue = (
 	input: DueCalculationInput,
 ): DueCalculation => {

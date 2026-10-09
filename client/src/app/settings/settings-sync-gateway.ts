@@ -17,6 +17,11 @@ export const settingsSyncFailure = (error: unknown): SettingsSyncFailure =>
 			: { kind: 'http', status: error.status }
 		: { kind: 'invalid-response' };
 
+/**
+ * Authenticated HTTP contract for SettingsWorkspaceStore preparation and replay.
+ * Parses timezone/invite snapshots and operation-bound outcomes; local durability,
+ * conflict review, and background scheduling remain in storage and the coordinator.
+ */
 @Service()
 export class SettingsSyncGateway {
 	private readonly http = inject(HttpClient);

@@ -1,3 +1,9 @@
+/**
+ * Strict Photo command contract at the Worker synchronization boundary. Rejects
+ * malformed intent before receipt admission; saved base evidence travels with the
+ * command so offline replay can detect conflicts instead of overwriting silently.
+ */
+
 import { z } from 'zod';
 export const photoChangeInput = z
 	.strictObject({

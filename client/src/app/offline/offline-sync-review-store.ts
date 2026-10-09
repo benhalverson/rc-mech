@@ -16,6 +16,12 @@ import { OfflineGarageStorage } from './offline-garage-storage';
 import type { ReviewDecision, SyncReview } from './offline-sync-review.models';
 import { OfflineWorkspaceStore } from './offline-workspace-store';
 
+/**
+ * Cross-workflow coordinator for retained conflicts and rejected commands.
+ * Collects owner-scoped reviews, commits a retry/discard decision atomically via
+ * storage, and reloads affected coordinators. Stored review evidence must still
+ * match, so a stale review cannot silently overwrite a newer remote version.
+ */
 export const OfflineSyncReviewStore = signalStore(
 	{ providedIn: 'root' },
 	withState<{ pending: boolean; error: string }>({ pending: false, error: '' }),

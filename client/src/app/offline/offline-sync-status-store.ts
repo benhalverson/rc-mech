@@ -7,7 +7,11 @@ import { SettingsWorkspaceStore } from '../settings/settings-workspace-store';
 import { VoiceWorkspaceStore } from '../voice/voice-workspace-store';
 import { OfflineWorkspaceStore } from './offline-workspace-store';
 
-/** One owner-fenced summary of the shared coordinators, without moving focus. */
+/**
+ * Read-only summary of pending, syncing, rejected, and conflicting work from the
+ * shared coordinators. The shell uses this owner-fenced projection for one status
+ * message; it neither starts replay nor moves focus when background state changes.
+ */
 export const OfflineSyncStatusStore = signalStore(
 	{ providedIn: 'root' },
 	withProps(() => ({

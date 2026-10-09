@@ -67,6 +67,13 @@ export type CarPhoto = {
 	url?: string;
 };
 
+/**
+ * Parses authenticated API photo metadata into the shape also used by local
+ * gallery records. Revision supports conflict/cache freshness checks, fileName
+ * labels review evidence, and byteSize preserves replacement metadata. These
+ * keys must survive parsing; optionality accommodates older local records and
+ * fixtures even though the current server returns all three fields.
+ */
 export const carPhotoSchema = object({
 	revision: optional(number()),
 	fileName: optional(string()),

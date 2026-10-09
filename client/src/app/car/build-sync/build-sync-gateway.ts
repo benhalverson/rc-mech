@@ -59,6 +59,10 @@ const buildSyncRemoteOutcomeSchema = union([
 	}),
 ]);
 
+/**
+ * Marks schema/identity rejection separately from an HTTP outage, so malformed
+ * acknowledgements cannot be accepted or mistaken for an offline retry signal.
+ */
 class InvalidBuildSyncResponse extends Error {}
 
 export type BuildSyncGatewayFailure =
@@ -100,6 +104,12 @@ const recoverTerminalOutcome = (
 	return throwError(() => buildSyncGatewayFailure(error));
 };
 
+/**
+ * Transports persisted installed-Component operations for CarWorkspaceStore and parses their
+ * canonical collection/outcome. Stable operation IDs bind acknowledgements to
+ * the submitted command; local ordering and dependency rebasing remain pure rules
+ * and storage work rather than gateway state.
+ */
 @Service()
 export class BuildSyncGateway {
 	private readonly http = inject(HttpClient);

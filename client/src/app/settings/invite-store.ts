@@ -87,6 +87,12 @@ const failureMessage = (
 		: 'Invite code could not be revoked.';
 };
 
+/**
+ * Settings-route workflow for creating and revoking invite codes. Uses the shared
+ * Settings workspace when prepared and the online gateway otherwise, projecting
+ * canonical rejection and operation outcomes without treating pending local codes
+ * as proof that the server has admitted them.
+ */
 export const InviteStore = signalStore(
 	withState<{
 		outcome: InviteOutcome;

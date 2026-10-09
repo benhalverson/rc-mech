@@ -1,3 +1,9 @@
+/**
+ * Build means the Car's installed Component configuration. These pure rules
+ * materialize its queued changes and select/rebase replay dependencies for
+ * OfflineGarageStorage and CarWorkspaceStore, independently of HTTP or IndexedDB.
+ */
+
 import type { InstalledComponent } from '../car.models';
 import type {
 	BuildSyncCollection,
@@ -65,6 +71,11 @@ export const materializeBuildCollections = (
 	return [...collections.values()];
 };
 
+/**
+ * Captures a Component intent with stable identity, its current comparison base,
+ * and only the prerequisites that must acknowledge first. Storage persists this
+ * record before the route can report local success.
+ */
 export const buildBuildSyncOperation = (
 	command: BuildSyncCommand,
 	collections: readonly BuildSyncCollection[],
@@ -164,6 +175,11 @@ export const readyBuildSyncOperations = (
 		)
 		.sort((a, b) => a.sequence - b.sequence);
 
+/**
+ * Updates a queued dependent Component command after an earlier acknowledgement.
+ * Uses the canonical collection while preserving the pending intent and identity;
+ * conflicting remote state is still checked by the server on replay.
+ */
 export const rebaseBuildSyncOperation = (
 	operation: BuildSyncOperation,
 	acknowledgedId: string,

@@ -23,6 +23,12 @@ export type OfflinePreparationResult =
 	| Readonly<{ kind: 'unsupported' }>
 	| Readonly<{ kind: 'ready'; snapshot: OfflineGarageSnapshot }>;
 
+/**
+ * Preparation/restoration capability used by OfflineWorkspaceStore and session
+ * admission. Coordinates shell capability checks, snapshot loading, and fenced
+ * storage so a ready result means durable offline access, not just a successful
+ * HTTP read. It does not publish UI state or replay feature commands.
+ */
 @Service()
 export class OfflineWorkspaceAccess {
 	private readonly capabilities = inject(OfflineCapabilities);

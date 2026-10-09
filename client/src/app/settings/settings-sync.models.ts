@@ -1,3 +1,7 @@
+/**
+ * Settings snapshots and operation/outcome schemas shared by preparation, queue projection, and HTTP validation.
+ */
+
 import { literal, object, optional, string, union } from 'zod/mini';
 import {
 	type InviteCodesResponse,

@@ -103,6 +103,12 @@ const mutationError = (
 					: 'The photo order could not be saved.';
 };
 
+/**
+ * Projects the selected Car gallery and translates gallery intents into workspace
+ * commands, retaining the legacy HTTP path when local preparation is unavailable.
+ * Owns route outcomes and rejects stale completions; PhotoMediaAccess owns the
+ * private display URLs cleared on selection changes and route destruction.
+ */
 export const CarPhotoStore = signalStore(
 	withState<{
 		carId: string;

@@ -24,6 +24,12 @@ export const photoSyncFailure = (
 			? 'unavailable'
 			: 'invalid-response',
 });
+/**
+ * HTTP boundary used by PhotoWorkspaceStore to replay durable captures/edits and load
+ * owner photo metadata, and by PhotoMediaAccess to fetch original bytes. Validates
+ * acknowledgements against the submitted identities; queue ordering, persistence,
+ * and retry decisions remain in the workspace store and storage capability.
+ */
 @Service()
 export class PhotoSyncGateway {
 	private readonly http = inject(HttpClient);

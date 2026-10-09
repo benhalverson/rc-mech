@@ -2,7 +2,11 @@ import { and, eq, exists, type SQL, sql } from 'drizzle-orm';
 import type { db } from '../db';
 import { syncOperation } from '../schema';
 
-/** In-flight duplicates cannot write after another request completes the receipt. */
+/**
+ * SQL witness shared by synchronization mutation batches. Rechecks the exact
+ * owner/operation/hash pending receipt at write time, because two requests can
+ * both read pending before the first one commits its terminal outcome.
+ */
 export const pendingSyncReceipt = (
 	database: ReturnType<typeof db>,
 	ownerId: string,
@@ -23,7 +27,11 @@ export const pendingSyncReceipt = (
 			),
 	);
 
-/** Bound literals for an INSERT ... SELECT guarded by its pending receipt. */
+/**
+ * Builds bound literal projections for receipt-guarded INSERT ... SELECT writes.
+ * Uses table column order because Drizzle requires the selection to match the
+ * insert schema; callers supply every stored value, including explicit defaults.
+ */
 export const syncInsertSelection = <T extends Record<string, unknown>>(
 	values: T,
 	columns: Readonly<Record<keyof T, unknown>>,

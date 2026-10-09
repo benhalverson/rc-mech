@@ -19,6 +19,10 @@ const details = (value: string | null): string | null => {
 		return value;
 	}
 };
+/**
+ * Adapts canonical or pending Consumable records to the existing editor/report
+ * model, keeping one presentation shape for online reads and the local working copy.
+ */
 export const consumableEntry = (record: ConsumableRecord): ConsumableEntry => ({
 	id: record.id,
 	carId: record.carId,
@@ -52,6 +56,11 @@ export const consumableEntry = (record: ConsumableRecord): ConsumableEntry => ({
 	notes: record.notes,
 	deletedAt: record.archivedAt,
 });
+/**
+ * Converts an editor intent into a stable Consumable change with its comparison
+ * base. Maintenance storage uses it for replay; tire/fluid history identity and
+ * kind must remain unchanged when an existing entry is edited.
+ */
 export const consumableChange = (
 	intent: ConsumableCommand,
 	records: readonly ConsumableRecord[],

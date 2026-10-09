@@ -4,7 +4,12 @@ import {
 	type OfflineWorkspaceFence,
 } from '../offline/offline-garage-storage';
 import { VoiceOfflineQueue } from './voice-offline-queue';
-/** Copy first, then delete: a crash at either boundary preserves stable capture IDs. */
+/**
+ * Bridges VoiceOfflineQueue into the shared workspace for VoiceWorkspaceStore.
+ * Copies owner-matched captures under the current fence before deleting legacy
+ * entries, preserving stable IDs across interrupted migration. Keep the reader
+ * until deployed-consumer and production-data checks establish safe removal.
+ */
 @Service()
 export class VoiceLegacyMigration {
 	private readonly legacy = inject(VoiceOfflineQueue);

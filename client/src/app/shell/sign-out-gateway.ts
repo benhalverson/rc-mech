@@ -47,6 +47,12 @@ export const signOutGatewayFailure = (
 	return { kind: 'unavailable' };
 };
 
+/**
+ * Server-session boundary for SignOutStore. Parses bounded sign-out responses
+ * and, when resuming durable cleanup, verifies that the current server session
+ * is the original one before revocation; a subsequently authenticated session
+ * must remain untouched.
+ */
 @Service()
 export class SignOutGateway {
 	private readonly http = inject(HttpClient);

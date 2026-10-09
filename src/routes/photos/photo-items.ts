@@ -13,6 +13,11 @@ import { ownedCar } from '../cars/car-records';
 import { required } from '../invariant';
 import { ownedPhoto, parsePhotoForm, publicPhoto } from './photo-records';
 
+/**
+ * Online original-photo reads and item edits retained beside durable gallery
+ * replay. Original responses expose the stored revision so the client can reject
+ * a stale download when newer gallery metadata has already arrived.
+ */
 export const createPhotoItemRoutes = () => {
 	const routes = new Hono<AppEnv>();
 

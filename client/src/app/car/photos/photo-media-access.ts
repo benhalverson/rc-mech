@@ -9,6 +9,12 @@ import { PhotoSyncGateway } from './photo-sync-gateway';
 export const PHOTO_OBJECT_URL = new InjectionToken<
 	Pick<typeof URL, 'createObjectURL' | 'revokeObjectURL'>
 >('PHOTO_OBJECT_URL', { factory: () => URL });
+/**
+ * Turns photo bytes into display URLs for CarPhotoStore. Reads the owner-fenced
+ * local original first and fetches/retains it through PhotoSyncGateway when online.
+ * Keeps browser URL handles outside serializable store state: clear() revokes them
+ * and invalidates in-flight opens when the gallery context changes or is destroyed.
+ */
 @Service()
 export class PhotoMediaAccess {
 	private readonly storage = inject(OfflineGarageStorage);

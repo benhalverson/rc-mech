@@ -12,6 +12,12 @@ import {
 	syncInsertSelection,
 } from './pending-sync-receipt';
 
+/**
+ * Owner Settings snapshot and stable-operation endpoints. Timezone updates compare
+ * the reviewed value, and invite changes observe canonical capacity/ownership.
+ * Conditional mutations and receipts keep retries from applying a completed or
+ * rejected operation again; the client retains those outcomes for review.
+ */
 export const createSettingsSyncRoutes = () => {
 	const routes = new Hono<AppEnv>();
 	routes.onError(

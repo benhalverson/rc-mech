@@ -9,6 +9,12 @@ import { VoiceSyncGateway } from './voice-sync-gateway';
 export const VOICE_OBJECT_URL = new InjectionToken<
 	Pick<typeof URL, 'createObjectURL' | 'revokeObjectURL'>
 >('VOICE_OBJECT_URL', { factory: () => URL });
+/**
+ * Provides VoiceLogStore with playback URLs for privately retained original audio.
+ * Uses the fenced cache first and the sync gateway when online, retaining viewed
+ * bytes for restart. Owns object-URL handles and invalidates late opens on clear(),
+ * so browser resources do not leak into durable or cross-owner store state.
+ */
 @Service()
 export class VoiceMediaAccess {
 	private readonly storage = inject(OfflineGarageStorage);

@@ -9,6 +9,12 @@ import type { AppEnv } from '../../types';
 import { ownedCar } from '../cars/car-records';
 import { publicPhoto } from './photo-records';
 
+/**
+ * Applies queued gallery edits against exact saved photo revisions/membership.
+ * Replacement bytes use a new immutable key; metadata and receipt commit before
+ * old-object cleanup. Receipt replay resumes cleanup safely, while revision and
+ * pending-receipt witnesses fence remote edits and concurrent duplicate requests.
+ */
 export const createPhotoChangeRoutes = () => {
 	const routes = new Hono<AppEnv>();
 	routes.onError(

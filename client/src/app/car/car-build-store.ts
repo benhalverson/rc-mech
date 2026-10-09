@@ -33,6 +33,11 @@ const idleOutcome = (): BuildSaveOutcome => ({
 	operationId: null,
 });
 
+/**
+ * Adapts the selected Car's Component history and editor intents to the shared
+ * CarWorkspaceStore, with an online gateway fallback before preparation. Publishes
+ * operation outcomes for the Build UI without owning durable queue or HTTP rules.
+ */
 export const CarBuildStore = signalStore(
 	withState({
 		carId: '',

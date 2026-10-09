@@ -1,3 +1,9 @@
+/**
+ * Pure presentation adapters for the conflict review panel. Extract labeled
+ * device/saved fields from typed operations without exposing transport JSON or
+ * changing the exact evidence later submitted for resolution.
+ */
+
 import type { SyncReview } from './offline-sync-review.models';
 export type ReviewField = Readonly<{ label: string; value: string }>;
 const hidden = new Set([

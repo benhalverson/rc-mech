@@ -80,6 +80,12 @@ const mutationFailureMessage = (
 		: 'The drive session could not be archived.';
 };
 
+/**
+ * Route workflow for viewing and editing outings. Projects the shared Car
+ * workspace when prepared and submits durable Drive intents, retaining the online
+ * path otherwise. UI outcomes belong here; cross-route replay and usage identity
+ * belong to CarWorkspaceStore and its persisted operations.
+ */
 export const DriveSessionStore = signalStore(
 	withState<DriveSessionState>({
 		carId: '',

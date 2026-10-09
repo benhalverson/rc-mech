@@ -18,6 +18,11 @@ import {
 	publicComponent,
 } from './car-records';
 
+/**
+ * Legacy Component HTTP endpoints retained alongside durable Build replay.
+ * Mutations advance the Car version so offline commands observe online changes
+ * and cannot silently overwrite Component history edited through these routes.
+ */
 export const createComponentRoutes = () => {
 	const routes = new Hono<AppEnv>();
 
