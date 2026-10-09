@@ -487,7 +487,7 @@ export class TrackingRunWorkflow {
 		}
 		let status: JobStatus;
 		let providerLossCount = 0;
-		attemptLoop: for (;;) {
+		for (;;) {
 			try {
 				status = await this.providerStep(
 					workflowIdentity,
@@ -509,27 +509,8 @@ export class TrackingRunWorkflow {
 									),
 						),
 				);
-			} catch (error) {
-				if (error instanceof RetryableProviderError) {
-					providerLossCount += 1;
-					const replacement = await this.replaceProviderAttempt(
-						workflowIdentity,
-						context,
-						identity,
-						createdAt,
-						step,
-						providerLossCount,
-					);
-					context = replacement.context;
-					identity = replacement.identity;
-					// biome-ignore lint/complexity/noUselessLabel: this restarts submission with a new lease.
-					continue attemptLoop;
-				}
-				return this.fail(error, workflowIdentity, identity, step);
-			}
 
-			for (let statusIndex = 0; ; statusIndex += 1) {
-				try {
+				for (let statusIndex = 0; ; statusIndex += 1) {
 					validateWorkflowStatus(status);
 					context = await this.synchronizeAuthority(
 						workflowIdentity,
@@ -585,23 +566,21 @@ export class TrackingRunWorkflow {
 						statusIndex,
 						step,
 					);
-				} catch (error) {
-					if (error instanceof RetryableProviderError) {
-						providerLossCount += 1;
-						const replacement = await this.replaceProviderAttempt(
-							workflowIdentity,
-							context,
-							identity,
-							createdAt,
-							step,
-							providerLossCount,
-						);
-						context = replacement.context;
-						identity = replacement.identity;
-						continue attemptLoop;
-					}
-					return this.fail(error, workflowIdentity, identity, step);
 				}
+			} catch (error) {
+				if (!(error instanceof RetryableProviderError))
+					return this.fail(error, workflowIdentity, identity, step);
+				providerLossCount += 1;
+				const replacement = await this.replaceProviderAttempt(
+					workflowIdentity,
+					context,
+					identity,
+					createdAt,
+					step,
+					providerLossCount,
+				);
+				context = replacement.context;
+				identity = replacement.identity;
 			}
 		}
 	}
@@ -629,10 +608,7 @@ export class TrackingRunWorkflow {
 						if (error instanceof TrackingWorkflowError)
 							return {
 								accepted: false as const,
-								code:
-									error instanceof OutputReadyAuthorityLostError
-										? ('OUTPUT_AUTHORITY_LOST' as const)
-										: error.code,
+								code: authorityFailureCode(error),
 							};
 						throw error;
 					}
@@ -693,10 +669,7 @@ export class TrackingRunWorkflow {
 					if (error instanceof TrackingWorkflowError)
 						return {
 							ok: false,
-							code:
-								error instanceof OutputReadyAuthorityLostError
-									? 'OUTPUT_AUTHORITY_LOST'
-									: error.code,
+							code: authorityFailureCode(error),
 							retryable: false,
 						};
 					if (
@@ -1000,10 +973,12 @@ export class TrackingRunWorkflow {
 			await this.assertProviderAuthority(workflowIdentity, identity);
 			return result;
 		} catch (error) {
-			if (error instanceof OutputReadyAuthorityLostError)
-				return { ok: false, code: 'OUTPUT_AUTHORITY_LOST', retryable: false };
 			if (error instanceof TrackingWorkflowError)
-				return { ok: false, code: error.code, retryable: false };
+				return {
+					ok: false,
+					code: authorityFailureCode(error),
+					retryable: false,
+				};
 			throw error;
 		}
 	}
@@ -1669,3 +1644,8 @@ const publicFailure = (
 	}
 	return 'TRACKING_PROVIDER_FAILED';
 };
+
+const authorityFailureCode = (error: TrackingWorkflowError) =>
+	error instanceof OutputReadyAuthorityLostError
+		? ('OUTPUT_AUTHORITY_LOST' as const)
+		: error.code;
