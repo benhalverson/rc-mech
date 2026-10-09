@@ -233,12 +233,15 @@ it.each(['open', 'synchronize'] as const)(
 		offline.hasSnapshot.set(true);
 		await settle();
 		let finish: (value: PhotoView | null) => void = () => {};
-		storage.photoView.mockReturnValueOnce(
+		storage[
+			action === 'open' ? 'photoView' : 'readyPhotoCaptures'
+		].mockReturnValueOnce(
 			new Promise<PhotoView | null>((resolve) => {
 				finish = resolve;
 			}),
 		);
 		store[action]();
+		TestBed.tick();
 		offline.hasSnapshot.set(false);
 		TestBed.tick();
 		finish(view);
@@ -259,8 +262,11 @@ it.each(['open', 'synchronize', 'mutate'] as const)(
 			storage.commitPhoto.mockReturnValueOnce(pending);
 			store.mutate({ requestId: 'late', change: command });
 		} else {
-			storage.photoView.mockReturnValueOnce(pending);
+			storage[
+				action === 'open' ? 'photoView' : 'readyPhotoCaptures'
+			].mockReturnValueOnce(pending);
 			store[action]();
+			TestBed.tick();
 		}
 		offline.hasSnapshot.set(false);
 		TestBed.tick();
@@ -458,4 +464,48 @@ it('acknowledges capture recovery only after the durable transaction', async () 
 		sessionKey: 'session',
 	});
 	expect(store.outcome().status).toBe('succeeded');
+});
+
+it('keeps a committed view when an earlier hydration resolves late', async () => {
+	let finish!: (value: PhotoView) => void;
+	storage.photoView.mockReturnValueOnce(
+		new Promise<PhotoView>((resolve) => {
+			finish = resolve;
+		}),
+	);
+	offline.hasSnapshot.set(true);
+	TestBed.tick();
+	gateway.apply.mockReturnValue(throwError(() => ({ kind: 'unavailable' })));
+	store.mutate({ requestId: 'committed', change: command });
+	await settle();
+	expect(store.captures()).toHaveLength(1);
+	finish(photoView([]));
+	await settle();
+	expect(store.captures()).toHaveLength(1);
+});
+it('recovers a failed hydration on reload and does not publish after destruction', async () => {
+	storage.photoView.mockRejectedValueOnce(new Error('read failed'));
+	offline.hasSnapshot.set(true);
+	await settle();
+	expect(store.failure()).toContain('could not be loaded');
+	expect(store.photos()).toEqual([]);
+	expect(store.captures()).toEqual([]);
+	expect(store.changes()).toEqual([]);
+	store.open();
+	await settle();
+	expect(store.failure()).toBe('');
+	expect(store.photos()).toEqual([photo]);
+	let finish!: (value: PhotoView) => void;
+	storage.photoView.mockReturnValueOnce(
+		new Promise<PhotoView>((resolve) => {
+			finish = resolve;
+		}),
+	);
+	store.open();
+	TestBed.tick();
+	TestBed.resetTestingModule();
+	finish(photoView([operation]));
+	await Promise.resolve();
+	await Promise.resolve();
+	expect(store.photos()).toEqual([]);
 });
