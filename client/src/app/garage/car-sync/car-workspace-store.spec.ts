@@ -1,7 +1,14 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { type Observable, Subject } from 'rxjs';
+import { type Observable, of, Subject, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+	BuildSyncCommand,
+	BuildSyncOperation,
+	BuildSyncRemoteOutcome,
+	BuildSyncView,
+} from '../../car/build-sync/build-sync.models';
+import { BuildSyncGateway } from '../../car/build-sync/build-sync-gateway';
 import type { SetupSnapshot } from '../../car/setups/setup-snapshot';
 import type {
 	SetupSyncCollection,
@@ -121,6 +128,40 @@ const syncedSetupView: SetupSyncView = {
 	operations: [],
 };
 
+const buildCommand: BuildSyncCommand = {
+	action: 'install',
+	carId: 'car-1',
+	componentId: null,
+	input: { slot: 'motor', name: 'Motor' },
+};
+const buildOperation: BuildSyncOperation = {
+	operationId: 'build-op',
+	ownerKey: 'owner-1',
+	carId: 'car-1',
+	command: {
+		type: 'build.change',
+		action: 'install',
+		carId: 'car-1',
+		componentId: 'motor',
+		baseVersion: 1,
+		base: null,
+		input: { slot: 'motor', name: 'Motor' },
+	},
+	dependencies: [],
+	status: 'pending',
+	createdAt: '2026-08-11T12:00:00Z',
+	sequence: 1,
+};
+const buildCollection = {
+	carId: 'car-1',
+	version: 2,
+	components: [{ id: 'motor', carId: 'car-1', slot: 'motor', name: 'Motor' }],
+};
+const buildView: BuildSyncView = {
+	canonicalCollections: [buildCollection],
+	collections: [buildCollection],
+	operations: [buildOperation],
+};
 const deferred = <T>() => {
 	let resolve!: (value: T) => void;
 	let reject!: (reason?: unknown) => void;
@@ -132,6 +173,28 @@ const deferred = <T>() => {
 };
 
 class FakeStorage {
+	readonly buildSyncView = vi.fn(
+		async (): Promise<BuildSyncView> => ({
+			canonicalCollections: [],
+			collections: [],
+			operations: [],
+		}),
+	);
+	readonly readyBuildOperations = vi.fn(
+		async (): Promise<readonly BuildSyncOperation[]> => [],
+	);
+	readonly commitBuild = vi.fn(async () => ({
+		operation: buildOperation,
+		collection: buildCollection,
+		view: buildView,
+	}));
+	readonly recordBuildOutcome = vi.fn(
+		async (): Promise<BuildSyncView> => ({ ...buildView, operations: [] }),
+	);
+	readonly mergeBuildCollection = vi.fn(
+		async (): Promise<BuildSyncView> => buildView,
+	);
+
 	readonly carSyncView = vi.fn(async (): Promise<CarSyncView | null> => null);
 	readonly setupSyncView = vi.fn(
 		async (): Promise<SetupSyncView | null> => ({
@@ -254,10 +317,18 @@ describe('CarWorkspaceStore', () => {
 	let offline: FakeOfflineWorkspace;
 	let connectivity: FakeConnectivity;
 	let operationNumber: number;
+	let buildGateway: {
+		apply: ReturnType<
+			typeof vi.fn<
+				(operation: BuildSyncOperation) => Observable<BuildSyncRemoteOutcome>
+			>
+		>;
+	};
 	let store: InstanceType<typeof CarWorkspaceStore>;
 
 	beforeEach(() => {
 		storage = new FakeStorage();
+		buildGateway = { apply: vi.fn() };
 		gateway = new FakeGateway();
 		setupGateway = new FakeSetupGateway();
 		offline = new FakeOfflineWorkspace();
@@ -269,6 +340,7 @@ describe('CarWorkspaceStore', () => {
 				{ provide: OfflineGarageStorage, useValue: storage },
 				{ provide: CarSyncGateway, useValue: gateway },
 				{ provide: SetupSyncGateway, useValue: setupGateway },
+				{ provide: BuildSyncGateway, useValue: buildGateway },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 				{ provide: OfflineConnectivity, useValue: connectivity },
 				{ provide: OfflineCapabilities, useValue: { supported: true } },
@@ -1160,6 +1232,7 @@ describe('CarWorkspaceStore', () => {
 				{ provide: OfflineGarageStorage, useValue: storage },
 				{ provide: CarSyncGateway, useValue: gateway },
 				{ provide: SetupSyncGateway, useValue: setupGateway },
+				{ provide: BuildSyncGateway, useValue: buildGateway },
 				{ provide: OfflineWorkspaceStore, useValue: offline },
 				{ provide: OfflineConnectivity, useValue: connectivity },
 				{ provide: OfflineCapabilities, useValue: { supported: false } },
@@ -1206,5 +1279,182 @@ describe('CarWorkspaceStore', () => {
 		expect(store.mutationOutcome().status).toBe('idle');
 		offline.networkUnavailable.set(true);
 		expect(store.externalRequestsAvailable()).toBe(false);
+	});
+	it('commits Build intent durably and publishes only the matching owner result', async () => {
+		store.commitBuild(buildCommand);
+		expect(storage.commitBuild).not.toHaveBeenCalled();
+		store.clearBuildMutationState();
+		storage.carSyncView.mockResolvedValue(syncedView);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.opened()).toBe(true));
+		const pending = deferred<Awaited<ReturnType<FakeStorage['commitBuild']>>>();
+		storage.commitBuild.mockReturnValueOnce(pending.promise);
+		store.commitBuild(buildCommand);
+		store.commitBuild(buildCommand);
+		store.clearBuildMutationState();
+		expect(storage.commitBuild).toHaveBeenCalledOnce();
+		expect(store.buildMutationOutcome().status).toBe('pending');
+		pending.resolve({
+			operation: buildOperation,
+			collection: buildCollection,
+			view: buildView,
+		});
+		await vi.waitFor(() =>
+			expect(store.buildMutationOutcome().status).toBe('succeeded'),
+		);
+		expect(store.buildCollections()).toEqual([buildCollection]);
+		expect(store.buildOperations()).toEqual([buildOperation]);
+		store.clearBuildMutationState();
+		expect(store.buildMutationOutcome().status).toBe('idle');
+		storage.commitBuild.mockRejectedValueOnce(new Error('Quota reached'));
+		store.commitBuild(buildCommand);
+		await vi.waitFor(() =>
+			expect(store.buildMutationOutcome()).toMatchObject({
+				status: 'failed',
+				error: { message: 'Quota reached' },
+			}),
+		);
+	});
+
+	it.each(['success', 'failure'] as const)(
+		'drops stale Build commit %s after an owner switch',
+		async (result) => {
+			storage.carSyncView.mockResolvedValue(syncedView);
+			offline.hasSnapshot.set(true);
+			offline.status.set('ready');
+			await vi.waitFor(() => expect(store.opened()).toBe(true));
+			const pending =
+				deferred<Awaited<ReturnType<FakeStorage['commitBuild']>>>();
+			storage.commitBuild.mockReturnValueOnce(pending.promise);
+			store.commitBuild(buildCommand);
+			offline.hasSnapshot.set(false);
+			offline.ownerKey.set('new-owner');
+			offline.sessionKey.set('new-session');
+			TestBed.tick();
+			if (result === 'success')
+				pending.resolve({
+					operation: buildOperation,
+					collection: buildCollection,
+					view: buildView,
+				});
+			else pending.reject(new Error('stale'));
+			await Promise.resolve();
+			expect(store.buildMutationOutcome().status).toBe('idle');
+			expect(store.buildCollections()).toEqual([]);
+			expect(store.buildOperations()).toEqual([]);
+			expect(store.buildSyncFailure()).toBeNull();
+		},
+	);
+
+	it('synchronizes Build work through the shared queue and records acknowledgement', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.readyBuildOperations.mockResolvedValueOnce([buildOperation]);
+		storage.buildSyncView.mockResolvedValue(buildView);
+		buildGateway.apply.mockReturnValueOnce(
+			of({
+				operationId: buildOperation.operationId,
+				outcome: 'applied',
+				collection: buildCollection,
+			}),
+		);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() =>
+			expect(storage.recordBuildOutcome).toHaveBeenCalledOnce(),
+		);
+		expect(store.buildSyncFailure()).toBeNull();
+		expect(store.buildOperations()).toEqual([]);
+	});
+
+	it.each([
+		{ kind: 'unavailable' },
+		{ kind: 'http', status: 401 },
+		{ kind: 'invalid-response' },
+	])('retains a failed Build request: %j', async (failure) => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		storage.readyBuildOperations.mockResolvedValueOnce([buildOperation]);
+		buildGateway.apply.mockReturnValueOnce(throwError(() => failure));
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.buildSyncFailure()).toEqual(failure));
+		expect(storage.recordBuildOutcome).not.toHaveBeenCalled();
+		if (failure.kind === 'unavailable')
+			expect(connectivity.scheduleRetry).toHaveBeenCalled();
+	});
+
+	it('fences queue reads and provider completion across an owner switch', async () => {
+		storage.carSyncView.mockResolvedValue(syncedView);
+		const ready = deferred<readonly BuildSyncOperation[]>();
+		storage.readyBuildOperations.mockReturnValueOnce(ready.promise);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() =>
+			expect(storage.readyBuildOperations).toHaveBeenCalledOnce(),
+		);
+		offline.hasSnapshot.set(false);
+		offline.ownerKey.set('other');
+		TestBed.tick();
+		ready.resolve([buildOperation]);
+		await Promise.resolve();
+		expect(buildGateway.apply).not.toHaveBeenCalled();
+	});
+
+	it.each(['success', 'failure'] as const)(
+		'fences stale Build transport %s',
+		async (result) => {
+			storage.carSyncView.mockResolvedValue(syncedView);
+			storage.readyBuildOperations.mockResolvedValueOnce([buildOperation]);
+			const response = new Subject<BuildSyncRemoteOutcome>();
+			buildGateway.apply.mockReturnValueOnce(response);
+			offline.hasSnapshot.set(true);
+			offline.status.set('ready');
+			await vi.waitFor(() => expect(buildGateway.apply).toHaveBeenCalledOnce());
+			offline.hasSnapshot.set(false);
+			offline.ownerKey.set('other');
+			TestBed.tick();
+			if (result === 'success')
+				response.next({
+					operationId: buildOperation.operationId,
+					outcome: 'applied',
+					collection: buildCollection,
+				});
+			else response.error(new Error('stale'));
+			await Promise.resolve();
+			expect(storage.recordBuildOutcome).not.toHaveBeenCalled();
+		},
+	);
+
+	it('merges refreshed Build data and retains local-storage failures', async () => {
+		store.observeServerBuildCollection(buildCollection);
+		expect(storage.mergeBuildCollection).not.toHaveBeenCalled();
+		storage.carSyncView.mockResolvedValue(syncedView);
+		offline.hasSnapshot.set(true);
+		offline.status.set('ready');
+		await vi.waitFor(() => expect(store.opened()).toBe(true));
+		store.observeServerBuildCollection(buildCollection);
+		await vi.waitFor(() =>
+			expect(store.buildCollections()).toEqual([buildCollection]),
+		);
+		storage.mergeBuildCollection.mockRejectedValueOnce(
+			new Error('Storage unavailable'),
+		);
+		store.observeServerBuildCollection(buildCollection);
+		await vi.waitFor(() =>
+			expect(store.buildSyncFailure()).toMatchObject({ kind: 'local' }),
+		);
+		const staleSuccess = deferred<BuildSyncView>();
+		storage.mergeBuildCollection.mockReturnValueOnce(staleSuccess.promise);
+		store.observeServerBuildCollection(buildCollection);
+		const stale = deferred<BuildSyncView>();
+		storage.mergeBuildCollection.mockReturnValueOnce(stale.promise);
+		store.observeServerBuildCollection(buildCollection);
+		offline.hasSnapshot.set(false);
+		offline.ownerKey.set('other');
+		TestBed.tick();
+		staleSuccess.resolve(buildView);
+		stale.reject(new Error('stale'));
+		await Promise.resolve();
+		expect(store.buildSyncFailure()).toBeNull();
 	});
 });

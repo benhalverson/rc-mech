@@ -29,6 +29,8 @@ export const installedComponentSchema = object({
 
 export const installedComponentCollectionSchema = object({
 	components: array(installedComponentSchema),
+	carId: optional(string()),
+	version: optional(number()),
 });
 
 export const installedComponentMutationSchema = object({
@@ -158,7 +160,7 @@ export type CarLifecycleOutcome =
 			readonly error: CarGatewayFailure;
 	  };
 
-export type BuildMode = 'add' | 'edit' | 'replace';
+export type BuildMode = 'add' | 'edit' | 'replace' | 'remove';
 
 export type BuildComponentInput = {
 	readonly slot?: string;

@@ -316,3 +316,63 @@ test('does not restore the prior Garage after explicit sign-out', async ({
 	await expect(reopened.getByText('Signed-out private buggy')).toHaveCount(0);
 	await expectAxeClean(reopened);
 });
+
+test('retains Component edits, replacements, and removals across an offline restart', async ({
+	context,
+	page,
+}) => {
+	await authenticateOwner(page);
+	const created = await page.request.post('/api/v1/cars', {
+		data: { name: 'Offline build buggy' },
+	});
+	expect(created.ok()).toBe(true);
+	const { car } = (await created.json()) as { car: { id: string } };
+	const installed = await page.request.post(
+		`/api/v1/cars/${car.id}/components`,
+		{ data: { slot: 'motor', name: 'Stock motor' } },
+	);
+	expect(installed.ok()).toBe(true);
+	await page.goto(`/garage/${car.id}/build`);
+	await expect(page.locator('[data-offline-status="ready"]')).toBeVisible();
+	await expect(page.getByText('Stock motor', { exact: true })).toBeVisible();
+	await context.setOffline(true);
+	await page.getByRole('button', { name: 'Edit', exact: true }).click();
+	await page.getByLabel('Name', { exact: true }).fill('Tuned motor');
+	await page.getByRole('button', { name: 'Save component' }).click();
+	await expect(page.getByText('Tuned motor', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Replace', exact: true }).click();
+	await page.getByLabel('Name', { exact: true }).fill('Race motor');
+	await page.getByRole('button', { name: 'Save component' }).click();
+	await expect(page.getByText('Race motor', { exact: true })).toBeVisible();
+	const reopened = await reopenOffline(
+		context,
+		page,
+		`/garage/${car.id}/build`,
+	);
+	await expect(reopened.getByText('Race motor', { exact: true })).toBeVisible();
+	await expect(
+		reopened.getByText('Pending sync: Race motor', { exact: false }),
+	).toBeVisible();
+	await reopened.getByRole('button', { name: 'Remove', exact: true }).click();
+	await expect(
+		reopened.getByRole('button', { name: 'Install', exact: true }),
+	).toBeVisible();
+	await expectAxeClean(reopened);
+	await context.setOffline(false);
+	await expect(
+		reopened.getByText('Pending sync:', { exact: false }),
+	).toHaveCount(0);
+	const history = await reopened.request.get(
+		`/api/v1/cars/${car.id}/components?history=true`,
+	);
+	const body = (await history.json()) as {
+		components: Array<{ name: string; removedAt: string | null }>;
+	};
+	expect(body.components.map((component) => component.name).sort()).toEqual([
+		'Race motor',
+		'Tuned motor',
+	]);
+	expect(
+		body.components.every((component) => component.removedAt !== null),
+	).toBe(true);
+});

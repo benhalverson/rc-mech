@@ -1,6 +1,20 @@
 import { InjectionToken, inject, Service } from '@angular/core';
 import Dexie, { type Table } from 'dexie';
 import type {
+	BuildSyncCollection,
+	BuildSyncCommand,
+	BuildSyncOperation,
+	BuildSyncRemoteOutcome,
+	BuildSyncView,
+} from '../car/build-sync/build-sync.models';
+import {
+	buildBuildSyncOperation,
+	materializeBuildCollections,
+	mergeBuildCollection,
+	readyBuildSyncOperations,
+	rebaseBuildSyncOperation,
+} from '../car/build-sync/build-sync-rules';
+import type {
 	BuiltSetupSyncOperation,
 	SetupSyncCollection,
 	SetupSyncCommand,
@@ -89,6 +103,7 @@ export type OfflineGarageSnapshot = Readonly<{
 	preparedAt: string;
 	cars: readonly GarageCar[];
 	setupCollections?: readonly SetupSyncCollection[];
+	buildCollections?: readonly BuildSyncCollection[];
 }>;
 
 type OfflineMetadata =
@@ -133,6 +148,7 @@ export class OfflineGarageStorage {
 	private readonly revokedSessions: Table<RevokedOfflineSession, string>;
 	private readonly operations: Table<CarSyncOperation, string>;
 	private readonly setupOperations: Table<SetupSyncOperation, string>;
+	private readonly buildOperations: Table<BuildSyncOperation, string>;
 
 	constructor() {
 		this.database
@@ -154,6 +170,10 @@ export class OfflineGarageStorage {
 		this.database.version(4).stores({
 			setupOperations: '&operationId,ownerKey,carId,setupId,status,createdAt',
 		});
+		this.database.version(5).stores({
+			buildOperations: '&operationId,ownerKey,carId,status,createdAt',
+		});
+		this.buildOperations = this.database.table('buildOperations');
 		this.snapshots = this.database.table('snapshots');
 		this.metadata = this.database.table('metadata');
 		this.revokedSessions = this.database.table('revokedSessions');
@@ -178,11 +198,14 @@ export class OfflineGarageStorage {
 		}
 		const activated = await this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.revokedSessions,
-			this.operations,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.revokedSessions,
+				this.operations,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const signOut = await this.metadata.get('sign-out');
 				if (signOut?.key === 'sign-out') {
@@ -199,6 +222,10 @@ export class OfflineGarageStorage {
 				if (active?.key === 'active-owner' && active.ownerKey !== ownerKey) {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.buildOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.operations.where('ownerKey').equals(active.ownerKey).delete(),
 						this.setupOperations
 							.where('ownerKey')
@@ -239,16 +266,23 @@ export class OfflineGarageStorage {
 		}
 		await this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.revokedSessions,
-			this.operations,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.revokedSessions,
+				this.operations,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
 				if (active?.key === 'active-owner') {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.buildOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.operations.where('ownerKey').equals(active.ownerKey).delete(),
 						this.setupOperations
 							.where('ownerKey')
@@ -279,8 +313,7 @@ export class OfflineGarageStorage {
 	async completeSignOut(operationId: string): Promise<void> {
 		await this.database.transaction(
 			'rw',
-			this.metadata,
-			this.revokedSessions,
+			[this.metadata, this.revokedSessions],
 			async () => {
 				const signOut = await this.metadata.get('sign-out');
 				if (
@@ -306,8 +339,7 @@ export class OfflineGarageStorage {
 	): Promise<boolean> {
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
+			[this.snapshots, this.metadata],
 			async () => {
 				const active = await this.metadata.get('active-owner');
 				if (
@@ -349,9 +381,7 @@ export class OfflineGarageStorage {
 			command.type === 'create' ? this.nextOperationId() : undefined;
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.operations,
+			[this.snapshots, this.metadata, this.operations],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -385,10 +415,13 @@ export class OfflineGarageStorage {
 		const setupId = createsSnapshot ? this.nextOperationId() : undefined;
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.operations,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.operations,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -426,6 +459,177 @@ export class OfflineGarageStorage {
 		);
 	}
 
+	private buildView(
+		canonicalCollections: readonly BuildSyncCollection[],
+		operations: readonly BuildSyncOperation[],
+	): BuildSyncView {
+		return {
+			canonicalCollections,
+			collections: materializeBuildCollections(
+				canonicalCollections,
+				operations,
+			),
+			operations,
+		};
+	}
+
+	private ownerBuildOperations(
+		ownerKey: string,
+	): Promise<BuildSyncOperation[]> {
+		return this.buildOperations.where('ownerKey').equals(ownerKey).toArray();
+	}
+
+	async buildSyncView(): Promise<BuildSyncView | null> {
+		const current = await this.currentSnapshot();
+		if (!current) return null;
+		return this.buildView(
+			current.buildCollections ?? [],
+			await this.ownerBuildOperations(current.ownerKey),
+		);
+	}
+
+	async commitBuild(
+		command: BuildSyncCommand,
+		fence: OfflineWorkspaceFence,
+	): Promise<
+		Readonly<{
+			operation: BuildSyncOperation;
+			collection: BuildSyncCollection;
+			view: BuildSyncView;
+		}>
+	> {
+		const operationId = this.nextOperationId();
+		const componentId = this.nextOperationId();
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.operations, this.buildOperations],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				const operations = await this.ownerBuildOperations(current.ownerKey);
+				const carOperations = await this.ownerOperations(current.ownerKey);
+				const cars = materializeCars(current.cars, carOperations);
+				if (!cars.some((car) => car.id === command.carId && !car.archivedAt))
+					throw new Error('Restore this Car before changing its build.');
+				const canonical = current.buildCollections ?? [];
+				const built = buildBuildSyncOperation(
+					command,
+					materializeBuildCollections(canonical, operations),
+					operations,
+					{
+						ownerKey: current.ownerKey,
+						operationId,
+						componentId,
+						createdAt: new Date(this.now()).toISOString(),
+						carDependencies: carOperations
+							.filter((operation) => operation.carId === command.carId)
+							.map((operation) => operation.operationId),
+					},
+				);
+				await this.buildOperations.add(built.operation);
+				return {
+					...built,
+					view: this.buildView(canonical, [...operations, built.operation]),
+				};
+			},
+		);
+	}
+
+	async readyBuildOperations(): Promise<readonly BuildSyncOperation[]> {
+		return this.database.transaction(
+			'r',
+			[this.snapshots, this.metadata, this.operations, this.buildOperations],
+			async () => {
+				const current = await this.currentSnapshot();
+				if (!current) return [];
+				const operations = await this.ownerBuildOperations(current.ownerKey);
+				const carOperations = await this.ownerOperations(current.ownerKey);
+				return readyBuildSyncOperations(
+					operations,
+					new Set(
+						[...operations, ...carOperations].map(
+							(operation) => operation.operationId,
+						),
+					),
+				);
+			},
+		);
+	}
+
+	async recordBuildOutcome(
+		outcome: BuildSyncRemoteOutcome,
+	): Promise<BuildSyncView> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.buildOperations],
+			async () => {
+				const current = await this.currentSnapshot();
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				let canonical = current.buildCollections ?? [];
+				const operation = await this.buildOperations.get(outcome.operationId);
+				if (operation?.ownerKey === current.ownerKey) {
+					if (outcome.outcome === 'applied') {
+						canonical = mergeBuildCollection(canonical, outcome.collection);
+						await this.snapshots.put({
+							...current,
+							buildCollections: canonical,
+						});
+						await this.buildOperations.delete(operation.operationId);
+						const dependents = await this.ownerBuildOperations(
+							current.ownerKey,
+						);
+						await this.buildOperations.bulkPut(
+							dependents.map((candidate) =>
+								rebaseBuildSyncOperation(
+									candidate,
+									operation.operationId,
+									outcome.collection,
+								),
+							),
+						);
+					} else {
+						await this.buildOperations.put({
+							...operation,
+							status:
+								outcome.outcome === 'rejected' ? 'needs-attention' : 'conflict',
+							feedback: outcome.error,
+							...(outcome.outcome === 'conflict'
+								? { remote: outcome.remote }
+								: {}),
+						});
+					}
+				}
+				return this.buildView(
+					canonical,
+					await this.ownerBuildOperations(current.ownerKey),
+				);
+			},
+		);
+	}
+
+	async mergeBuildCollection(
+		collection: BuildSyncCollection,
+		fence: OfflineWorkspaceFence,
+	): Promise<BuildSyncView> {
+		return this.database.transaction(
+			'rw',
+			[this.snapshots, this.metadata, this.buildOperations],
+			async () => {
+				const current = await this.currentSnapshot(undefined, fence);
+				if (!current) throw new Error('The offline Garage is unavailable.');
+				const canonical = mergeBuildCollection(
+					current.buildCollections ?? [],
+					collection,
+				);
+				await this.snapshots.put({ ...current, buildCollections: canonical });
+				return this.buildView(
+					canonical,
+					await this.ownerBuildOperations(current.ownerKey),
+				);
+			},
+		);
+	}
+
 	async readyCarOperations(): Promise<readonly CarSyncOperation[]> {
 		const view = await this.carSyncView();
 		return view ? readyCarSyncOperations(view.operations) : [];
@@ -434,10 +638,13 @@ export class OfflineGarageStorage {
 	async readySetupOperations(): Promise<readonly SetupSyncOperation[]> {
 		return this.database.transaction(
 			'r',
-			this.snapshots,
-			this.metadata,
-			this.operations,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.operations,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const current = await this.currentSnapshot();
 				if (!current) return [];
@@ -459,10 +666,13 @@ export class OfflineGarageStorage {
 	async recordCarOutcome(outcome: CarSyncRemoteOutcome): Promise<CarSyncView> {
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.operations,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.operations,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const current = await this.currentSnapshot();
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -539,9 +749,12 @@ export class OfflineGarageStorage {
 	): Promise<SetupSyncView> {
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const current = await this.currentSnapshot();
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -607,9 +820,7 @@ export class OfflineGarageStorage {
 	async replaceCars(cars: readonly GarageCar[]): Promise<CarSyncView> {
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.operations,
+			[this.snapshots, this.metadata, this.operations],
 			async () => {
 				const current = await this.currentSnapshot();
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -625,9 +836,7 @@ export class OfflineGarageStorage {
 	): Promise<CarSyncView> {
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.operations,
+			[this.snapshots, this.metadata, this.operations],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -647,9 +856,12 @@ export class OfflineGarageStorage {
 	): Promise<SetupSyncView> {
 		return this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const current = await this.currentSnapshot(undefined, fence);
 				if (!current) throw new Error('The offline Garage is unavailable.');
@@ -681,6 +893,10 @@ export class OfflineGarageStorage {
 		return {
 			...snapshot,
 			cars: materializeCars(snapshot.cars, operations),
+			buildCollections: materializeBuildCollections(
+				snapshot.buildCollections ?? [],
+				await this.ownerBuildOperations(snapshot.ownerKey),
+			),
 			setupCollections: materializeSetupCollections(
 				snapshot.setupCollections ?? [],
 				setupOperations,
@@ -695,16 +911,23 @@ export class OfflineGarageStorage {
 	private async invalidateActiveOwner(): Promise<void> {
 		await this.database.transaction(
 			'rw',
-			this.snapshots,
-			this.metadata,
-			this.revokedSessions,
-			this.operations,
-			this.setupOperations,
+			[
+				this.snapshots,
+				this.metadata,
+				this.revokedSessions,
+				this.operations,
+				this.setupOperations,
+				this.buildOperations,
+			],
 			async () => {
 				const active = await this.metadata.get('active-owner');
 				if (active?.key === 'active-owner') {
 					await Promise.all([
 						this.snapshots.delete(active.ownerKey),
+						this.buildOperations
+							.where('ownerKey')
+							.equals(active.ownerKey)
+							.delete(),
 						this.operations.where('ownerKey').equals(active.ownerKey).delete(),
 						this.setupOperations
 							.where('ownerKey')

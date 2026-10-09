@@ -12,6 +12,7 @@ import {
 	carUpdateInput,
 } from '../../types';
 import { applySetupSyncOperation } from '../setups/setup-sync';
+import { applyBuildSyncOperation } from './build-sync';
 import { ownedCar, publicCar } from './car-records';
 
 const canonicalJson = (value: unknown): string => {
@@ -97,6 +98,7 @@ export const createCarSyncRoutes = () => {
 		const command = parsed.data.command;
 		const isSetupCommand = command.type.startsWith('setup.');
 		const setupId = command['setupId'];
+		const isBuildCommand = command.type === 'build.change';
 		const now = new Date().toISOString();
 		const database = db(c.env);
 		const requestHash = await requestDigest(parsed.data);
@@ -124,7 +126,7 @@ export const createCarSyncRoutes = () => {
 				operationId: operationId.data,
 				contractVersion: parsed.data.contractVersion,
 				kind: command.type,
-				entityType: isSetupCommand ? 'setup' : 'car',
+				entityType: isSetupCommand ? 'setup' : isBuildCommand ? 'build' : 'car',
 				entityId:
 					isSetupCommand && typeof setupId === 'string'
 						? setupId
@@ -245,6 +247,15 @@ export const createCarSyncRoutes = () => {
 				.run();
 			return c.json(response, 404);
 		};
+
+		if (isBuildCommand)
+			return applyBuildSyncOperation(c, {
+				command,
+				operationId: operationId.data,
+				requestHash,
+				now,
+				requireTerminalReceipt,
+			});
 
 		if (isSetupCommand)
 			return applySetupSyncOperation(c, {

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, isNull, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { canWrite } from '../../car-policy';
 import {
@@ -7,7 +7,7 @@ import {
 	STANDARD_COMPONENT_SLOTS,
 } from '../../component-policy';
 import { db } from '../../db';
-import { component, maintenancePlan } from '../../schema';
+import { car, component, maintenancePlan } from '../../schema';
 import { type AppEnv, componentInput, componentUpdateInput } from '../../types';
 import { required } from '../invariant';
 import { planSessionCount } from '../maintenance/plan-records';
@@ -55,6 +55,10 @@ export const createComponentRoutes = () => {
 			.get();
 		const sessionCount = await planSessionCount(c, carId);
 		await database.batch([
+			database
+				.update(car)
+				.set({ version: sql`${car.version} + 1`, lastOperationId: null })
+				.where(and(eq(car.id, carId), eq(car.ownerId, c.get('userId')))),
 			database
 				.update(component)
 				.set({ removedAt: now })
@@ -113,14 +117,45 @@ export const createComponentRoutes = () => {
 		);
 	});
 
+	routes.get('/components', async (c) => {
+		const rows = await db(c.env)
+			.select({
+				ownerCarId: sql<string>`${car.id}`.as('ownerCarId'),
+				version: car.version,
+				component: getTableColumns(component),
+			})
+			.from(car)
+			.leftJoin(component, eq(component.carId, car.id))
+			.where(eq(car.ownerId, c.get('userId')));
+		const collections = new Map<
+			string,
+			{
+				carId: string;
+				version: number;
+				components: Array<typeof component.$inferSelect>;
+			}
+		>();
+		for (const row of rows) {
+			const collection = collections.get(row.ownerCarId) ?? {
+				carId: row.ownerCarId,
+				version: row.version,
+				components: [],
+			};
+			if (row.component)
+				collection.components.push(publicComponent(row.component));
+			collections.set(row.ownerCarId, collection);
+		}
+		return c.json({ collections: [...collections.values()] });
+	});
+
 	routes.get('/component-slots', (c) =>
 		c.json({ standard: STANDARD_COMPONENT_SLOTS }),
 	);
 
 	routes.get('/cars/:carId/components', async (c) => {
 		const { carId } = c.req.param();
-		if (!(await ownedCar(c, carId)))
-			return c.json({ error: 'Car not found' }, 404);
+		const parent = await ownedCar(c, carId);
+		if (!parent) return c.json({ error: 'Car not found' }, 404);
 		const history = c.req.query('history') === 'true';
 		const where = history
 			? eq(component.carId, carId)
@@ -130,7 +165,12 @@ export const createComponentRoutes = () => {
 			.from(component)
 			.where(where)
 			.orderBy(desc(component.installedAt));
-		return c.json({ components: components.map(publicComponent), history });
+		return c.json({
+			components: components.map(publicComponent),
+			history,
+			carId,
+			version: parent.version,
+		});
 	});
 
 	routes.get('/cars/:carId/components/:componentId', async (c) => {
@@ -160,17 +200,24 @@ export const createComponentRoutes = () => {
 				{ error: 'Historical component installations are immutable' },
 				409,
 			);
-		await db(c.env)
-			.update(component)
-			.set({
-				name: parsed.data.name,
-				manufacturer: parsed.data.manufacturer,
-				model: parsed.data.model,
-				serialNumber: parsed.data.serialNumber,
-				notes: parsed.data.notes,
-				installedAt: parsed.data.installedAt,
-			})
-			.where(and(eq(component.id, componentId), eq(component.carId, carId)));
+		const database = db(c.env);
+		await database.batch([
+			database
+				.update(car)
+				.set({ version: sql`${car.version} + 1`, lastOperationId: null })
+				.where(and(eq(car.id, carId), eq(car.ownerId, c.get('userId')))),
+			database
+				.update(component)
+				.set({
+					name: parsed.data.name,
+					manufacturer: parsed.data.manufacturer,
+					model: parsed.data.model,
+					serialNumber: parsed.data.serialNumber,
+					notes: parsed.data.notes,
+					installedAt: parsed.data.installedAt,
+				})
+				.where(and(eq(component.id, componentId), eq(component.carId, carId))),
+		]);
 		const updated = await ownedComponent(c, carId, componentId);
 		return c.json({
 			component: publicComponent(
@@ -214,6 +261,10 @@ export const createComponentRoutes = () => {
 		const database = db(c.env);
 		const sessionCount = await planSessionCount(c, carId);
 		await database.batch([
+			database
+				.update(car)
+				.set({ version: sql`${car.version} + 1`, lastOperationId: null })
+				.where(and(eq(car.id, carId), eq(car.ownerId, c.get('userId')))),
 			database
 				.update(component)
 				.set({ removedAt: now })
@@ -285,6 +336,10 @@ export const createComponentRoutes = () => {
 		const removedAt = new Date().toISOString();
 		const database = db(c.env);
 		await database.batch([
+			database
+				.update(car)
+				.set({ version: sql`${car.version} + 1`, lastOperationId: null })
+				.where(and(eq(car.id, carId), eq(car.ownerId, c.get('userId')))),
 			database
 				.update(component)
 				.set({ removedAt })

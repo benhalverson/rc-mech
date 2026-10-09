@@ -28,6 +28,15 @@
 				}
 			</header>
 
+			@for (operation of buildStore.syncOperations(); track operation.operationId) {
+				<p class="alloy-state mt-0" role="status">
+					@if (operation.status === 'pending') { Pending sync: {{ operation.command.input.name }} }
+					@else { <strong>{{ operation.status === 'conflict' ? 'Sync conflict' : 'Needs attention' }}</strong> {{ operation.feedback?.message }} }
+				</p>
+				@if (operation.remote; as remote) {
+					<details><summary class="alloy-focus-ring">Compare the remote build</summary><ul>@for (component of remote.components; track component.id) { <li>{{ component.slot }}: {{ component.name }} — {{ component.removedAt ? 'Previous installation' : 'Current installation' }}</li> }</ul></details>
+				}
+			}
 			@if (editing()) {
 				<form class="alloy-panel mb-0 grid gap-5" (submit)="save($event)" aria-labelledby="component-form-title" [attr.aria-describedby]="formError() ? 'component-form-error' : 'component-form-intro'" novalidate>
 					<div>
@@ -154,6 +163,7 @@
 										<div class="form-actions mt-0 flex flex-col gap-2 sm:flex-row">
 											<button class="alloy-control alloy-control-tertiary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openEdit(current)"><svg lucidePencil size="18" strokeWidth="1.8" aria-hidden="true"></svg>Edit</button>
 											<button class="alloy-control alloy-control-secondary alloy-focus-ring inline-flex items-center justify-center gap-2" type="button" (click)="openReplace(current)"><svg lucideRepeat2 size="18" strokeWidth="1.8" aria-hidden="true"></svg>Replace</button>
+<button class="alloy-control alloy-control-secondary alloy-focus-ring" type="button" (click)="remove(current)" [disabled]="action() !== null">Remove</button>
 										</div>
 									}
 								</div>
