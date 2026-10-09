@@ -1,4 +1,22 @@
-"""Observation contracts for the versioned media-service wire API."""
+"""Provider-neutral observation evidence accepted by tracking and the hermetic
+benchmark.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+SubjectProvenance: Pins model, pipeline, configuration, and confidence calibration
+    to
+    each observation.
+SubjectObservation: Binds one detection/re-identification to source time, frame,
+    normalized geometry, and provenance.
+TrackingGap: Marks a closed ambiguous/missing interval that pass interpolation must
+    not cross.
+AcceptedSubjectObservations: Validates ordered observations and gaps for a case
+    before
+    benchmark evaluation.
+RejectedSubjectObservations: Represents a safe case failure without fabricating
+    accepted evidence.
+SubjectSafeError: Enforces canonical code/stage/message combinations for observation
+    failures.
+"""
 # ruff: noqa: EM101, TRY003
 
 from typing import Annotated, Literal

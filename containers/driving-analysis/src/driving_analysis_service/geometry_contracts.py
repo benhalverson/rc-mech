@@ -1,4 +1,21 @@
-"""Geometry contracts for the versioned media-service wire API."""
+"""Shared coordinate and timing shapes used by media, tracking, and benchmark
+contracts.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+RationalValue: Carries exact frame-rate/time-base fractions without reducing them to
+    floating-point timing.
+NormalizedPoint: Bounds a point to the normalized coordinate space used by gates and
+    observations.
+NormalizedBox: Bounds a nonempty subject/view rectangle and rejects boxes outside
+    the
+    normalized frame.
+DirectedGate: Pairs noncoincident endpoints with crossing direction for
+    deterministic
+    pass detection.
+CornerGates: Keeps the entry/exit gate pair together for one Corner.
+SubjectSeed: Binds the selected identity/box to an absolute source timestamp and
+    decoded-frame index.
+"""
 # ruff: noqa: EM101, TRY003
 
 from typing import Annotated, Literal

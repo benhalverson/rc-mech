@@ -1,4 +1,10 @@
-"""Contract primitives for the versioned media-service wire API."""
+"""Shared validation vocabulary below the media/observation/benchmark domains.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+StrictContract: Frozen, strict, extra-forbidding root for wire models; keeps
+    coercion
+    and unknown fields out of every domain contract.
+"""
 # ruff: noqa: EM101, TRY003
 
 import re

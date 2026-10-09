@@ -1,4 +1,22 @@
-"""Media contracts for the versioned media-service wire API."""
+"""Internal validation API models consumed by the media service and its Worker caller.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+HealthResponse: Versioned ready response for the media validation endpoint.
+StagedMediaInput: Identifies privately staged bytes and the declared size to check
+    before validation.
+MediaValidationRequest: Binds staged input to the validation contract and caller
+    correlation ID.
+MediaFacts: Returns bounded decoded-media facts needed by preparation without
+    exposing
+    a local path.
+SafeError: Restricts validation failure detail so process paths and provider
+    internals
+    do not enter responses.
+AcceptedValidationResponse: Carries validated media facts tied to the caller
+    correlation ID.
+RejectedValidationResponse: Carries a safe failure even when input validation could
+    not recover a correlation ID.
+"""
 # ruff: noqa: EM101, TRY003
 
 from typing import Annotated, Literal

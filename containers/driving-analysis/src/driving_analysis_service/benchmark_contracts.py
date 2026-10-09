@@ -1,4 +1,67 @@
-"""Benchmark contracts for the versioned media-service wire API."""
+"""Saved corpus, annotation, and report contracts for provider-neutral benchmark
+evaluation.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+CorpusRecording: Pins source checksum, byte count, duration, and decoded timing
+    facts
+    for a corpus recording.
+PermittedUseV1: Records permitted benchmark uses and separately authorized remote
+    processing without storing authorization evidence.
+FixedCameraFramingV1: Pins fixed camera/zoom and the normalized Track-view
+    convention
+    used by annotations.
+RepresentativeCorpusRecordingV2: Adds authorized use and 16:9 fixed-camera framing
+    to
+    representative source evidence.
+BenchmarkCase: Binds a subject seed and ordered source window to one corpus
+    recording.
+RepresentativeCaseFactsV1: Checks field counts and identity challenges that justify
+    representative case coverage.
+RepresentativeBenchmarkCaseV2: Adds those representative facts to the otherwise
+    shared
+    case identity/window.
+BenchmarkProvenance: Pins inference/runtime identity and evaluation thresholds so
+    reports cannot mix configurations.
+BenchmarkEvaluationPolicyV1: Separates scoring tolerances from candidate-generation
+    provenance for representative evaluation.
+CorpusRecordingManifest: Validates unique recording IDs in the saved corpus index.
+CorpusManifest: Adds unique cases, required pass coverage, and v1 scoring provenance
+    to the recording index.
+RepresentativeCorpusManifestV2: Requires a sufficiently varied representative corpus
+    and an explicit evaluation policy.
+GroundTruthPass: Annotated ordered entry/exit times for one Corner pass, used as the
+    matching target.
+SubjectIdentityAnnotation: Manual source-frame box evidence used to detect unflagged
+    identity switches.
+GroundTruthCase: Collects gates, passes, ambiguity intervals, and identity
+    annotations
+    for one seeded subject.
+AnnotationProvenanceV1: Pins manual review conventions, tool identity, source
+    checksum, and adjudication evidence.
+RepresentativeGroundTruthCaseV2: Adds annotation provenance to a representative
+    case's
+    expected evidence.
+GroundTruth: Validates unique annotated cases tied to the v1 corpus identity.
+RepresentativeGroundTruthV2: Requires representative annotation cases under the v2
+    ground-truth contract.
+CoverageMetrics: Counts eligible versus annotated passes so the coverage ratio has
+    explicit denominators.
+GapMetrics: Separates timely, missed, and premature ambiguity flags for the
+    benchmark
+    report.
+IdentityMetrics: Reports unflagged switches independently of pass coverage.
+GateTimingMetrics: Carries timing-error aggregates while allowing absent values when
+    no pass was matched.
+BenchmarkReport: Combines reproducibility identity, pass/fail, coverage, gap,
+    identity, and timing results.
+BenchmarkObservationSetV2: Binds stored provider observations to manifest, ground
+    truth, generation, and inference digests.
+BenchmarkEvidenceV2: Retains the digest chain needed to reproduce a representative
+    report.
+RepresentativeBenchmarkReportV2: Adds initial-seed coverage and the retained
+    evidence
+    digest chain to the report.
+"""
 # ruff: noqa: EM101, TRY003
 
 from typing import Annotated, Literal

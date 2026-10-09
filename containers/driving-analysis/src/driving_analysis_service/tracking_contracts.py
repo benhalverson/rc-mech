@@ -1,3 +1,40 @@
+"""Preparation and one-segment tracking wire models shared by the media and GPU
+adapters.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+RaceWindow: Bounds the source-time interval selected for one analysis.
+FixedTrackView: Enforces the accepted bottom-two-thirds crop rather than an
+    arbitrary
+    provider view.
+PrepareStageRequest: Binds staged source, race window, prepared-artifact ID, and
+    correlation for replay.
+PreparedMediaArtifact: Describes verified prepared bytes, source identity, frame-
+    manifest identity, and runtime provenance.
+PreparedFrame: Maps a prepared frame back to its decoded source frame and timestamp.
+PreparedFrameManifest: Validates ordered source-frame mapping tied to the exact
+    prepared artifact.
+PrepareStageAccepted: Returns the immutable prepared descriptor for the correlated
+    preparation request.
+ProcessingSafeError: Canonical bounded failure detail used by preparation and
+    tracking
+    stages.
+ProcessingRejected: Versioned safe stage rejection, including malformed requests
+    without recovered identity.
+TrackStageRequest: Binds an observation segment and seed to its prepared window;
+    rejects an out-of-window seed.
+OpenTrackingGap: Ends a segment at the first unresolved ambiguity without inventing
+    a
+    gap end time.
+SubjectObservationSegment: Keeps trusted observations before an optional open gap
+    under one provenance identity.
+ObservationSegmentArtifact: Names immutable compressed observation bytes and their
+    prepared-media relationship.
+TrackStageAccepted: Returns the accepted segment artifact tied to request/case
+    identity.
+ProviderCandidate: Constrained per-frame model output parsed by inference; its JSON
+    schema is also sent to the local model.
+"""
+
 # Validation messages stay inside the Python service and are never returned as
 # provider or media error detail.
 # ruff: noqa: EM101, TRY003

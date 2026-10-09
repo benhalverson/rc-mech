@@ -1,8 +1,9 @@
-"""Compatibility surface for existing media and benchmark contract consumers.
+"""Compatibility import surface for pre-split media and benchmark consumers.
 
-New code imports media_contracts, observation_contracts, benchmark_contracts,
-geometry_contracts or contract_primitives directly. Wire versions and model
-identities are unchanged; this module preserves the historical public path.
+Re-exports the original model objects from their owning domain modules so
+existing imports keep identity and wire behavior. Production consumers in this
+change import their domain directly; removal of this facade is a separate
+consumer-migration decision, not a second set of contract definitions.
 """
 
 from driving_analysis_service.benchmark_contracts import (

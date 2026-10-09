@@ -1,3 +1,25 @@
+"""Immutable Corner-render requests and accepted clip descriptors used by Worker/media
+stages.
+
+Model responsibilities (kept here to preserve generated schema descriptions):
+RenderPadding: Bounds requested time before and after the accepted Corner pass.
+RenderOverlay: Captures immutable gate/label overlay intent alongside the rendered
+    clip.
+RenderSpecification: Binds source, pass window, normalized view, padding, and
+    overlay
+    into a reproducible render request.
+RenderStageRequest: Pairs the render specification with staged input and correlation
+    identity.
+RenderArtifact: Describes private clip bytes and runtime provenance without exposing
+    the local artifact path.
+RenderStageAccepted: Returns the request-bound rendered artifact only after
+    successful
+    publication.
+RenderSafeError: Canonical code/stage/message triple for safe render rejection.
+RenderStageRejected: Returns a bounded render failure without an accepted clip
+    descriptor.
+"""
+
 # Strict, provider-neutral contracts for immutable Corner-clip rendering.
 # ruff: noqa: EM101, TRY003
 
