@@ -75,7 +75,8 @@ export class LocalSam31Provider implements TrackingProvider {
 			config.maxResponseBytes ?? DEFAULT_RESPONSE_BYTES,
 			'Provider response limit',
 		);
-		this.fetcher = config.fetcher ?? fetch;
+		// Workerd requires the global receiver when fetch is stored on an instance.
+		this.fetcher = config.fetcher ?? fetch.bind(globalThis);
 	}
 
 	async submit(
@@ -179,8 +180,25 @@ export class LocalSam31Provider implements TrackingProvider {
 						signal: controller.signal,
 					}),
 				);
-			} catch {
+			} catch (error) {
+				console.warn('tracking-provider-contact-failed', {
+					operation: method,
+					segmentId: expectedIdentity.segmentId,
+					aborted: controller.signal.aborted,
+					errorName: error instanceof Error ? error.name : 'UnknownError',
+					illegalInvocation:
+						error instanceof Error && /illegal invocation/i.test(error.message),
+				});
 				return unavailable();
+			}
+			if (!response.ok) {
+				console.warn('tracking-provider-http-failed', {
+					operation: method,
+					segmentId: expectedIdentity.segmentId,
+					status: response.status,
+					contentType: response.headers.get('content-type'),
+					ray: response.headers.get('cf-ray'),
+				});
 			}
 			const result = await parseProviderResponse(
 				response,

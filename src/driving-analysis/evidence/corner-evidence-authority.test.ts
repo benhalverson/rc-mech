@@ -507,7 +507,7 @@ describe('private Corner clips on real SQL authority', () => {
 			ANALYSIS_MEDIA: value.r2.bucket,
 			RACE_VIDEO_MEDIA_CONTAINER: {
 				getByName: (name) => {
-					expect(name).toMatch(/^corner-render-/);
+					expect(name).toBe(identity.runId);
 					return { renderCornerClip: value.render };
 				},
 			},

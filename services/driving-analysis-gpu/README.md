@@ -62,6 +62,28 @@ Cloudflare's package. The install script creates the service skeleton; operators
 provision the model, profile, image tag, state mount, and Tunnel credential
 outside Git.
 
+### Deploying a GPU release
+
+`pnpm deploy` deploys the frontend, D1 migrations, Cloudflare Worker, Workflows,
+and Cloudflare media container. It does not deploy this Ubuntu GPU service.
+Building a local demo image also does not update the production image tag or
+restart the production container.
+
+For a GPU release, retain the previous image and profile for rollback, build or
+promote the validated GPU image to the tag used by the installed systemd unit
+(`chassis-notes-driving-analysis-gpu:current`), and install its matching profile
+at `/etc/chassis-notes-gpu/profile.json`. Preserve the profile file ownership
+and read-only mount permissions. Then restart `chassis-notes-gpu.service` and
+wait for loopback `/health` to report `ready` with the expected
+`resolvedProfileDigest`. Update the Worker's `INFERENCE_PROFILE_JSON` secret
+from that same profile and verify a new real analysis through the authenticated
+Worker-to-Tunnel path. A healthy loopback endpoint alone does not verify it.
+
+Existing analyses pin their original profile. Finish or cancel active work
+before changing the image/profile pair; use a new analysis for release
+verification. Record the running container's image ID and profile digest in
+the release evidence, rather than relying on the mutable `:current` tag.
+
 The worker is supervised by `chassis-notes-gpu.service` and uses host networking
 only because its application binds to `127.0.0.1:8080`. `cloudflared` is a
 separate service with one private hostname ingress and a default 404 rule.

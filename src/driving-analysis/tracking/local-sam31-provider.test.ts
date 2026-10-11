@@ -78,6 +78,27 @@ const rejection = (
 };
 
 describe('LocalSam31Provider', () => {
+	test('preserves the global receiver required by the Workers fetch runtime', async () => {
+		vi.stubGlobal('fetch', async function (this: unknown) {
+			if (this !== globalThis) throw new TypeError('Illegal invocation');
+			return jsonResponse(jobStatusFixture());
+		});
+		try {
+			const { provider } = providerFixture(
+				() => jsonResponse(jobStatusFixture()),
+				{
+					fetcher: undefined,
+				},
+			);
+			expect(await provider.submit(submissionFixture())).toEqual({
+				ok: true,
+				value: jobStatusFixture(),
+			});
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	test('never contacts an expired provider deadline', async () => {
 		const { provider, fetcher } = providerFixture(() =>
 			jsonResponse(jobStatusFixture()),
@@ -233,6 +254,56 @@ describe('LocalSam31Provider', () => {
 		).toMatchObject({ ok: false, retryable: false });
 		expect(fetcher).not.toHaveBeenCalled();
 	});
+
+	test.each([
+		{
+			label: 'ordinary Error',
+			error: new Error('secret network detail'),
+			errorName: 'Error',
+			illegalInvocation: false,
+		},
+		{
+			label: 'illegal invocation',
+			error: new TypeError('Illegal invocation: secret network detail'),
+			errorName: 'TypeError',
+			illegalInvocation: true,
+		},
+		{
+			label: 'non-Error rejection',
+			error: 'secret network detail',
+			errorName: 'UnknownError',
+			illegalInvocation: false,
+		},
+	])(
+		'redacts fetch diagnostics for $label',
+		async ({ error, errorName, illegalInvocation }) => {
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const { provider } = providerFixture(async () => {
+					throw error;
+				});
+				expect(await provider.status(executionIdentityFixture())).toEqual({
+					ok: false,
+					code: 'TRACKING_PROVIDER_UNAVAILABLE',
+					retryable: true,
+				});
+				expect(warn.mock.calls).toEqual([
+					[
+						'tracking-provider-contact-failed',
+						{
+							operation: 'GET',
+							segmentId: SEGMENT_ID,
+							aborted: false,
+							errorName,
+							illegalInvocation,
+						},
+					],
+				]);
+			} finally {
+				warn.mockRestore();
+			}
+		},
+	);
 
 	test('maps network failure and timeout to retryable unavailability', async () => {
 		const failed = providerFixture(async () => {

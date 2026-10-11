@@ -621,14 +621,23 @@ describe('Race-video media container adapter', () => {
 		const instance = Object.create(
 			RaceVideoMediaContainer.prototype,
 		) as RaceVideoMediaContainer;
+		const renewActivityTimeout = vi.fn();
 		Object.assign(instance as unknown as Record<string, unknown>, {
 			env: { ANALYSIS_MEDIA: value.r2.bucket },
 			ctx: { container: { exec } },
 			startAndWaitForPorts: value.start,
+			renewActivityTimeout,
 			containerFetch: value.probe,
 		});
 		await expect(instance.validateRaceVideo(command)).resolves.toEqual(
 			accepted,
+		);
+		expect(renewActivityTimeout).toHaveBeenCalledTimes(2);
+		expect(renewActivityTimeout.mock.invocationCallOrder[0]).toBeLessThan(
+			value.start.mock.invocationCallOrder[0]!,
+		);
+		expect(renewActivityTimeout.mock.invocationCallOrder[1]).toBeGreaterThan(
+			value.start.mock.invocationCallOrder[0]!,
 		);
 		expect(value.start).toHaveBeenCalledWith({
 			ports: 8080,

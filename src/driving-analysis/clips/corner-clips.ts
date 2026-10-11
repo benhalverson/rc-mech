@@ -175,8 +175,10 @@ export const cornerClipRenderer =
 			new CornerClipAuthority(environment.DB),
 			environment.ANALYSIS_MEDIA,
 			(command) => {
+				// Preparation and rendering are sequential stages of the same run.
+				// Reuse its container instead of allocating one for every corner clip.
 				const container = environment.RACE_VIDEO_MEDIA_CONTAINER?.getByName(
-					`corner-render-${command.request.renderId}`,
+					command.request.specification.runId,
 				);
 				if (!container?.renderCornerClip)
 					throw new Error('CLIP_RENDER_UNAVAILABLE');
