@@ -798,9 +798,12 @@ export class DrivingAnalysisAuthority {
 		if (current?.stage !== 'tracking' || current.workflowId !== run.workflowId)
 			return { kind: 'stale' };
 		const target = trackingAnalysisTarget(state);
+		// Older runs persisted 99 before the race finished. Preserve the database's
+		// monotonic counter; publicTrackingAnalysis projects actual race progress.
+		const persistedProgress = Math.max(current.progress, target.progress);
 		if (
 			current.status === target.status &&
-			current.progress === target.progress
+			current.progress === persistedProgress
 		)
 			return {
 				kind: 'replayed',
@@ -844,7 +847,7 @@ export class DrivingAnalysisAuthority {
 				.update(drivingAnalysis)
 				.set({
 					status: target.status,
-					progress: target.progress,
+					progress: persistedProgress,
 					stateVersion: current.stateVersion + 1,
 					updatedAt,
 				})

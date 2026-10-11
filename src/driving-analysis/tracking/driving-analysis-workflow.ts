@@ -244,8 +244,43 @@ export class TrackingRunWorkflow {
 		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
 		step: WorkflowStep,
 	): Promise<FirstTrackingWorkflowResult> {
-		let currentSegmentId = event.payload.segmentId;
-		let result = await this.runOnce(event, step);
+		// Restarted Workflows have no event history. The saved correction is the
+		// authority for where to resume, so do not wait for old UI events again.
+		const resumed = await step.do(
+			'load-saved-tracking-correction',
+			async () => {
+				const provenance = await this.authority.publicProvenance(
+					event.payload.ownerId,
+					event.payload.analysisId,
+					event.payload.runId,
+				);
+				const latest = provenance.segments.at(-1);
+				if (!latest || latest.segmentId === event.payload.segmentId)
+					return null;
+				return this.authority.workflowContext({
+					ownerId: event.payload.ownerId,
+					analysisId: event.payload.analysisId,
+					runId: event.payload.runId,
+					workflowId: event.instanceId,
+					segmentId: latest.segmentId,
+				});
+			},
+		);
+		let currentSegmentId = resumed?.segmentId ?? event.payload.segmentId;
+		let result = resumed
+			? await this.runOnce(
+					{
+						...event,
+						payload: {
+							...event.payload,
+							segmentId: resumed.segmentId,
+							subjectSeed: resumed.seed,
+						},
+					},
+					prefixedTrackingStep(step, resumed.segmentId),
+					resumed,
+				)
+			: await this.runOnce(event, step);
 		for (
 			let index = 0;
 			result.state.lifecycle === 'awaiting-reidentification' ||

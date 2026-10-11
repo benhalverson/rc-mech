@@ -879,17 +879,21 @@ export class TrackingAuthority {
 					eq(trackingExecutionAttempt.id, command.attemptId),
 					eq(trackingExecutionAttempt.leaseId, command.leaseId),
 					eq(trackingExecutionAttempt.fence, command.fence),
-					eq(trackingExecutionAttempt.state, command.nextState),
+					inArray(trackingExecutionAttempt.state, [
+						command.nextState,
+						'failed',
+					]),
 				),
 			)
 			.get();
 		if (retired) return;
-		const attempt = await this.requireCurrentAttempt(command);
+		const attempt = await this.requireCurrentAttempt(command, true);
 		await this.database.batch([
 			this.database
 				.update(trackingExecutionAttempt)
 				.set({
-					state: command.nextState,
+					// Keep the failed attempt as evidence while releasing its pointer.
+					state: attempt.state === 'failed' ? 'failed' : command.nextState,
 					updatedAt: command.updatedAt,
 					version: attempt.version + 1,
 				})
@@ -2147,14 +2151,17 @@ export class TrackingAuthority {
 		};
 	}
 
-	private async requireCurrentAttempt(command: {
-		ownerId: string;
-		runId: string;
-		segmentId: string;
-		attemptId: string;
-		leaseId: string;
-		fence: number;
-	}): Promise<TrackingAttemptRecord> {
+	private async requireCurrentAttempt(
+		command: {
+			ownerId: string;
+			runId: string;
+			segmentId: string;
+			attemptId: string;
+			leaseId: string;
+			fence: number;
+		},
+		allowFailedRetirement = false,
+	): Promise<TrackingAttemptRecord> {
 		await this.requireActiveRun(command.ownerId, command.runId);
 		const [segment, attempt] = await Promise.all([
 			this.ownedSegment(command.runId, command.segmentId),
@@ -2170,9 +2177,10 @@ export class TrackingAuthority {
 			segment.currentAttemptId !== command.attemptId ||
 			segment.authorityLeaseId !== command.leaseId ||
 			segment.authorityFence !== command.fence ||
-			!MUTABLE_ATTEMPT_STATES.includes(
+			(!MUTABLE_ATTEMPT_STATES.includes(
 				attempt.state as (typeof MUTABLE_ATTEMPT_STATES)[number],
-			)
+			) &&
+				!(allowFailedRetirement && attempt.state === 'failed'))
 		)
 			throw stale('Tracking attempt does not hold current authority');
 		return attempt;
