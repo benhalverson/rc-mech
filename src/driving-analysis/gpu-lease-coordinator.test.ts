@@ -201,6 +201,44 @@ describe('GpuLeaseCoordinator', () => {
 		);
 	});
 
+	test.each(['expired', 'provider-lost'] as const)(
+		'cancels the exact %s waiter so the next run can acquire capacity',
+		async (reason) => {
+			const stub = coordinator();
+			await stub.enqueue({ segmentId: 'old', deadlineAt, kind: 'initial' });
+			await stub.enqueue({ segmentId: 'next', deadlineAt, kind: 'initial' });
+			const lease = await stub.acquire({ now });
+			if (lease.status !== 'acquired') throw new Error('expected lease');
+			const identity = {
+				segmentId: lease.segmentId,
+				leaseId: lease.leaseId,
+				fence: lease.fence,
+			};
+			if (reason === 'expired')
+				await stub.witness({ ...identity, now: lease.expiresAt });
+			else await stub.requeueProviderLoss({ ...identity, now });
+			expect(await stub.acquire({ segmentId: 'next', now })).toEqual({
+				status: 'busy',
+			});
+			expect(
+				await stub.cancel({ ...identity, leaseId: crypto.randomUUID() }),
+			).toEqual({ status: 'stale' });
+			expect(
+				await stub.cancel({ ...identity, fence: lease.fence + 1 }),
+			).toEqual({
+				status: 'stale',
+			});
+			expect(await stub.cancel(identity)).toEqual({ status: 'cancelled' });
+			expect(await stub.cancel(identity)).toEqual({
+				status: 'already-cancelled',
+			});
+			expect(await stub.acquire({ segmentId: 'next', now })).toMatchObject({
+				status: 'acquired',
+				segmentId: 'next',
+			});
+		},
+	);
+
 	test('cannot release a restored waiter belonging to a newer lease', async () => {
 		const stub = coordinator();
 		await stub.enqueue({ segmentId: 'one', deadlineAt, kind: 'initial' });

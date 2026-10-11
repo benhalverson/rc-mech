@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
 from driving_analysis_service.inference import InferenceFailureError
+from driving_analysis_service.sam31_frames import install_bounded_frame_loader
 from driving_analysis_service.sam31_inference import Sam31FrameResult
+from driving_analysis_service.sam31_memory import bound_forward_tracking_memory
 
 SUBJECT_OBJECT_ID = 1
 BOX_VALUE_COUNT = 4
@@ -163,6 +165,7 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
     torch = cast("_Torch", importlib.import_module("torch"))
     if not torch.cuda.is_available():
         raise RuntimeError
+    install_bounded_frame_loader()
     builder_module = importlib.import_module("sam3.model_builder")
     builder = getattr(builder_module, "build_sam3_multiplex_video_predictor", None)
     if not callable(builder):
@@ -182,6 +185,7 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
     predictor.model.init_state = _filter_init_state_arguments(
         predictor.model.init_state
     )
+    bound_forward_tracking_memory(predictor.model)
     # Compatibility adapter for the pinned upstream multiplex implementation.
     predictor.model._build_sam2_output = _merge_uncached_tracking_output(  # noqa: SLF001
         predictor.model._build_sam2_output  # noqa: SLF001

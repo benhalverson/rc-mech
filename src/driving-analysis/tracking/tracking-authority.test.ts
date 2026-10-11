@@ -1739,36 +1739,76 @@ describe('TrackingAuthority', () => {
 		);
 	});
 
-	test('cancellation cleanup snapshots queued segments and preserves accepted evidence', async () => {
-		const { authority, segment } = await createAttemptAuthority();
-		await makeOutputReady(authority);
-		await authority.acceptArtifact(
-			await preparePromotion(authority, segment.specificationDigest),
-		);
-		await authority.createSegment(
-			segmentCommand({
-				segmentId: SECOND_SEGMENT_ID,
-				order: 1,
-				seed: {
-					kind: 'reidentification',
-					sourceId: REIDENTIFICATION_ID,
-					value: submissionFixture().trackingRequest.subjectSeed,
+	test.each(['replaced', 'failed'] as const)(
+		'retry cleanup includes %s runs from older workflows within the same analysis',
+		async (status) => {
+			const { authority } = await createAttemptAuthority();
+			await authority.fenceRun({
+				ownerId: OWNER_ID,
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status,
+				completedAt: LATER,
+			});
+			expect(
+				await authority.cancellationTargets(
+					'other',
+					ANALYSIS_ID,
+					'new-workflow',
+				),
+			).toEqual([]);
+			expect(
+				await authority.cancellationTargets(OWNER_ID, 'other', 'new-workflow'),
+			).toEqual([]);
+			expect(
+				await authority.cancellationTargets(
+					OWNER_ID,
+					ANALYSIS_ID,
+					'new-workflow',
+				),
+			).toMatchObject([
+				{
+					segmentId: SEGMENT_ID,
+					cancelledAt: LATER,
+					identity: { runId: RUN_ID, attemptId: ATTEMPT_ID },
 				},
-			}),
-		);
-		await authority.fenceRun({
-			ownerId: OWNER_ID,
-			runId: RUN_ID,
-			expectedVersion: 1,
-			status: 'cancelled',
-			completedAt: LATER,
-		});
-		expect(
-			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
-		).toEqual([
-			{ segmentId: SECOND_SEGMENT_ID, identity: null, cancelledAt: LATER },
-		]);
-	});
+			]);
+		},
+	);
+
+	test.each(['cancelled', 'replaced', 'failed'] as const)(
+		'%s cleanup snapshots queued segments and preserves accepted evidence',
+		async (status) => {
+			const { authority, segment } = await createAttemptAuthority();
+			await makeOutputReady(authority);
+			await authority.acceptArtifact(
+				await preparePromotion(authority, segment.specificationDigest),
+			);
+			await authority.createSegment(
+				segmentCommand({
+					segmentId: SECOND_SEGMENT_ID,
+					order: 1,
+					seed: {
+						kind: 'reidentification',
+						sourceId: REIDENTIFICATION_ID,
+						value: submissionFixture().trackingRequest.subjectSeed,
+					},
+				}),
+			);
+			await authority.fenceRun({
+				ownerId: OWNER_ID,
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status,
+				completedAt: LATER,
+			});
+			expect(
+				await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+			).toEqual([
+				{ segmentId: SECOND_SEGMENT_ID, identity: null, cancelledAt: LATER },
+			]);
+		},
+	);
 
 	test('enforces immutable database records below the gateway', async () => {
 		const { authority, database, segment } = await createAttemptAuthority();

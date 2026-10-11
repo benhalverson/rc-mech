@@ -359,6 +359,10 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    install_frames = Mock()
+    bound_memory = Mock()
+    monkeypatch.setattr(runtime_module, "install_bounded_frame_loader", install_frames)
+    monkeypatch.setattr(runtime_module, "bound_forward_tracking_memory", bound_memory)
     predictor = _Predictor(())
     calls: list[dict[str, object]] = []
 
@@ -397,6 +401,8 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
     built = runtime_module._build_predictor(checkpoint)
 
     assert built is predictor
+    install_frames.assert_called_once_with()
+    bound_memory.assert_called_once_with(predictor.model)
     mask = object()
     state: dict[str, object] = {"cached_frame_outputs": {}}
     assert predictor.model._build_sam2_output(state, 1, mask) is mask

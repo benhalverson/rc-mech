@@ -1712,8 +1712,13 @@ export class TrackingAuthority {
 				and(
 					eq(trackingRun.ownerId, ownerId),
 					eq(trackingRun.analysisId, analysisId),
-					eq(trackingRun.workflowId, workflowId),
-					eq(trackingRun.status, 'cancelled'),
+					or(
+						and(
+							eq(trackingRun.workflowId, workflowId),
+							eq(trackingRun.status, 'cancelled'),
+						),
+						inArray(trackingRun.status, ['replaced', 'failed']),
+					),
 				),
 			);
 		const targets: {

@@ -33,7 +33,7 @@ Run with host networking so FastAPI can bind only to loopback for same-host
 
 ```console
 docker run --rm --gpus all --network host \
-  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=50g \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=8g \
   --mount type=bind,src=/var/lib/chassis-notes-gpu,dst=/var/lib/chassis-notes-gpu \
   --mount type=bind,src=/models/sam3.1.pt,dst=/models/sam3.1.pt,readonly \
   --env GPU_INFERENCE_PROFILE_PATH=/var/lib/chassis-notes-gpu/profile.json \
@@ -43,9 +43,23 @@ docker run --rm --gpus all --network host \
 
 The profile file is the canonical versioned Inference profile selected by
 Cloudflare. Its digest must match every submission, status, and artifact.
+Keep `pipeline.version` at `subject-tracking.v1`, the service's processing
+contract version; distinguish implementation changes with the pipeline and
+runtime-image digests. A different version in the profile causes the Worker to
+reject observation provenance even when inference succeeds.
 FastAPI intentionally trusts only Access-authenticated traffic delivered by the
 same-host Tunnel; neither the Access service token nor any R2 signing material
 is installed in this service.
+
+Decoded JPEGs are disposable scratch under `/tmp/chassis-notes-gpu-work`.
+The 8 GiB tmpfs keeps their creation and deletion off the durable journal volume
+and is included in the container's memory limit. Inputs, observation artifacts,
+and the execution journal remain in the private state directory. SAM loads at
+most two normalized image tensors at a time and retains conditioning frames
+plus the forward attention history still eligible for use. Re-identification
+starts a new session; these bounded sessions do not support reverse propagation
+or edits to already-processed frames. Validate the full recording with its
+installed profile before treating these bounds as demo acceptance evidence.
 
 Run the hermetic quality gate without the model extra:
 

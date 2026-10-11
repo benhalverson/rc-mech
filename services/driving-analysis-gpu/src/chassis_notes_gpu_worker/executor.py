@@ -1,4 +1,5 @@
 import shutil
+import tempfile
 import threading
 from collections.abc import Generator
 from dataclasses import dataclass, replace
@@ -156,7 +157,10 @@ class Sam31TrackingExecutor:
         service_root = job_root / "execution"
         settings = ServiceSettings(
             staging_root=service_root / "staged",
-            work_root=service_root / "work",
+            # Decoded frames are disposable scratch. Keeping thousands of JPEGs
+            # on the journal volume can stall lease/control writes during a race.
+            # The container bounds /tmp independently from durable job artifacts.
+            work_root=Path(tempfile.gettempdir()) / "chassis-notes-gpu-work",
             artifact_root=service_root / "artifacts",
             limits=replace(
                 MediaLimits(),

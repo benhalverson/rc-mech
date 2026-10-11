@@ -15,7 +15,7 @@ ExecStart=/usr/bin/docker run --rm --name chassis-notes-gpu \
   --gpus all \
   --network host \
   --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=8g \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --pids-limit 512 \
