@@ -19,7 +19,6 @@ const errorStatus = (
 		case 'CONFLICT':
 		case 'SOURCE_UNAVAILABLE':
 		case 'TERMINAL_FAILURE':
-		case 'QUOTA_EXCEEDED':
 			return 409;
 		case 'RATE_LIMITED':
 			return 429;

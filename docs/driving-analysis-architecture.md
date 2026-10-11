@@ -460,7 +460,7 @@ Accessibility requirements include keyboard-operable start/end marking and box a
 - Do not construct shell command strings from requests. Invoke FFmpeg with argument arrays and validated local paths.
 - Never log upload bodies, video frames, model inputs, Subject boxes, Transfer-grant or internal media URLs, Access headers, multipart identifiers, or R2 object bodies.
 - Redact container/provider exception text before it reaches D1 or clients. Structured internal logs retain only safe error class and stage.
-- Enforce per-file, retained-storage, incomplete-upload, and active-analysis quotas per User. Rate-limit upload creation and analysis creation without throttling legitimate authenticated part transfer.
+- Enforce per-file, retained-storage, and incomplete-upload quotas per User. Do not cap the number of active analyses: waiting for Re-identification releases GPU capacity, and retained work must not block a new analysis. The coordinator serializes GPU execution. Rate-limit upload creation and analysis creation without throttling legitimate authenticated part transfer.
 - Cancellation and deletion are ownership-checked commands, not direct Workflow or R2 identifiers supplied by the browser.
 
 ## Local development

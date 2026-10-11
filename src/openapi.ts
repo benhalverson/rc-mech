@@ -1927,7 +1927,7 @@ drivingAnalysisPaths['/api/v1/cars/{carId}/drives/{driveId}/driving-analyses'] =
 				},
 				409: {
 					description:
-						'Request identity reuse with different input, source readiness, Track-map, or active-analysis quota conflict',
+						'Request identity reuse with different input, source readiness, or Track-map conflict',
 				},
 				429: { description: 'Driving-analysis creation rate limit reached' },
 				503: { description: 'Durable processing Workflow unavailable' },

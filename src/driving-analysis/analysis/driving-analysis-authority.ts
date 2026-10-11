@@ -22,7 +22,6 @@ import {
 	digestFixedTrackViewLayout,
 	drivingAnalysisWorkflowPayloadSchema,
 	FIXED_TRACK_VIEW,
-	MAX_ACTIVE_DRIVING_ANALYSES_PER_OWNER,
 	MAX_DRIVING_ANALYSIS_CREATIONS_PER_HOUR,
 	type PublicDrivingAnalysis,
 } from './driving-analysis-contracts';
@@ -34,7 +33,6 @@ export type DrivingAnalysisAuthorityErrorCode =
 	| 'CONFLICT'
 	| 'INVALID_INPUT'
 	| 'NOT_FOUND'
-	| 'QUOTA_EXCEEDED'
 	| 'RATE_LIMITED'
 	| 'SOURCE_UNAVAILABLE'
 	| 'TERMINAL_FAILURE'
@@ -252,7 +250,6 @@ export class DrivingAnalysisAuthority {
 			);
 		await this.requireApprovedTrackMap(parsed.data.approvedTrackMapVersionId);
 		await this.verifySubjectFrame(command);
-		await this.requireOwnerWithinAnalysisQuota(command.ownerId);
 		await this.consumeCreationPermit(command.ownerId);
 
 		const analysisId = this.id();
@@ -304,7 +301,6 @@ export class DrivingAnalysisAuthority {
 				parsed.data.requestId,
 			);
 			if (raced) return this.replay(raced, requestDigest);
-			await this.requireOwnerWithinAnalysisQuota(command.ownerId);
 			throw authorityError('CONFLICT', 'Driving analysis could not be created');
 		}
 		await this.start(record);
@@ -1144,30 +1140,6 @@ export class DrivingAnalysisAuthority {
 			throw authorityError(
 				'CONFLICT',
 				'An approved Track-map version on an active layout is required',
-			);
-	}
-
-	private async requireOwnerWithinAnalysisQuota(
-		ownerId: string,
-	): Promise<void> {
-		const active = await this.database
-			.select({ id: drivingAnalysis.id })
-			.from(drivingAnalysis)
-			.where(
-				and(
-					eq(drivingAnalysis.ownerId, ownerId),
-					inArray(drivingAnalysis.status, [
-						'queued',
-						'running',
-						'awaiting-reidentification',
-					]),
-				),
-			)
-			.limit(MAX_ACTIVE_DRIVING_ANALYSES_PER_OWNER);
-		if (active.length >= MAX_ACTIVE_DRIVING_ANALYSES_PER_OWNER)
-			throw authorityError(
-				'QUOTA_EXCEEDED',
-				'Active Driving-analysis quota has been reached',
 			);
 	}
 
