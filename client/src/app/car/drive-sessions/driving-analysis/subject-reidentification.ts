@@ -14,6 +14,10 @@ import {
 	type SubjectBox,
 	subjectSeed,
 } from './driving-analysis.models';
+import {
+	PrivateVideoPlayerBinding,
+	PrivateVideoPlayerCapability,
+} from './private-video-player';
 import type { RaceRecording } from './race-recording.models';
 import { ReidentificationStore } from './reidentification-store';
 import { SubjectBoxEditor } from './subject-box-editor';
@@ -21,7 +25,7 @@ import { verifiedFrameImage } from './verified-frame-image';
 
 @Component({
 	selector: 'app-subject-reidentification',
-	imports: [SubjectBoxEditor],
+	imports: [SubjectBoxEditor, PrivateVideoPlayerBinding],
 	templateUrl: './subject-reidentification.html',
 	host: { class: 'block' },
 })
@@ -30,6 +34,13 @@ export class SubjectReidentification implements OnChanges {
 	readonly analysis = input.required<DrivingAnalysis>();
 	readonly recording = input.required<RaceRecording>();
 	protected readonly store = inject(ReidentificationStore);
+	protected readonly playback = inject(PrivateVideoPlayerCapability).create();
+	protected readonly playbackSource = computed(() =>
+		JSON.stringify([this.recording().id, this.recording().playbackUrl]),
+	);
+	protected readonly durationMs = computed(
+		() => this.recording().media?.durationMs ?? 0,
+	);
 	protected readonly selectedFrame = linkedSignal({
 		source: () => this.store.context(),
 		computation: () => 0,
@@ -108,6 +119,35 @@ export class SubjectReidentification implements OnChanges {
 		const frame = this.store.context()?.frames[frameIndex];
 		if (!frame) return;
 		this.selectedFrame.set(frameIndex);
+	}
+
+	protected playBeforeGap(): void {
+		const context = this.store.context();
+		if (!context) return;
+		this.playback.seek(
+			Math.max(
+				this.analysis().raceWindow.startTimestampMs,
+				context.gap.startTimestampMs - 2_000,
+			),
+		);
+		if (!this.playback.playing()) this.playback.toggle();
+	}
+
+	protected selectPlaybackFrame(): void {
+		this.playback.pause();
+		const timestamp = this.playback.currentTimestampMs();
+		const context = this.store.context();
+		const index = this.frames().findIndex(
+			(frame) => frame.timestampMs >= timestamp,
+		);
+		if (!context || timestamp <= context.gap.startTimestampMs || index < 0) {
+			this.error.set(
+				'Pause on a clear view of the same car after the tracking gap, inside the Race window.',
+			);
+			return;
+		}
+		this.error.set('');
+		this.selectedFrame.set(index);
 	}
 
 	/** Retry the accepted immutable correction through its workflow command. */

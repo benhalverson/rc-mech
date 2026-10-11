@@ -24,6 +24,7 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 		providers: [
 			CornerReviewGateway,
 			PageVisibilityCapability,
+			PrivateVideoPlayerCapability,
 			CornerReviewStore,
 			ReidentificationGateway,
 			ReidentificationIdentity,

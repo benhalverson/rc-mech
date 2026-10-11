@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrivingAnalysis } from './driving-analysis.models';
+import { PrivateVideoPlayerCapability } from './private-video-player';
 import type { RaceRecording } from './race-recording.models';
 import type {
 	CorrectionRecordingIdentity,
@@ -106,7 +107,10 @@ const setup = async () => {
 	};
 	TestBed.configureTestingModule({
 		imports: [SubjectReidentification],
-		providers: [{ provide: ReidentificationStore, useValue: store }],
+		providers: [
+			{ provide: ReidentificationStore, useValue: store },
+			PrivateVideoPlayerCapability,
+		],
 	});
 	const fixture = TestBed.createComponent(SubjectReidentification);
 	fixture.componentRef.setInput('analysis', analysis);

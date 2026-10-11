@@ -21,6 +21,20 @@
 		} @else if (context.frames.length === 0) {
 			<p role="status">No later prepared frames are available for this gap.</p>
 		} @else {
+			<details class="rounded border border-alloy-separator p-3">
+				<summary class="alloy-focus-ring cursor-pointer font-semibold">Review recording around the gap</summary>
+				<p>Follow the same car through the gap, pause on a clear view, then use that playback frame for the correction below.</p>
+				<video controls preload="metadata" class="aspect-video w-full bg-black" [privateVideoPlayer]="playback" [durationMs]="durationMs()" [sourceIdentity]="playbackSource()" [src]="recording().playbackUrl" aria-label="Private recording for car re-identification">
+					<track kind="captions" srclang="en" label="No captions available" src="/media/no-captions.vtt" />
+				</video>
+				<div class="mt-3 flex flex-wrap gap-3">
+					<button class="alloy-control alloy-control-secondary" type="button" (click)="playBeforeGap()">Play from before gap</button>
+					<button class="alloy-control alloy-control-secondary" type="button" (click)="playback.toggle()">{{ playback.playing() ? 'Pause recording' : 'Play recording' }}</button>
+					<button class="alloy-control alloy-control-primary" type="button" (click)="selectPlaybackFrame()">Use this playback frame</button>
+				</div>
+				<p>Playback position: {{ playback.currentTimestampMs() }} ms</p>
+				@if (playback.failure()) { <p role="alert">Private playback is unavailable. Retry playback or use the verified-frame slider below.</p> }
+			</details>
 			<form class="grid gap-3" (submit)="submit($event)">
 				@if (previewUrl(); as url) {
 					<fieldset class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
