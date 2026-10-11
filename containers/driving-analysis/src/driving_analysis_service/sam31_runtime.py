@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
 from driving_analysis_service.inference import InferenceFailureError
+from driving_analysis_service.sam31_confidence import use_frame_tracking_confidence
 from driving_analysis_service.sam31_frames import install_bounded_frame_loader
 from driving_analysis_service.sam31_inference import Sam31FrameResult
 from driving_analysis_service.sam31_memory import bound_forward_tracking_memory
@@ -33,6 +34,7 @@ type _InitState = Callable[..., object]
 
 class _StateModel(Protocol):
     init_state: _InitState
+    _postprocess_output: Callable[..., dict]
     _build_sam2_output: Callable[..., object]
     _convert_low_res_mask_to_video_res: Callable[..., object]
 
@@ -195,6 +197,9 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
         predictor.model.init_state
     )
     bound_forward_tracking_memory(predictor.model)
+    predictor.model._postprocess_output = use_frame_tracking_confidence(  # noqa: SLF001
+        predictor.model._postprocess_output  # noqa: SLF001
+    )
     # Compatibility adapter for the pinned upstream multiplex implementation.
     predictor.model._build_sam2_output = _merge_uncached_tracking_output(  # noqa: SLF001
         predictor.model._build_sam2_output  # noqa: SLF001

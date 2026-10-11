@@ -25,6 +25,7 @@ class _Array:
 class _Model:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self._postprocess_output = Mock()
 
     def _build_sam2_output(
         self,

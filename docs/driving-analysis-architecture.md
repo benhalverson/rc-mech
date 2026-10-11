@@ -321,6 +321,15 @@ A provider-neutral Subject observation contains:
 
 The configured threshold and provider-specific confidence calibration are part of run provenance. The public domain does not assume confidence values from different models are directly comparable.
 
+For SAM 3.1 point propagation, `out_probs` from the pinned upstream runtime is the
+original prompt/detection score, not a per-frame tracking score. The adapter keeps
+upstream mask filtering and exposes the sigmoid of the current object's presence
+logit from `obj_id_to_sam2_score` instead. Missing scores fail closed. Profiles using
+this behavior identify the calibration as `sam31-frame-presence-v1` and pin the
+updated runtime image and pipeline digest. Presence is not proof of identity:
+motion/area checks and manual gap recovery still apply, and full-race identity
+quality requires separately retained reference evidence.
+
 ### Tracking artifact acceptance
 
 1. The worker finalizes a successful segment artifact locally and reports `output-ready` with attempt, segment, specification, profile, lease, and fencing identities plus contract version, checksum, and byte count.
