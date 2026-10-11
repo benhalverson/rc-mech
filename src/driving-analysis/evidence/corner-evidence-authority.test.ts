@@ -25,6 +25,10 @@ import {
 	PROFILE_DIGEST,
 } from '../../testing/driving-analysis-tracking-fixtures';
 import { MockR2Controller } from '../../testing/hono-fixture';
+import {
+	preparationDigestFixture,
+	trackingRunInputFixture,
+} from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1, type SqliteD1Fixture } from '../../testing/sqlite-d1';
 import type { AppEnv } from '../../types';
 import { createAnalysisLifecycle } from '../analysis/analysis-lifecycle';
@@ -1023,14 +1027,28 @@ const seed = async (
 		averageFrameRate: { numerator: 10, denominator: 1 },
 		ffmpegVersion: '7.1.2',
 		pipelineVersion: 'subject-tracking.v1' as const,
-		preparationInputDigest: INPUT_DIGEST,
+		preparationInputDigest: preparationDigestFixture(
+			trackingRunInputFixture({
+				runId: RUN_ID,
+				raceVideoId: RACE_VIDEO_ID,
+				window: { startTimestampMs: 0, endTimestampMs: 400 },
+			}),
+			PREPARED_MEDIA_ID,
+		),
 		preparationConfigurationDigest: 'a'.repeat(64),
 	};
 	await database.insert(preparedTrackingMedia).values({
 		id: PREPARED_MEDIA_ID,
 		runId: RUN_ID,
 		descriptorJson: JSON.stringify(prepared),
-		preparationInputDigest: INPUT_DIGEST,
+		preparationInputDigest: preparationDigestFixture(
+			trackingRunInputFixture({
+				runId: RUN_ID,
+				raceVideoId: RACE_VIDEO_ID,
+				window: { startTimestampMs: 0, endTimestampMs: 400 },
+			}),
+			PREPARED_MEDIA_ID,
+		),
 		preparedChecksum: MEDIA_CHECKSUM,
 		frameManifestChecksum: source.manifestChecksum,
 		sourceChecksum: SOURCE_CHECKSUM,
@@ -1332,6 +1350,14 @@ describe('CornerEvidenceAuthority', () => {
 			preparedFrameManifestSchema.parse({
 				...sharedMeasurement.manifest,
 				caseId: RUN_ID,
+				preparationInputDigest: preparationDigestFixture(
+					trackingRunInputFixture({
+						runId: RUN_ID,
+						raceVideoId: RACE_VIDEO_ID,
+						window: { startTimestampMs: 0, endTimestampMs: 400 },
+					}),
+					PREPARED_MEDIA_ID,
+				),
 				window: { startTimestampMs: 0, endTimestampMs: 400 },
 				frames: sharedMeasurement.manifest.frames.slice(0, scenario.frameCount),
 			});
@@ -1537,6 +1563,23 @@ describe('CornerEvidenceAuthority', () => {
 			batchMeasurementDigest: storedBatch?.measurementDigest,
 			durationMs: storedBatch?.measurementDigest === 'c'.repeat(64) ? 100 : 101,
 		});
+	});
+
+	test('rejects prepared media carrying the run digest instead of its preparation digest', async () => {
+		const value = await seed();
+		if (!sqlite) throw new Error('SQLite fixture unavailable');
+		// Simulate a legacy/corrupt row below the normally immutable write boundary.
+		sqlite.exec('DROP TRIGGER prepared_tracking_media_immutable_update');
+		await value.database
+			.update(preparedTrackingMedia)
+			.set({ preparationInputDigest: INPUT_DIGEST })
+			.where(eq(preparedTrackingMedia.id, PREPARED_MEDIA_ID));
+		await expect(value.authority.load(identity)).rejects.toEqual(
+			new CornerEvidenceAuthorityError('STALE_AUTHORITY'),
+		);
+		expect(
+			await value.database.select().from(cornerEvidenceBatch),
+		).toHaveLength(0);
 	});
 
 	test('rejects stale lifecycle authority and database mutation', async () => {

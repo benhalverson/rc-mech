@@ -14,6 +14,7 @@ import {
 	TRANSFER_ID,
 } from '../../testing/driving-analysis-tracking-fixtures';
 import {
+	preparationDigestFixture,
 	preparedDescriptorFixture,
 	preparedObjectsFixture,
 	trackingRunInputFixture,
@@ -106,7 +107,10 @@ const seedPreparedTrackView = async (
 		runId: RUN_ID,
 		expectedRunVersion: 1,
 		expectedInputDigest: INPUT_DIGEST,
-		descriptor: preparedDescriptorFixture(INPUT_DIGEST, PREPARED_ID),
+		descriptor: preparedDescriptorFixture(
+			preparationDigestFixture(trackingRunInputFixture(), PREPARED_ID),
+			PREPARED_ID,
+		),
 		objects: preparedObjectsFixture(PREPARED_ID),
 		deleteAfter: '2026-08-17T20:00:00.000Z',
 		createdAt: NOW,

@@ -53,10 +53,8 @@ import {
 	uuidV4Schema,
 } from './contracts';
 import { inferenceProfileSchema } from './inference-profile';
-import {
-	LocalSam31Provider,
-	type TrackingProvider,
-} from './local-sam31-provider';
+import { createTrackingProvider } from './local-development';
+import type { TrackingProvider } from './local-sam31-provider';
 import { PreparedTrackViewAuthority } from './prepared-track-view-authority';
 import { preparedTrackViewStore } from './r2-prepared-track-view-store';
 import { R2TrackingArtifactStore } from './r2-tracking-artifact-store';
@@ -165,6 +163,8 @@ type CoordinatorPort = {
 };
 
 export type DrivingAnalysisWorkflowEnvironment = {
+	ENVIRONMENT?: string;
+	LOCAL_ANALYSIS_SECRET?: string;
 	DB: D1Database;
 	ANALYSIS_MEDIA: R2Bucket;
 	GPU_LEASE_COORDINATOR: {
@@ -1251,6 +1251,15 @@ export class TrackingRunWorkflow {
 		)
 			throw error;
 		const code = publicFailure(error);
+		// Publication completes the attempt before corner measurements and clips
+		// are committed. A later failure must preserve that accepted artifact for
+		// replay, and must not be masked by an invalid completed -> failed change.
+		const current = await this.authority
+			.workflowContext(workflowIdentity)
+			.catch(() => {
+				throw new TrackingWorkflowError('TRACKING_AUTHORITY_STALE');
+			});
+		if (current.acceptedArtifactId !== null) throw error;
 		try {
 			await step.do(
 				`record-safe-tracking-failure-${identity.attemptId}`,
@@ -1395,11 +1404,7 @@ export const trackingRunWorkflow = (
 		environment.GPU_LEASE_COORDINATOR.getByName(
 			GPU_LEASE_COORDINATOR_OBJECT_NAME,
 		),
-		new LocalSam31Provider({
-			origin: environment.GPU_PROVIDER_ORIGIN ?? '',
-			accessClientId: environment.GPU_ACCESS_CLIENT_ID ?? '',
-			accessClientSecret: environment.GPU_ACCESS_CLIENT_SECRET ?? '',
-		}),
+		createTrackingProvider(environment),
 		r2TransferGrantAuthority(environment),
 		trackingArtifactPublication(environment),
 		new AcceptedCornerEvidence(
@@ -1448,12 +1453,7 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 			const result = await new TrackingCancellation(
 				new TrackingAuthority(this.env.DB),
 				{
-					cancel: (command) =>
-						new LocalSam31Provider({
-							origin: this.env.GPU_PROVIDER_ORIGIN ?? '',
-							accessClientId: this.env.GPU_ACCESS_CLIENT_ID ?? '',
-							accessClientSecret: this.env.GPU_ACCESS_CLIENT_SECRET ?? '',
-						}).cancel(command),
+					cancel: (command) => createTrackingProvider(this.env).cancel(command),
 				},
 				this.env.GPU_LEASE_COORDINATOR.getByName(
 					GPU_LEASE_COORDINATOR_OBJECT_NAME,
@@ -1597,6 +1597,14 @@ const assertCurrentAttempt = (
 const targetAttemptState = (
 	status: JobStatus,
 ): 'transferring' | 'processing' | 'output-ready' => {
+	// The provider also uses "transferring" while uploading completed output.
+	if (
+		status.state === 'transferring' &&
+		status.transferRequest?.role === 'observation-artifact' &&
+		status.transferRequest.method === 'PUT' &&
+		status.artifact !== null
+	)
+		return 'output-ready';
 	if (
 		status.state === 'transfer-grant-required' ||
 		status.state === 'transferring'

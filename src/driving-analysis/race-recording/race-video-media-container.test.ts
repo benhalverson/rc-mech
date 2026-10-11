@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import acceptedFixture from '../../../containers/driving-analysis/tests/fixtures/race-video-validation/accepted.json';
 import rejectedFixture from '../../../containers/driving-analysis/tests/fixtures/race-video-validation/rejected.json';
 import { RUN_ID } from '../../testing/driving-analysis-tracking-fixtures';
@@ -26,6 +26,8 @@ import {
 	raceVideoPlaybackContentType,
 	raceVideoValidationResponseSchema,
 } from './race-video-validation-contracts';
+
+afterEach(() => vi.unstubAllGlobals());
 
 const RECORDING_ID = '11111111-1111-4111-8111-111111111111';
 const VALIDATION_ID = '22222222-2222-4222-8222-222222222222';
@@ -201,6 +203,7 @@ describe('Race-video media container adapter', () => {
 				})),
 				put: vi.fn(async (key: string, body: ReadableStream) => {
 					puts.push({ key, body });
+					await new Response(body).arrayBuffer();
 				}),
 			},
 			start: vi.fn(async () => undefined),
@@ -215,18 +218,43 @@ describe('Race-video media container adapter', () => {
 					),
 				),
 			),
-			stream: vi.fn(async () => ({
-				body: new ReadableStream<Uint8Array>(),
+			stream: vi.fn(async (path: string) => ({
+				body: new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(new Uint8Array(path.endsWith('.mp4') ? 14 : 15));
+						controller.close();
+					},
+				}),
 				waitForExit: async () => 0,
 			})),
 			cleanup: vi.fn(async () => undefined),
 		};
+		const lengths: number[] = [];
+		vi.stubGlobal(
+			'FixedLengthStream',
+			class extends TransformStream<Uint8Array, Uint8Array> {
+				constructor(byteCount: number) {
+					let received = 0;
+					super({
+						transform(chunk, controller) {
+							received += chunk.byteLength;
+							controller.enqueue(chunk);
+						},
+						flush() {
+							expect(received).toBe(byteCount);
+						},
+					});
+					lengths.push(byteCount);
+				}
+			},
+		);
 		await expect(
 			prepareRaceVideoTrackView(
 				preparationCommand,
 				runtime as unknown as RaceVideoTrackViewPreparationRuntime,
 			),
 		).resolves.toMatchObject({ outcome: 'accepted' });
+		expect(lengths).toEqual([14, 15]);
 		expect(runtime.start).toHaveBeenCalledOnce();
 		expect(runtime.stage).toHaveBeenCalledWith(
 			'/var/lib/rc-mech/staged/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.media',

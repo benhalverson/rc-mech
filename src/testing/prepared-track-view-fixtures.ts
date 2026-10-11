@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
 	PreparedFrameManifest,
 	PreparedTrackViewObject,
@@ -35,6 +36,30 @@ export const trackingRunInputFixture = (
 	},
 	...overrides,
 });
+
+// Independent media-side canonical request, matching Python's sorted JSON + LF.
+export const preparationDigestFixture = (
+	input = trackingRunInputFixture(),
+	preparedMediaId = PREPARED_MEDIA_ID,
+) =>
+	createHash('sha256')
+		.update(
+			`${JSON.stringify({
+				caseId: input.runId,
+				contractVersion: 'subject-tracking.v1',
+				input: {
+					expectedByteCount: input.sourceByteCount,
+					stagedMediaId: input.raceVideoId,
+				},
+				pipelineVersion: 'subject-tracking.v1',
+				preparedMediaId,
+				window: {
+					endTimestampMs: input.window.endTimestampMs,
+					startTimestampMs: input.window.startTimestampMs,
+				},
+			})}\n`,
+		)
+		.digest('hex');
 
 export const preparedDescriptorFixture = (
 	inputDigest: string,

@@ -12,6 +12,7 @@ import {
 	MANIFEST_SHA,
 	MEDIA_SHA,
 	PREPARED_MEDIA_ID,
+	preparationDigestFixture,
 	prepareAcceptedFixture,
 	trackingRunInputFixture,
 } from '../../testing/prepared-track-view-fixtures';
@@ -139,7 +140,11 @@ const preparationFixture = async (
 	const media = {
 		prepare: async (command: TrackViewMediaPreparationCommand) => {
 			calls.push(command);
-			return handler(command, analysisMedia, inputDigest);
+			return handler(
+				command,
+				analysisMedia,
+				preparationDigestFixture(input, command.request.preparedMediaId),
+			);
 		},
 	};
 	const store = storeFactory(analysisMedia);
@@ -245,7 +250,8 @@ describe('TrackViewPreparation', () => {
 		const result = await value.preparation.prepare(OWNER_ID, RUN_ID);
 		expect(result).toEqual({
 			runId: RUN_ID,
-			prepared: prepareAcceptedFixture(value.inputDigest).prepared,
+			prepared: prepareAcceptedFixture(preparationDigestFixture(value.input))
+				.prepared,
 		});
 		expect(JSON.stringify(result)).not.toContain('race-videos/');
 		expect(JSON.stringify(result)).not.toContain('prepared/');

@@ -47,6 +47,9 @@ const mockAi = {
 		throw new Error('Unexpected Workers AI call in backend tests');
 	},
 	models: async () => [],
+	websearch: () => {
+		throw new Error('Unexpected web search in backend tests');
+	},
 	toMarkdown: () => {
 		throw new Error('Unexpected Markdown conversion in backend tests');
 	},
@@ -83,6 +86,14 @@ const MOCK_ENV = {
 
 const request = (path: string, init?: RequestInit) =>
 	app.request(path, init, MOCK_ENV);
+
+test('local analysis transfer is unavailable without explicit development configuration', async () => {
+	const response = await request(
+		'/__local-analysis-transfer?capability=forged',
+	);
+	expect(response.status).toBe(404);
+	expect(await response.text()).toBe('');
+});
 
 test('health is exposed through the Worker request interface', async () => {
 	const response = await request('/api/v1/health');

@@ -145,28 +145,46 @@ class SourceFrameService:
             )
             if checksum != request.source_checksum_sha256:
                 return frame_error("SOURCE_MISMATCH", 422)
-            frames = _source_frames(
-                source,
-                RaceWindow(
-                    startTimestampMs=0, endTimestampMs=settings.limits.max_duration_ms
-                ),
-                metadata,
-                settings,
-                deadline,
-            )
             selection = request.selection
-            selected = next(
-                (
-                    frame
-                    for frame in frames
-                    if (
-                        frame.timestamp_ms >= selection.timestamp_ms
-                        if isinstance(selection, TimestampSelection)
-                        else frame.frame_index == selection.frame_index
-                    )
-                ),
-                None,
+            estimated_timestamp_ms = (
+                selection.timestamp_ms
+                if isinstance(selection, TimestampSelection)
+                else int(selection.frame_index * 1000 / metadata.average_frame_rate)
             )
+            # Read from the beginning so frame indices retain source provenance.
+            # A full scan remains available for unusual variable-rate timing.
+            read_end_timestamp_ms = (
+                min(estimated_timestamp_ms, metadata.duration_ms)
+                + metadata.start_time_ms
+                + 1000
+            )
+            selected = None
+            for read_end in (read_end_timestamp_ms, None):
+                frames = _source_frames(
+                    source,
+                    RaceWindow(
+                        startTimestampMs=0,
+                        endTimestampMs=settings.limits.max_duration_ms,
+                    ),
+                    metadata,
+                    settings,
+                    deadline,
+                    read_end_timestamp_ms=read_end,
+                )
+                selected = next(
+                    (
+                        frame
+                        for frame in frames
+                        if (
+                            frame.timestamp_ms >= selection.timestamp_ms
+                            if isinstance(selection, TimestampSelection)
+                            else frame.frame_index == selection.frame_index
+                        )
+                    ),
+                    None,
+                )
+                if selected is not None:
+                    break
             if selected is None:
                 return frame_error("FRAME_UNAVAILABLE", 422)
             image = None

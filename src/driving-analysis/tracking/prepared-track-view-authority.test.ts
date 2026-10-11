@@ -10,6 +10,7 @@ import {
 } from '../../testing/driving-analysis-tracking-fixtures';
 import {
 	PREPARED_MEDIA_ID,
+	preparationDigestFixture,
 	preparedDescriptorFixture,
 	preparedObjectsFixture,
 	trackingRunInputFixture,
@@ -83,7 +84,7 @@ const acceptCommand = (inputDigest: string) => ({
 	runId: RUN_ID,
 	expectedRunVersion: 1,
 	expectedInputDigest: inputDigest,
-	descriptor: preparedDescriptorFixture(inputDigest),
+	descriptor: preparedDescriptorFixture(preparationDigestFixture()),
 	objects: preparedObjectsFixture(),
 	deleteAfter: DELETE_AFTER,
 	createdAt: NOW,
@@ -262,7 +263,10 @@ describe('PreparedTrackViewAuthority', () => {
 		await expectAuthorityError(
 			authority.acceptPreparedTrackView({
 				...command,
-				descriptor: preparedDescriptorFixture(inputDigest, conflictingId),
+				descriptor: preparedDescriptorFixture(
+					preparationDigestFixture(trackingRunInputFixture(), conflictingId),
+					conflictingId,
+				),
 				objects: preparedObjectsFixture(conflictingId),
 			}),
 			'CONFLICT',

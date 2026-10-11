@@ -32,6 +32,31 @@ The Worker has a typed `EMAIL` Cloudflare Email Service seam in [src/email.ts](.
 
 For local database work, use `pnpm db:migrate:local`. To inspect or reset local D1, use Wrangler's local commands, for example `pnpm exec wrangler d1 migrations list DB --local`.
 
+### Real local video analysis
+
+Run `pnpm analysis:local` before starting (or restarting) `pnpm worker:dev`.
+Keep both processes and `pnpm client:dev` running, then use
+`http://localhost:4200`. The local account needs an uploaded, validated recording
+and an approved Track map. Local D1 and R2 are independent of production.
+
+The analysis launcher requires Docker with NVIDIA support, OpenSSL, the built GPU
+image, a matching inference profile, and the SAM 3.1 checkpoint. Defaults match
+the repository's GPU-host installation. Override `LOCAL_GPU_IMAGE`,
+`LOCAL_GPU_PROFILE_PATH`, and `LOCAL_GPU_CHECKPOINT_PATH` when installed elsewhere.
+
+The launcher starts a separate GPU worker on loopback port 8081 and a TLS media
+proxy on loopback port 9443. Its private development certificate is trusted only
+by that GPU container. Temporary `.dev.vars.local` entries select the installed
+profile and signed, expiring capabilities for the local R2 binding. The normal
+lease, fencing, checksum, and artifact-acceptance checks still run. Production
+ignores this path even if a local capability key is accidentally configured.
+No production Access or R2 signing credentials are needed.
+
+Stop the launcher with Ctrl+C to stop its GPU container and restore the previous
+local variables, then restart the local Worker. GPU state is kept in the separate
+`rc-mech-local-analysis-state` Docker volume. The production GPU service and its
+state are not modified; avoid running simultaneous production and local GPU jobs.
+
 ## Production setup and acceptance
 
 Production uses one Worker named `rc-mech` with five intentional runtime dependencies: D1 `DB` for relational data, private R2 `PHOTOS` for car photos, Email Service `EMAIL` for magic links, static assets `ASSETS` from `./public`, and `ENVIRONMENT=production`. The top-level Wrangler configuration is production; `env.local` is local-only. Deploy with bare `wrangler deploy`, which preserves the Worker name.

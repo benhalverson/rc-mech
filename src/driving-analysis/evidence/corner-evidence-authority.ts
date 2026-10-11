@@ -16,6 +16,7 @@ import {
 	subjectSeedSchema,
 } from '../tracking/contracts';
 import { inferenceProfileSchema } from '../tracking/inference-profile';
+import { digestPreparationInput } from '../tracking/preparation-input';
 import { FRAME_MANIFEST_CONTENT_TYPE } from '../tracking/track-view-contracts';
 import type {
 	AcceptedCornerEvidenceContext,
@@ -85,6 +86,11 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 					'evidence_prepared_media_id',
 				),
 				preparedDescriptorJson: preparedTrackingMedia.descriptorJson,
+				preparationInputDigest: preparedTrackingMedia.preparationInputDigest,
+				raceVideoId: trackingRunInput.raceVideoId,
+				sourceByteCount: trackingRunInput.sourceByteCount,
+				windowStartTimestampMs: trackingRunInput.windowStartTimestampMs,
+				windowEndTimestampMs: trackingRunInput.windowEndTimestampMs,
 				seedJson: trackingSegment.seedJson,
 				profileJson: inferenceProfileAuthority.configurationJson,
 				manifestObjectKey: preparedTrackingObject.objectKey,
@@ -197,10 +203,6 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 						subjectObservationArtifact.specificationDigest,
 					),
 					eq(
-						preparedTrackingMedia.preparationInputDigest,
-						trackingRunInput.inputDigest,
-					),
-					eq(
 						preparedTrackingMedia.sourceChecksum,
 						trackingRunInput.sourceChecksum,
 					),
@@ -230,6 +232,11 @@ export class CornerEvidenceAuthority implements CornerEvidenceAuthorityPort {
 			)
 			.get();
 		if (!source) throw stale();
+		if (
+			source.preparationInputDigest !==
+			(await digestPreparationInput(source, source.preparedMediaId))
+		)
+			throw stale();
 		const corners = await this.loadCorners(source.approvedTrackMapVersionId);
 		const existing = await this.loadExisting(source.artifactId);
 		if (existing && !batchMatchesSource(existing.batch, source)) throw stale();

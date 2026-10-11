@@ -16,6 +16,7 @@ import {
 } from '../../testing/driving-analysis-tracking-fixtures';
 import { MockR2Controller } from '../../testing/hono-fixture';
 import {
+	preparationDigestFixture,
 	preparedDescriptorFixture,
 	preparedObjectsFixture,
 	trackingRunInputFixture,
@@ -143,7 +144,10 @@ const publicationFixture = async () => {
 		runId: RUN_ID,
 		expectedRunVersion: 1,
 		expectedInputDigest: INPUT_DIGEST,
-		descriptor: preparedDescriptorFixture(INPUT_DIGEST, PREPARED_ID),
+		descriptor: preparedDescriptorFixture(
+			preparationDigestFixture(trackingRunInputFixture(), PREPARED_ID),
+			PREPARED_ID,
+		),
 		objects: preparedObjectsFixture(PREPARED_ID),
 		deleteAfter: '2026-08-18T20:00:00.000Z',
 		createdAt: START.toISOString(),

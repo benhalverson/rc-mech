@@ -541,6 +541,9 @@ export const createHonoFixture = (
 			throw new Error('Unexpected Workers AI call in backend tests');
 		},
 		models: async () => [],
+		websearch: () => {
+			throw new Error('Unexpected web search in backend tests');
+		},
 		toMarkdown: () => {
 			throw new Error('Unexpected Markdown conversion in backend tests');
 		},
