@@ -21,6 +21,7 @@ class InferenceSettings:
     endpoint: str | None = None
     fixture_path: Path | None = None
     checkpoint_path: Path | None = None
+    sam31_box_prompt: bool = False
     request_timeout_seconds: float = 30.0
     max_response_bytes: int = 64 * 1024
 

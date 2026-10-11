@@ -78,7 +78,9 @@ class Sam31CudaRuntime:
         checkpoint: Path,
         *,
         predictor_factory: _PredictorFactory | None = None,
+        box_prompt: bool = False,
     ) -> None:
+        self._box_prompt = box_prompt
         self._predictor = (predictor_factory or _build_predictor)(checkpoint)
         self._inference_context_factory = (
             _cuda_autocast if predictor_factory is None else nullcontext
@@ -113,16 +115,23 @@ class Sam31CudaRuntime:
             )
             session_id = _string(session.get("session_id"))
             try:
-                center_x = seed_box[0] + seed_box[2] / 2
-                center_y = seed_box[1] + seed_box[3] / 2
+                x, y, width, height = seed_box
+                # SAM's instance prompt encoder represents a bounding box with
+                # top-left/bottom-right points labelled 2 and 3. Keep the old
+                # center-point semantics available for already-pinned profiles.
+                points = (
+                    [[x, y], [x + width, y + height]]
+                    if self._box_prompt
+                    else [[x + width / 2, y + height / 2]]
+                )
                 _check_deadline(deadline)
                 self._predictor.handle_request(
                     {
                         "type": "add_prompt",
                         "session_id": session_id,
                         "frame_index": seed_position,
-                        "points": [[center_x, center_y]],
-                        "point_labels": [1],
+                        "points": points,
+                        "point_labels": [2, 3] if self._box_prompt else [1],
                         "obj_id": SUBJECT_OBJECT_ID,
                     }
                 )

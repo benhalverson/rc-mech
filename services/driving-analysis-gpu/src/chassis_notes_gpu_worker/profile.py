@@ -53,9 +53,9 @@ class InferenceProfile(StrictContract):
     identity_confidence_threshold: float = Field(
         alias="identityConfidenceThreshold", ge=0, le=1, strict=True
     )
-    prompt_semantics: Literal["subject-box-center-positive-point.v1"] = Field(
-        alias="promptSemantics"
-    )
+    prompt_semantics: Literal[
+        "subject-box-center-positive-point.v1", "subject-box-corners.v1"
+    ] = Field(alias="promptSemantics")
     tracking: TrackingConfiguration
 
     @property

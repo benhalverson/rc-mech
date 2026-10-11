@@ -115,7 +115,10 @@ def _output(
     }
 
 
-def test_sam31_runtime_uses_official_point_prompt_video_api(tmp_path: Path) -> None:
+@pytest.mark.parametrize("box_prompt", [False, True])
+def test_sam31_runtime_uses_official_point_prompt_video_api(
+    tmp_path: Path, *, box_prompt: bool
+) -> None:
     predictor = _Predictor(
         (
             _output(
@@ -130,6 +133,7 @@ def test_sam31_runtime_uses_official_point_prompt_video_api(tmp_path: Path) -> N
     runtime = Sam31CudaRuntime(
         tmp_path / "checkpoint.pt",
         predictor_factory=_factory(predictor),
+        box_prompt=box_prompt,
     )
 
     results = list(
@@ -157,8 +161,12 @@ def test_sam31_runtime_uses_official_point_prompt_video_api(tmp_path: Path) -> N
             "type": "add_prompt",
             "session_id": "session-1",
             "frame_index": 2,
-            "points": [[0.2, 0.30000000000000004]],
-            "point_labels": [1],
+            "points": (
+                [[0.1, 0.2], [0.30000000000000004, 0.4]]
+                if box_prompt
+                else [[0.2, 0.30000000000000004]]
+            ),
+            "point_labels": [2, 3] if box_prompt else [1],
             "obj_id": 1,
         },
         {

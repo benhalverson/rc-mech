@@ -295,6 +295,38 @@ def test_default_executor_reports_an_uninstalled_checkpoint_unready(
     assert executor.ready() is False
 
 
+@pytest.mark.parametrize("box_prompt", [False, True])
+def test_executor_uses_the_profile_prompt_semantics(
+    tmp_path: Path,
+    profile: InferenceProfile,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    box_prompt: bool,
+) -> None:
+    settings_seen = []
+
+    def create(settings: object) -> object:
+        settings_seen.append(settings)
+        return object()
+
+    monkeypatch.setattr(executor_module.Sam31InferenceProvider, "create", create)
+    Sam31TrackingExecutor(
+        profile.model_copy(
+            update={
+                "precision": "bfloat16",
+                "prompt_semantics": (
+                    "subject-box-corners.v1"
+                    if box_prompt
+                    else "subject-box-center-positive-point.v1"
+                ),
+            }
+        ),
+        tmp_path / "checkpoint.pt",
+    )
+    assert len(settings_seen) == 1
+    assert settings_seen[0].sam31_box_prompt is box_prompt
+
+
 @pytest.mark.parametrize("precision", ["float32", "float16"])
 def test_executor_rejects_unsupported_precision_before_loading_provider(
     profile: InferenceProfile,

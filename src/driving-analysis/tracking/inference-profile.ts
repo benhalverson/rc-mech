@@ -21,7 +21,10 @@ export const inferenceProfileSchema = z.strictObject({
 	precision: z.enum(['float32', 'float16', 'bfloat16']),
 	confidenceCalibration: profileIdentifier,
 	identityConfidenceThreshold: z.number().min(0).max(1),
-	promptSemantics: z.literal('subject-box-center-positive-point.v1'),
+	promptSemantics: z.enum([
+		'subject-box-center-positive-point.v1',
+		'subject-box-corners.v1',
+	]),
 	tracking: z.strictObject({
 		minimumAreaRatio: z.number().positive(),
 		maximumSeedAreaRatio: z.number().positive(),

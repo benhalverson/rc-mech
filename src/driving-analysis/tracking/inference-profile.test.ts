@@ -28,6 +28,22 @@ const EXPECTED_CANONICAL_PROFILE =
 	'"minimumAreaRatio":"f64:3fa999999999999a"}}';
 
 describe('Inference profile canonicalization', () => {
+	test('pins box prompts separately from historical center prompts', async () => {
+		const original = inferenceProfileFixture();
+		const boxProfile = inferenceProfileSchema.parse({
+			...original,
+			promptSemantics: 'subject-box-corners.v1',
+		});
+		expect(await digestInferenceProfile(boxProfile)).not.toBe(PROFILE_DIGEST);
+		expect(
+			new TextDecoder().decode(canonicalInferenceProfile(boxProfile)),
+		).toBe(
+			EXPECTED_CANONICAL_PROFILE.replace(
+				'subject-box-center-positive-point.v1',
+				'subject-box-corners.v1',
+			),
+		);
+	});
 	test('matches Python identity for the supported bfloat16 adapter profile', async () => {
 		const profile = inferenceProfileSchema.parse({
 			...inferenceProfileFixture(),

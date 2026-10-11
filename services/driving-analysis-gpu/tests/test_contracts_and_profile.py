@@ -41,6 +41,16 @@ def test_inference_profile_normalizes_negative_zero(
     assert canonical_profile_bytes(negative) == canonical_profile_bytes(positive)
 
 
+def test_box_prompt_has_distinct_profile_identity(profile: InferenceProfile) -> None:
+    body = profile.model_dump(mode="json", by_alias=True)
+    body["promptSemantics"] = "subject-box-corners.v1"
+    box_profile = InferenceProfile.model_validate(body)
+    assert box_profile.digest != profile.digest
+    assert b'"promptSemantics":"subject-box-corners.v1"' in (
+        canonical_profile_bytes(box_profile)
+    )
+
+
 def test_precision_changes_identity_without_rewriting_historical_profiles(
     profile: InferenceProfile,
 ) -> None:

@@ -230,22 +230,33 @@ def test_sam31_provider_handles_runtime_readiness_failures(
         )
 
 
+@pytest.mark.parametrize("box_prompt", [False, True])
 def test_sam31_default_runtime_factory_uses_cuda_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    box_prompt: bool,
 ) -> None:
     runtime = _Runtime(())
     checkpoints: list[Path] = []
 
-    def create(checkpoint: Path) -> _Runtime:
+    def create(checkpoint: Path, *, box_prompt: bool = False) -> _Runtime:
         checkpoints.append(checkpoint)
+        prompts.append(box_prompt)
         return runtime
 
+    prompts: list[bool] = []
     monkeypatch.setattr(runtime_module, "Sam31CudaRuntime", create)
 
     checkpoint = tmp_path / "sam3.1.pt"
-    assert sam31_module._create_cuda_runtime(checkpoint) is runtime
+    checkpoint.write_bytes(b"checkpoint")
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    provider = Sam31InferenceProvider.create(
+        replace(_settings(checkpoint, digest), sam31_box_prompt=box_prompt)
+    )
+    assert provider.ready()
     assert checkpoints == [checkpoint]
+    assert prompts == [box_prompt]
     assert not sam31_module._checkpoint_matches(tmp_path / "missing.pt", "0" * 64)
 
 

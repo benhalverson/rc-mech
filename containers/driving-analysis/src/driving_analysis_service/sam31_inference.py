@@ -73,7 +73,15 @@ class Sam31InferenceProvider:
         *,
         runtime_factory: Sam31RuntimeFactory | None = None,
     ) -> Self:
-        return cls(settings, runtime_factory or _create_cuda_runtime)
+        return cls(
+            settings,
+            runtime_factory
+            or (
+                lambda checkpoint: _create_cuda_runtime(
+                    checkpoint, box_prompt=settings.sam31_box_prompt
+                )
+            ),
+        )
 
     @property
     def provenance(self) -> SubjectProvenance:
@@ -132,12 +140,12 @@ class Sam31InferenceProvider:
             stream.close()
 
 
-def _create_cuda_runtime(checkpoint: Path) -> Sam31Runtime:
+def _create_cuda_runtime(checkpoint: Path, *, box_prompt: bool = False) -> Sam31Runtime:
     from driving_analysis_service.sam31_runtime import (  # noqa: PLC0415
         Sam31CudaRuntime,
     )
 
-    return Sam31CudaRuntime(checkpoint)
+    return Sam31CudaRuntime(checkpoint, box_prompt=box_prompt)
 
 
 def _checkpoint_matches(path: Path, expected_digest: str) -> bool:

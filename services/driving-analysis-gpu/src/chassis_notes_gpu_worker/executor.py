@@ -139,6 +139,7 @@ class Sam31TrackingExecutor:
             confidence_calibration=profile.confidence_calibration,
             identity_confidence_threshold=profile.identity_confidence_threshold,
             checkpoint_path=checkpoint_path,
+            sam31_box_prompt=profile.prompt_semantics == "subject-box-corners.v1",
         )
         self._provider = provider or Sam31InferenceProvider.create(settings)
 

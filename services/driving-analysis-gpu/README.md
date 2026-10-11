@@ -47,6 +47,12 @@ Keep `pipeline.version` at `subject-tracking.v1`, the service's processing
 contract version; distinguish implementation changes with the pipeline and
 runtime-image digests. A different version in the profile causes the Worker to
 reject observation provenance even when inference succeeds.
+For new box-seeded candidates, set `promptSemantics` to
+`subject-box-corners.v1`. The SAM instance encoder receives both normalized
+corners with labels 2 and 3, preserving the user's selected extent. Historical
+`subject-box-center-positive-point.v1` profiles retain their single-point
+behavior. Pin a new image/profile pair and create a new analysis when changing
+prompt semantics; do not rewrite an existing run's profile.
 FastAPI intentionally trusts only Access-authenticated traffic delivered by the
 same-host Tunnel; neither the Access service token nor any R2 signing material
 is installed in this service.
