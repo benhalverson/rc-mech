@@ -27,10 +27,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/service/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    TRITON_CACHE_DIR=/var/lib/chassis-notes-gpu/cache/triton \
+    PYTORCH_KERNEL_CACHE_PATH=/var/lib/chassis-notes-gpu/cache/torch \
     GPU_WORKER_STATE_ROOT=/var/lib/chassis-notes-gpu
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ffmpeg python3.12 \
+    && apt-get install --yes --no-install-recommends ffmpeg gcc python3.12 python3.12-dev \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -m 0700 -o 10001 -g 10001 /var/lib/chassis-notes-gpu
 

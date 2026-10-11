@@ -16,6 +16,7 @@ import {
 } from '../../testing/driving-analysis-tracking-fixtures';
 import { MockR2Controller } from '../../testing/hono-fixture';
 import {
+	preparationDigestFixture,
 	preparedDescriptorFixture,
 	preparedObjectsFixture,
 	trackingRunInputFixture,
@@ -293,7 +294,7 @@ const prepareAuthority = async () => {
 		runId: RUN_ID,
 		expectedRunVersion: 1,
 		expectedInputDigest: INPUT_DIGEST,
-		descriptor: preparedDescriptorFixture(INPUT_DIGEST),
+		descriptor: preparedDescriptorFixture(preparationDigestFixture()),
 		objects: preparedObjectsFixture(),
 		deleteAfter: '2026-08-18T20:00:00.000Z',
 		createdAt: NOW.toISOString(),
@@ -309,7 +310,8 @@ const workflowEvent = (): Readonly<
 		analysisId: ANALYSIS_ID,
 		runId: RUN_ID,
 		segmentId: SEGMENT_ID,
-		preparedMediaId: preparedDescriptorFixture(INPUT_DIGEST).preparedMediaId,
+		preparedMediaId: preparedDescriptorFixture(preparationDigestFixture())
+			.preparedMediaId,
 		subjectSeed: submissionFixture().trackingRequest.subjectSeed,
 	},
 	timestamp: NOW,
@@ -463,13 +465,14 @@ const coreWorkflowFixture = (
 		workflowId: WORKFLOW_ID,
 		profileDigest: PROFILE_DIGEST,
 		segmentId: SEGMENT_ID,
-		preparedMediaId: preparedDescriptorFixture(INPUT_DIGEST).preparedMediaId,
+		preparedMediaId: preparedDescriptorFixture(preparationDigestFixture())
+			.preparedMediaId,
 		specificationDigest: '4'.repeat(64),
 		availabilityDeadlineAt: NOW.getTime() + 86_400_000,
 		outcome: null,
 		acceptedArtifactId: null,
 		outputTransferRequestId: null,
-		prepared: preparedDescriptorFixture(INPUT_DIGEST),
+		prepared: preparedDescriptorFixture(preparationDigestFixture()),
 		profile: inferenceProfileFixture(),
 		seed: submissionFixture().trackingRequest.subjectSeed,
 		attempt,
@@ -2823,6 +2826,86 @@ describe('DrivingAnalysisWorkflow', () => {
 		},
 	);
 
+	test('preserves accepted output when clip rendering fails and completes on replay', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.status.mockImplementation(async (identity) => ({
+			ok: true,
+			value: completedStatusFixture(identity as TrackingJobSubmission),
+		}));
+		value.publication.publish.mockImplementation(async () => {
+			value.getContext().acceptedArtifactId = ATTEMPT_ID;
+			const attempt = value.getContext().attempt;
+			if (!attempt) throw new Error('Missing accepted attempt');
+			attempt.state = 'completed';
+		});
+		const failure = new Error('clip renderer unavailable');
+		value.renderClips.mockRejectedValue(failure);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toBe(failure);
+		expect(value.getContext().acceptedArtifactId).toBe(ATTEMPT_ID);
+		expect(value.getContext().attempt?.state).toBe('completed');
+		value.renderClips.mockResolvedValue(undefined);
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
+		await value.workflow.run(
+			workflowEvent(),
+			new WorkflowStepFixture() as unknown as WorkflowStep,
+		);
+		expect(value.publication.publish).toHaveBeenCalledOnce();
+		expect(value.provider.submit).not.toHaveBeenCalled();
+		expect(value.completeAnalysis).toHaveBeenCalledOnce();
+	});
+
+	test('keeps output uploads output-ready instead of regressing to input transfer', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'output-ready',
+			progress: 90,
+			safeFailureCode: null,
+		});
+		value.getContext().outputTransferRequestId = OUTPUT_TRANSFER_ID;
+		value.provider.status.mockImplementationOnce(async (identity) => ({
+			ok: true,
+			value: {
+				...completedStatusFixture(identity as TrackingJobSubmission),
+				state: 'transferring',
+				transferRequest: {
+					transferRequestId: OUTPUT_TRANSFER_ID,
+					role: 'observation-artifact',
+					method: 'PUT',
+				},
+			},
+		}));
+		value.provider.status.mockImplementation(async (identity) => ({
+			ok: true,
+			value: completedStatusFixture(identity as TrackingJobSubmission),
+		}));
+		await value.workflow.run(
+			workflowEvent(),
+			value.steps as unknown as WorkflowStep,
+		);
+		expect(value.authority.transitionAttempt).not.toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'transferring' }),
+		);
+		expect(value.publication.publish).toHaveBeenCalledOnce();
+		expect(value.completeAnalysis).toHaveBeenCalledOnce();
+	});
+
 	test('keeps accepted-evidence infrastructure failures retryable', async () => {
 		const value = coreWorkflowFixture({
 			attemptId: ATTEMPT_ID,
@@ -3037,6 +3120,37 @@ describe('DrivingAnalysisWorkflow', () => {
 			expect(() => trackingRunWorkflow(environment)).toThrow(expected);
 		},
 	);
+
+	test('redacts a persistence failure while marking an unaccepted attempt failed', async () => {
+		const value = coreWorkflowFixture({
+			attemptId: ATTEMPT_ID,
+			leaseId: LEASE_ID,
+			fence: 7,
+			state: 'active',
+			progress: 0,
+			safeFailureCode: null,
+		});
+		delete (value.coordinator as { requeueProviderLoss?: unknown })
+			.requeueProviderLoss;
+		value.provider.submit.mockResolvedValue({
+			ok: false,
+			code: 'TRACKING_PROVIDER_RESPONSE_INVALID',
+			retryable: false,
+		});
+		value.authority.transitionAttempt.mockRejectedValue(
+			new Error('private database detail'),
+		);
+		await expect(
+			value.workflow.run(
+				workflowEvent(),
+				value.steps as unknown as WorkflowStep,
+			),
+		).rejects.toEqual(new TrackingWorkflowError('TRACKING_AUTHORITY_STALE'));
+		expect(value.authority.transitionAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({ nextState: 'failed' }),
+		);
+		expect(value.publishAnalysisState).not.toHaveBeenCalled();
+	});
 
 	test('redacts an internal failure while recording the safe failure', async () => {
 		const value = coreWorkflowFixture({

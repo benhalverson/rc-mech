@@ -10,6 +10,11 @@ import {
 	type TransferGrantCommand,
 	transferGrantCommandSchema,
 } from './contracts';
+import {
+	type LocalAnalysisEnvironment,
+	LocalAnalysisTransferSigner,
+	localAnalysisEnabled,
+} from './local-development';
 import { TrackingAuthority } from './tracking-authority';
 
 export const INPUT_TRANSFER_GRANT_SECONDS = 30 * 60;
@@ -38,7 +43,7 @@ export type IssueTrackingTransferGrantCommand = z.infer<
 	typeof issueTrackingTransferGrantCommandSchema
 >;
 
-type TransferGrantBinding = {
+export type TransferGrantBinding = {
 	objectKey: string;
 	contentType: string;
 	method: 'GET' | 'PUT';
@@ -195,7 +200,7 @@ export class R2TransferGrantAuthority {
 	}
 }
 
-export type R2TransferGrantEnvironment = {
+export type R2TransferGrantEnvironment = LocalAnalysisEnvironment & {
 	DB: D1Database;
 	GPU_LEASE_COORDINATOR: {
 		getByName(name: string): LeaseWitness;
@@ -211,12 +216,14 @@ export const r2TransferGrantAuthority = (
 	new R2TransferGrantAuthority(
 		new TrackingAuthority(env.DB),
 		env.GPU_LEASE_COORDINATOR.getByName(GPU_LEASE_COORDINATOR_OBJECT_NAME),
-		new Aws4FetchR2TransferGrantSigner({
-			accountId: env.R2_ACCOUNT_ID ?? '',
-			accessKeyId: env.R2_ACCESS_KEY_ID ?? '',
-			secretAccessKey: env.R2_SECRET_ACCESS_KEY ?? '',
-			bucketName: ANALYSIS_MEDIA_BUCKET_NAME,
-		}),
+		localAnalysisEnabled(env)
+			? new LocalAnalysisTransferSigner(env)
+			: new Aws4FetchR2TransferGrantSigner({
+					accountId: env.R2_ACCOUNT_ID ?? '',
+					accessKeyId: env.R2_ACCESS_KEY_ID ?? '',
+					secretAccessKey: env.R2_SECRET_ACCESS_KEY ?? '',
+					bucketName: ANALYSIS_MEDIA_BUCKET_NAME,
+				}),
 	);
 
 const awsTimestamp = (epochSeconds: number): string =>

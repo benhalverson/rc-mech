@@ -11,6 +11,10 @@ import {
 import { isAllowedOrigin } from './auth-policy';
 import { maintainAnalysisMedia } from './driving-analysis/analysis/lifecycle-maintenance';
 import { createTrackMapRoutes } from './driving-analysis/track-maps/track-map-routes';
+import {
+	LOCAL_ANALYSIS_TRANSFER_PATH,
+	localAnalysisTransfer,
+} from './driving-analysis/tracking/local-development';
 import { createReidentificationRoutes } from './driving-analysis/tracking/reidentification-routes';
 import { createFeatureFlagRoutes } from './feature-flags/routes';
 import { openApi } from './openapi';
@@ -43,6 +47,9 @@ export const createApp = (
 	dependencies: AppDependencies = defaultAppDependencies,
 ) => {
 	const app = new Hono<AppEnv>();
+	app.all(LOCAL_ANALYSIS_TRANSFER_PATH, (c) =>
+		localAnalysisTransfer(c.req.raw, c.env),
+	);
 
 	app.use('*', async (c, next) => {
 		const url = new URL(c.req.url);

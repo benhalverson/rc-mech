@@ -235,15 +235,21 @@ const publishPreparedObject = async (
 	contentType: string,
 	contentEncoding: string | undefined,
 	checksumSha256: string,
+	byteCount: number,
 ): Promise<void> => {
 	const stream = await runtime.stream(path);
-	await runtime.bucket.put(key, stream.body, {
-		httpMetadata: {
-			contentType,
-			...(contentEncoding ? { contentEncoding } : {}),
-		},
-		customMetadata: { sha256: checksumSha256 },
-	});
+	const fixed = new FixedLengthStream(byteCount);
+	const copying = stream.body.pipeTo(fixed.writable);
+	await Promise.all([
+		copying,
+		runtime.bucket.put(key, fixed.readable, {
+			httpMetadata: {
+				contentType,
+				...(contentEncoding ? { contentEncoding } : {}),
+			},
+			customMetadata: { sha256: checksumSha256 },
+		}),
+	]);
 	/* c8 ignore next -- stream process failure is covered by live acceptance. */
 	if ((await stream.waitForExit()) !== 0)
 		/* c8 ignore next -- prepared artifact process failure is covered by live acceptance. */
@@ -313,6 +319,7 @@ export const prepareRaceVideoTrackView = async (
 			PREPARED_MEDIA_CONTENT_TYPE,
 			undefined,
 			parsed.prepared.checksumSha256,
+			parsed.prepared.byteCount,
 		);
 		await publishPreparedObject(
 			runtime,
@@ -324,6 +331,7 @@ export const prepareRaceVideoTrackView = async (
 			FRAME_MANIFEST_CONTENT_TYPE,
 			'gzip',
 			parsed.prepared.frameManifestChecksumSha256,
+			parsed.prepared.frameManifestByteCount,
 		);
 		return parsed;
 	} catch (error) {

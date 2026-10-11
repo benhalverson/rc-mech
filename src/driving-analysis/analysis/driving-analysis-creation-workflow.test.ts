@@ -210,6 +210,41 @@ describe('Driving-analysis creation Workflow', () => {
 		}
 	});
 
+	test.each(['tracking', 'preparation'] as const)(
+		'resumes a restarted %s workflow without preparing duplicate media',
+		async (stage) => {
+			const begun = {
+				kind: 'replayed' as const,
+				analysis: { ...analysis(3, 50), stage },
+			};
+			const authority = {
+				beginPreparation: vi.fn(async () => begun),
+			} as unknown as DrivingAnalysisAuthority;
+			const startPreparation = vi.fn();
+			const dispatch = vi.fn(async () => undefined);
+			const runner = new DrivingAnalysisCreationWorkflowRunner(
+				authority,
+				{ startPreparation },
+				() => new Date(),
+				dispatch,
+			);
+			await expect(
+				runner.run(event, new StepFixture() as unknown as WorkflowStep),
+			).resolves.toEqual({ status: 'replayed', analysis: begun.analysis });
+			expect(startPreparation).not.toHaveBeenCalled();
+			if (stage === 'tracking') {
+				expect(dispatch).toHaveBeenCalledExactlyOnceWith({
+					ownerId: payload.ownerId,
+					analysisId: ANALYSIS_ID,
+					runId: '9bf8ece4-1449-413e-bb03-ca67865d9aa5',
+					segmentId: '8f5c9237-b018-4960-a4b0-f619b610c767',
+					preparedMediaId: '7a08d05c-badb-4429-b656-e400ac0d655c',
+					subjectSeed: begun.analysis.subjectSeed,
+				});
+			} else expect(dispatch).not.toHaveBeenCalled();
+		},
+	);
+
 	test('continues a replayed zero-progress preparation from authoritative state', async () => {
 		const beginPreparation = vi.fn(async () => ({
 			kind: 'replayed' as const,

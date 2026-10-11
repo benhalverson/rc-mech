@@ -1,3 +1,4 @@
+import builtins
 import importlib
 import inspect
 import math
@@ -30,6 +31,8 @@ type _InitState = Callable[..., object]
 
 class _StateModel(Protocol):
     init_state: _InitState
+    _build_sam2_output: Callable[..., object]
+    _convert_low_res_mask_to_video_res: Callable[..., object]
 
 
 class _BuiltPredictor(_Predictor, Protocol):
@@ -55,6 +58,16 @@ class _Torch(Protocol):
         device_type: str,
         dtype: object,
     ) -> AbstractContextManager[object]: ...
+
+
+class _MaskTensor(Protocol):
+    def float(self) -> "_MaskTensor": ...
+
+    def unsqueeze(self, dim: int) -> "_MaskTensor": ...
+
+    def squeeze(self, dim: int) -> "_MaskTensor": ...
+
+    def __gt__(self, other: builtins.float) -> "_MaskTensor": ...
 
 
 class Sam31CudaRuntime:
@@ -169,6 +182,19 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
     predictor.model.init_state = _filter_init_state_arguments(
         predictor.model.init_state
     )
+    # Compatibility adapter for the pinned upstream multiplex implementation.
+    predictor.model._build_sam2_output = _merge_uncached_tracking_output(  # noqa: SLF001
+        predictor.model._build_sam2_output  # noqa: SLF001
+    )
+    predictor.model._convert_low_res_mask_to_video_res = _remove_small_mask_fragments(  # noqa: SLF001
+        predictor.model._convert_low_res_mask_to_video_res,  # noqa: SLF001
+        cast(
+            "Callable[..., _MaskTensor]",
+            importlib.import_module(
+                "sam3.model.sam3_tracker_utils"
+            ).fill_holes_in_mask_scores,
+        ),
+    )
     return predictor
 
 
@@ -186,6 +212,60 @@ def _filter_init_state_arguments(init_state: _InitState) -> _InitState:
         )
 
     return compatible_init_state
+
+
+def _merge_uncached_tracking_output(
+    build_output: Callable[..., object],
+) -> Callable[..., object]:
+    """Preserve SAM 3.1 point-prompt masks on frames without detection history.
+
+    The pinned multiplex implementation returns early for an uncached frame,
+    discarding the refined tracker mask it just computed. Point-only sessions
+    have no detector cache beyond the seed frame. Initialize an empty entry so
+    the upstream merge and subsequent suppression checks process the real mask.
+    """
+
+    def compatible_build_output(
+        inference_state: dict[str, object],
+        frame_idx: int,
+        refined_obj_id_to_mask: object = None,
+    ) -> object:
+        cache = inference_state.get("cached_frame_outputs")
+        if not isinstance(cache, dict):
+            raise InferenceFailureError
+        if refined_obj_id_to_mask is not None:
+            cache.setdefault(frame_idx, {})
+        return build_output(inference_state, frame_idx, refined_obj_id_to_mask)
+
+    return compatible_build_output
+
+
+def _remove_small_mask_fragments(
+    convert_mask: Callable[..., object],
+    clean_components: Callable[..., _MaskTensor],
+) -> Callable[..., object]:
+    """Exclude tiny disconnected mask fragments before SAM calculates its boxes.
+
+    A remote single pixel can expand a valid car mask into a track-sized box.
+    Use SAM's component cleanup at native video resolution. It removes only
+    components of at most eight pixels and at most half the mask's total area,
+    retaining the subject component without relaxing any identity guard.
+    """
+
+    def clean_mask(low_res_mask: object, inference_state: object) -> object:
+        converted = convert_mask(low_res_mask, inference_state)
+        if converted is None:
+            return None
+        mask = cast("_MaskTensor", converted)
+        cleaned = clean_components(
+            mask.float().unsqueeze(0),
+            max_area=8,
+            fill_holes=False,
+            remove_sprinkles=True,
+        )
+        return cleaned.squeeze(0) > 0.0
+
+    return clean_mask
 
 
 def _frame_result(outputs: Mapping[str, object]) -> Sam31FrameResult:

@@ -28,7 +28,6 @@ const preparationResultSchema = z.strictObject({
 	preparedMediaId: z.string().uuid().optional(),
 });
 
-/* c8 ignore next -- deterministic identity is exercised by the deployed Workflow. */
 const deterministicUuidV4 = async (value: string): Promise<string> => {
 	const digest = new Uint8Array(
 		await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
@@ -226,8 +225,24 @@ export class DrivingAnalysisCreationWorkflowRunner {
 				),
 		);
 		if (begun.kind === 'stale') return { status: 'stale' };
-		if (begun.kind === 'replayed' && begun.analysis.progress > 0)
+		if (begun.kind === 'replayed' && begun.analysis.progress > 0) {
+			// A restarted Workflow has no cached steps. Resume the existing run
+			// rather than reporting completion while its analysis is still tracking.
+			if (this.startFirstTracking && begun.analysis.stage === 'tracking') {
+				const runId = await deterministicUuidV4(
+					`${begun.analysis.id}:tracking-run:${event.instanceId}`,
+				);
+				await this.startFirstTracking({
+					ownerId: payload.ownerId,
+					analysisId: begun.analysis.id,
+					runId,
+					segmentId: await deterministicUuidV4(`${runId}:first-segment`),
+					preparedMediaId: await deterministicUuidV4(`${runId}:preparation:1`),
+					subjectSeed: begun.analysis.subjectSeed,
+				});
+			}
 			return { status: 'replayed', analysis: begun.analysis };
+		}
 
 		const analysis = begun.analysis;
 		const createdAt = event.timestamp.toISOString();

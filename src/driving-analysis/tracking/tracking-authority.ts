@@ -85,6 +85,7 @@ import {
 	type InferenceProfile,
 	inferenceProfileSchema,
 } from './inference-profile';
+import { digestPreparationInput } from './preparation-input';
 import type { TrackingArtifactStore } from './r2-tracking-artifact-store';
 import { readReidentificationFrames } from './reidentification-frames';
 import {
@@ -334,7 +335,9 @@ export class TrackingAuthority {
 		/* c8 ignore next 19 -- the typed prepared-view authority validates this tuple before its one immutable D1 commit; this remains a corruption defense at the consumer boundary. */
 		if (
 			input.inputDigest !== run.inputDigest ||
-			prepared.preparationInputDigest !== input.inputDigest ||
+			prepared.preparationInputDigest !==
+				(await digestPreparationInput(input, command.preparedMediaId)) ||
+			prepared.caseId !== run.id ||
 			prepared.sourceByteCount !== input.sourceByteCount ||
 			prepared.sourceChecksumSha256 !== input.sourceChecksum ||
 			prepared.window.startTimestampMs !== input.windowStartTimestampMs ||

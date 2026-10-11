@@ -13,6 +13,7 @@ import {
 	TRANSFER_ID,
 } from '../../testing/driving-analysis-tracking-fixtures';
 import {
+	preparationDigestFixture,
 	preparedDescriptorFixture,
 	preparedObjectsFixture,
 	trackingRunInputFixture,
@@ -80,7 +81,7 @@ const authorityFixture = async () => {
 		runId: RUN_ID,
 		expectedRunVersion: 1,
 		expectedInputDigest: INPUT_DIGEST,
-		descriptor: preparedDescriptorFixture(INPUT_DIGEST),
+		descriptor: preparedDescriptorFixture(preparationDigestFixture()),
 		objects: preparedObjectsFixture(),
 		deleteAfter: new Date((NOW_SECONDS + 86_400) * 1000).toISOString(),
 		createdAt: NOW,
@@ -95,7 +96,8 @@ const authorityFixture = async () => {
 			sourceId: null,
 			value: submissionFixture().trackingRequest.subjectSeed,
 		},
-		preparedMediaId: preparedDescriptorFixture(INPUT_DIGEST).preparedMediaId,
+		preparedMediaId: preparedDescriptorFixture(preparationDigestFixture())
+			.preparedMediaId,
 		specificationVersion: 'tracking-segment-spec.v1',
 		availabilityDeadlineAt: (NOW_SECONDS + 86_400) * 1000,
 		createdAt: NOW,
@@ -370,6 +372,22 @@ describe('R2TransferGrantAuthority', () => {
 		expect(() => r2TransferGrantAuthority(incompleteEnvironment)).toThrow(
 			'CONFIGURATION_INVALID',
 		);
+		const local = r2TransferGrantAuthority({
+			...incompleteEnvironment,
+			ENVIRONMENT: 'local',
+			LOCAL_ANALYSIS_SECRET: 'a'.repeat(64),
+		});
+		const localGrant = await local.issue(
+			issueCommand(segment.specificationDigest),
+		);
+		expect(new URL(localGrant.url).origin).toBe('https://127.0.0.1:9443');
+		expect(() =>
+			r2TransferGrantAuthority({
+				...incompleteEnvironment,
+				ENVIRONMENT: 'production',
+				LOCAL_ANALYSIS_SECRET: 'a'.repeat(64),
+			}),
+		).toThrow('CONFIGURATION_INVALID');
 	});
 
 	test('rejects method-role mismatch before touching authority', () => {

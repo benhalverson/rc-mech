@@ -3,6 +3,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -24,6 +25,23 @@ class _Array:
 class _Model:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+
+    def _build_sam2_output(
+        self,
+        inference_state: dict[str, object],
+        frame_idx: int,
+        refined_obj_id_to_mask: object = None,
+    ) -> object:
+        cache = inference_state["cached_frame_outputs"]
+        assert isinstance(cache, dict)
+        return refined_obj_id_to_mask if frame_idx in cache else {}
+
+    def _convert_low_res_mask_to_video_res(
+        self,
+        mask: object,
+        _state: object,
+    ) -> object:
+        return mask
 
     def init_state(
         self,
@@ -366,6 +384,9 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
         "sam3.model_builder": SimpleNamespace(
             build_sam3_multiplex_video_predictor=builder
         ),
+        "sam3.model.sam3_tracker_utils": SimpleNamespace(
+            fill_holes_in_mask_scores=Mock(),
+        ),
     }
     monkeypatch.setattr(
         "driving_analysis_service.sam31_runtime.importlib.import_module",
@@ -376,6 +397,10 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
     built = runtime_module._build_predictor(checkpoint)
 
     assert built is predictor
+    mask = object()
+    state: dict[str, object] = {"cached_frame_outputs": {}}
+    assert predictor.model._build_sam2_output(state, 1, mask) is mask
+    assert predictor.model._convert_low_res_mask_to_video_res(None, state) is None
     assert calls == [
         {
             "checkpoint_path": str(checkpoint),
@@ -412,3 +437,61 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
     modules["sam3.model_builder"] = SimpleNamespace()
     with pytest.raises(TypeError):
         runtime_module._build_predictor(checkpoint)
+
+
+def test_point_tracking_preserves_existing_cache_and_no_mask_behavior() -> None:
+    existing = {7: object()}
+    state: dict[str, object] = {"cached_frame_outputs": {1: existing}}
+    original = Mock(return_value="merged")
+    adapted = runtime_module._merge_uncached_tracking_output(original)
+    mask = object()
+    assert adapted(state, 1, mask) == "merged"
+    assert state == {"cached_frame_outputs": {1: existing}}
+    original.assert_called_once_with(state, 1, mask)
+    assert adapted(state, 2) == "merged"
+    assert state == {"cached_frame_outputs": {1: existing}}
+    original.assert_called_with(state, 2, None)
+
+
+@pytest.mark.parametrize("cache", [None, [], "invalid"])
+def test_point_tracking_rejects_invalid_cache(cache: object) -> None:
+    original = Mock()
+    adapted = runtime_module._merge_uncached_tracking_output(original)
+    with pytest.raises(InferenceFailureError):
+        adapted({"cached_frame_outputs": cache}, 1, object())
+    original.assert_not_called()
+
+
+def test_native_mask_cleanup_preserves_resolution_and_returns_boolean_mask() -> None:
+    low_res = object()
+    state = object()
+    native_mask = MagicMock()
+    boolean_mask = object()
+    cleaned = MagicMock()
+    cleaned.squeeze.return_value.__gt__.return_value = boolean_mask
+    convert = Mock(return_value=native_mask)
+    cleanup = Mock(return_value=cleaned)
+    adapted = runtime_module._remove_small_mask_fragments(convert, cleanup)
+    assert adapted(low_res, state) is boolean_mask
+    convert.assert_called_once_with(low_res, state)
+    native_mask.float.return_value.unsqueeze.assert_called_once_with(0)
+    cleanup.assert_called_once_with(
+        native_mask.float.return_value.unsqueeze.return_value,
+        max_area=8,
+        fill_holes=False,
+        remove_sprinkles=True,
+    )
+    cleaned.squeeze.assert_called_once_with(0)
+    cleaned.squeeze.return_value.__gt__.assert_called_once_with(0.0)
+
+
+def test_mask_cleanup_preserves_missing_mask_and_upstream_failure() -> None:
+    convert = Mock(return_value=None)
+    cleanup = Mock()
+    adapted = runtime_module._remove_small_mask_fragments(convert, cleanup)
+    assert adapted(None, {}) is None
+    cleanup.assert_not_called()
+    convert.side_effect = RuntimeError("conversion failed")
+    with pytest.raises(RuntimeError, match="conversion failed"):
+        adapted(object(), {})
+    cleanup.assert_not_called()

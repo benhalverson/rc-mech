@@ -16,6 +16,10 @@ import {
 } from '../../schema';
 import { inferenceProfileFixture } from '../../testing/driving-analysis-tracking-fixtures';
 import { MockR2Controller } from '../../testing/hono-fixture';
+import {
+	preparationDigestFixture,
+	trackingRunInputFixture,
+} from '../../testing/prepared-track-view-fixtures';
 import { createSqliteD1 } from '../../testing/sqlite-d1';
 import { cornerClipPublication } from '../clips/clip-schema';
 import { CornerClipAuthority } from '../clips/corner-clip-authority';
@@ -254,10 +258,6 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 					request,
 					output,
 				}: import('../tracking/track-view-preparation').TrackViewMediaPreparationCommand) => {
-					const context = await prepared.preparationContext(
-						OWNER_ID,
-						request.caseId,
-					);
 					const bytes = new Uint8Array([1, 2, 3, 4]);
 					const checksum = await digest(bytes);
 					const facts = {
@@ -272,7 +272,15 @@ test('composes preparation, accepted gap, exact-frame correction, Corner clips a
 						averageFrameRate: { numerator: 10, denominator: 1 },
 						ffmpegVersion: '7.1.2',
 						pipelineVersion: 'subject-tracking.v1' as const,
-						preparationInputDigest: context.input.inputDigest,
+						preparationInputDigest: preparationDigestFixture(
+							trackingRunInputFixture({
+								runId: request.caseId,
+								raceVideoId: request.input.stagedMediaId,
+								sourceByteCount: request.input.expectedByteCount,
+								window: request.window,
+							}),
+							request.preparedMediaId,
+						),
 						preparationConfigurationDigest: '9'.repeat(64),
 					};
 					const manifest = await gzip({

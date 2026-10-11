@@ -10,6 +10,7 @@ import {
 	trackingRunInput,
 } from './authority-schema';
 import { preparedMediaArtifactSchema } from './contracts';
+import { digestPreparationInput } from './preparation-input';
 import {
 	type AcceptPreparedTrackViewCommand,
 	acceptPreparedTrackViewCommandSchema,
@@ -292,7 +293,10 @@ export class PreparedTrackViewAuthority {
 			context.run.inputDigest !== command.expectedInputDigest ||
 			context.input.inputDigest !== command.expectedInputDigest ||
 			command.descriptor.preparationInputDigest !==
-				command.expectedInputDigest ||
+				(await digestPreparationInput(
+					context.input,
+					command.descriptor.preparedMediaId,
+				)) ||
 			command.descriptor.caseId !== command.runId ||
 			command.descriptor.sourceByteCount !== context.input.sourceByteCount ||
 			command.descriptor.sourceChecksumSha256 !==

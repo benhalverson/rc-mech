@@ -1,3 +1,4 @@
+import { digestPreparationInput } from './preparation-input';
 import { preparedObjectKeys } from './prepared-object-keys';
 import {
 	type AcceptedPreparedTrackView,
@@ -205,7 +206,8 @@ export class TrackViewPreparation {
 			descriptor.window.startTimestampMs !==
 				context.input.windowStartTimestampMs ||
 			descriptor.window.endTimestampMs !== context.input.windowEndTimestampMs ||
-			descriptor.preparationInputDigest !== context.input.inputDigest
+			descriptor.preparationInputDigest !==
+				(await digestPreparationInput(context.input, preparedMediaId))
 		) {
 			await this.cleanup(candidateKeys);
 			throw new TrackViewPreparationError(

@@ -149,6 +149,9 @@ class RaceWindowPreparationService:
                 metadata,
                 self.settings,
                 deadline,
+                read_end_timestamp_ms=request.window.end_timestamp_ms
+                + metadata.start_time_ms
+                + 1000,
             )
             ffmpeg_version = probe_ffmpeg_version(self.settings, deadline)
             with tempfile.TemporaryDirectory(
@@ -352,12 +355,14 @@ def _validate_window(
         raise InvalidProcessingRequestError
 
 
-def _source_frames(
+def _source_frames(  # noqa: PLR0913 - optional probe bound preserves full-scan fallback
     source: Path,
     window: RaceWindow,
     metadata: ProbeMetadata,
     settings: ServiceSettings,
     deadline: float,
+    *,
+    read_end_timestamp_ms: int | None = None,
 ) -> tuple[PreparedFrame, ...]:
     output_limit = min(
         MAX_FRAME_TIMESTAMP_OUTPUT_BYTES,
@@ -377,6 +382,11 @@ def _source_frames(
             str(metadata.video_stream_index),
             "-show_entries",
             "frame=best_effort_timestamp_time",
+            *(
+                ("-read_intervals", f"%{read_end_timestamp_ms / 1000:.3f}")
+                if read_end_timestamp_ms is not None
+                else ()
+            ),
             "-of",
             "csv=p=0",
             str(source),
@@ -417,7 +427,9 @@ def _source_frames(
             if window.start_timestamp_ms <= item[1] < window.end_timestamp_ms
         )
     )
-    if not selected or len(selected) > settings.limits.max_frames:
+    if (not selected and read_end_timestamp_ms is None) or len(
+        selected
+    ) > settings.limits.max_frames:
         raise ValueError("Race window source frame count is invalid")
     if any(
         current.frame_index <= previous.frame_index

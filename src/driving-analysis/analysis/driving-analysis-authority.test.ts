@@ -25,6 +25,7 @@ import {
 	MockR2Controller,
 } from '../../testing/hono-fixture';
 import {
+	preparationDigestFixture,
 	preparedDescriptorFixture,
 	preparedObjectsFixture,
 	trackingRunInputFixture,
@@ -290,7 +291,7 @@ const seedPreparedAnalysis = async (binding: D1Database) => {
 		expectedRunVersion: 1,
 		expectedInputDigest: inputDigest,
 		descriptor: {
-			...preparedDescriptorFixture(inputDigest),
+			...preparedDescriptorFixture(preparationDigestFixture(pinned)),
 			caseId: RETRY_WORKFLOW_ID,
 			sourceByteCount: 1024,
 			sourceChecksumSha256: 'a'.repeat(64),
