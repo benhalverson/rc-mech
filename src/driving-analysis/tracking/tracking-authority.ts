@@ -1950,7 +1950,7 @@ export class TrackingAuthority {
 		const run = await this.requireOwnedRun(ownerId, runId);
 		if (run.analysisId !== analysisId)
 			throw notFound('Tracking run was not found');
-		const [segments, attempts] = await Promise.all([
+		const [segments, attempts, prepared] = await Promise.all([
 			this.database
 				.select()
 				.from(trackingSegment)
@@ -1974,20 +1974,34 @@ export class TrackingAuthority {
 					asc(trackingExecutionAttempt.createdAt),
 					asc(trackingExecutionAttempt.id),
 				),
+			this.database
+				.select()
+				.from(preparedTrackingMedia)
+				.where(eq(preparedTrackingMedia.runId, runId))
+				.get(),
 		]);
 		const attemptSummaries = attempts as TrackingAttemptSummary[];
-		const currentAttemptIds = new Set(
-			segments.flatMap((segment) =>
-				segment.currentAttemptId === null ? [] : [segment.currentAttemptId],
-			),
-		);
 		const latestAttempt =
-			attemptSummaries.find((attempt) => currentAttemptIds.has(attempt.id)) ??
-			attemptSummaries.at(-1);
-		const highWater = attemptSummaries.reduce(
-			(progress, attempt) => Math.max(progress, attempt.progress),
-			0,
-		);
+			attemptSummaries.find(
+				(attempt) => attempt.id === segments.at(-1)?.currentAttemptId,
+			) ?? attemptSummaries.at(-1);
+		// Provider progress describes one execution, which can finish at an early
+		// tracking gap. Only accepted source positions establish race progress.
+		const highWater = prepared
+			? segments.reduce((progress, segment) => {
+					if (segment.acceptedArtifactId === null) return progress;
+					if (segment.outcome === 'completed') return 99;
+					if (segment.gapJson === null) return progress;
+					const gap = trackingGapSchema.parse(JSON.parse(segment.gapJson));
+					const fraction =
+						(gap.startTimestampMs - prepared.windowStartTimestampMs) /
+						(prepared.windowEndTimestampMs - prepared.windowStartTimestampMs);
+					return Math.max(
+						progress,
+						Math.min(98, Math.max(0, Math.floor(fraction * 99))),
+					);
+				}, 0)
+			: 0;
 		const currentWaitReason = segments.at(-1)?.waitReason;
 		const acceptedGap = segments.at(-1)?.outcome === 'tracking-gap';
 		const hasAcceptedEvidence = segments.some(
@@ -2020,21 +2034,21 @@ export class TrackingAuthority {
 		} else if (currentWaitReason) {
 			state = {
 				lifecycle: hasAcceptedEvidence ? 'running' : 'queued',
-				progress: hasAcceptedEvidence ? 99 : Math.min(highWater, 99),
+				progress: highWater,
 				waitReason: currentWaitReason,
 				safeFailureCode: null,
 			};
 		} else if (acceptedGap) {
 			state = {
 				lifecycle: 'awaiting-reidentification',
-				progress: 99,
+				progress: highWater,
 				waitReason: null,
 				safeFailureCode: null,
 			};
 		} else if (hasAcceptedEvidence) {
 			state = {
 				lifecycle: 'running',
-				progress: 99,
+				progress: highWater,
 				waitReason: null,
 				safeFailureCode: null,
 			};

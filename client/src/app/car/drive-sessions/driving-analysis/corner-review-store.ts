@@ -52,7 +52,8 @@ export const CornerReviewStore = signalStore(
 				if (!store.lifecycleResource.hasValue()) return null;
 				const lifecycle = store.lifecycleResource.value();
 				return lifecycle.analysisId === store.analysisId() &&
-					lifecycle.status === 'awaiting-reidentification'
+					lifecycle.status !== 'deleting' &&
+					lifecycle.status !== 'deleted'
 					? lifecycle.analysisId
 					: null;
 			}),
@@ -72,6 +73,11 @@ export const CornerReviewStore = signalStore(
 		};
 	}),
 	withComputed((store) => ({
+		analysis: computed(() => {
+			if (!store.correctionAnalysisResource.hasValue()) return null;
+			const analysis = store.correctionAnalysisResource.value();
+			return analysis.id === store.analysisId() ? analysis : null;
+		}),
 		correction: computed(() => {
 			if (!store.lifecycleResource.hasValue()) return null;
 			const lifecycle = store.lifecycleResource.value();
@@ -175,6 +181,11 @@ export const CornerReviewStore = signalStore(
 						!store.lifecycleResource.isLoading()
 					)
 						store.lifecycleResource.reload();
+					if (
+						(status === 'queued' || status === 'running') &&
+						!store.correctionAnalysisResource.isLoading()
+					)
+						store.correctionAnalysisResource.reload();
 				}),
 			),
 		);

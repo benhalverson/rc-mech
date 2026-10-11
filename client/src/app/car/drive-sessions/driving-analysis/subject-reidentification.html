@@ -37,7 +37,8 @@
 			</details>
 			<form class="grid gap-3" (submit)="submit($event)">
 				@if (previewUrl(); as url) {
-					<fieldset class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
+					@if (!frameReady() && !frameImage.failed()) { <p role="status">Loading the selected frame. Car selection will be available when the image is ready.</p> }
+					<fieldset class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [attr.aria-busy]="!frameReady()" [class.pointer-events-none]="!frameReady()">
 						<legend class="sr-only">Verified correction frame</legend>
 						<app-subject-box-editor heading="Subject car correction" [headingLevel]="headingLevel() === 3 ? 4 : 6" [editorId]="'reidentify-' + analysis().id" [(box)]="box" [(valid)]="boxValid">
 							@for (image of frameImage.images(); track image) {

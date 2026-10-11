@@ -3,6 +3,13 @@
 		<div><p class="alloy-eyebrow">Driving analysis</p><h2 id="corner-review-title" class="m-0 text-2xl font-semibold">Corner comparison</h2></div>
 		<button class="alloy-control alloy-control-secondary" type="button" (click)="store.refresh()" [disabled]="store.loading()">Refresh evidence</button>
 	</header>
+	@if (store.analysis(); as analysis) {
+		<div class="grid gap-2" role="status">
+			<p class="m-0">Analysis progress: {{ analysis.progress }}% · {{ analysis.stage }}</p>
+			<progress class="w-full" aria-label="Overall analysis progress" [value]="analysis.progress" max="100"></progress>
+			@if (analysis.status === 'awaiting-reidentification') { <p class="m-0">Waiting for you to identify the car. This analysis is not using the GPU.</p> }
+		</div>
+	}
 	@if (store.lifecycle(); as lifecycle) {
 		<section class="grid gap-3" aria-label="Analysis actions">
 			@if (lifecycle.failure; as failure) { <p role="status">{{ failure.retryable ? 'Processing is temporarily unavailable. You can retry this analysis.' : 'This analysis cannot be retried with its current source and inputs.' }}</p> }

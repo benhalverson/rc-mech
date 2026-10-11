@@ -84,28 +84,30 @@ const authorityError = (
 
 const trackingAnalysisTarget = (
 	state: PublicTrackingState,
-	currentProgress: number,
 ): Readonly<{
 	status: 'running' | 'awaiting-reidentification' | 'failed' | 'cancelled';
 	progress: number;
 }> => {
+	// Preparation owns 0-20; accepted race positions own 21-98. A complete
+	// tracking artifact earns 99, and final clip publication alone earns 100.
+	const progress = 21 + Math.floor((Math.min(state.progress, 99) * 78) / 99);
 	if (state.lifecycle === 'awaiting-reidentification')
-		return { status: 'awaiting-reidentification', progress: 99 };
+		return { status: 'awaiting-reidentification', progress };
 	if (state.lifecycle === 'failed')
 		return {
 			status: 'failed',
-			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+			progress,
 		};
 	if (state.lifecycle === 'cancelled')
 		return {
 			status: 'cancelled',
-			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+			progress,
 		};
 	if (state.lifecycle === 'completed' || state.progress >= 99)
 		return { status: 'running', progress: 99 };
 	return {
 		status: 'running',
-		progress: Math.max(currentProgress, Math.max(21, state.progress)),
+		progress,
 	};
 };
 
@@ -170,6 +172,13 @@ const publicTrackingAnalysis = (
 	state: PublicTrackingState,
 ): PublicDrivingAnalysis => ({
 	...publicAnalysis(record),
+	progress: trackingAnalysisTarget(state).progress,
+	lifecycle:
+		record.status === 'running' || record.status === 'queued'
+			? state.progress >= 99
+				? 'tracking-complete'
+				: 'tracking'
+			: publicAnalysis(record).lifecycle,
 	...(state.waitReason !== null
 		? {
 				status:
@@ -400,7 +409,9 @@ export class DrivingAnalysisAuthority {
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
 		if (
 			record.stage === 'tracking' &&
-			(record.status === 'running' || record.status === 'failed')
+			(record.status === 'running' ||
+				record.status === 'awaiting-reidentification' ||
+				record.status === 'failed')
 		) {
 			const run = await this.database
 				.select({ id: trackingRun.id })
@@ -786,7 +797,7 @@ export class DrivingAnalysisAuthority {
 		/* c8 ignore next -- a Tracking run linked to a missing analysis is corruption defense. */
 		if (current?.stage !== 'tracking' || current.workflowId !== run.workflowId)
 			return { kind: 'stale' };
-		const target = trackingAnalysisTarget(state, current.progress);
+		const target = trackingAnalysisTarget(state);
 		if (
 			current.status === target.status &&
 			current.progress === target.progress
