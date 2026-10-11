@@ -243,11 +243,23 @@ describe('DrivingAnalysisCreator', () => {
 		fixture.detectChanges();
 		const image = root.querySelector<HTMLImageElement>('[data-subject-frame]');
 		expect(image?.src).toContain('/api/v1/verified-frame');
+		expect(root.textContent).toContain(
+			'Loading the selected frame image… Drawing is disabled until the image appears.',
+		);
+		expect(root.textContent).not.toContain('Frame image ready.');
+		expect(
+			root.querySelector('[data-frame-editor]')?.getAttribute('aria-busy'),
+		).toBe('true');
 		expect(
 			root.querySelector<HTMLFieldSetElement>('[data-frame-editor]')?.disabled,
 		).toBe(true);
 		image?.dispatchEvent(new Event('load'));
 		fixture.detectChanges();
+		expect(root.textContent).toContain('Frame image ready. Drag a rectangle');
+		expect(root.textContent).not.toContain('Loading the selected frame image');
+		expect(
+			root.querySelector('[data-frame-editor]')?.getAttribute('aria-busy'),
+		).toBe('false');
 		expect(
 			root.querySelector<HTMLFieldSetElement>('[data-frame-editor]')?.disabled,
 		).toBe(false);
@@ -259,6 +271,11 @@ describe('DrivingAnalysisCreator', () => {
 		).toBe('133');
 		image?.dispatchEvent(new Event('error'));
 		fixture.detectChanges();
+		expect(root.textContent).not.toContain('Loading the selected frame image');
+		expect(root.textContent).not.toContain('Frame image ready.');
+		expect(
+			root.querySelector('[data-frame-editor]')?.getAttribute('aria-busy'),
+		).toBe('false');
 		expect(root.textContent).toContain(
 			'The verified image could not be loaded',
 		);
