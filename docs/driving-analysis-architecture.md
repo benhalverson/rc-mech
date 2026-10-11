@@ -543,6 +543,34 @@ The SAM 3.1 slices reuse the validated adapter, runtime, contracts, fixtures, an
 12. **Angular evidence review** — per-corner pass comparison, Best/tie labels, clips, gaps/exclusions, stable run/segment provenance, deletion, Playwright, and AXE.
 13. **Release hardening** — representative SAM benchmark, full backend/client/architecture/browser coverage, dry-run deploy, Container and local-service restart verification, Access/Tunnel and R2 privacy checks, production migration check, and lease/failure/cancellation drills.
 
+## Motion-assisted SAM 3.1 candidate
+
+The optional `motion-box-proposals.v1` prompt mode uses
+`fixed-track-view-motion-crops.v1` preprocessing and
+`sam31-motion-mask-consistency-v1` scoring. These values are pinned in the
+Inference profile; existing center-point and box-corner runs retain their
+original behavior. The GPU executor rejects mismatched mode/preprocessing or
+calibration combinations.
+
+For a fixed camera, a bounded temporal background sample and a velocity estimate
+propose the location of the user-seeded car in each source frame. Near-equal
+candidate matches, missing proposals, and scene changes stop the segment. SAM
+3.1 independently segments each proposed box in a close crop. Only the SAM box,
+translated back into the original Track-view coordinates, can become an
+observation. Proposals alone never become observations or human corrections.
+
+The score is the minimum of current model presence, motion consistency, and
+proposal/mask box intersection-over-union. It is a consistency measure, not a
+calibrated probability of identity. Existing geometry, confidence, gap, and
+corner-pass rules still apply. The single-image SAM state resets each frame so
+memory and reset cost do not grow with race length. No state survives a gap to
+automatically reacquire another car.
+
+This mode remains a candidate pending full-race local/production demonstration
+and the existing identity-switch/pass-coverage acceptance criteria. Its fixed
+camera and foreground-contrast assumptions require evaluation on representative
+recordings; an opening-segment result does not qualify the whole race.
+
 ## Completion contract
 
 Version one is complete only when:

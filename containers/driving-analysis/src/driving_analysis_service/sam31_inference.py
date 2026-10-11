@@ -78,8 +78,12 @@ class Sam31InferenceProvider:
             settings,
             runtime_factory
             or (
-                lambda checkpoint: _create_cuda_runtime(
-                    checkpoint, box_prompt=settings.sam31_box_prompt
+                lambda checkpoint: (
+                    _create_motion_runtime(checkpoint)
+                    if settings.sam31_motion_assisted
+                    else _create_cuda_runtime(
+                        checkpoint, box_prompt=settings.sam31_box_prompt
+                    )
                 )
             ),
         )
@@ -147,6 +151,14 @@ def _create_cuda_runtime(checkpoint: Path, *, box_prompt: bool = False) -> Sam31
     )
 
     return Sam31CudaRuntime(checkpoint, box_prompt=box_prompt)
+
+
+def _create_motion_runtime(checkpoint: Path) -> Sam31Runtime:
+    from driving_analysis_service.sam31_motion_runtime import (  # noqa: PLC0415 - optional GPU dependencies
+        Sam31MotionRuntime,
+    )
+
+    return Sam31MotionRuntime(checkpoint)
 
 
 def _checkpoint_matches(path: Path, expected_digest: str) -> bool:

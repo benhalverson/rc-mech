@@ -131,6 +131,18 @@ class Sam31TrackingExecutor:
         if profile.precision != "bfloat16":
             message = "The pinned SAM 3.1 adapter supports only bfloat16 precision"
             raise UnsupportedPrecisionError(message)
+        motion_assisted = profile.prompt_semantics == "motion-box-proposals.v1"
+        if motion_assisted != (
+            profile.preprocessing == "fixed-track-view-motion-crops.v1"
+        ):
+            message = "Motion prompts require the matching crop preprocessing"
+            raise ValueError(message)
+        if (
+            motion_assisted
+            and profile.confidence_calibration != "sam31-motion-mask-consistency-v1"
+        ):
+            message = "Motion prompts require the matching consistency calibration"
+            raise ValueError(message)
         settings = InferenceSettings(
             provider="sam31",
             model=profile.model.name,
@@ -140,6 +152,7 @@ class Sam31TrackingExecutor:
             identity_confidence_threshold=profile.identity_confidence_threshold,
             checkpoint_path=checkpoint_path,
             sam31_box_prompt=profile.prompt_semantics == "subject-box-corners.v1",
+            sam31_motion_assisted=motion_assisted,
         )
         self._provider = provider or Sam31InferenceProvider.create(settings)
 

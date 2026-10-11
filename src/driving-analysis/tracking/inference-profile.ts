@@ -17,13 +17,17 @@ export const inferenceProfileSchema = z.strictObject({
 		digest: sha256Schema,
 	}),
 	runtimeImageDigest: sha256Schema,
-	preprocessing: z.literal('fixed-track-view-frames.v1'),
+	preprocessing: z.enum([
+		'fixed-track-view-frames.v1',
+		'fixed-track-view-motion-crops.v1',
+	]),
 	precision: z.enum(['float32', 'float16', 'bfloat16']),
 	confidenceCalibration: profileIdentifier,
 	identityConfidenceThreshold: z.number().min(0).max(1),
 	promptSemantics: z.enum([
 		'subject-box-center-positive-point.v1',
 		'subject-box-corners.v1',
+		'motion-box-proposals.v1',
 	]),
 	tracking: z.strictObject({
 		minimumAreaRatio: z.number().positive(),
