@@ -56,7 +56,8 @@
 			"image": "./containers/driving-analysis/Dockerfile",
 			"image_build_context": "./containers/driving-analysis",
 			"instance_type": "standard-4",
-			"max_instances": 2
+			// Allow the shared frame selector plus two overlapping analysis runs.
+			"max_instances": 3
 		}
 	],
 	"workflows": [

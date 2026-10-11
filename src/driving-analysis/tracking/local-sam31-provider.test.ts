@@ -78,6 +78,27 @@ const rejection = (
 };
 
 describe('LocalSam31Provider', () => {
+	test('preserves the global receiver required by the Workers fetch runtime', async () => {
+		vi.stubGlobal('fetch', async function (this: unknown) {
+			if (this !== globalThis) throw new TypeError('Illegal invocation');
+			return jsonResponse(jobStatusFixture());
+		});
+		try {
+			const { provider } = providerFixture(
+				() => jsonResponse(jobStatusFixture()),
+				{
+					fetcher: undefined,
+				},
+			);
+			expect(await provider.submit(submissionFixture())).toEqual({
+				ok: true,
+				value: jobStatusFixture(),
+			});
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	test('never contacts an expired provider deadline', async () => {
 		const { provider, fetcher } = providerFixture(() =>
 			jsonResponse(jobStatusFixture()),
