@@ -502,8 +502,11 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 	pingEndpoint = 'driving-analysis-media/health';
 
 	/* c8 ignore start -- Cloudflare Container process wiring is verified by Wrangler/live acceptance. */
-	private startRuntime(): Promise<void> {
-		return this.startAndWaitForPorts({
+	private async startRuntime(): Promise<void> {
+		// RPC/exec staging is not an HTTP request tracked by the Container SDK.
+		// A reused container must not retain the prior stage's idle deadline.
+		this.renewActivityTimeout();
+		await this.startAndWaitForPorts({
 			ports: 8080,
 			cancellationOptions: {
 				instanceGetTimeoutMS: 30_000,
@@ -511,6 +514,7 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 				waitInterval: 250,
 			},
 		});
+		this.renewActivityTimeout();
 	}
 
 	private async stage(path: string, body: ReadableStream): Promise<number> {
