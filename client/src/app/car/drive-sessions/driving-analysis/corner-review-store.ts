@@ -1,21 +1,31 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { computed, inject } from '@angular/core';
+import { computed, effect, inject, untracked } from '@angular/core';
 import {
 	patchState,
 	signalStore,
 	withComputed,
+	withHooks,
 	withMethods,
 	withProps,
 	withState,
 } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { catchError, EMPTY, exhaustMap, pipe, tap } from 'rxjs';
+import {
+	catchError,
+	EMPTY,
+	exhaustMap,
+	pipe,
+	switchMap,
+	tap,
+	timer,
+} from 'rxjs';
 import {
 	type AnalysisLifecycleCommand,
 	AnalysisLifecycleGateway,
 } from './analysis-lifecycle-gateway';
 import { CornerReviewGateway } from './corner-review-gateway';
 import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
+import { PageVisibilityCapability } from './page-visibility';
 
 export const CornerReviewStore = signalStore(
 	withState({
@@ -25,6 +35,7 @@ export const CornerReviewStore = signalStore(
 	}),
 	withProps((store) => {
 		return {
+			visibility: inject(PageVisibilityCapability),
 			resource: inject(CornerReviewGateway).read(store.analysisId),
 			clipsResource: inject(CornerReviewGateway).readClips(store.analysisId),
 			lifecycleResource: inject(AnalysisLifecycleGateway).read(
@@ -142,6 +153,31 @@ export const CornerReviewStore = signalStore(
 		}),
 	})),
 	withMethods((store) => {
+		const monitorLifecycle = rxMethod<
+			Readonly<{ analysisId: string; hidden: boolean }>
+		>(
+			pipe(
+				switchMap(({ analysisId, hidden }) =>
+					analysisId
+						? timer(hidden ? 30_000 : 3_000, hidden ? 30_000 : 3_000)
+						: EMPTY,
+				),
+				tap(() => {
+					const status = store.lifecycle()?.status;
+					if (
+						(!status ||
+							[
+								'queued',
+								'running',
+								'awaiting-reidentification',
+								'deleting',
+							].includes(status)) &&
+						!store.lifecycleResource.isLoading()
+					)
+						store.lifecycleResource.reload();
+				}),
+			),
+		);
 		const execute = rxMethod<AnalysisLifecycleCommand>(
 			pipe(
 				exhaustMap((command) => {
@@ -166,6 +202,12 @@ export const CornerReviewStore = signalStore(
 			),
 		);
 		return {
+			monitorLifecycle,
+			refreshAcceptedEvidence(): void {
+				store.resource.reload();
+				store.clipsResource.reload();
+				store.correctionAnalysisResource.reload();
+			},
 			changeLifecycle(
 				command: Readonly<{ action: AnalysisLifecycleCommand['action'] }>,
 			): void {
@@ -199,5 +241,24 @@ export const CornerReviewStore = signalStore(
 				store.lifecycleResource.reload();
 			},
 		};
+	}),
+	withHooks({
+		onInit(store) {
+			store.monitorLifecycle(
+				computed(() => ({
+					analysisId: store.analysisId(),
+					hidden: store.visibility.hidden(),
+				})),
+			);
+			let previous = '';
+			effect(() => {
+				const lifecycle = store.lifecycle();
+				if (!lifecycle || lifecycle.analysisId !== store.analysisId()) return;
+				const current = `${lifecycle.analysisId}:${lifecycle.stateVersion}:${lifecycle.status}`;
+				if (previous && current !== previous)
+					untracked(() => store.refreshAcceptedEvidence());
+				previous = current;
+			});
+		},
 	}),
 );

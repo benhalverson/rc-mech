@@ -23,6 +23,7 @@ export const DRIVE_SESSIONS_ROUTES: Routes = [
 		path: 'analysis/:analysisId',
 		providers: [
 			CornerReviewGateway,
+			PageVisibilityCapability,
 			CornerReviewStore,
 			ReidentificationGateway,
 			ReidentificationIdentity,
