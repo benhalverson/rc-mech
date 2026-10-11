@@ -28,6 +28,7 @@ MIN_AREA_RATIO = 0.05
 MAX_SEED_AREA_RATIO = 25.0
 MAX_FRAME_AREA_RATIO = 8.0
 MAX_CENTER_DISPLACEMENT = 0.35
+MAX_SUBJECT_LENGTHS_PER_FRAME = 4.0
 CHECKSUM_CHUNK_BYTES = 1024 * 1024
 
 
@@ -221,7 +222,14 @@ def _geometry_is_plausible(
     if not MIN_AREA_RATIO <= area_ratio <= maximum_ratio:
         return False
     center_distance = math.dist(_center(box), _center(reference))
-    return center_distance <= MAX_CENTER_DISPLACEMENT
+    # A screen-relative limit alone lets a tiny distant car jump to another
+    # vehicle hundreds of pixels away in one frame. Bound motion relative to
+    # the last trusted subject as well; never enlarge it using the new mask.
+    motion_limit = min(
+        MAX_CENTER_DISPLACEMENT,
+        MAX_SUBJECT_LENGTHS_PER_FRAME * max(reference.width, reference.height),
+    )
+    return center_distance <= motion_limit
 
 
 def _area(box: NormalizedBox) -> float:

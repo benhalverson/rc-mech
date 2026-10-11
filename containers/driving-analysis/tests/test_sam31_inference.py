@@ -8,6 +8,7 @@ import pytest
 import driving_analysis_service.sam31_inference as sam31_module
 import driving_analysis_service.sam31_runtime as runtime_module
 from driving_analysis_service.geometry_contracts import (
+    NormalizedBox,
     SubjectSeed,
 )
 from driving_analysis_service.inference import (
@@ -379,3 +380,27 @@ def test_sam31_geometry_guard_uses_previous_mask_and_rejects_jumps() -> None:
     assert visible.visibility == "visible"
     assert too_small.visibility == "uncertain"
     assert jumped.visibility == "uncertain"
+
+
+def test_sam31_rejects_recorded_small_car_identity_jump() -> None:
+    previous = NormalizedBox(
+        x=0.5703125,
+        y=0.17777778208255768,
+        width=0.010416666977107525,
+        height=0.009722222574055195,
+    )
+    switched = sam31_module._candidate(
+        Sam31FrameResult(
+            box=(0.3979166746, 0.1472222209, 0.0098958341, 0.0083333338),
+            score=1.0,
+        ),
+        previous,
+        previous,
+    )
+    continuous = sam31_module._candidate(
+        Sam31FrameResult(box=(0.58177, 0.17917, 0.01042, 0.00972), score=1.0),
+        previous,
+        previous,
+    )
+    assert switched.visibility == "uncertain"
+    assert continuous.visibility == "visible"
