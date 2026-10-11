@@ -656,6 +656,15 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(creator.locator('[data-mark-seed]')).toBeFocused();
 	await expect(creator.locator('video')).toHaveJSProperty('paused', true);
 	await expect(creator.locator('[data-subject-frame]')).toBeAttached();
+	await expect(
+		creator
+			.getByRole('status')
+			.filter({ hasText: 'Loading the selected frame image' }),
+	).toBeVisible();
+	await expect(creator.locator('[data-frame-editor]')).toHaveAttribute(
+		'aria-busy',
+		'true',
+	);
 	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
 		'disabled',
 		true,
@@ -680,6 +689,13 @@ test('creates a queued Driving analysis from a ready private Race recording', as
 	await expect(creator.locator('[data-frame-editor]')).toHaveJSProperty(
 		'disabled',
 		false,
+	);
+	await expect(
+		creator.getByRole('status').filter({ hasText: 'Frame image ready' }),
+	).toBeVisible();
+	await expect(creator.locator('[data-frame-editor]')).toHaveAttribute(
+		'aria-busy',
+		'false',
 	);
 	await failedCreatorImage.evaluate((image) => {
 		image.dispatchEvent(new Event('load'));

@@ -69,8 +69,13 @@
 		@if(store.subjectFrameLoading()){<p role="status">Finding the exact source frame…</p>}
 		@if(store.subjectFrameError();as error){<p role="alert">{{error}}</p>}
 		@if(selectedFrame();as frame){
-			<p>Verified frame {{frame.frameIndex}} · {{frame.timestampMs}} ms. Draw the Subject box on this frozen image.</p>
-			<fieldset data-frame-editor class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()">
+			<p>Verified frame {{frame.frameIndex}} · {{frame.timestampMs}} ms.</p>
+			@if (frameReady()) {
+				<p role="status">Frame image ready. Drag a rectangle around your car on the frozen image below, inside the outlined Track view.</p>
+			} @else if (!frameImage.failed()) {
+				<p role="status">Loading the selected frame image… Drawing is disabled until the image appears.</p>
+			}
+			<fieldset data-frame-editor class="m-0 min-w-0 border-0 p-0" [disabled]="!frameReady()" [class.pointer-events-none]="!frameReady()" [attr.aria-busy]="!frameReady() && !frameImage.failed()">
 				<legend class="sr-only">Verified Subject frame</legend>
 				<app-subject-box-editor [editorId]="'analysis-' + driveSessionId()" [(box)]="box" [(valid)]="boxValid">
 					@for (image of frameImage.images(); track image) {
