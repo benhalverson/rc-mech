@@ -255,6 +255,56 @@ describe('LocalSam31Provider', () => {
 		expect(fetcher).not.toHaveBeenCalled();
 	});
 
+	test.each([
+		{
+			label: 'ordinary Error',
+			error: new Error('secret network detail'),
+			errorName: 'Error',
+			illegalInvocation: false,
+		},
+		{
+			label: 'illegal invocation',
+			error: new TypeError('Illegal invocation: secret network detail'),
+			errorName: 'TypeError',
+			illegalInvocation: true,
+		},
+		{
+			label: 'non-Error rejection',
+			error: 'secret network detail',
+			errorName: 'UnknownError',
+			illegalInvocation: false,
+		},
+	])(
+		'redacts fetch diagnostics for $label',
+		async ({ error, errorName, illegalInvocation }) => {
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const { provider } = providerFixture(async () => {
+					throw error;
+				});
+				expect(await provider.status(executionIdentityFixture())).toEqual({
+					ok: false,
+					code: 'TRACKING_PROVIDER_UNAVAILABLE',
+					retryable: true,
+				});
+				expect(warn.mock.calls).toEqual([
+					[
+						'tracking-provider-contact-failed',
+						{
+							operation: 'GET',
+							segmentId: SEGMENT_ID,
+							aborted: false,
+							errorName,
+							illegalInvocation,
+						},
+					],
+				]);
+			} finally {
+				warn.mockRestore();
+			}
+		},
+	);
+
 	test('maps network failure and timeout to retryable unavailability', async () => {
 		const failed = providerFixture(async () => {
 			throw new Error('secret network detail');
