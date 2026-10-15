@@ -1412,6 +1412,44 @@ describe('CornerEvidenceAuthority', () => {
 		]);
 	});
 
+	test('commits and replays thirteen passes within D1 binding limits', async () => {
+		const value = await seed();
+		const binding = sqlite!.database;
+		const prepare = binding.prepare.bind(binding);
+		vi.spyOn(binding, 'prepare').mockImplementation((query) => {
+			const statement = prepare(query);
+			const bind = statement.bind.bind(statement);
+			statement.bind = (...values: unknown[]) => {
+				if (values.length > 100) throw new Error('too many SQL variables');
+				return bind(...values);
+			};
+			return statement;
+		});
+		const firstPass = measurement.passes[0]!;
+		const expected: CornerEvidenceMeasurement = {
+			version: 'corner-evidence.v1',
+			passes: Array.from({ length: 13 }, (_, index) => ({
+				...firstPass,
+				ordinal: index + 1,
+			})),
+		};
+		const input = { ...command(), measurement: expected };
+		await expect(value.authority.commit(input)).resolves.toEqual({
+			status: 'committed',
+			measurement: expected,
+		});
+		await expect(value.authority.commit(input)).resolves.toEqual({
+			status: 'replayed',
+			measurement: expected,
+		});
+		expect(
+			await value.database.select().from(cornerEvidenceBatch),
+		).toHaveLength(1);
+		expect(await value.database.select().from(cornerPassEvidence)).toHaveLength(
+			13,
+		);
+	});
+
 	test('atomically commits and replays provenance-bound immutable evidence', async () => {
 		const value = await seed();
 		expect(

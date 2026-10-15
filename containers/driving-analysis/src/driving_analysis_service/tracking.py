@@ -68,11 +68,13 @@ from driving_analysis_service.tracking_artifacts import (
 )
 from driving_analysis_service.tracking_contracts import (
     PROCESSING_CONTRACT_VERSION,
+    ClosedTrackingGap,
     ObservationSegmentArtifact,
     OpenTrackingGap,
     PreparedFrameManifest,
     PreparedMediaArtifact,
     ProviderCandidate,
+    RecoveredObservationSegment,
     SubjectObservationSegment,
     TrackStageAccepted,
     TrackStageRequest,
@@ -80,6 +82,8 @@ from driving_analysis_service.tracking_contracts import (
 )
 
 MAX_COMPLETION_BYTES = 64 * 1024
+MAX_RECOVERY_FRAMES = 30
+RECOVERY_CONFIRMATION_FRAMES = 3
 
 
 class SubjectTrackingService:
@@ -96,9 +100,15 @@ class SubjectTrackingService:
         settings: ServiceSettings,
         provider: InferenceProvider,
         admission: threading.BoundedSemaphore | None = None,
+        *,
+        recover_gap_frames: int = 0,
     ) -> None:
         self.settings = settings
         self.provider = provider
+        if not 0 <= recover_gap_frames <= MAX_RECOVERY_FRAMES:
+            message = "Gap recovery must be bounded to at most 30 frames"
+            raise ValueError(message)
+        self.recover_gap_frames = recover_gap_frames
         self._admission = admission or threading.BoundedSemaphore(
             settings.limits.max_concurrent_processing
         )
@@ -185,7 +195,7 @@ class SubjectTrackingService:
             if len(frame_paths) != len(manifest.frames):
                 raise InvalidArtifactError
             seed_position = _seed_position(request, manifest)
-            observations, gap = self._observe(
+            observations, gap, closed_gaps = self._observe(
                 request,
                 manifest,
                 frame_paths,
@@ -199,13 +209,25 @@ class SubjectTrackingService:
             if not provider_still_ready or self.provider.provenance != provenance:
                 raise InferenceUnavailableError
 
-        envelope = SubjectObservationSegment(
-            contractVersion="subject-observation-segment.v1",
-            outcome="accepted",
-            caseId=request.case_id,
-            observations=observations,
-            openGap=gap,
-            provenance=provenance,
+        envelope = (
+            RecoveredObservationSegment(
+                contractVersion="subject-observation-segment.v2",
+                outcome="accepted",
+                caseId=request.case_id,
+                observations=observations,
+                openGap=gap,
+                provenance=provenance,
+                gaps=closed_gaps,
+            )
+            if self.recover_gap_frames
+            else SubjectObservationSegment(
+                contractVersion="subject-observation-segment.v1",
+                outcome="accepted",
+                caseId=request.case_id,
+                observations=observations,
+                openGap=gap,
+                provenance=provenance,
+            )
         )
         segment_bytes = compressed_contract(envelope)
         check_deadline(deadline)
@@ -257,9 +279,16 @@ class SubjectTrackingService:
         frame_paths: tuple[Path, ...],
         seed_position: int,
         deadline: float,
-    ) -> tuple[tuple[SubjectObservation, ...], OpenTrackingGap | None]:
+    ) -> tuple[
+        tuple[SubjectObservation, ...],
+        OpenTrackingGap | None,
+        tuple[ClosedTrackingGap, ...],
+    ]:
         observations: list[SubjectObservation] = []
         gap: OpenTrackingGap | None = None
+        closed_gaps: list[ClosedTrackingGap] = []
+        missing_frames = 0
+        recovery: list[SubjectObservation] = []
         seed_frame = InferenceFrame(
             image_path=frame_paths[seed_position],
             provenance=manifest.frames[seed_position],
@@ -289,31 +318,57 @@ class SubjectTrackingService:
                 if len(observations) >= MAX_SUBJECT_OBSERVATIONS:
                     raise ProcessOutputLimitError
                 frame_provenance = inference_frame.provenance
+                if gap is not None:
+                    missing_frames += 1
                 box = _trusted_box(candidate, threshold)
                 if box is None:
-                    gap = OpenTrackingGap(
-                        startTimestampMs=frame_provenance.timestamp_ms,
-                        reason=_gap_reason(candidate),
-                    )
-                    break
-                observations.append(
-                    SubjectObservation(
-                        timestampMs=frame_provenance.timestamp_ms,
-                        frameIndex=frame_provenance.frame_index,
-                        box=box,
-                        center=NormalizedPoint(
-                            x=box.x + box.width / 2,
-                            y=box.y + box.height / 2,
-                        ),
-                        visibility=candidate.visibility,
-                        identityConfidence=candidate.identity_confidence,
-                        origin="detected",
-                        provenance=self.provider.provenance,
-                    )
+                    if gap is None:
+                        gap = OpenTrackingGap(
+                            startTimestampMs=frame_provenance.timestamp_ms,
+                            reason=_gap_reason(candidate),
+                        )
+                        missing_frames = 1
+                    recovery.clear()
+                    # Never recover an unverified initial seed or an unbounded gap.
+                    if not observations or missing_frames >= self.recover_gap_frames:
+                        break
+                    continue
+                observation = SubjectObservation(
+                    timestampMs=frame_provenance.timestamp_ms,
+                    frameIndex=frame_provenance.frame_index,
+                    box=box,
+                    center=NormalizedPoint(
+                        x=box.x + box.width / 2,
+                        y=box.y + box.height / 2,
+                    ),
+                    visibility=candidate.visibility,
+                    identityConfidence=candidate.identity_confidence,
+                    origin="detected",
+                    provenance=self.provider.provenance,
                 )
+                if gap is not None:
+                    recovery.append(observation)
+                    # A one-frame flash or merged foreground blob cannot close
+                    # an occlusion. Confirm a short visible trajectory first.
+                    if len(recovery) == RECOVERY_CONFIRMATION_FRAMES:
+                        closed_gaps.append(
+                            ClosedTrackingGap(
+                                startTimestampMs=gap.start_timestamp_ms,
+                                endTimestampMs=recovery[0].timestamp_ms,
+                                reason=gap.reason,
+                            )
+                        )
+                        observations.extend(recovery)
+                        recovery.clear()
+                        gap = None
+                        missing_frames = 0
+                    elif missing_frames >= self.recover_gap_frames:
+                        break
+                else:
+                    observations.append(observation)
         finally:
             stream.close()
-        return tuple(observations), gap
+        return tuple(observations), gap, tuple(closed_gaps)
 
 
 def _accepted(
@@ -379,7 +434,7 @@ def _recover_completed_segment(
 
 def _segment_descriptor(
     request: TrackStageRequest,
-    envelope: SubjectObservationSegment,
+    envelope: SubjectObservationSegment | RecoveredObservationSegment,
     byte_count: int,
     checksum: str,
     tracking_input_digest: str,

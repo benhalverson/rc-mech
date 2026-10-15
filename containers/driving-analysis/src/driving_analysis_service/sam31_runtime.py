@@ -34,6 +34,8 @@ type _InitState = Callable[..., object]
 
 class _StateModel(Protocol):
     init_state: _InitState
+    batched_grounding_batch_size: int
+    postprocess_batch_size: int
     _postprocess_output: Callable[..., dict]
     _build_sam2_output: Callable[..., object]
     _convert_low_res_mask_to_video_res: Callable[..., object]
@@ -172,7 +174,7 @@ class Sam31CudaRuntime:
                 )
 
 
-def _build_predictor(checkpoint: Path) -> _Predictor:
+def _build_predictor(checkpoint: Path, *, max_num_objects: int = 1) -> _Predictor:
     torch = cast("_Torch", importlib.import_module("torch"))
     if not torch.cuda.is_available():
         raise RuntimeError
@@ -185,7 +187,7 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
         "_BuiltPredictor",
         builder(
             checkpoint_path=str(checkpoint),
-            max_num_objects=1,
+            max_num_objects=max_num_objects,
             use_fa3=False,
             use_rope_real=False,
             compile=False,
@@ -193,6 +195,11 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
             async_loading_frames=False,
         ),
     )
+    if max_num_objects > 1:
+        # Person exclusion runs on one frame at a time. Do not allocate the
+        # upstream multi-frame grounding/postprocessing buffers for it.
+        predictor.model.batched_grounding_batch_size = 1
+        predictor.model.postprocess_batch_size = 1
     predictor.model.init_state = _filter_init_state_arguments(
         predictor.model.init_state
     )

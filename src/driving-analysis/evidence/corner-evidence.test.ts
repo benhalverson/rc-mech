@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import type { SubjectProvenance } from '../tracking/contracts';
+import {
+	subjectObservationSegmentSchema,
+	type SubjectProvenance,
+} from '../tracking/contracts';
 import {
 	assertCornerEvidenceBudget,
 	CornerEvidenceError,
@@ -112,6 +115,76 @@ const traversalInput = (positions: readonly number[]) => {
 };
 
 describe('deterministic corner evidence', () => {
+	test('resumes after a closed gap without measuring across it', () => {
+		const value = traversalInput([0.2, 0.6, 0.6, 0.6, 0.9, 0.2, 0.6, 0.9]);
+		const segment = subjectObservationSegmentSchema.parse({
+			...value.segment,
+			contractVersion: 'subject-observation-segment.v2',
+			observations: value.segment.observations.filter(
+				(item) => item.timestampMs !== 300,
+			),
+			gaps: [
+				{ startTimestampMs: 300, endTimestampMs: 400, reason: 'occluded' },
+			],
+		});
+		const passes = measureAcceptedSegment({ ...value, segment }).passes;
+		expect(passes.map((pass) => pass.exclusionReason)).toEqual([
+			'tracking-gap',
+			'tracking-gap',
+			null,
+		]);
+		expect(
+			passes.filter((pass) => pass.eligibility === 'eligible'),
+		).toHaveLength(1);
+		expect(passes[2]).toMatchObject({
+			best: true,
+			entry: { beforeFrameIndex: 6 },
+			exit: { afterFrameIndex: 8 },
+		});
+	});
+
+	test('never interpolates a crossing through missing frames', () => {
+		const value = input();
+		const segment = subjectObservationSegmentSchema.parse({
+			...value.segment,
+			contractVersion: 'subject-observation-segment.v2',
+			observations: value.segment.observations.filter(
+				(item) => item.timestampMs !== 200,
+			),
+			gaps: [{ startTimestampMs: 200, endTimestampMs: 300, reason: 'missing' }],
+		});
+		expect(measureAcceptedSegment({ ...value, segment }).passes).toEqual([]);
+		if (segment.contractVersion !== 'subject-observation-segment.v2')
+			throw new Error('wrong version');
+		expect(() =>
+			measureAcceptedSegment({ ...value, segment: { ...segment, gaps: [] } }),
+		).toThrow(CornerEvidenceError);
+		expect(() =>
+			measureAcceptedSegment({
+				...value,
+				segment: {
+					...segment,
+					gaps: [
+						{ startTimestampMs: 201, endTimestampMs: 300, reason: 'missing' },
+					],
+				},
+			}),
+		).toThrow(CornerEvidenceError);
+	});
+
+	test('rejects a closed gap that contains a claimed observation', () => {
+		const value = input();
+		expect(
+			subjectObservationSegmentSchema.safeParse({
+				...value.segment,
+				contractVersion: 'subject-observation-segment.v2',
+				gaps: [
+					{ startTimestampMs: 200, endTimestampMs: 300, reason: 'missing' },
+				],
+			}).success,
+		).toBe(false);
+	});
+
 	test('preserves serialized golden output and input across every traversal kind', () => {
 		const mixed = traversalInput([
 			0.6, 0.9, 0.2, 0.6, 0.2, 0.6, 0.9, 0.2, 0.6, 0.9, 0.2, 0.6, 0.6, 0.6, 0.9,

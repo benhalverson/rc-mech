@@ -73,7 +73,9 @@ class FixedCameraMotion:
     def gray(frame: NDArray[np.uint8]) -> NDArray[np.uint8]:
         return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    def propose(self, frame: NDArray[np.uint8]) -> MotionProposal | None:
+    def propose(
+        self, frame: NDArray[np.uint8], *, elapsed_frames: int = 1
+    ) -> MotionProposal | None:
         if frame.shape[:2] != (self.height, self.width):
             message = "Prepared motion frame dimensions changed"
             raise ValueError(message)
@@ -85,8 +87,10 @@ class FixedCameraMotion:
         mask = cv2.dilate(mask, np.ones((5, 5), dtype=np.uint8))
         groups = _components(mask)
 
-        radius = max(18.0, float(np.linalg.norm(self.size)) * 1.3)
-        prediction = self.center + self.velocity
+        radius = max(18.0, float(np.linalg.norm(self.size)) * 1.3) + min(
+            60.0, 2.0 * (elapsed_frames - 1)
+        )
+        prediction = self.center + self.velocity * elapsed_frames
         candidates: list[tuple[float, tuple[int, int, int, int]]] = []
         for x, y, width, height, area in groups:
             if not _plausible_component(width, height, area):
@@ -112,11 +116,13 @@ class FixedCameraMotion:
         distance, box = candidates[0]
         return MotionProposal(box=box, consistency=max(0.0, 1 - distance / radius))
 
-    def accept(self, proposal: MotionProposal) -> None:
+    def accept(self, proposal: MotionProposal, *, elapsed_frames: int = 1) -> None:
         """Advance identity state only after SAM also accepts the proposal."""
         x, y, width, height = proposal.box
         center = np.array([x + width / 2, y + height / 2])
-        self.velocity = 0.45 * self.velocity + 0.55 * (center - self.center)
+        self.velocity = 0.45 * self.velocity + 0.55 * (
+            (center - self.center) / elapsed_frames
+        )
         self.center = center
         self.size = 0.8 * self.size + 0.2 * np.array([width, height])
 

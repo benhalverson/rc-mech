@@ -346,10 +346,7 @@ class OpenTrackingGap(StrictContract):
     reason: Literal["ambiguous-identity", "occluded", "missing"]
 
 
-class SubjectObservationSegment(StrictContract):
-    contract_version: Literal["subject-observation-segment.v1"] = Field(
-        alias="contractVersion"
-    )
+class ObservationSegmentFields(StrictContract):
     outcome: Literal["accepted"]
     case_id: SafeFreeFormIdentifier = Field(alias="caseId")
     observations: tuple[SubjectObservation, ...] = Field(
@@ -360,7 +357,7 @@ class SubjectObservationSegment(StrictContract):
     provenance: SubjectProvenance
 
     @model_validator(mode="after")
-    def observations_are_bound_and_ordered(self) -> "SubjectObservationSegment":
+    def observations_are_bound_and_ordered(self) -> "ObservationSegmentFields":
         if any(
             current.timestamp_ms <= previous.timestamp_ms
             or current.frame_index <= previous.frame_index
@@ -379,6 +376,61 @@ class SubjectObservationSegment(StrictContract):
             for observation in self.observations
         ):
             raise ValueError("observations must match segment provenance")
+        return self
+
+
+class SubjectObservationSegment(ObservationSegmentFields):
+    contract_version: Literal["subject-observation-segment.v1"] = Field(
+        alias="contractVersion"
+    )
+
+
+class ClosedTrackingGap(OpenTrackingGap):
+    """Missing frames in [start, end); end is an actual recovered observation."""
+
+    end_timestamp_ms: int = Field(
+        alias="endTimestampMs", ge=0, le=MAX_BENCHMARK_TIMESTAMP_MS, strict=True
+    )
+
+    @model_validator(mode="after")
+    def positive_interval(self) -> "ClosedTrackingGap":
+        if self.end_timestamp_ms <= self.start_timestamp_ms:
+            raise ValueError("Closed gaps must contain a missing interval")
+        return self
+
+
+class RecoveredObservationSegment(ObservationSegmentFields):
+    contract_version: Literal["subject-observation-segment.v2"] = Field(
+        alias="contractVersion"
+    )
+    gaps: tuple[ClosedTrackingGap, ...] = Field(
+        max_length=MAX_SUBJECT_OBSERVATIONS, strict=False
+    )
+
+    @model_validator(mode="after")
+    def closed_gaps_are_bound_and_ordered(self) -> "RecoveredObservationSegment":
+        observation_index = 0
+        previous_end = -1
+        for gap in self.gaps:
+            if gap.start_timestamp_ms <= previous_end or (
+                self.open_gap is not None
+                and gap.end_timestamp_ms >= self.open_gap.start_timestamp_ms
+            ):
+                raise ValueError("Closed gaps must be separate and ordered")
+            while (
+                observation_index < len(self.observations)
+                and self.observations[observation_index].timestamp_ms
+                < gap.start_timestamp_ms
+            ):
+                observation_index += 1
+            if (
+                observation_index == 0
+                or observation_index == len(self.observations)
+                or self.observations[observation_index].timestamp_ms
+                != gap.end_timestamp_ms
+            ):
+                raise ValueError("Closed gaps require observations before and after")
+            previous_end = gap.end_timestamp_ms
         return self
 
 

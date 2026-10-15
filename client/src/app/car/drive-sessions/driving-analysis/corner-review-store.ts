@@ -214,11 +214,6 @@ export const CornerReviewStore = signalStore(
 		);
 		return {
 			monitorLifecycle,
-			refreshAcceptedEvidence(): void {
-				store.resource.reload();
-				store.clipsResource.reload();
-				store.correctionAnalysisResource.reload();
-			},
 			changeLifecycle(
 				command: Readonly<{ action: AnalysisLifecycleCommand['action'] }>,
 			): void {
@@ -261,15 +256,36 @@ export const CornerReviewStore = signalStore(
 					hidden: store.visibility.hidden(),
 				})),
 			);
-			let previous = '';
-			effect(() => {
-				const lifecycle = store.lifecycle();
-				if (!lifecycle || lifecycle.analysisId !== store.analysisId()) return;
-				const current = `${lifecycle.analysisId}:${lifecycle.stateVersion}:${lifecycle.status}`;
-				if (previous && current !== previous)
-					untracked(() => store.refreshAcceptedEvidence());
-				previous = current;
-			});
+			for (const resource of [
+				store.resource,
+				store.clipsResource,
+				store.correctionAnalysisResource,
+			]) {
+				let selectedAnalysisId = '';
+				let refreshedVersion = '';
+				effect(() => {
+					const analysisId = store.analysisId();
+					if (selectedAnalysisId !== analysisId) {
+						selectedAnalysisId = analysisId;
+						refreshedVersion = '';
+					}
+					const lifecycle = store.lifecycle();
+					if (!lifecycle || lifecycle.analysisId !== analysisId) return;
+					const current = `${lifecycle.stateVersion}:${lifecycle.status}`;
+					if (!refreshedVersion) {
+						refreshedVersion = current;
+						return;
+					}
+					// A lifecycle change can arrive before the initial read finishes.
+					// Keep it pending independently for each resource until reload starts.
+					if (
+						current !== refreshedVersion &&
+						!resource.isLoading() &&
+						untracked(() => resource.reload())
+					)
+						refreshedVersion = current;
+				});
+			}
 		},
 	}),
 );

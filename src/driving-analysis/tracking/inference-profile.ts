@@ -28,6 +28,7 @@ export const inferenceProfileSchema = z.strictObject({
 		'subject-box-center-positive-point.v1',
 		'subject-box-corners.v1',
 		'motion-box-proposals.v1',
+		'motion-box-gap-recovery.v1',
 	]),
 	tracking: z.strictObject({
 		minimumAreaRatio: z.number().positive(),

@@ -33,7 +33,7 @@ Run with host networking so FastAPI can bind only to loopback for same-host
 
 ```console
 docker run --rm --gpus all --network host \
-  --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=8g \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m \
   --mount type=bind,src=/var/lib/chassis-notes-gpu,dst=/var/lib/chassis-notes-gpu \
   --mount type=bind,src=/models/sam3.1.pt,dst=/models/sam3.1.pt,readonly \
   --env GPU_INFERENCE_PROFILE_PATH=/var/lib/chassis-notes-gpu/profile.json \
@@ -53,14 +53,45 @@ corners with labels 2 and 3, preserving the user's selected extent. Historical
 `subject-box-center-positive-point.v1` profiles retain their single-point
 behavior. Pin a new image/profile pair and create a new analysis when changing
 prompt semantics; do not rewrite an existing run's profile.
+
+The opt-in `motion-box-gap-recovery.v1` prompt profile uses
+`fixed-track-view-motion-crops.v1` preprocessing and
+`sam31-motion-gap-consistency-v1` calibration. It evaluates the human seed with
+SAM before applying motion proposals to later frames. When observations are
+missing, it searches at most 30 source frames and requires three consecutive
+trusted detections to resume. Recovery compares foreground appearance and
+continued motion; an unconfirmed candidate cannot permanently redirect the
+search. Consecutive visible masks reject abrupt aspect-ratio changes before
+updating motion or appearance. Shape alone does not prevent person switches.
+The candidate also runs SAM's person prompt on bounded single-frame sessions,
+refreshing person bounds every five frames and when a candidate approaches a
+cached bound. Final exclusion requires overlap with occupied person-mask pixels
+plus two pixels; empty corners of a person rectangle do not reject a car.
+Candidates are rejected
+only when that region is at least 1.5 times the candidate height. SAM can assign
+its person label to a car-sized mask; the label alone must not veto a human car
+seed. This relative-size guard is a heuristic, not an identity guarantee.
+The 48-pixel proximity margin triggers refresh only; it does not exclude nearby
+cars. This guard can introduce gaps and still requires full-race validation.
+Scores measure consistency, not a probability of correct identity.
+
+Recovery artifacts use `subject-observation-segment.v2` with explicit half-open
+closed gaps. No predicted positions become observations, and corner passes
+crossing any missing interval remain ineligible. Saved v1 profiles retain their
+stop-at-first-gap behavior. Use a fresh analysis with the matching image/profile
+pair to evaluate this candidate. A short diagnostic that recovers occlusions is
+not full-race acceptance or evidence of zero identity switches.
 FastAPI intentionally trusts only Access-authenticated traffic delivered by the
 same-host Tunnel; neither the Access service token nor any R2 signing material
 is installed in this service.
 
-Decoded JPEGs are disposable scratch under `/tmp/chassis-notes-gpu-work`.
-The 8 GiB tmpfs keeps their creation and deletion off the durable journal volume
-and is included in the container's memory limit. Inputs, observation artifacts,
-and the execution journal remain in the private state directory. SAM loads at
+Decoded JPEGs and the verified working media copy are disposable scratch under
+each private job's `execution/work` directory on the disk-backed state volume.
+Provision that volume for the admitted media size (up to 50 GiB per input), its
+verified working copy, decoded JPEGs, and retained artifacts; the compressed
+input size does not bound decoded-frame storage. The prepared bundle hard-links
+the immutable transferred files, avoiding another full input copy. The 512 MiB
+`/tmp` tmpfs is only for small runtime temporary files. SAM loads at
 most two normalized image tensors at a time and retains conditioning frames
 plus the forward attention history still eligible for use. Re-identification
 starts a new session; these bounded sessions do not support reverse propagation

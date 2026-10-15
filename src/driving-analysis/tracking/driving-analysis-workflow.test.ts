@@ -896,6 +896,12 @@ describe('DrivingAnalysisWorkflow', () => {
 	test('consumes a correction already committed before the gap public result is read', async () => {
 		const value = coreWorkflowFixture();
 		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		// The restart lookup runs before the accepted segment's public result.
+		value.authority.publicProvenance.mockResolvedValueOnce({
+			runId: RUN_ID,
+			profileDigest: PROFILE_DIGEST,
+			segments: [],
+		});
 		value.authority.publicProvenance.mockResolvedValueOnce({
 			runId: RUN_ID,
 			profileDigest: PROFILE_DIGEST,

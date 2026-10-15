@@ -21,6 +21,7 @@ import {
 } from './race-video-validation-contracts';
 import type { SourceFrameCommand } from './subject-frame-contracts';
 import { selectSubjectFrame } from './subject-frame-media';
+import { SubjectFrameQueue } from './subject-frame-queue';
 
 const uuidV4Schema = z
 	.string()
@@ -490,6 +491,9 @@ export const validateRaceVideoMedia = async (
 type RaceVideoMediaContainerEnvironment = Pick<Env, 'ANALYSIS_MEDIA'>;
 
 export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEnvironment> {
+	private readonly subjectFrameQueue = new SubjectFrameQueue((command) =>
+		this.selectSubjectFrameUncached(command),
+	);
 	/* c8 ignore next -- declarative Container runtime configuration is verified by Wrangler. */
 	defaultPort = 8080;
 	/* c8 ignore next -- declarative Container runtime configuration is verified by Wrangler. */
@@ -601,6 +605,10 @@ export class RaceVideoMediaContainer extends Container<RaceVideoMediaContainerEn
 
 	/* c8 ignore start -- Thin Cloudflare Container process adapter; the injected media runtime is tested directly. */
 	async selectSubjectFrame(command: SourceFrameCommand) {
+		return this.subjectFrameQueue.select(command);
+	}
+
+	private async selectSubjectFrameUncached(command: SourceFrameCommand) {
 		return selectSubjectFrame(command, {
 			bucket: this.env.ANALYSIS_MEDIA,
 			start: () => this.startRuntime(),

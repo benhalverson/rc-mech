@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from driving_analysis_service.api import create_app
@@ -36,12 +37,14 @@ from driving_analysis_service.tracking_contracts import (
     PrepareStageRequest,
     ProcessingRejected,
     ProviderCandidate,
+    RecoveredObservationSegment,
     TrackStageAccepted,
     TrackStageRequest,
 )
 from tests.conftest import (
     CORRELATION_ID,
     STAGED_MEDIA_ID,
+    VideoFactory,
     stage_media,
 )
 
@@ -248,6 +251,80 @@ def test_tracking_stage_consumes_one_provider_segment(
 
     assert isinstance(result, TrackStageAccepted)
     assert result.segment.observation_count == 3
+
+
+@dataclass(frozen=True)
+class _GapProvider(_SegmentOnlyProvider):
+    missing: tuple[int, ...]
+
+    def track_segment(
+        self,
+        *,
+        seed_frame: InferenceFrame,
+        frames: tuple[InferenceFrame, ...],
+        seed: SubjectSeed,
+        timeout_seconds: float | None = None,
+    ) -> Generator[ProviderCandidate]:
+        del seed_frame, timeout_seconds
+        for frame in frames:
+            missing = frame.provenance.frame_index in self.missing
+            yield ProviderCandidate(
+                box=None if missing else seed.box,
+                identityConfidence=0.0 if missing else 1.0,
+                visibility="uncertain" if missing else "visible",
+            )
+
+
+@pytest.mark.parametrize(
+    ("missing", "limit", "expected"),
+    [
+        ((2,), 30, ([1, 3, 4, 5, 6, 7, 8], 300, None)),
+        ((2, 4), 30, ([1, 5, 6, 7, 8], 500, None)),
+        ((2, 3, 4, 5, 6, 7, 8), 3, ([1], None, 200)),
+        ((6, 7), 30, ([1, 2, 3, 4, 5], None, 600)),
+    ],
+)
+def test_bounded_recovery_requires_three_visible_frames(
+    settings: ServiceSettings,
+    video_factory: VideoFactory,
+    missing: tuple[int, ...],
+    limit: int,
+    expected: tuple[list[int], int | None, int | None],
+) -> None:
+    expected_frames, end, open_gap = expected
+    configured = replace(settings, inference=_inference_settings())
+    source = video_factory("recovery.mp4", 160, 90, 1.0, "libx264")
+    preparation = _prepare_request(stage_media(configured, source))
+    preparation = preparation.model_copy(
+        update={
+            "window": preparation.window.model_copy(update={"end_timestamp_ms": 900}),
+        }
+    )
+    prepared = RaceWindowPreparationService(configured).prepare(preparation)
+    assert isinstance(prepared, PrepareStageAccepted)
+    result = SubjectTrackingService(
+        configured,
+        _GapProvider(configuration_provenance(configured.inference), missing),
+        recover_gap_frames=limit,
+    ).track(_track_request(prepared))
+    assert isinstance(result, TrackStageAccepted)
+    raw = read_artifact(
+        bundle_member_path(
+            configured,
+            SEGMENT_ID,
+            OBSERVATION_BUNDLE_SUFFIX,
+            OBSERVATION_SEGMENT_SUFFIX,
+        ),
+        max_bytes=MAX_OBSERVATION_SEGMENT_BYTES,
+    )
+    envelope = RecoveredObservationSegment.model_validate_json(gzip.decompress(raw))
+    assert [item.frame_index for item in envelope.observations] == expected_frames
+    assert [item.end_timestamp_ms for item in envelope.gaps] == (
+        [] if end is None else [end]
+    )
+    assert (
+        envelope.open_gap.start_timestamp_ms if envelope.open_gap else None
+    ) == open_gap
 
 
 def test_fixture_provider_stops_at_first_untrusted_frame(

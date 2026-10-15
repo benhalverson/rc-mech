@@ -23,6 +23,7 @@ class InferenceSettings:
     checkpoint_path: Path | None = None
     sam31_box_prompt: bool = False
     sam31_motion_assisted: bool = False
+    sam31_gap_recovery: bool = False
     request_timeout_seconds: float = 30.0
     max_response_bytes: int = 64 * 1024
 

@@ -1,4 +1,15 @@
-import { and, eq, exists, inArray, isNull, sql } from 'drizzle-orm';
+import {
+	and,
+	desc,
+	eq,
+	exists,
+	inArray,
+	isNull,
+	lt,
+	notInArray,
+	or,
+	sql,
+} from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import {
 	authRateLimit,
@@ -398,6 +409,82 @@ export class DrivingAnalysisAuthority {
 			);
 		}
 		return this.get(ownerId, analysisId);
+	}
+
+	/** Lists retained results within an owned session, newest first. */
+	async list(
+		ownerId: string,
+		carId: string,
+		driveSessionId: string,
+		cursor?: string,
+	) {
+		const session = await this.database
+			.select({ id: driveSession.id })
+			.from(driveSession)
+			.innerJoin(car, eq(car.id, driveSession.carId))
+			.where(
+				and(
+					eq(car.id, carId),
+					eq(car.ownerId, ownerId),
+					eq(driveSession.id, driveSessionId),
+					isNull(driveSession.deletedAt),
+				),
+			)
+			.get();
+		if (!session)
+			throw authorityError('NOT_FOUND', 'Car or Drive session not found');
+		if (cursor !== undefined && !uuidV4Schema.safeParse(cursor).success)
+			throw authorityError('INVALID_INPUT', 'Invalid analysis history cursor');
+		const previous = cursor ? await this.find(ownerId, cursor) : undefined;
+		if (
+			cursor &&
+			(!previous ||
+				previous.carId !== carId ||
+				previous.driveSessionId !== driveSessionId)
+		)
+			throw authorityError('INVALID_INPUT', 'Invalid analysis history cursor');
+		const records = await this.database
+			.select({ id: drivingAnalysis.id })
+			.from(drivingAnalysis)
+			.where(
+				and(
+					eq(drivingAnalysis.ownerId, ownerId),
+					eq(drivingAnalysis.carId, carId),
+					eq(drivingAnalysis.driveSessionId, driveSessionId),
+					notInArray(drivingAnalysis.status, ['deleting', 'deleted']),
+					previous
+						? or(
+								lt(drivingAnalysis.createdAt, previous.createdAt),
+								and(
+									eq(drivingAnalysis.createdAt, previous.createdAt),
+									lt(drivingAnalysis.id, previous.id),
+								),
+							)
+						: undefined,
+				),
+			)
+			.orderBy(desc(drivingAnalysis.createdAt), desc(drivingAnalysis.id))
+			.limit(11)
+			.all();
+		const page = records.slice(0, 10);
+		const analyses = await Promise.all(
+			page.map(async ({ id }) => {
+				try {
+					return await this.get(ownerId, id);
+				} catch (error) {
+					if (
+						error instanceof DrivingAnalysisAuthorityError &&
+						error.code === 'NOT_FOUND'
+					)
+						return null;
+					throw error;
+				}
+			}),
+		);
+		return {
+			drivingAnalyses: analyses.filter((analysis) => analysis !== null),
+			nextCursor: records.length > 10 ? page[page.length - 1].id : null,
+		};
 	}
 
 	async get(

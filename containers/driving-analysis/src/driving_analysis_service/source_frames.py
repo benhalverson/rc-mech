@@ -26,8 +26,9 @@ from driving_analysis_service.processing_deadline import (
     start_deadline,
 )
 from driving_analysis_service.settings import ServiceSettings
+from driving_analysis_service.source_frame_cache import SourceFrameCache
 from driving_analysis_service.stage_admission import processing_slot
-from driving_analysis_service.tracking_contracts import RaceWindow
+from driving_analysis_service.tracking_contracts import PreparedFrame, RaceWindow
 
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -118,6 +119,7 @@ class SourceFrameService:
     ) -> None:
         self.settings = settings
         self.admission = admission
+        self._frame_cache = SourceFrameCache()
 
     def select(self, request: SourceFrameRequest) -> JSONResponse:
         with processing_slot(self.admission) as admitted:
@@ -158,8 +160,11 @@ class SourceFrameService:
                 + metadata.start_time_ms
                 + 1000
             )
-            selected = None
+            frames = self._frame_cache.get(checksum, request.input.expected_byte_count)
+            selected = _selected_frame(frames, selection)
             for read_end in (read_end_timestamp_ms, None):
+                if selected is not None:
+                    break
                 frames = _source_frames(
                     source,
                     RaceWindow(
@@ -171,20 +176,7 @@ class SourceFrameService:
                     deadline,
                     read_end_timestamp_ms=read_end,
                 )
-                selected = next(
-                    (
-                        frame
-                        for frame in frames
-                        if (
-                            frame.timestamp_ms >= selection.timestamp_ms
-                            if isinstance(selection, TimestampSelection)
-                            else frame.frame_index == selection.frame_index
-                        )
-                    ),
-                    None,
-                )
-                if selected is not None:
-                    break
+                selected = _selected_frame(frames, selection)
             if selected is None:
                 return frame_error("FRAME_UNAVAILABLE", 422)
             image = None
@@ -224,6 +216,9 @@ class SourceFrameService:
                     return frame_error("FRAME_UNAVAILABLE", 422)
                 image = base64.b64encode(result.stdout).decode("ascii")
             check_deadline(deadline)
+            self._frame_cache.remember(
+                checksum, request.input.expected_byte_count, frames
+            )
             return JSONResponse(
                 content=SourceFrameResponse(
                     contractVersion="source-frame.v1",
@@ -233,3 +228,20 @@ class SourceFrameService:
                     imageBase64=image,
                 ).model_dump(by_alias=True)
             )
+
+
+def _selected_frame(
+    frames: tuple[PreparedFrame, ...], selection: TimestampSelection | FrameSelection
+) -> PreparedFrame | None:
+    return next(
+        (
+            frame
+            for frame in frames
+            if (
+                frame.timestamp_ms >= selection.timestamp_ms
+                if isinstance(selection, TimestampSelection)
+                else frame.frame_index == selection.frame_index
+            )
+        ),
+        None,
+    )

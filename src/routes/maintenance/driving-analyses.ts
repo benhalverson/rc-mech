@@ -76,6 +76,21 @@ export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 		);
 	});
 
+	routes.get('/cars/:carId/drives/:driveId/driving-analyses', (c) =>
+		handle(
+			() =>
+				dependencies
+					.drivingAnalysisAuthority(c.env)
+					.list(
+						c.get('userId'),
+						c.req.param('carId'),
+						c.req.param('driveId'),
+						c.req.query('cursor'),
+					),
+			(page) => Response.json(page),
+		),
+	);
+
 	routes.post('/cars/:carId/drives/:driveId/driving-analyses', async (c) => {
 		const parsed = createDrivingAnalysisInputSchema.safeParse(
 			await c.req.json().catch(() => undefined),

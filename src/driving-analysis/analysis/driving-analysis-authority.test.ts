@@ -1073,7 +1073,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { status: 'queued', stage: 'tracking', progress: 50 },
+			analysis: { status: 'queued', stage: 'tracking', progress: 60 },
 		});
 		await expect(
 			authority.publishTrackingState(
@@ -1145,7 +1145,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { lifecycle: 'cancelled', progress: 99 },
+			analysis: { lifecycle: 'cancelled', progress: 80 },
 		});
 	});
 
@@ -1319,7 +1319,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { lifecycle: 'tracking', progress: 50 },
+			analysis: { lifecycle: 'tracking', progress: 60 },
 		});
 		await database
 			.update(trackingRun)
@@ -1344,7 +1344,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { lifecycle: 'failed', status: 'failed', progress: 75 },
+			analysis: { lifecycle: 'failed', status: 'failed', progress: 80 },
 		});
 		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
 			status: 'failed',

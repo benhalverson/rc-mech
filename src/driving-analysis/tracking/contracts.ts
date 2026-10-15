@@ -234,17 +234,32 @@ export const subjectObservationSchema = z
 			) <= 1e-6,
 	);
 
-export const subjectObservationSegmentSchema = z
-	.strictObject({
-		contractVersion: z.literal('subject-observation-segment.v1'),
-		outcome: z.literal('accepted'),
-		caseId: safeIdentifierSchema,
-		observations: z
-			.array(subjectObservationSchema)
-			.max(MAX_SUBJECT_OBSERVATIONS),
-		openGap: openTrackingGapSchema.nullable(),
-		provenance: subjectProvenanceSchema,
+const observationSegmentFields = z.strictObject({
+	outcome: z.literal('accepted'),
+	caseId: safeIdentifierSchema,
+	observations: z.array(subjectObservationSchema).max(MAX_SUBJECT_OBSERVATIONS),
+	openGap: openTrackingGapSchema.nullable(),
+	provenance: subjectProvenanceSchema,
+});
+
+// Closed gaps are half-open source-time intervals: the first recovered
+// observation may occur at endTimestampMs, never inside the missing interval.
+const closedTrackingGapSchema = openTrackingGapSchema
+	.extend({
+		endTimestampMs: timestampSchema,
 	})
+	.refine((gap) => gap.endTimestampMs > gap.startTimestampMs);
+
+export const subjectObservationSegmentSchema = z
+	.discriminatedUnion('contractVersion', [
+		observationSegmentFields.extend({
+			contractVersion: z.literal('subject-observation-segment.v1'),
+		}),
+		observationSegmentFields.extend({
+			contractVersion: z.literal('subject-observation-segment.v2'),
+			gaps: z.array(closedTrackingGapSchema).max(MAX_SUBJECT_OBSERVATIONS),
+		}),
+	])
 	.refine((segment) =>
 		segment.observations.every((observation, index) => {
 			const previous = segment.observations[index - 1];
@@ -258,7 +273,29 @@ export const subjectObservationSegmentSchema = z
 					JSON.stringify(segment.provenance)
 			);
 		}),
-	);
+	)
+	.refine((segment) => {
+		if (segment.contractVersion === 'subject-observation-segment.v1')
+			return true;
+		let observationIndex = 0;
+		return segment.gaps.every((gap, index) => {
+			const previous = segment.gaps[index - 1];
+			if (
+				(previous && previous.endTimestampMs >= gap.startTimestampMs) ||
+				(segment.openGap &&
+					gap.endTimestampMs >= segment.openGap.startTimestampMs)
+			)
+				return false;
+			while (
+				observationIndex < segment.observations.length &&
+				segment.observations[observationIndex]!.timestampMs <
+					gap.startTimestampMs
+			)
+				observationIndex += 1;
+			const after = segment.observations[observationIndex];
+			return observationIndex > 0 && after?.timestampMs === gap.endTimestampMs;
+		});
+	});
 
 export const observationSegmentArtifactSchema = z
 	.strictObject({

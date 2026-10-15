@@ -151,9 +151,12 @@ class _TrackingService:
     copied_media: bytes | None = None
     copied_manifest: bytes | None = None
 
-    def __init__(self, settings: object, provider: object) -> None:
+    def __init__(
+        self, settings: object, provider: object, *, recover_gap_frames: int = 0
+    ) -> None:
         self.settings = settings
         self.provider = provider
+        self.recover_gap_frames = recover_gap_frames
 
     def track(self, request: TrackStageRequest) -> TrackStageAccepted | object:
         settings = self.settings
@@ -240,6 +243,12 @@ def test_executor_reuses_the_preserved_tracking_service_contract(
     assert result.path.read_bytes() == b"observations"
     assert _TrackingService.copied_media == MEDIA_BYTES
     assert _TrackingService.copied_manifest == MANIFEST_BYTES
+    service_root = tmp_path / "job" / "execution"
+    assert (service_root / "work").is_dir()
+    prepared_id = submission.tracking_request.prepared.prepared_media_id
+    bundle = service_root / "artifacts" / f"{prepared_id}{PREPARED_BUNDLE_SUFFIX}"
+    assert next(bundle.glob(f"*{PREPARED_MEDIA_SUFFIX}")).samefile(prepared_media)
+    assert next(bundle.glob(f"*{FRAME_MANIFEST_SUFFIX}")).samefile(frame_manifest)
 
 
 def test_executor_rejects_cancellation_and_nonaccepted_results(
@@ -282,6 +291,43 @@ def test_executor_rejects_cancellation_and_nonaccepted_results(
             tmp_path / "cancelled-during-track",
             cancelled_during_track,
         )
+
+
+def test_large_prepared_input_uses_disk_scratch_without_another_transfer_copy(
+    tmp_path: Path,
+    profile: InferenceProfile,
+    submission_factory: SubmissionFactory,
+    artifact_factory: ArtifactFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submission = submission_factory()
+    job_root = tmp_path / "job"
+    job_root.mkdir()
+    media = job_root / "prepared.track.mp4"
+    # Sparse input exceeds the old tmpfs without allocating 9 GiB in this test.
+    with media.open("wb") as stream:
+        stream.truncate(9 * 1024**3)
+    manifest = job_root / "prepared.frames.json.gz"
+    manifest.write_bytes(MANIFEST_BYTES)
+    captured = []
+
+    def service(settings: object, _provider: object, **_kwargs: object) -> object:
+        captured.append(settings)
+        return type("RejectedService", (), {"track": lambda *_args: object()})()
+
+    monkeypatch.setattr(executor_module, "SubjectTrackingService", service)
+    with pytest.raises(TrackingExecutionError):
+        _executor(profile, artifact_factory(submission)).execute(
+            submission, ExecutionInput(media, manifest), job_root, threading.Event()
+        )
+    (settings,) = captured
+    assert settings.work_root == job_root / "execution" / "work"
+    prepared_id = submission.tracking_request.prepared.prepared_media_id
+    linked = artifact_path(settings, prepared_id, PREPARED_BUNDLE_SUFFIX) / (
+        f"{prepared_id}{PREPARED_MEDIA_SUFFIX}"
+    )
+    assert linked.samefile(media)
+    assert linked.stat().st_size == 9 * 1024**3
 
 
 def test_default_executor_reports_an_uninstalled_checkpoint_unready(

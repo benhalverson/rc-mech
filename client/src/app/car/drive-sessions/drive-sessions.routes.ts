@@ -4,6 +4,8 @@ import { CarGateway } from '../car-gateway';
 import { CarStore } from '../car-store';
 import { DriveSessionGateway } from './drive-session-gateway';
 import { DriveSessionStore } from './drive-session-store';
+import { AnalysisHistoryGateway } from './driving-analysis/analysis-history-gateway';
+import { AnalysisHistoryStore } from './driving-analysis/analysis-history-store';
 import { AnalysisLifecycleGateway } from './driving-analysis/analysis-lifecycle-gateway';
 import { CornerReviewGateway } from './driving-analysis/corner-review-gateway';
 import { CornerReviewStore } from './driving-analysis/corner-review-store';
@@ -19,6 +21,14 @@ import { ReidentificationIdentity } from './driving-analysis/reidentification-id
 import { ReidentificationStore } from './driving-analysis/reidentification-store';
 
 export const DRIVE_SESSIONS_ROUTES: Routes = [
+	{
+		path: 'history/:driveSessionId',
+		providers: [AnalysisHistoryGateway, AnalysisHistoryStore],
+		loadComponent: () =>
+			import('./driving-analysis/analysis-history').then(
+				({ AnalysisHistory }) => AnalysisHistory,
+			),
+	},
 	{
 		path: 'analysis/:analysisId',
 		providers: [
