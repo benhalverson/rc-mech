@@ -896,6 +896,12 @@ describe('DrivingAnalysisWorkflow', () => {
 	test('consumes a correction already committed before the gap public result is read', async () => {
 		const value = coreWorkflowFixture();
 		value.getContext().acceptedArtifactId = ATTEMPT_ID;
+		// The restart lookup runs before the accepted segment's public result.
+		value.authority.publicProvenance.mockResolvedValueOnce({
+			runId: RUN_ID,
+			profileDigest: PROFILE_DIGEST,
+			segments: [],
+		});
 		value.authority.publicProvenance.mockResolvedValueOnce({
 			runId: RUN_ID,
 			profileDigest: PROFILE_DIGEST,
@@ -2141,6 +2147,71 @@ describe('DrivingAnalysisWorkflow', () => {
 		expect(await deterministicUuidV4('one immutable lease')).toBe(first);
 		expect(await deterministicUuidV4('another lease')).not.toBe(first);
 	});
+
+	test.each([
+		['submission', 0],
+		['processing', 0],
+		['processing', 4],
+	] as const)(
+		'bounds interrupted %s executions after %i capacity refusals',
+		async (phase, busyCount) => {
+			const value = coreWorkflowFixture();
+			value.getContext().availabilityDeadlineAt = Date.now() + 86_400_000;
+			let fence = 6;
+			value.coordinator.acquire.mockImplementation(async () => ({
+				status: 'acquired',
+				segmentId: SEGMENT_ID,
+				leaseId: LEASE_ID,
+				fence: ++fence,
+				expiresAt: Date.now() + 90_000,
+			}));
+			const interrupted = {
+				ok: false as const,
+				code: 'JOB_INTERRUPTED' as const,
+				retryable: true,
+			};
+			value.provider.submit.mockImplementation(async (submission) =>
+				phase === 'submission'
+					? interrupted
+					: {
+							ok: true as const,
+							value: status(submission, 'processing', 20, null, null),
+						},
+			);
+			let refused = 0;
+			value.provider.status.mockImplementation(async () =>
+				refused++ < busyCount
+					? { ok: false, code: 'GPU_CAPACITY_BUSY', retryable: true }
+					: interrupted,
+			);
+			if (phase === 'processing')
+				value.provider.cancel.mockRejectedValue(new Error('provider offline'));
+			else
+				value.provider.cancel.mockImplementation(async (command) => ({
+					ok: true,
+					value: status(command, 'cancelled', 20, null, null),
+				}));
+			await expect(
+				value.workflow.run(
+					workflowEvent(),
+					value.steps as unknown as WorkflowStep,
+				),
+			).rejects.toMatchObject({ code: 'TRACKING_PROVIDER_FAILED' });
+			expect(value.provider.submit).toHaveBeenCalledTimes(busyCount + 3);
+			expect(value.provider.cancel).toHaveBeenCalledTimes(busyCount + 3);
+			for (const [submission] of value.provider.submit.mock.calls) {
+				const { trackingRequest: _request, ...identity } = submission;
+				expect(value.provider.cancel).toHaveBeenCalledWith(identity);
+			}
+			expect(value.coordinator.requeueProviderLoss).toHaveBeenCalledTimes(
+				busyCount + 2,
+			);
+			expect(value.authority.transitionAttempt).toHaveBeenCalledWith(
+				expect.objectContaining({ nextState: 'failed' }),
+			);
+			expect(value.coordinator.release).toHaveBeenCalled();
+		},
+	);
 
 	test('retires provider-loss attempts and submits the replacement with a new identity', async () => {
 		const value = coreWorkflowFixture();

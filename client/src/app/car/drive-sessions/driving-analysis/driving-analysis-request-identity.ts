@@ -17,8 +17,9 @@ export class DrivingAnalysisRequestIdentityCapability {
 		return requestId;
 	}
 
-	clear(): void {
-		this.identities.clear();
+	clear(driveSessionId?: string): void {
+		if (driveSessionId === undefined) this.identities.clear();
+		else this.identities.delete(driveSessionId);
 	}
 	retryId(analysisId: string, stateVersion: number): string {
 		const key = `retry:${analysisId}:${stateVersion}`;

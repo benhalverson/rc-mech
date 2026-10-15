@@ -30,8 +30,15 @@ describe('tracking provider contracts', () => {
 	test('shares the provider runtime observation ceiling', () => {
 		const segmentSchema = z.toJSONSchema(subjectObservationSegmentSchema);
 		const artifactSchema = z.toJSONSchema(observationSegmentArtifactSchema);
-		expect(segmentSchema.properties?.observations).toMatchObject({
-			maxItems: MAX_SUBJECT_OBSERVATIONS,
+		expect(segmentSchema).toMatchObject({
+			oneOf: [
+				{
+					properties: { observations: { maxItems: MAX_SUBJECT_OBSERVATIONS } },
+				},
+				{
+					properties: { observations: { maxItems: MAX_SUBJECT_OBSERVATIONS } },
+				},
+			],
 		});
 		expect(artifactSchema.properties?.observationCount).toMatchObject({
 			maximum: MAX_SUBJECT_OBSERVATIONS,

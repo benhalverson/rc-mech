@@ -879,17 +879,21 @@ export class TrackingAuthority {
 					eq(trackingExecutionAttempt.id, command.attemptId),
 					eq(trackingExecutionAttempt.leaseId, command.leaseId),
 					eq(trackingExecutionAttempt.fence, command.fence),
-					eq(trackingExecutionAttempt.state, command.nextState),
+					inArray(trackingExecutionAttempt.state, [
+						command.nextState,
+						'failed',
+					]),
 				),
 			)
 			.get();
 		if (retired) return;
-		const attempt = await this.requireCurrentAttempt(command);
+		const attempt = await this.requireCurrentAttempt(command, true);
 		await this.database.batch([
 			this.database
 				.update(trackingExecutionAttempt)
 				.set({
-					state: command.nextState,
+					// Keep the failed attempt as evidence while releasing its pointer.
+					state: attempt.state === 'failed' ? 'failed' : command.nextState,
 					updatedAt: command.updatedAt,
 					version: attempt.version + 1,
 				})
@@ -1712,8 +1716,13 @@ export class TrackingAuthority {
 				and(
 					eq(trackingRun.ownerId, ownerId),
 					eq(trackingRun.analysisId, analysisId),
-					eq(trackingRun.workflowId, workflowId),
-					eq(trackingRun.status, 'cancelled'),
+					or(
+						and(
+							eq(trackingRun.workflowId, workflowId),
+							eq(trackingRun.status, 'cancelled'),
+						),
+						inArray(trackingRun.status, ['replaced', 'failed']),
+					),
 				),
 			);
 		const targets: {
@@ -1945,7 +1954,7 @@ export class TrackingAuthority {
 		const run = await this.requireOwnedRun(ownerId, runId);
 		if (run.analysisId !== analysisId)
 			throw notFound('Tracking run was not found');
-		const [segments, attempts] = await Promise.all([
+		const [segments, attempts, prepared] = await Promise.all([
 			this.database
 				.select()
 				.from(trackingSegment)
@@ -1969,20 +1978,34 @@ export class TrackingAuthority {
 					asc(trackingExecutionAttempt.createdAt),
 					asc(trackingExecutionAttempt.id),
 				),
+			this.database
+				.select()
+				.from(preparedTrackingMedia)
+				.where(eq(preparedTrackingMedia.runId, runId))
+				.get(),
 		]);
 		const attemptSummaries = attempts as TrackingAttemptSummary[];
-		const currentAttemptIds = new Set(
-			segments.flatMap((segment) =>
-				segment.currentAttemptId === null ? [] : [segment.currentAttemptId],
-			),
-		);
 		const latestAttempt =
-			attemptSummaries.find((attempt) => currentAttemptIds.has(attempt.id)) ??
-			attemptSummaries.at(-1);
-		const highWater = attemptSummaries.reduce(
-			(progress, attempt) => Math.max(progress, attempt.progress),
-			0,
-		);
+			attemptSummaries.find(
+				(attempt) => attempt.id === segments.at(-1)?.currentAttemptId,
+			) ?? attemptSummaries.at(-1);
+		// Provider progress describes one execution, which can finish at an early
+		// tracking gap. Only accepted source positions establish race progress.
+		const highWater = prepared
+			? segments.reduce((progress, segment) => {
+					if (segment.acceptedArtifactId === null) return progress;
+					if (segment.outcome === 'completed') return 99;
+					if (segment.gapJson === null) return progress;
+					const gap = trackingGapSchema.parse(JSON.parse(segment.gapJson));
+					const fraction =
+						(gap.startTimestampMs - prepared.windowStartTimestampMs) /
+						(prepared.windowEndTimestampMs - prepared.windowStartTimestampMs);
+					return Math.max(
+						progress,
+						Math.min(98, Math.max(0, Math.floor(fraction * 99))),
+					);
+				}, 0)
+			: 0;
 		const currentWaitReason = segments.at(-1)?.waitReason;
 		const acceptedGap = segments.at(-1)?.outcome === 'tracking-gap';
 		const hasAcceptedEvidence = segments.some(
@@ -2015,21 +2038,21 @@ export class TrackingAuthority {
 		} else if (currentWaitReason) {
 			state = {
 				lifecycle: hasAcceptedEvidence ? 'running' : 'queued',
-				progress: hasAcceptedEvidence ? 99 : Math.min(highWater, 99),
+				progress: highWater,
 				waitReason: currentWaitReason,
 				safeFailureCode: null,
 			};
 		} else if (acceptedGap) {
 			state = {
 				lifecycle: 'awaiting-reidentification',
-				progress: 99,
+				progress: highWater,
 				waitReason: null,
 				safeFailureCode: null,
 			};
 		} else if (hasAcceptedEvidence) {
 			state = {
 				lifecycle: 'running',
-				progress: 99,
+				progress: highWater,
 				waitReason: null,
 				safeFailureCode: null,
 			};
@@ -2128,14 +2151,17 @@ export class TrackingAuthority {
 		};
 	}
 
-	private async requireCurrentAttempt(command: {
-		ownerId: string;
-		runId: string;
-		segmentId: string;
-		attemptId: string;
-		leaseId: string;
-		fence: number;
-	}): Promise<TrackingAttemptRecord> {
+	private async requireCurrentAttempt(
+		command: {
+			ownerId: string;
+			runId: string;
+			segmentId: string;
+			attemptId: string;
+			leaseId: string;
+			fence: number;
+		},
+		allowFailedRetirement = false,
+	): Promise<TrackingAttemptRecord> {
 		await this.requireActiveRun(command.ownerId, command.runId);
 		const [segment, attempt] = await Promise.all([
 			this.ownedSegment(command.runId, command.segmentId),
@@ -2151,9 +2177,10 @@ export class TrackingAuthority {
 			segment.currentAttemptId !== command.attemptId ||
 			segment.authorityLeaseId !== command.leaseId ||
 			segment.authorityFence !== command.fence ||
-			!MUTABLE_ATTEMPT_STATES.includes(
+			(!MUTABLE_ATTEMPT_STATES.includes(
 				attempt.state as (typeof MUTABLE_ATTEMPT_STATES)[number],
-			)
+			) &&
+				!(allowFailedRetirement && attempt.state === 'failed'))
 		)
 			throw stale('Tracking attempt does not hold current authority');
 		return attempt;

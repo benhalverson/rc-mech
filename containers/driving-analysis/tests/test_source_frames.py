@@ -5,10 +5,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from driving_analysis_service import source_frames
 from driving_analysis_service.api import create_app
 from driving_analysis_service.settings import ServiceSettings
 from tests.conftest import STAGED_MEDIA_ID, VideoFactory, stage_media
@@ -185,3 +187,29 @@ def test_oversized_selection_body_has_versioned_error(
     )
     assert response.status_code == 413
     assert response.json()["contractVersion"] == "source-frame.v1"
+
+
+def test_adjacent_frame_reuses_timestamps_but_revalidates_source(
+    settings: ServiceSettings, accepted_video: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    probe = Mock(wraps=source_frames._source_frames)
+    monkeypatch.setattr(source_frames, "_source_frames", probe)
+    client = TestClient(create_app(settings))
+    first = client.post(
+        "/v1/frames/select", json=frame_request(settings, accepted_video)
+    )
+    assert first.status_code == 200
+    adjacent = frame_request(settings, accepted_video)
+    adjacent["selection"] = {"kind": "frame", "frameIndex": 3}
+    second = client.post("/v1/frames/select", json=adjacent)
+    assert second.status_code == 200
+    assert (second.json()["frameIndex"], second.json()["timestampMs"]) == (3, 300)
+    assert base64.b64decode(second.json()["imageBase64"]).startswith(b"\xff\xd8")
+    assert probe.call_count == 1
+    changed = frame_request(settings, accepted_video)
+    (settings.staging_root / f"{STAGED_MEDIA_ID}.media").write_bytes(
+        b"x" * accepted_video.stat().st_size
+    )
+    rejected = client.post("/v1/frames/select", json=changed)
+    assert rejected.status_code == 422
+    assert probe.call_count == 1

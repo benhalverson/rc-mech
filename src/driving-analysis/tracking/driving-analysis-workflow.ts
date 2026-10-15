@@ -244,8 +244,43 @@ export class TrackingRunWorkflow {
 		event: Readonly<WorkflowEvent<FirstTrackingWorkflowPayload>>,
 		step: WorkflowStep,
 	): Promise<FirstTrackingWorkflowResult> {
-		let currentSegmentId = event.payload.segmentId;
-		let result = await this.runOnce(event, step);
+		// Restarted Workflows have no event history. The saved correction is the
+		// authority for where to resume, so do not wait for old UI events again.
+		const resumed = await step.do(
+			'load-saved-tracking-correction',
+			async () => {
+				const provenance = await this.authority.publicProvenance(
+					event.payload.ownerId,
+					event.payload.analysisId,
+					event.payload.runId,
+				);
+				const latest = provenance.segments.at(-1);
+				if (!latest || latest.segmentId === event.payload.segmentId)
+					return null;
+				return this.authority.workflowContext({
+					ownerId: event.payload.ownerId,
+					analysisId: event.payload.analysisId,
+					runId: event.payload.runId,
+					workflowId: event.instanceId,
+					segmentId: latest.segmentId,
+				});
+			},
+		);
+		let currentSegmentId = resumed?.segmentId ?? event.payload.segmentId;
+		let result = resumed
+			? await this.runOnce(
+					{
+						...event,
+						payload: {
+							...event.payload,
+							segmentId: resumed.segmentId,
+							subjectSeed: resumed.seed,
+						},
+					},
+					prefixedTrackingStep(step, resumed.segmentId),
+					resumed,
+				)
+			: await this.runOnce(event, step);
 		for (
 			let index = 0;
 			result.state.lifecycle === 'awaiting-reidentification' ||
@@ -487,6 +522,7 @@ export class TrackingRunWorkflow {
 		}
 		let status: JobStatus;
 		let providerLossCount = 0;
+		let executionLossCount = 0;
 		attemptLoop: for (;;) {
 			try {
 				status = await this.providerStep(
@@ -511,6 +547,16 @@ export class TrackingRunWorkflow {
 				);
 			} catch (error) {
 				if (error instanceof RetryableProviderError) {
+					if (error.providerCode !== 'GPU_CAPACITY_BUSY') {
+						executionLossCount += 1;
+						if (executionLossCount >= 3)
+							return this.fail(
+								new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'),
+								workflowIdentity,
+								identity,
+								step,
+							);
+					}
 					providerLossCount += 1;
 					const replacement = await this.replaceProviderAttempt(
 						workflowIdentity,
@@ -587,6 +633,16 @@ export class TrackingRunWorkflow {
 					);
 				} catch (error) {
 					if (error instanceof RetryableProviderError) {
+						if (error.providerCode !== 'GPU_CAPACITY_BUSY') {
+							executionLossCount += 1;
+							if (executionLossCount >= 3)
+								return this.fail(
+									new TrackingWorkflowError('TRACKING_PROVIDER_FAILED'),
+									workflowIdentity,
+									identity,
+									step,
+								);
+						}
 						providerLossCount += 1;
 						const replacement = await this.replaceProviderAttempt(
 							workflowIdentity,
@@ -904,6 +960,7 @@ export class TrackingRunWorkflow {
 		);
 		if (!retirement.retired)
 			throw new TrackingWorkflowError('TRACKING_PROVIDER_UNAVAILABLE');
+		await this.requestProviderCancellation(identity, step);
 		const result = await step.do(
 			`requeue-lost-tracking-capacity-${identity.attemptId}`,
 			async () =>
@@ -953,6 +1010,30 @@ export class TrackingRunWorkflow {
 			),
 			identity: nextIdentity,
 		};
+	}
+
+	private async requestProviderCancellation(
+		identity: AttemptIdentity,
+		step: WorkflowStep,
+	): Promise<void> {
+		// The attempt is already fenced in D1. Cancel only its exact provider
+		// identity; an unavailable provider still has its independent watchdog.
+		// A successful request does not assert that physical GPU work has stopped.
+		await step.do(
+			`cancel-retired-provider-attempt-${identity.attemptId}`,
+			SINGLE_ATTEMPT_STEP,
+			async () => {
+				try {
+					const result = await this.provider.cancel({
+						...providerIdentity(identity),
+						contractVersion: 'tracking-provider.v1',
+					});
+					return { requested: result.ok };
+				} catch {
+					return { requested: false };
+				}
+			},
+		);
 	}
 
 	private submission(
@@ -1283,6 +1364,7 @@ export class TrackingRunWorkflow {
 					return { failed: true };
 				},
 			);
+			await this.requestProviderCancellation(identity, step);
 			await step.do(
 				`release-failed-tracking-lease-${identity.attemptId}`,
 				async () => this.coordinator.release(leaseIdentity(identity)),
@@ -1449,18 +1531,18 @@ export class DrivingAnalysisWorkflow extends WorkflowEntrypoint<
 		step: WorkflowStep,
 	): Promise<DrivingAnalysisCreationWorkflowResult | { kind: 'cancelled' }> {
 		const payload = drivingAnalysisWorkflowPayloadSchema.parse(event.payload);
-		if (payload.cancellation) {
-			const result = await new TrackingCancellation(
-				new TrackingAuthority(this.env.DB),
-				{
-					cancel: (command) => createTrackingProvider(this.env).cancel(command),
-				},
-				this.env.GPU_LEASE_COORDINATOR.getByName(
-					GPU_LEASE_COORDINATOR_OBJECT_NAME,
-				),
-			).run(payload, step);
-			return result;
-		}
+		// Previous runs are fenced as replaced or already failed. Clear their
+		// queued work before this Workflow competes with its own predecessor.
+		const cleanup = await new TrackingCancellation(
+			new TrackingAuthority(this.env.DB),
+			{
+				cancel: (command) => createTrackingProvider(this.env).cancel(command),
+			},
+			this.env.GPU_LEASE_COORDINATOR.getByName(
+				GPU_LEASE_COORDINATOR_OBJECT_NAME,
+			),
+		).run(payload, step);
+		if (payload.cancellation) return cleanup;
 		/* c8 ignore next -- real profile/container wiring is exercised by deployment acceptance. */
 		const authority = new DrivingAnalysisAuthority(this.env.DB);
 		return new DrivingAnalysisCreationWorkflowRunner(

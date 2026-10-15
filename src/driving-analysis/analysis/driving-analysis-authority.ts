@@ -1,4 +1,15 @@
-import { and, eq, exists, inArray, isNull, sql } from 'drizzle-orm';
+import {
+	and,
+	desc,
+	eq,
+	exists,
+	inArray,
+	isNull,
+	lt,
+	notInArray,
+	or,
+	sql,
+} from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import {
 	authRateLimit,
@@ -22,7 +33,6 @@ import {
 	digestFixedTrackViewLayout,
 	drivingAnalysisWorkflowPayloadSchema,
 	FIXED_TRACK_VIEW,
-	MAX_ACTIVE_DRIVING_ANALYSES_PER_OWNER,
 	MAX_DRIVING_ANALYSIS_CREATIONS_PER_HOUR,
 	type PublicDrivingAnalysis,
 } from './driving-analysis-contracts';
@@ -34,7 +44,6 @@ export type DrivingAnalysisAuthorityErrorCode =
 	| 'CONFLICT'
 	| 'INVALID_INPUT'
 	| 'NOT_FOUND'
-	| 'QUOTA_EXCEEDED'
 	| 'RATE_LIMITED'
 	| 'SOURCE_UNAVAILABLE'
 	| 'TERMINAL_FAILURE'
@@ -86,28 +95,30 @@ const authorityError = (
 
 const trackingAnalysisTarget = (
 	state: PublicTrackingState,
-	currentProgress: number,
 ): Readonly<{
 	status: 'running' | 'awaiting-reidentification' | 'failed' | 'cancelled';
 	progress: number;
 }> => {
+	// Preparation owns 0-20; accepted race positions own 21-98. A complete
+	// tracking artifact earns 99, and final clip publication alone earns 100.
+	const progress = 21 + Math.floor((Math.min(state.progress, 99) * 78) / 99);
 	if (state.lifecycle === 'awaiting-reidentification')
-		return { status: 'awaiting-reidentification', progress: 99 };
+		return { status: 'awaiting-reidentification', progress };
 	if (state.lifecycle === 'failed')
 		return {
 			status: 'failed',
-			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+			progress,
 		};
 	if (state.lifecycle === 'cancelled')
 		return {
 			status: 'cancelled',
-			progress: Math.max(currentProgress, Math.min(state.progress, 99)),
+			progress,
 		};
 	if (state.lifecycle === 'completed' || state.progress >= 99)
 		return { status: 'running', progress: 99 };
 	return {
 		status: 'running',
-		progress: Math.max(currentProgress, Math.max(21, state.progress)),
+		progress,
 	};
 };
 
@@ -172,6 +183,13 @@ const publicTrackingAnalysis = (
 	state: PublicTrackingState,
 ): PublicDrivingAnalysis => ({
 	...publicAnalysis(record),
+	progress: trackingAnalysisTarget(state).progress,
+	lifecycle:
+		record.status === 'running' || record.status === 'queued'
+			? state.progress >= 99
+				? 'tracking-complete'
+				: 'tracking'
+			: publicAnalysis(record).lifecycle,
 	...(state.waitReason !== null
 		? {
 				status:
@@ -252,7 +270,6 @@ export class DrivingAnalysisAuthority {
 			);
 		await this.requireApprovedTrackMap(parsed.data.approvedTrackMapVersionId);
 		await this.verifySubjectFrame(command);
-		await this.requireOwnerWithinAnalysisQuota(command.ownerId);
 		await this.consumeCreationPermit(command.ownerId);
 
 		const analysisId = this.id();
@@ -304,7 +321,6 @@ export class DrivingAnalysisAuthority {
 				parsed.data.requestId,
 			);
 			if (raced) return this.replay(raced, requestDigest);
-			await this.requireOwnerWithinAnalysisQuota(command.ownerId);
 			throw authorityError('CONFLICT', 'Driving analysis could not be created');
 		}
 		await this.start(record);
@@ -395,6 +411,82 @@ export class DrivingAnalysisAuthority {
 		return this.get(ownerId, analysisId);
 	}
 
+	/** Lists retained results within an owned session, newest first. */
+	async list(
+		ownerId: string,
+		carId: string,
+		driveSessionId: string,
+		cursor?: string,
+	) {
+		const session = await this.database
+			.select({ id: driveSession.id })
+			.from(driveSession)
+			.innerJoin(car, eq(car.id, driveSession.carId))
+			.where(
+				and(
+					eq(car.id, carId),
+					eq(car.ownerId, ownerId),
+					eq(driveSession.id, driveSessionId),
+					isNull(driveSession.deletedAt),
+				),
+			)
+			.get();
+		if (!session)
+			throw authorityError('NOT_FOUND', 'Car or Drive session not found');
+		if (cursor !== undefined && !uuidV4Schema.safeParse(cursor).success)
+			throw authorityError('INVALID_INPUT', 'Invalid analysis history cursor');
+		const previous = cursor ? await this.find(ownerId, cursor) : undefined;
+		if (
+			cursor &&
+			(!previous ||
+				previous.carId !== carId ||
+				previous.driveSessionId !== driveSessionId)
+		)
+			throw authorityError('INVALID_INPUT', 'Invalid analysis history cursor');
+		const records = await this.database
+			.select({ id: drivingAnalysis.id })
+			.from(drivingAnalysis)
+			.where(
+				and(
+					eq(drivingAnalysis.ownerId, ownerId),
+					eq(drivingAnalysis.carId, carId),
+					eq(drivingAnalysis.driveSessionId, driveSessionId),
+					notInArray(drivingAnalysis.status, ['deleting', 'deleted']),
+					previous
+						? or(
+								lt(drivingAnalysis.createdAt, previous.createdAt),
+								and(
+									eq(drivingAnalysis.createdAt, previous.createdAt),
+									lt(drivingAnalysis.id, previous.id),
+								),
+							)
+						: undefined,
+				),
+			)
+			.orderBy(desc(drivingAnalysis.createdAt), desc(drivingAnalysis.id))
+			.limit(11)
+			.all();
+		const page = records.slice(0, 10);
+		const analyses = await Promise.all(
+			page.map(async ({ id }) => {
+				try {
+					return await this.get(ownerId, id);
+				} catch (error) {
+					if (
+						error instanceof DrivingAnalysisAuthorityError &&
+						error.code === 'NOT_FOUND'
+					)
+						return null;
+					throw error;
+				}
+			}),
+		);
+		return {
+			drivingAnalyses: analyses.filter((analysis) => analysis !== null),
+			nextCursor: records.length > 10 ? page[page.length - 1].id : null,
+		};
+	}
+
 	async get(
 		ownerId: string,
 		analysisId: string,
@@ -404,7 +496,9 @@ export class DrivingAnalysisAuthority {
 			throw authorityError('NOT_FOUND', 'Driving analysis not found');
 		if (
 			record.stage === 'tracking' &&
-			(record.status === 'running' || record.status === 'failed')
+			(record.status === 'running' ||
+				record.status === 'awaiting-reidentification' ||
+				record.status === 'failed')
 		) {
 			const run = await this.database
 				.select({ id: trackingRun.id })
@@ -790,10 +884,13 @@ export class DrivingAnalysisAuthority {
 		/* c8 ignore next -- a Tracking run linked to a missing analysis is corruption defense. */
 		if (current?.stage !== 'tracking' || current.workflowId !== run.workflowId)
 			return { kind: 'stale' };
-		const target = trackingAnalysisTarget(state, current.progress);
+		const target = trackingAnalysisTarget(state);
+		// Older runs persisted 99 before the race finished. Preserve the database's
+		// monotonic counter; publicTrackingAnalysis projects actual race progress.
+		const persistedProgress = Math.max(current.progress, target.progress);
 		if (
 			current.status === target.status &&
-			current.progress === target.progress
+			current.progress === persistedProgress
 		)
 			return {
 				kind: 'replayed',
@@ -837,7 +934,7 @@ export class DrivingAnalysisAuthority {
 				.update(drivingAnalysis)
 				.set({
 					status: target.status,
-					progress: target.progress,
+					progress: persistedProgress,
 					stateVersion: current.stateVersion + 1,
 					updatedAt,
 				})
@@ -1144,30 +1241,6 @@ export class DrivingAnalysisAuthority {
 			throw authorityError(
 				'CONFLICT',
 				'An approved Track-map version on an active layout is required',
-			);
-	}
-
-	private async requireOwnerWithinAnalysisQuota(
-		ownerId: string,
-	): Promise<void> {
-		const active = await this.database
-			.select({ id: drivingAnalysis.id })
-			.from(drivingAnalysis)
-			.where(
-				and(
-					eq(drivingAnalysis.ownerId, ownerId),
-					inArray(drivingAnalysis.status, [
-						'queued',
-						'running',
-						'awaiting-reidentification',
-					]),
-				),
-			)
-			.limit(MAX_ACTIVE_DRIVING_ANALYSES_PER_OWNER);
-		if (active.length >= MAX_ACTIVE_DRIVING_ANALYSES_PER_OWNER)
-			throw authorityError(
-				'QUOTA_EXCEEDED',
-				'Active Driving-analysis quota has been reached',
 			);
 	}
 

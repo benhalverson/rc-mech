@@ -28,6 +28,7 @@ MIN_AREA_RATIO = 0.05
 MAX_SEED_AREA_RATIO = 25.0
 MAX_FRAME_AREA_RATIO = 8.0
 MAX_CENTER_DISPLACEMENT = 0.35
+MAX_SUBJECT_LENGTHS_PER_FRAME = 4.0
 CHECKSUM_CHUNK_BYTES = 1024 * 1024
 
 
@@ -73,7 +74,23 @@ class Sam31InferenceProvider:
         *,
         runtime_factory: Sam31RuntimeFactory | None = None,
     ) -> Self:
-        return cls(settings, runtime_factory or _create_cuda_runtime)
+        return cls(
+            settings,
+            runtime_factory
+            or (
+                lambda checkpoint: (
+                    _create_motion_runtime(
+                        checkpoint,
+                        recover_gaps=settings.sam31_gap_recovery,
+                        threshold=settings.identity_confidence_threshold,
+                    )
+                    if settings.sam31_motion_assisted
+                    else _create_cuda_runtime(
+                        checkpoint, box_prompt=settings.sam31_box_prompt
+                    )
+                )
+            ),
+        )
 
     @property
     def provenance(self) -> SubjectProvenance:
@@ -115,6 +132,7 @@ class Sam31InferenceProvider:
         frame_directory, seed_position = _segment_location(seed_frame, frames)
         seed_box = _box_tuple(seed.box)
         previous_box: NormalizedBox | None = None
+        elapsed_frames = 1
         stream = runtime.track(
             frame_directory=frame_directory,
             seed_position=seed_position,
@@ -124,20 +142,46 @@ class Sam31InferenceProvider:
         )
         try:
             for result in stream:
-                candidate = _candidate(result, seed.box, previous_box)
-                if candidate.visibility == "visible":
+                candidate = _candidate(
+                    result,
+                    seed.box,
+                    previous_box,
+                    elapsed_frames=elapsed_frames
+                    if self.settings.sam31_gap_recovery
+                    else 1,
+                )
+                if (
+                    candidate.visibility == "visible"
+                    and candidate.identity_confidence
+                    >= self._provenance.identity_confidence_threshold
+                ):
                     previous_box = candidate.box
+                    elapsed_frames = 1
+                else:
+                    elapsed_frames += 1
                 yield candidate
         finally:
             stream.close()
 
 
-def _create_cuda_runtime(checkpoint: Path) -> Sam31Runtime:
+def _create_cuda_runtime(checkpoint: Path, *, box_prompt: bool = False) -> Sam31Runtime:
     from driving_analysis_service.sam31_runtime import (  # noqa: PLC0415
         Sam31CudaRuntime,
     )
 
-    return Sam31CudaRuntime(checkpoint)
+    return Sam31CudaRuntime(checkpoint, box_prompt=box_prompt)
+
+
+def _create_motion_runtime(
+    checkpoint: Path, *, recover_gaps: bool = False, threshold: float = 0.3
+) -> Sam31Runtime:
+    from driving_analysis_service.sam31_motion_runtime import (  # noqa: PLC0415 - optional GPU dependencies
+        Sam31MotionRuntime,
+    )
+
+    return Sam31MotionRuntime(
+        checkpoint, recover_gaps=recover_gaps, threshold=threshold
+    )
 
 
 def _checkpoint_matches(path: Path, expected_digest: str) -> bool:
@@ -174,6 +218,8 @@ def _candidate(
     result: Sam31FrameResult,
     seed_box: NormalizedBox,
     previous_box: NormalizedBox | None,
+    *,
+    elapsed_frames: int = 1,
 ) -> ProviderCandidate:
     if not math.isfinite(result.score) or not 0.0 <= result.score <= 1.0:
         raise InferenceFailureError
@@ -192,7 +238,9 @@ def _candidate(
         )
     except ValidationError as error:
         raise InferenceFailureError from error
-    trusted = _geometry_is_plausible(box, seed_box, previous_box)
+    trusted = _geometry_is_plausible(
+        box, seed_box, previous_box, elapsed_frames=elapsed_frames
+    )
     return ProviderCandidate(
         box=box,
         identityConfidence=result.score,
@@ -204,6 +252,8 @@ def _geometry_is_plausible(
     box: NormalizedBox,
     seed_box: NormalizedBox,
     previous_box: NormalizedBox | None,
+    *,
+    elapsed_frames: int = 1,
 ) -> bool:
     reference = previous_box or seed_box
     area_ratio = _area(box) / _area(reference)
@@ -213,7 +263,16 @@ def _geometry_is_plausible(
     if not MIN_AREA_RATIO <= area_ratio <= maximum_ratio:
         return False
     center_distance = math.dist(_center(box), _center(reference))
-    return center_distance <= MAX_CENTER_DISPLACEMENT
+    # A screen-relative limit alone lets a tiny distant car jump to another
+    # vehicle hundreds of pixels away in one frame. Bound motion relative to
+    # the last trusted subject as well; never enlarge it using the new mask.
+    motion_limit = min(
+        MAX_CENTER_DISPLACEMENT,
+        MAX_SUBJECT_LENGTHS_PER_FRAME
+        * max(reference.width, reference.height)
+        * min(elapsed_frames, 30),
+    )
+    return center_distance <= motion_limit
 
 
 def _area(box: NormalizedBox) -> float:

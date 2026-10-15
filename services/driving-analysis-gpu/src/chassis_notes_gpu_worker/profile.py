@@ -45,7 +45,9 @@ class InferenceProfile(StrictContract):
     model: ModelIdentity
     pipeline: PipelineIdentity
     runtime_image_digest: Sha256 = Field(alias="runtimeImageDigest")
-    preprocessing: Literal["fixed-track-view-frames.v1"]
+    preprocessing: Literal[
+        "fixed-track-view-frames.v1", "fixed-track-view-motion-crops.v1"
+    ]
     precision: Literal["float32", "float16", "bfloat16"]
     confidence_calibration: str = Field(
         alias="confidenceCalibration", min_length=1, max_length=128
@@ -53,9 +55,12 @@ class InferenceProfile(StrictContract):
     identity_confidence_threshold: float = Field(
         alias="identityConfidenceThreshold", ge=0, le=1, strict=True
     )
-    prompt_semantics: Literal["subject-box-center-positive-point.v1"] = Field(
-        alias="promptSemantics"
-    )
+    prompt_semantics: Literal[
+        "subject-box-center-positive-point.v1",
+        "subject-box-corners.v1",
+        "motion-box-proposals.v1",
+        "motion-box-gap-recovery.v1",
+    ] = Field(alias="promptSemantics")
     tracking: TrackingConfiguration
 
     @property

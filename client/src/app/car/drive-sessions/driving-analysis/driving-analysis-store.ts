@@ -677,6 +677,15 @@ export const DrivingAnalysisStore = signalStore(
 				remove(command);
 			},
 			createAnalysis(command: StartDrivingAnalysisCommand): void {
+				const previous = store.analysisCreation().analysis;
+				if (
+					previous?.driveSessionId === command.driveSessionId &&
+					['completed', 'failed', 'cancelled', 'deleted'].includes(previous.status)
+				) {
+					// A new run after a terminal result is a new user action. Keep
+					// the new identity stable if its submission must be retried.
+					store.analysisRequests.clear(command.driveSessionId);
+				}
 				createAnalysis({
 					...command,
 					requestId: store.analysisRequests.requestId(command),

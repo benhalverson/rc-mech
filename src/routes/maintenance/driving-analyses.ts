@@ -19,7 +19,6 @@ const errorStatus = (
 		case 'CONFLICT':
 		case 'SOURCE_UNAVAILABLE':
 		case 'TERMINAL_FAILURE':
-		case 'QUOTA_EXCEEDED':
 			return 409;
 		case 'RATE_LIMITED':
 			return 429;
@@ -76,6 +75,21 @@ export const createDrivingAnalysisRoutes = (dependencies: AppDependencies) => {
 			(lifecycle) => Response.json({ lifecycle }, { status: 202 }),
 		);
 	});
+
+	routes.get('/cars/:carId/drives/:driveId/driving-analyses', (c) =>
+		handle(
+			() =>
+				dependencies
+					.drivingAnalysisAuthority(c.env)
+					.list(
+						c.get('userId'),
+						c.req.param('carId'),
+						c.req.param('driveId'),
+						c.req.query('cursor'),
+					),
+			(page) => Response.json(page),
+		),
+	);
 
 	routes.post('/cars/:carId/drives/:driveId/driving-analyses', async (c) => {
 		const parsed = createDrivingAnalysisInputSchema.safeParse(

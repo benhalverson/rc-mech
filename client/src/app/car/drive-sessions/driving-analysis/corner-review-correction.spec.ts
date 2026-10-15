@@ -11,6 +11,7 @@ import { CornerReview } from './corner-review';
 import { CornerReviewStore } from './corner-review-store';
 import type { DrivingAnalysis } from './driving-analysis.models';
 import { DrivingAnalysisRequestIdentityCapability } from './driving-analysis-request-identity';
+import { PrivateVideoPlayerCapability } from './private-video-player';
 import {
 	RACE_RECORDING_PART_SIZE,
 	type RaceRecording,
@@ -88,6 +89,147 @@ afterEach(() => {
 	TestBed.resetTestingModule();
 });
 
+it.each(['refresh', 'navigate'] as const)(
+	'handles lifecycle changes during initial loads before %s',
+	async (scenario) => {
+		TestBed.configureTestingModule({
+			providers: [
+				provideHttpClient(),
+				provideHttpClientTesting(),
+				CornerReviewStore,
+				AnalysisLifecycleGateway,
+				DrivingAnalysisRequestIdentityCapability,
+			],
+		});
+		const store = TestBed.inject(CornerReviewStore);
+		const http = TestBed.inject(HttpTestingController);
+		const lifecycleUrl = '/api/v1/driving-analyses/analysis-1/lifecycle';
+		const evidenceUrl = '/api/v1/driving-analyses/analysis-1/evidence';
+		const clipsUrl = '/api/v1/driving-analyses/analysis-1/clips';
+		const analysisUrl = '/api/v1/driving-analyses/analysis-1';
+		const lifecycle = (stateVersion: number) => ({
+			analysisId: 'analysis-1',
+			status: stateVersion === 1 ? 'running' : 'awaiting-reidentification',
+			stateVersion,
+			permanent: false,
+			canCancel: true,
+			canRetry: false,
+			failure: null,
+		});
+		const evidence = (stateVersion: number) => ({
+			analysisId: 'analysis-1',
+			carId: 'car-1',
+			driveSessionId: 'drive-1',
+			stateVersion,
+			status: stateVersion === 1 ? 'running' : 'awaiting-reidentification',
+			runId: 'run-1',
+			trackMapVersionId: 'map-1',
+			tieToleranceMs: null,
+			corners: [],
+		});
+		store.selectAnalysis({ analysisId: 'analysis-1' });
+		TestBed.tick();
+		const firstEvidence = http.expectOne(evidenceUrl);
+		const firstClips = http.expectOne(clipsUrl);
+		http.expectOne(lifecycleUrl).flush({ lifecycle: lifecycle(1) });
+		const firstAnalysis = await vi.waitFor(() => {
+			TestBed.tick();
+			return http.expectOne(analysisUrl);
+		});
+		for (const stateVersion of [2, 3]) {
+			store.lifecycleResource.reload();
+			TestBed.tick();
+			http
+				.expectOne(lifecycleUrl)
+				.flush({ lifecycle: lifecycle(stateVersion) });
+			await vi.waitFor(() => {
+				TestBed.tick();
+				expect(store.lifecycle()?.stateVersion).toBe(stateVersion);
+			});
+		}
+		http.expectNone(evidenceUrl);
+		http.expectNone(clipsUrl);
+		http.expectNone(analysisUrl);
+		if (scenario === 'navigate') {
+			store.selectAnalysis({ analysisId: 'analysis-2' });
+			TestBed.tick();
+			expect(firstEvidence.cancelled).toBe(true);
+			expect(firstClips.cancelled).toBe(true);
+			firstAnalysis.flush({ drivingAnalysis: analysis });
+			TestBed.tick();
+			expect(store.analysis()).toBeNull();
+			expect(store.correction()).toBeNull();
+			http.expectOne('/api/v1/driving-analyses/analysis-2/lifecycle').flush({
+				lifecycle: { ...lifecycle(1), analysisId: 'analysis-2' },
+			});
+			http.expectOne('/api/v1/driving-analyses/analysis-2/evidence').flush({
+				evidence: { ...evidence(1), analysisId: 'analysis-2' },
+			});
+			http
+				.expectOne('/api/v1/driving-analyses/analysis-2/clips')
+				.flush({ clips: [] });
+			const nextAnalysis = await vi.waitFor(() => {
+				TestBed.tick();
+				return http.expectOne('/api/v1/driving-analyses/analysis-2');
+			});
+			nextAnalysis.flush({
+				drivingAnalysis: {
+					...analysis,
+					id: 'analysis-2',
+					stateVersion: 1,
+					status: 'running',
+					lifecycle: 'tracking',
+				},
+			});
+			await vi.waitFor(() => {
+				TestBed.tick();
+				expect(store.analysis()?.id).toBe('analysis-2');
+				expect(store.review()?.analysisId).toBe('analysis-2');
+			});
+			http.expectNone(() => true);
+			return;
+		}
+		firstEvidence.flush({ evidence: evidence(1) });
+		firstClips.flush({ clips: [] });
+		firstAnalysis.flush({
+			drivingAnalysis: {
+				...analysis,
+				stateVersion: 1,
+				status: 'running',
+				lifecycle: 'tracking',
+			},
+		});
+		const refreshed = await vi.waitFor(() => {
+			TestBed.tick();
+			const requests = http.match(() => true);
+			expect(requests.map((request) => request.request.url).sort()).toEqual(
+				[analysisUrl, clipsUrl, evidenceUrl].sort(),
+			);
+			return requests;
+		});
+		for (const request of refreshed) {
+			request.flush(
+				request.request.url === analysisUrl
+					? { drivingAnalysis: analysis }
+					: request.request.url === clipsUrl
+						? { clips: [] }
+						: { evidence: evidence(3) },
+			);
+		}
+		const source = await vi.waitFor(() => {
+			TestBed.tick();
+			return http.expectOne('/api/v1/race-videos/video-1');
+		});
+		source.flush({ raceVideo: recording });
+		await vi.waitFor(() => {
+			TestBed.tick();
+			expect(store.correction()).toEqual({ analysis, recording });
+			expect(store.review()?.stateVersion).toBe(3);
+		});
+		http.expectNone(() => true);
+	},
+);
+
 it.each([
 	'missing-analysis',
 	'missing-recording',
@@ -105,6 +247,7 @@ it.each([
 			AnalysisLifecycleGateway,
 			DrivingAnalysisRequestIdentityCapability,
 			ReidentificationStore,
+			PrivateVideoPlayerCapability,
 		],
 	});
 	const store = TestBed.inject(CornerReviewStore);

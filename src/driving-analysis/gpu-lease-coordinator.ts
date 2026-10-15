@@ -308,8 +308,16 @@ export class GpuLeaseCoordinator extends DurableObject<Env> {
 					return { status: 'stale' };
 				state.activeLease = null;
 			} else {
-				if (input.leaseId !== undefined || input.fence !== undefined)
-					return { status: 'stale' };
+				if (input.leaseId !== undefined) {
+					const restored = state.waiters.find(
+						(waiter) => waiter.segmentId === input.segmentId,
+					)?.restoredFrom;
+					if (
+						restored?.leaseId !== input.leaseId ||
+						restored.fence !== input.fence
+					)
+						return { status: 'stale' };
+				}
 				const before = state.waiters.length;
 				state.waiters = state.waiters.filter(
 					(waiter) => waiter.segmentId !== input.segmentId,

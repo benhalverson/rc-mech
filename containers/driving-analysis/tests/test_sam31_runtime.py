@@ -25,6 +25,7 @@ class _Array:
 class _Model:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self._postprocess_output = Mock()
 
     def _build_sam2_output(
         self,
@@ -115,7 +116,10 @@ def _output(
     }
 
 
-def test_sam31_runtime_uses_official_point_prompt_video_api(tmp_path: Path) -> None:
+@pytest.mark.parametrize("box_prompt", [False, True])
+def test_sam31_runtime_uses_official_point_prompt_video_api(
+    tmp_path: Path, *, box_prompt: bool
+) -> None:
     predictor = _Predictor(
         (
             _output(
@@ -130,6 +134,7 @@ def test_sam31_runtime_uses_official_point_prompt_video_api(tmp_path: Path) -> N
     runtime = Sam31CudaRuntime(
         tmp_path / "checkpoint.pt",
         predictor_factory=_factory(predictor),
+        box_prompt=box_prompt,
     )
 
     results = list(
@@ -157,8 +162,12 @@ def test_sam31_runtime_uses_official_point_prompt_video_api(tmp_path: Path) -> N
             "type": "add_prompt",
             "session_id": "session-1",
             "frame_index": 2,
-            "points": [[0.2, 0.30000000000000004]],
-            "point_labels": [1],
+            "points": (
+                [[0.1, 0.2], [0.30000000000000004, 0.4]]
+                if box_prompt
+                else [[0.2, 0.30000000000000004]]
+            ),
+            "point_labels": [2, 3] if box_prompt else [1],
             "obj_id": 1,
         },
         {
@@ -359,6 +368,10 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    install_frames = Mock()
+    bound_memory = Mock()
+    monkeypatch.setattr(runtime_module, "install_bounded_frame_loader", install_frames)
+    monkeypatch.setattr(runtime_module, "bound_forward_tracking_memory", bound_memory)
     predictor = _Predictor(())
     calls: list[dict[str, object]] = []
 
@@ -397,6 +410,8 @@ def test_sam31_runtime_builds_the_pinned_cuda_predictor(
     built = runtime_module._build_predictor(checkpoint)
 
     assert built is predictor
+    install_frames.assert_called_once_with()
+    bound_memory.assert_called_once_with(predictor.model)
     mask = object()
     state: dict[str, object] = {"cached_frame_outputs": {}}
     assert predictor.model._build_sam2_output(state, 1, mask) is mask

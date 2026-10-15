@@ -1,0 +1,33 @@
+<section class="mx-auto grid max-w-5xl gap-4 p-4" aria-labelledby="analysis-history-heading">
+	<a class="alloy-focus-ring w-fit underline" [routerLink]="['/garage', carId(), 'drive-sessions']">Back to Drive sessions</a>
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<h2 id="analysis-history-heading" class="m-0 text-xl font-semibold">Saved analyses</h2>
+		<button type="button" class="alloy-control alloy-control-secondary alloy-focus-ring" (click)="store.reload()" [disabled]="store.loading()">Refresh analyses</button>
+	</div>
+	<p class="m-0 text-sm text-alloy-text-secondary">Results for this Drive session, newest first. Open an analysis to review clips or continue a car correction.</p>
+	@if (store.loading()) {
+		<p role="status">Loading saved analyses…</p>
+	} @else if (store.failed()) {
+		<p role="alert">Saved analyses could not be loaded. Use Refresh analyses to try again.</p>
+	} @else if (store.analyses().length === 0) {
+		<p>No retained analyses on this page.</p>
+	} @else {
+		<ul class="m-0 grid list-none gap-3 p-0">
+			@for (analysis of store.analyses(); track analysis.id) {
+				<li class="grid gap-2 rounded border border-alloy-separator p-4">
+					<a class="alloy-focus-ring w-fit font-semibold underline" [routerLink]="['/garage', analysis.carId, 'drive-sessions', 'analysis', analysis.id]">{{ analysis.subjectSeed.identity }} · {{ analysis.createdAt | date:'medium' }}</a>
+					<p class="m-0">{{ statusLabels[analysis.status] }} · {{ analysis.progress }}%</p>
+					<p class="m-0 text-sm text-alloy-text-secondary">Race window: {{ analysis.raceWindow.startTimestampMs / 1000 | number:'1.1-1' }}–{{ analysis.raceWindow.endTimestampMs / 1000 | number:'1.1-1' }} seconds</p>
+				</li>
+			}
+		</ul>
+	}
+	<nav class="flex flex-wrap gap-3" aria-label="Analysis history pages">
+		@if (store.cursor()) {
+			<button type="button" class="alloy-control alloy-control-secondary alloy-focus-ring" (click)="store.newest()" [disabled]="store.loading()">Newest analyses</button>
+		}
+		@if (store.nextCursor() && !store.failed()) {
+			<button type="button" class="alloy-control alloy-control-secondary alloy-focus-ring" (click)="store.older()" [disabled]="store.loading()">Older analyses</button>
+		}
+	</nav>
+</section>

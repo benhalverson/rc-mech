@@ -27,7 +27,7 @@ grep -Eq -- '--read-only' "$unit" || fail 'worker root is writable'
 docker image inspect chassis-notes-driving-analysis-gpu:current --format '{{json .Config.Cmd}}' \
   | grep -Eq -- '"--host","127\.0\.0\.1".*"--port","8080"' \
   || fail 'worker is not loopback-only'
-for flag in '--gpus all' '--cap-drop ALL' '--security-opt no-new-privileges:true' '--pids-limit 512' '--memory 32g' '--memory-swap 32g' '--user 10001:10001' '--tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m'; do
+for flag in '--gpus all' '--cap-drop ALL' '--security-opt no-new-privileges:true' '--pids-limit 512' '--memory 64g' '--memory-swap 64g' '--user 10001:10001' '--tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m'; do
   grep -Fq -- "$flag" "$unit" || fail "worker security flag is missing: $flag"
 done
 for mount in 'dst=/var/lib/chassis-notes-gpu' 'dst=/etc/chassis-notes-gpu/profile.json,readonly' 'dst=/models/sam3.1.pt,readonly'; do

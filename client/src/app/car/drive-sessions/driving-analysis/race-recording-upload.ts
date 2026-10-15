@@ -8,6 +8,7 @@ import {
 	input,
 	signal,
 } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import {
 	LucideCheckCircle2,
 	LucidePause,
@@ -40,6 +41,7 @@ type DisplayStatus =
 @Component({
 	selector: 'app-race-recording-upload',
 	imports: [
+		RouterLink,
 		LucideCheckCircle2,
 		LucidePause,
 		LucidePlay,

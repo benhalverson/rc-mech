@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 sam31 = [
   "einops==0.8.1",
+  "opencv-python-headless==4.11.0.86",
   "psutil==7.0.0",
   "pycocotools==2.0.11",
   "sam3 @ git+https://github.com/facebookresearch/sam3.git@96914d2425f90a64f45ca977c2b5165418099543",

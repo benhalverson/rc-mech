@@ -321,6 +321,15 @@ A provider-neutral Subject observation contains:
 
 The configured threshold and provider-specific confidence calibration are part of run provenance. The public domain does not assume confidence values from different models are directly comparable.
 
+For SAM 3.1 point propagation, `out_probs` from the pinned upstream runtime is the
+original prompt/detection score, not a per-frame tracking score. The adapter keeps
+upstream mask filtering and exposes the sigmoid of the current object's presence
+logit from `obj_id_to_sam2_score` instead. Missing scores fail closed. Profiles using
+this behavior identify the calibration as `sam31-frame-presence-v1` and pin the
+updated runtime image and pipeline digest. Presence is not proof of identity:
+motion/area checks and manual gap recovery still apply, and full-race identity
+quality requires separately retained reference evidence.
+
 ### Tracking artifact acceptance
 
 1. The worker finalizes a successful segment artifact locally and reports `output-ready` with attempt, segment, specification, profile, lease, and fencing identities plus contract version, checksum, and byte count.
@@ -460,7 +469,7 @@ Accessibility requirements include keyboard-operable start/end marking and box a
 - Do not construct shell command strings from requests. Invoke FFmpeg with argument arrays and validated local paths.
 - Never log upload bodies, video frames, model inputs, Subject boxes, Transfer-grant or internal media URLs, Access headers, multipart identifiers, or R2 object bodies.
 - Redact container/provider exception text before it reaches D1 or clients. Structured internal logs retain only safe error class and stage.
-- Enforce per-file, retained-storage, incomplete-upload, and active-analysis quotas per User. Rate-limit upload creation and analysis creation without throttling legitimate authenticated part transfer.
+- Enforce per-file, retained-storage, and incomplete-upload quotas per User. Do not cap the number of active analyses: waiting for Re-identification releases GPU capacity, and retained work must not block a new analysis. The coordinator serializes GPU execution. Rate-limit upload creation and analysis creation without throttling legitimate authenticated part transfer.
 - Cancellation and deletion are ownership-checked commands, not direct Workflow or R2 identifiers supplied by the browser.
 
 ## Local development
@@ -533,6 +542,34 @@ The SAM 3.1 slices reuse the validated adapter, runtime, contracts, fixtures, an
 11. **Angular creation and correction workflow** — lazy route, gateway/store, resumable upload, private video player, Race-window editor, accessible Subject boxing, coarse wait reasons, monotonic progress, and Re-identification.
 12. **Angular evidence review** — per-corner pass comparison, Best/tie labels, clips, gaps/exclusions, stable run/segment provenance, deletion, Playwright, and AXE.
 13. **Release hardening** — representative SAM benchmark, full backend/client/architecture/browser coverage, dry-run deploy, Container and local-service restart verification, Access/Tunnel and R2 privacy checks, production migration check, and lease/failure/cancellation drills.
+
+## Motion-assisted SAM 3.1 candidate
+
+The optional `motion-box-proposals.v1` prompt mode uses
+`fixed-track-view-motion-crops.v1` preprocessing and
+`sam31-motion-mask-consistency-v1` scoring. These values are pinned in the
+Inference profile; existing center-point and box-corner runs retain their
+original behavior. The GPU executor rejects mismatched mode/preprocessing or
+calibration combinations.
+
+For a fixed camera, a bounded temporal background sample and a velocity estimate
+propose the location of the user-seeded car in each source frame. Near-equal
+candidate matches, missing proposals, and scene changes stop the segment. SAM
+3.1 independently segments each proposed box in a close crop. Only the SAM box,
+translated back into the original Track-view coordinates, can become an
+observation. Proposals alone never become observations or human corrections.
+
+The score is the minimum of current model presence, motion consistency, and
+proposal/mask box intersection-over-union. It is a consistency measure, not a
+calibrated probability of identity. Existing geometry, confidence, gap, and
+corner-pass rules still apply. The single-image SAM state resets each frame so
+memory and reset cost do not grow with race length. No state survives a gap to
+automatically reacquire another car.
+
+This mode remains a candidate pending full-race local/production demonstration
+and the existing identity-switch/pass-coverage acceptance criteria. Its fixed
+camera and foreground-contrast assumptions require evaluation on representative
+recordings; an opening-segment result does not qualify the whole race.
 
 ## Completion contract
 

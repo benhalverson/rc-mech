@@ -3,7 +3,6 @@ import { sha256Schema, uuidV4Schema } from '../tracking/contracts';
 import { canonicalJson, float64Token } from '../tracking/inference-profile';
 
 export const MAX_RACE_WINDOW_DURATION_MS = 15 * 60 * 1000;
-export const MAX_ACTIVE_DRIVING_ANALYSES_PER_OWNER = 3;
 export const MAX_DRIVING_ANALYSIS_CREATIONS_PER_HOUR = 20;
 export const DRIVING_ANALYSIS_CREATION_WINDOW_MS = 60 * 60 * 1000;
 export const FIXED_TRACK_VIEW = {

@@ -33,7 +33,8 @@ import type {
 import { MAX_CORNER_EVIDENCE_PASSES } from './corner-evidence';
 import { cornerEvidenceBatch, cornerPassEvidence } from './evidence-schema';
 
-const PASS_INSERT_CHUNK_SIZE = 100;
+// Each pass binds 18 columns. Keep each statement within D1's 100-parameter limit.
+const PASS_INSERT_CHUNK_SIZE = 5;
 const PINNED_EVIDENCE_MAP_STATUSES: (typeof trackMapVersion.$inferSelect)['status'][] =
 	['approved', 'retired'];
 

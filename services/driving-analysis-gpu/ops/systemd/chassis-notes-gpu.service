@@ -19,8 +19,8 @@ ExecStart=/usr/bin/docker run --rm --name chassis-notes-gpu \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --pids-limit 512 \
-  --memory 32g \
-  --memory-swap 32g \
+  --memory 64g \
+  --memory-swap 64g \
   --user 10001:10001 \
   --env-file /etc/chassis-notes-gpu/worker.env \
   --mount type=bind,src=/var/lib/chassis-notes-gpu,dst=/var/lib/chassis-notes-gpu \

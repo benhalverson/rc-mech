@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrivingAnalysis } from './driving-analysis.models';
+import { PrivateVideoPlayerCapability } from './private-video-player';
 import type { RaceRecording } from './race-recording.models';
 import type {
 	CorrectionRecordingIdentity,
@@ -106,7 +107,10 @@ const setup = async () => {
 	};
 	TestBed.configureTestingModule({
 		imports: [SubjectReidentification],
-		providers: [{ provide: ReidentificationStore, useValue: store }],
+		providers: [
+			{ provide: ReidentificationStore, useValue: store },
+			PrivateVideoPlayerCapability,
+		],
 	});
 	const fixture = TestBed.createComponent(SubjectReidentification);
 	fixture.componentRef.setInput('analysis', analysis);
@@ -140,6 +144,140 @@ afterEach(() => {
 });
 
 describe('SubjectReidentification', () => {
+	const playbackSetup = async () => {
+		const pause = vi
+			.spyOn(HTMLMediaElement.prototype, 'pause')
+			.mockImplementation(function (this: HTMLMediaElement) {
+				this.dispatchEvent(new Event('pause'));
+			});
+		const play = vi
+			.spyOn(HTMLMediaElement.prototype, 'play')
+			.mockImplementation(async function (this: HTMLMediaElement) {
+				this.dispatchEvent(new Event('play'));
+			});
+		const f = await setup();
+		const video = f.element.querySelector('video');
+		if (!video) throw new Error('Missing recording player');
+		const click = (label: string) => {
+			const button = Array.from(f.element.querySelectorAll('button')).find(
+				(candidate) => candidate.textContent?.trim() === label,
+			);
+			if (!button) throw new Error(`Missing button: ${label}`);
+			button.click();
+		};
+		return { ...f, video, pause, play, click };
+	};
+	it.each([
+		{ gapTimestampMs: 1500, seekTimestampMs: 1000 },
+		{ gapTimestampMs: 5000, seekTimestampMs: 3000 },
+	])(
+		'plays before the $gapTimestampMs ms gap within the Race window',
+		async ({ gapTimestampMs, seekTimestampMs }) => {
+			const f = await playbackSetup();
+			f.fixture.componentRef.setInput('analysis', {
+				...analysis,
+				raceWindow: { startTimestampMs: 1000, endTimestampMs: 10_000 },
+			});
+			f.fixture.componentRef.setInput('recording', {
+				...recording,
+				media: { ...recording.media, durationMs: 12_000 },
+			});
+			f.store.context.set({
+				...gap,
+				gap: { ...gap.gap, startTimestampMs: gapTimestampMs },
+			});
+			await f.fixture.whenStable();
+			f.click('Play from before gap');
+			await f.fixture.whenStable();
+			expect(f.video.currentTime).toBe(seekTimestampMs / 1000);
+			expect(f.play).toHaveBeenCalledOnce();
+			expect(f.element.textContent).toContain('Pause recording');
+			f.click('Play from before gap');
+			expect(f.play).toHaveBeenCalledOnce();
+		},
+	);
+	it.each([550, 650])(
+		'selects the first verified frame at or after playback at %s ms',
+		async (timestampMs) => {
+			const f = await playbackSetup();
+			f.store.context.set({
+				...gap,
+				frames: [
+					...gap.frames,
+					{ frameIndex: 19, timestampMs: 650 },
+					{ frameIndex: 21, timestampMs: 700 },
+				],
+			});
+			await f.fixture.whenStable();
+			f.video.currentTime = timestampMs / 1000;
+			f.video.dispatchEvent(new Event('timeupdate'));
+			f.click('Use this playback frame');
+			await f.fixture.whenStable();
+			expect(f.pause).toHaveBeenCalled();
+			expect(f.element.textContent).toContain(
+				'Selected source frame 19 at 650 ms',
+			);
+			expect(f.element.querySelector('img')?.getAttribute('src')).toBe(
+				'/correction-preview-19',
+			);
+			expect(f.store.correct).not.toHaveBeenCalled();
+			f.submit();
+			expect(f.store.correct).toHaveBeenCalledWith(
+				expect.objectContaining({
+					subjectSeed: expect.objectContaining({
+						frameIndex: 19,
+						timestampMs: 650,
+					}),
+				}),
+			);
+		},
+	);
+	it.each([200, 250, 1000, 1100])(
+		'rejects playback at %s ms outside the correction interval',
+		async (timestampMs) => {
+			const f = await playbackSetup();
+			f.fixture.componentRef.setInput('recording', {
+				...recording,
+				media: { ...recording.media, durationMs: 2000 },
+			});
+			await f.fixture.whenStable();
+			f.video.currentTime = timestampMs / 1000;
+			f.video.dispatchEvent(new Event('timeupdate'));
+			f.click('Use this playback frame');
+			await f.fixture.whenStable();
+			expect(f.element.querySelector('[role=alert]')?.textContent).toContain(
+				'after the tracking gap, inside the Race window',
+			);
+			expect(f.element.textContent).toContain(
+				'Selected source frame 15 at 500 ms',
+			);
+			expect(f.store.correct).not.toHaveBeenCalled();
+		},
+	);
+	it('keeps verified-frame slider correction available after playback fails', async () => {
+		const f = await playbackSetup();
+		f.store.context.set({
+			...gap,
+			frames: [...gap.frames, { frameIndex: 19, timestampMs: 650 }],
+		});
+		await f.fixture.whenStable();
+		f.play.mockRejectedValueOnce(new Error('Playback unavailable'));
+		f.click('Play recording');
+		await f.fixture.whenStable();
+		expect(f.element.querySelector('[role=alert]')?.textContent).toContain(
+			'use the verified-frame slider below',
+		);
+		f.input('input[type=range]', '1');
+		f.submit();
+		expect(f.store.correct).toHaveBeenCalledWith(
+			expect.objectContaining({
+				subjectSeed: expect.objectContaining({
+					frameIndex: 19,
+					timestampMs: 650,
+				}),
+			}),
+		);
+	});
 	it('requires the replacement recording/checksum preview to load before confirming', async () => {
 		const f = await setup();
 		if (!recording.media) throw new Error('Missing validated fixture media');

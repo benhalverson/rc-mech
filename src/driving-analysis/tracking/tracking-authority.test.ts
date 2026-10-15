@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/d1';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import {
+	trackingExecutionAttempt,
+	trackingRun,
+	trackingSegment,
+} from '../../schema';
 import {
 	ATTEMPT_ID,
 	inferenceProfileFixture,
@@ -344,7 +351,7 @@ describe('TrackingAuthority', () => {
 		});
 	});
 
-	test('rejects stale wait and deadline commands, and preserves progress through waiting and expiry', async () => {
+	test('rejects stale wait and deadline commands without counting provider progress as accepted evidence', async () => {
 		const { authority, segment } = await createAttemptAuthority();
 		const identity = {
 			ownerId: OWNER_ID,
@@ -383,7 +390,7 @@ describe('TrackingAuthority', () => {
 		});
 		expect(
 			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
-		).toMatchObject({ lifecycle: 'queued', progress: 75 });
+		).toMatchObject({ lifecycle: 'queued', progress: 0 });
 		await authority.expireAvailability({
 			...identity,
 			expiredAt: segment.availabilityDeadlineAt,
@@ -396,7 +403,7 @@ describe('TrackingAuthority', () => {
 			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
 		).toMatchObject({
 			lifecycle: 'failed',
-			progress: 75,
+			progress: 0,
 			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
 		});
 	});
@@ -524,7 +531,7 @@ describe('TrackingAuthority', () => {
 			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
 		).toMatchObject({
 			lifecycle: 'failed',
-			progress: 90,
+			progress: 0,
 			waitReason: null,
 			safeFailureCode: 'TRACKING_PROVIDER_UNAVAILABLE',
 		});
@@ -703,7 +710,7 @@ describe('TrackingAuthority', () => {
 		expect((await authority.activateAttempt(replacement)).state).toBe('active');
 		expect(
 			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
-		).toMatchObject({ lifecycle: 'running', progress: 25 });
+		).toMatchObject({ lifecycle: 'running', progress: 0 });
 		await expectAuthorityError(
 			authority.transitionAttempt({
 				...attemptWitness(),
@@ -782,6 +789,83 @@ describe('TrackingAuthority', () => {
 			}),
 			'STALE_AUTHORITY',
 		);
+	});
+
+	test('retires failed attempts without erasing failure history or accepting stale witnesses', async () => {
+		const value = await createAttemptAuthority();
+		const database = drizzle(value.database);
+		await value.authority.transitionAttempt({
+			...attemptWitness(),
+			expectedState: 'active',
+			nextState: 'failed',
+			progress: 23,
+			safeFailureCode: 'TRACKING_PROVIDER_FAILED',
+			updatedAt: LATER,
+		});
+		const command = {
+			...attemptWitness(),
+			nextState: 'replaced' as const,
+			updatedAt: LATER,
+		};
+		const readAttempt = () =>
+			database
+				.select()
+				.from(trackingExecutionAttempt)
+				.where(eq(trackingExecutionAttempt.id, ATTEMPT_ID))
+				.get();
+		const readSegment = () =>
+			database
+				.select()
+				.from(trackingSegment)
+				.where(eq(trackingSegment.id, SEGMENT_ID))
+				.get();
+		const failed = await readAttempt();
+		if (!failed) throw new Error('Expected retained failed attempt');
+		for (const witness of [{ leaseId: SECOND_LEASE_ID }, { fence: 8 }]) {
+			await expectAuthorityError(
+				value.authority.retireAttempt({ ...command, ...witness }),
+				'CONFLICT',
+			);
+		}
+		expect(await readAttempt()).toEqual(failed);
+		expect(await readSegment()).toMatchObject({
+			currentAttemptId: ATTEMPT_ID,
+			authorityLeaseId: LEASE_ID,
+			authorityFence: 7,
+		});
+		await value.authority.retireAttempt(command);
+		const retired = await readAttempt();
+		expect(retired).toEqual({ ...failed, version: failed.version + 1 });
+		expect(await readSegment()).toMatchObject({
+			currentAttemptId: null,
+			authorityLeaseId: null,
+			authorityFence: null,
+		});
+		await value.authority.retireAttempt(command);
+		expect(await readAttempt()).toEqual(retired);
+		for (const witness of [{ leaseId: SECOND_LEASE_ID }, { fence: 8 }]) {
+			await expectAuthorityError(
+				value.authority.retireAttempt({ ...command, ...witness }),
+				'CONFLICT',
+			);
+		}
+		await value.authority.activateAttempt(
+			attemptCommand({
+				attemptId: SECOND_ATTEMPT_ID,
+				leaseId: SECOND_LEASE_ID,
+				fence: 8,
+			}),
+		);
+		await expectAuthorityError(
+			value.authority.retireAttempt(command),
+			'STALE_AUTHORITY',
+		);
+		expect(await readSegment()).toMatchObject({
+			currentAttemptId: SECOND_ATTEMPT_ID,
+			authorityLeaseId: SECOND_LEASE_ID,
+			authorityFence: 8,
+		});
+		expect(await readAttempt()).toEqual(retired);
 	});
 
 	test('rejects retirement when the segment authority update loses its fence', async () => {
@@ -1083,8 +1167,59 @@ describe('TrackingAuthority', () => {
 			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
 		).toMatchObject({
 			lifecycle: 'awaiting-reidentification',
-			progress: 99,
+			progress: 49,
 		});
+	});
+
+	test.each([
+		{ timestampMs: 100, progress: 0 },
+		{ timestampMs: 101, progress: 0 },
+		{ timestampMs: 250, progress: 49 },
+		{ timestampMs: 399, progress: 98 },
+	])(
+		'projects an accepted gap at $timestampMs ms as $progress percent',
+		async ({ timestampMs, progress }) => {
+			const { authority, segment } = await createAttemptAuthority();
+			await makeOutputReady(authority);
+			expect(
+				await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+			).toMatchObject({ lifecycle: 'running', progress: 0 });
+			const command = await preparePromotion(
+				authority,
+				segment.specificationDigest,
+				{
+					outcome: 'tracking-gap',
+					gap: { startTimestampMs: timestampMs, reason: 'ambiguous-identity' },
+					firstTimestampMs: null,
+					lastTimestampMs: null,
+				},
+			);
+			expect(
+				await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+			).toMatchObject({ lifecycle: 'running', progress: 0 });
+			await authority.acceptArtifact(command);
+			expect(
+				await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+			).toMatchObject({ lifecycle: 'awaiting-reidentification', progress });
+		},
+	);
+
+	test('reserves 100 percent for authoritative completion after accepting the full race', async () => {
+		const { authority, segment, database } = await createAttemptAuthority();
+		await makeOutputReady(authority);
+		await authority.acceptArtifact(
+			await preparePromotion(authority, segment.specificationDigest),
+		);
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'running', progress: 99 });
+		await drizzle(database)
+			.update(trackingRun)
+			.set({ status: 'completed', completedAt: LATER, version: 2 })
+			.where(eq(trackingRun.id, RUN_ID));
+		expect(
+			await authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
+		).toMatchObject({ lifecycle: 'completed', progress: 100 });
 	});
 
 	test('loads only the current prepared manifest and rejects missing authority', async () => {
@@ -1739,36 +1874,76 @@ describe('TrackingAuthority', () => {
 		);
 	});
 
-	test('cancellation cleanup snapshots queued segments and preserves accepted evidence', async () => {
-		const { authority, segment } = await createAttemptAuthority();
-		await makeOutputReady(authority);
-		await authority.acceptArtifact(
-			await preparePromotion(authority, segment.specificationDigest),
-		);
-		await authority.createSegment(
-			segmentCommand({
-				segmentId: SECOND_SEGMENT_ID,
-				order: 1,
-				seed: {
-					kind: 'reidentification',
-					sourceId: REIDENTIFICATION_ID,
-					value: submissionFixture().trackingRequest.subjectSeed,
+	test.each(['replaced', 'failed'] as const)(
+		'retry cleanup includes %s runs from older workflows within the same analysis',
+		async (status) => {
+			const { authority } = await createAttemptAuthority();
+			await authority.fenceRun({
+				ownerId: OWNER_ID,
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status,
+				completedAt: LATER,
+			});
+			expect(
+				await authority.cancellationTargets(
+					'other',
+					ANALYSIS_ID,
+					'new-workflow',
+				),
+			).toEqual([]);
+			expect(
+				await authority.cancellationTargets(OWNER_ID, 'other', 'new-workflow'),
+			).toEqual([]);
+			expect(
+				await authority.cancellationTargets(
+					OWNER_ID,
+					ANALYSIS_ID,
+					'new-workflow',
+				),
+			).toMatchObject([
+				{
+					segmentId: SEGMENT_ID,
+					cancelledAt: LATER,
+					identity: { runId: RUN_ID, attemptId: ATTEMPT_ID },
 				},
-			}),
-		);
-		await authority.fenceRun({
-			ownerId: OWNER_ID,
-			runId: RUN_ID,
-			expectedVersion: 1,
-			status: 'cancelled',
-			completedAt: LATER,
-		});
-		expect(
-			await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
-		).toEqual([
-			{ segmentId: SECOND_SEGMENT_ID, identity: null, cancelledAt: LATER },
-		]);
-	});
+			]);
+		},
+	);
+
+	test.each(['cancelled', 'replaced', 'failed'] as const)(
+		'%s cleanup snapshots queued segments and preserves accepted evidence',
+		async (status) => {
+			const { authority, segment } = await createAttemptAuthority();
+			await makeOutputReady(authority);
+			await authority.acceptArtifact(
+				await preparePromotion(authority, segment.specificationDigest),
+			);
+			await authority.createSegment(
+				segmentCommand({
+					segmentId: SECOND_SEGMENT_ID,
+					order: 1,
+					seed: {
+						kind: 'reidentification',
+						sourceId: REIDENTIFICATION_ID,
+						value: submissionFixture().trackingRequest.subjectSeed,
+					},
+				}),
+			);
+			await authority.fenceRun({
+				ownerId: OWNER_ID,
+				runId: RUN_ID,
+				expectedVersion: 1,
+				status,
+				completedAt: LATER,
+			});
+			expect(
+				await authority.cancellationTargets(OWNER_ID, ANALYSIS_ID, WORKFLOW_ID),
+			).toEqual([
+				{ segmentId: SECOND_SEGMENT_ID, identity: null, cancelledAt: LATER },
+			]);
+		},
+	);
 
 	test('enforces immutable database records below the gateway', async () => {
 		const { authority, database, segment } = await createAttemptAuthority();
@@ -1906,7 +2081,7 @@ describe('TrackingAuthority', () => {
 		});
 		expect(
 			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
-		).toMatchObject({ lifecycle: 'running', progress: 17, waitReason: null });
+		).toMatchObject({ lifecycle: 'running', progress: 0, waitReason: null });
 		await value.authority.fenceRun({
 			ownerId: OWNER_ID,
 			runId: RUN_ID,
@@ -1916,7 +2091,7 @@ describe('TrackingAuthority', () => {
 		});
 		expect(
 			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
-		).toMatchObject({ lifecycle: 'cancelled', progress: 17 });
+		).toMatchObject({ lifecycle: 'cancelled', progress: 0 });
 	});
 
 	test('projects replacement as cancellation and run failure without leaking detail', async () => {
@@ -1971,7 +2146,7 @@ describe('TrackingAuthority', () => {
 			await value.authority.publicState(OWNER_ID, ANALYSIS_ID, RUN_ID),
 		).toMatchObject({
 			lifecycle: 'failed',
-			progress: 23,
+			progress: 0,
 			safeFailureCode: safeFailureCode.startsWith('TRACKING_')
 				? safeFailureCode
 				: 'TRACKING_PROVIDER_FAILED',

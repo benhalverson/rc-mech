@@ -1073,7 +1073,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { status: 'queued', stage: 'tracking', progress: 50 },
+			analysis: { status: 'queued', stage: 'tracking', progress: 60 },
 		});
 		await expect(
 			authority.publishTrackingState(
@@ -1145,7 +1145,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { lifecycle: 'cancelled', progress: 99 },
+			analysis: { lifecycle: 'cancelled', progress: 80 },
 		});
 	});
 
@@ -1319,7 +1319,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { lifecycle: 'tracking', progress: 50 },
+			analysis: { lifecycle: 'tracking', progress: 60 },
 		});
 		await database
 			.update(trackingRun)
@@ -1344,7 +1344,7 @@ describe('DrivingAnalysisAuthority', () => {
 			),
 		).resolves.toMatchObject({
 			kind: 'published',
-			analysis: { lifecycle: 'failed', status: 'failed', progress: 75 },
+			analysis: { lifecycle: 'failed', status: 'failed', progress: 80 },
 		});
 		expect(await authority.get(OWNER_ID, ANALYSIS_ID)).toMatchObject({
 			status: 'failed',
@@ -1562,36 +1562,34 @@ describe('DrivingAnalysisAuthority', () => {
 		});
 	});
 
-	test('enforces active-analysis quota and the atomic D1 quota trigger', async () => {
-		const { authority, database } = await fixture();
+	test('allows new analyses when more than three analyses are active', async () => {
+		const { authority, database, binding } = await fixture();
 		await authority.create(command());
 		const persisted = await database.select().from(drivingAnalysis).get();
 		if (!persisted) throw new Error('Driving-analysis fixture was not created');
-		for (const suffix of ['1', '2'])
+		for (const suffix of ['1', '2', '3'])
 			await database.insert(drivingAnalysis).values({
 				...persisted,
 				id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${suffix}`,
 				requestId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb${suffix}`,
 				workflowId: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${suffix}`,
 			});
-		await expectCode(
-			authority.create({
+		const nextAuthority = new DrivingAnalysisAuthority(binding, {
+			clock: () => NOW,
+			id: () => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+			startProcessing: vi.fn(async () => undefined),
+			verifySubjectFrame: vi.fn(async () => undefined),
+		});
+		await expect(
+			nextAuthority.create({
 				...command(),
 				input: {
 					...input(),
 					requestId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
 				},
 			}),
-			'QUOTA_EXCEEDED',
-		);
-		await expect(
-			database.insert(drivingAnalysis).values({
-				...persisted,
-				id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-				requestId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-				workflowId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-			}),
-		).rejects.toThrow('Failed query');
+		).resolves.toMatchObject({ created: true, analysis: { status: 'queued' } });
+		expect(await database.select().from(drivingAnalysis)).toHaveLength(5);
 	});
 
 	test('rate-limits new commands while exact replays remain available', async () => {

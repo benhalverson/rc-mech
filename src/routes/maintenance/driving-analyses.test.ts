@@ -168,7 +168,6 @@ describe('Driving-analysis routes', () => {
 		['CONFLICT', 409],
 		['SOURCE_UNAVAILABLE', 409],
 		['TERMINAL_FAILURE', 409],
-		['QUOTA_EXCEEDED', 409],
 		['RATE_LIMITED', 429],
 		['WORKFLOW_UNAVAILABLE', 503],
 	] as const)('maps safe %s authority failures to %i', async (code, status) => {

@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
 from driving_analysis_service.inference import InferenceFailureError
+from driving_analysis_service.sam31_confidence import use_frame_tracking_confidence
+from driving_analysis_service.sam31_frames import install_bounded_frame_loader
 from driving_analysis_service.sam31_inference import Sam31FrameResult
+from driving_analysis_service.sam31_memory import bound_forward_tracking_memory
 
 SUBJECT_OBJECT_ID = 1
 BOX_VALUE_COUNT = 4
@@ -31,6 +34,9 @@ type _InitState = Callable[..., object]
 
 class _StateModel(Protocol):
     init_state: _InitState
+    batched_grounding_batch_size: int
+    postprocess_batch_size: int
+    _postprocess_output: Callable[..., dict]
     _build_sam2_output: Callable[..., object]
     _convert_low_res_mask_to_video_res: Callable[..., object]
 
@@ -76,7 +82,9 @@ class Sam31CudaRuntime:
         checkpoint: Path,
         *,
         predictor_factory: _PredictorFactory | None = None,
+        box_prompt: bool = False,
     ) -> None:
+        self._box_prompt = box_prompt
         self._predictor = (predictor_factory or _build_predictor)(checkpoint)
         self._inference_context_factory = (
             _cuda_autocast if predictor_factory is None else nullcontext
@@ -111,16 +119,23 @@ class Sam31CudaRuntime:
             )
             session_id = _string(session.get("session_id"))
             try:
-                center_x = seed_box[0] + seed_box[2] / 2
-                center_y = seed_box[1] + seed_box[3] / 2
+                x, y, width, height = seed_box
+                # SAM's instance prompt encoder represents a bounding box with
+                # top-left/bottom-right points labelled 2 and 3. Keep the old
+                # center-point semantics available for already-pinned profiles.
+                points = (
+                    [[x, y], [x + width, y + height]]
+                    if self._box_prompt
+                    else [[x + width / 2, y + height / 2]]
+                )
                 _check_deadline(deadline)
                 self._predictor.handle_request(
                     {
                         "type": "add_prompt",
                         "session_id": session_id,
                         "frame_index": seed_position,
-                        "points": [[center_x, center_y]],
-                        "point_labels": [1],
+                        "points": points,
+                        "point_labels": [2, 3] if self._box_prompt else [1],
                         "obj_id": SUBJECT_OBJECT_ID,
                     }
                 )
@@ -159,10 +174,11 @@ class Sam31CudaRuntime:
                 )
 
 
-def _build_predictor(checkpoint: Path) -> _Predictor:
+def _build_predictor(checkpoint: Path, *, max_num_objects: int = 1) -> _Predictor:
     torch = cast("_Torch", importlib.import_module("torch"))
     if not torch.cuda.is_available():
         raise RuntimeError
+    install_bounded_frame_loader()
     builder_module = importlib.import_module("sam3.model_builder")
     builder = getattr(builder_module, "build_sam3_multiplex_video_predictor", None)
     if not callable(builder):
@@ -171,7 +187,7 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
         "_BuiltPredictor",
         builder(
             checkpoint_path=str(checkpoint),
-            max_num_objects=1,
+            max_num_objects=max_num_objects,
             use_fa3=False,
             use_rope_real=False,
             compile=False,
@@ -179,8 +195,17 @@ def _build_predictor(checkpoint: Path) -> _Predictor:
             async_loading_frames=False,
         ),
     )
+    if max_num_objects > 1:
+        # Person exclusion runs on one frame at a time. Do not allocate the
+        # upstream multi-frame grounding/postprocessing buffers for it.
+        predictor.model.batched_grounding_batch_size = 1
+        predictor.model.postprocess_batch_size = 1
     predictor.model.init_state = _filter_init_state_arguments(
         predictor.model.init_state
+    )
+    bound_forward_tracking_memory(predictor.model)
+    predictor.model._postprocess_output = use_frame_tracking_confidence(  # noqa: SLF001
+        predictor.model._postprocess_output  # noqa: SLF001
     )
     # Compatibility adapter for the pinned upstream multiplex implementation.
     predictor.model._build_sam2_output = _merge_uncached_tracking_output(  # noqa: SLF001

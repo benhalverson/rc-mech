@@ -1,4 +1,3 @@
-import shutil
 import threading
 from collections.abc import Generator
 from dataclasses import dataclass, replace
@@ -130,6 +129,23 @@ class Sam31TrackingExecutor:
         if profile.precision != "bfloat16":
             message = "The pinned SAM 3.1 adapter supports only bfloat16 precision"
             raise UnsupportedPrecisionError(message)
+        gap_recovery = profile.prompt_semantics == "motion-box-gap-recovery.v1"
+        self._recover_gap_frames = 30 if gap_recovery else 0
+        motion_assisted = (
+            gap_recovery or profile.prompt_semantics == "motion-box-proposals.v1"
+        )
+        if motion_assisted != (
+            profile.preprocessing == "fixed-track-view-motion-crops.v1"
+        ):
+            message = "Motion prompts require the matching crop preprocessing"
+            raise ValueError(message)
+        if motion_assisted and profile.confidence_calibration != (
+            "sam31-motion-gap-consistency-v1"
+            if gap_recovery
+            else "sam31-motion-mask-consistency-v1"
+        ):
+            message = "Motion prompts require the matching consistency calibration"
+            raise ValueError(message)
         settings = InferenceSettings(
             provider="sam31",
             model=profile.model.name,
@@ -138,6 +154,9 @@ class Sam31TrackingExecutor:
             confidence_calibration=profile.confidence_calibration,
             identity_confidence_threshold=profile.identity_confidence_threshold,
             checkpoint_path=checkpoint_path,
+            sam31_box_prompt=profile.prompt_semantics == "subject-box-corners.v1",
+            sam31_motion_assisted=motion_assisted,
+            sam31_gap_recovery=gap_recovery,
         )
         self._provider = provider or Sam31InferenceProvider.create(settings)
 
@@ -156,6 +175,9 @@ class Sam31TrackingExecutor:
         service_root = job_root / "execution"
         settings = ServiceSettings(
             staging_root=service_root / "staged",
+            # Prepared media may exceed /tmp's memory-backed capacity before
+            # decoding even begins. Keep its verified copy and decoded frames
+            # on the private job volume, which is provisioned for large media.
             work_root=service_root / "work",
             artifact_root=service_root / "artifacts",
             limits=replace(
@@ -168,17 +190,19 @@ class Sam31TrackingExecutor:
         prepared_id = submission.tracking_request.prepared.prepared_media_id
         prepared_bundle = artifact_path(settings, prepared_id, PREPARED_BUNDLE_SUFFIX)
         prepared_bundle.mkdir(mode=0o700)
-        shutil.copyfile(
-            inputs.prepared_media,
-            prepared_bundle / f"{prepared_id}{PREPARED_MEDIA_SUFFIX}",
+        # Both files are immutable verified transfers inside this private job
+        # volume. Reuse their inodes instead of making another full media copy;
+        # the tracking service still creates and verifies its working snapshot.
+        (prepared_bundle / f"{prepared_id}{PREPARED_MEDIA_SUFFIX}").hardlink_to(
+            inputs.prepared_media
         )
-        shutil.copyfile(
-            inputs.frame_manifest,
-            prepared_bundle / f"{prepared_id}{FRAME_MANIFEST_SUFFIX}",
+        (prepared_bundle / f"{prepared_id}{FRAME_MANIFEST_SUFFIX}").hardlink_to(
+            inputs.frame_manifest
         )
         service = SubjectTrackingService(
             settings,
             _CancellableProvider(self._provider, cancelled),
+            recover_gap_frames=self._recover_gap_frames,
         )
         response = service.track(submission.tracking_request)
         if not isinstance(response, TrackStageAccepted) or cancelled.is_set():

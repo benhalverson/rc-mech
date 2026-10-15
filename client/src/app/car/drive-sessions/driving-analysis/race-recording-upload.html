@@ -58,6 +58,7 @@
 			<button class="alloy-control alloy-control-secondary alloy-focus-ring mt-2 inline-flex w-fit items-center gap-2" type="button" (click)="store.retry()"><svg lucideRefreshCw size="17" strokeWidth="1.8" aria-hidden="true"></svg>Check status</button>
 		</div>
 	}
+	<a class="alloy-focus-ring w-fit text-sm font-semibold underline" [routerLink]="['/garage', carId(), 'drive-sessions', 'history', driveSession().id]">View saved analyses</a>
 	@if (status() === 'ready' && recording(); as readyRecording) {
 		<app-driving-analysis-creator [carId]="carId()" [driveSessionId]="driveSession().id" [recording]="readyRecording" />
 	}

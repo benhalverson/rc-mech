@@ -6,6 +6,7 @@ import {
 	type DrivingAnalysisWorkflowEnvironment,
 	TrackingRunWorkflow,
 } from '../tracking/driving-analysis-workflow';
+import { TrackingAuthority } from '../tracking/tracking-authority';
 import { DrivingAnalysisAuthority } from './driving-analysis-authority';
 import {
 	type DrivingAnalysisWorkflowPayload,
@@ -359,12 +360,16 @@ describe('Driving-analysis creation Workflow', () => {
 	});
 
 	test('dispatches creation through the one per-analysis Workflow entrypoint', async () => {
+		const cleanup = vi
+			.spyOn(TrackingAuthority.prototype, 'cancellationTargets')
+			.mockResolvedValue([]);
 		const begin = vi
 			.spyOn(DrivingAnalysisAuthority.prototype, 'beginPreparation')
 			.mockResolvedValue({ kind: 'stale' });
 		const environment = {
 			DB: {} as D1Database,
-		} as DrivingAnalysisWorkflowEnvironment;
+			GPU_LEASE_COORDINATOR: { getByName: () => ({}) },
+		} as unknown as DrivingAnalysisWorkflowEnvironment;
 		const workflow = new DrivingAnalysisWorkflow(
 			{} as ExecutionContext,
 			environment,
@@ -377,9 +382,14 @@ describe('Driving-analysis creation Workflow', () => {
 			ANALYSIS_ID,
 			expect.any(String),
 		);
+		expect(cleanup).toHaveBeenCalledBefore(begin);
 	});
 
 	test('keeps preparation and first Tracking segment in the same run Workflow', async () => {
+		vi.spyOn(
+			TrackingAuthority.prototype,
+			'cancellationTargets',
+		).mockResolvedValue([]);
 		const begin = vi
 			.spyOn(DrivingAnalysisAuthority.prototype, 'beginPreparation')
 			.mockResolvedValue({ kind: 'published', analysis: analysis(2, 0) });

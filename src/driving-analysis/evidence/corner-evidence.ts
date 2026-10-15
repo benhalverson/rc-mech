@@ -157,23 +157,59 @@ const measureCorner = (
 	passBudget: { count: number },
 ): CornerPassEvidence[] => {
 	const observations = segment.observations;
-	const events: { kind: 'entry' | 'exit'; crossing: GateCrossing }[] = [];
+	const events: (
+		| { kind: 'entry' | 'exit'; crossing: GateCrossing }
+		| { kind: 'gap'; timestampMs: number }
+	)[] = [];
+	const gaps =
+		segment.contractVersion === 'subject-observation-segment.v2'
+			? segment.gaps
+			: [];
+	let gapIndex = 0;
 	for (let index = 1; index < observations.length; index += 1) {
 		const before = observations[index - 1];
 		const after = observations[index];
 		/* c8 ignore next -- the index bounds above establish both observations. */
 		if (!before || !after) continue;
+		const gap = gaps[gapIndex];
+		if (
+			gap &&
+			gap.startTimestampMs > before.timestampMs &&
+			gap.endTimestampMs <= after.timestampMs
+		) {
+			events.push({ kind: 'gap', timestampMs: gap.startTimestampMs });
+			gapIndex += 1;
+			continue;
+		}
 		const entry = crossing(before, after, corner.entryGate);
 		if (entry) events.push({ kind: 'entry', crossing: entry });
 		const exit = crossing(before, after, corner.exitGate);
 		if (exit) events.push({ kind: 'exit', crossing: exit });
 	}
 	events.sort(
-		(left, right) => left.crossing.timestampMs - right.crossing.timestampMs,
+		(left, right) =>
+			(left.kind === 'gap' ? left.timestampMs : left.crossing.timestampMs) -
+			(right.kind === 'gap' ? right.timestampMs : right.crossing.timestampMs),
 	);
 	const passes: CornerPassEvidence[] = [];
 	let entry: GateCrossing | null = null;
+	let afterGap = false;
 	for (const event of events) {
+		if (event.kind === 'gap') {
+			if (entry)
+				appendPass(passes, passBudget, () =>
+					createCornerPass(corner, passes.length + 1, {
+						entry,
+						exit: null,
+						durationMs: null,
+						eligibility: 'ineligible',
+						exclusionReason: 'tracking-gap',
+					}),
+				);
+			entry = null;
+			afterGap = true;
+			continue;
+		}
 		if (event.kind === 'entry') {
 			if (entry)
 				appendPass(passes, passBudget, () =>
@@ -186,6 +222,7 @@ const measureCorner = (
 					}),
 				);
 			entry = event.crossing;
+			afterGap = false;
 			continue;
 		}
 		if (!entry) {
@@ -195,7 +232,7 @@ const measureCorner = (
 					exit: event.crossing,
 					durationMs: null,
 					eligibility: 'ineligible',
-					exclusionReason: 'gate-order',
+					exclusionReason: afterGap ? 'tracking-gap' : 'gate-order',
 				}),
 			);
 			continue;
@@ -294,8 +331,36 @@ const assertObservationContinuity = (
 	);
 	if (seedIndex < 0 || input.segment.caseId !== input.manifest.caseId)
 		throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+	const gaps =
+		input.segment.contractVersion === 'subject-observation-segment.v2'
+			? input.segment.gaps
+			: [];
+	let gapIndex = 0;
+	let framePosition = seedIndex;
 	for (const [index, observation] of input.segment.observations.entries()) {
-		const frame = input.manifest.frames[seedIndex + index];
+		const gap = gaps[gapIndex];
+		if (
+			gap &&
+			input.manifest.frames[framePosition]?.timestampMs === gap.startTimestampMs
+		) {
+			if (index === 0 || gap.endTimestampMs <= gap.startTimestampMs)
+				throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+			while (
+				framePosition < input.manifest.frames.length &&
+				(input.manifest.frames[framePosition]?.timestampMs ?? Infinity) <
+					gap.endTimestampMs
+			) {
+				framePosition += 1;
+				if (framePosition - seedIndex > MAX_CORNER_EVIDENCE_FRAMES)
+					throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+			}
+			if (
+				input.manifest.frames[framePosition]?.timestampMs !== gap.endTimestampMs
+			)
+				throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+			gapIndex += 1;
+		}
+		const frame = input.manifest.frames[framePosition];
 		if (
 			!frame ||
 			frame.frameIndex !== observation.frameIndex ||
@@ -305,10 +370,11 @@ const assertObservationContinuity = (
 				input.segment.provenance.identityConfidenceThreshold
 		)
 			throw new CornerEvidenceError('INVALID_OBSERVATIONS');
+		framePosition += 1;
 	}
-	const nextFrame =
-		input.manifest.frames[seedIndex + input.segment.observations.length];
+	const nextFrame = input.manifest.frames[framePosition];
 	if (
+		gapIndex !== gaps.length ||
 		(input.segment.openGap === null && nextFrame !== undefined) ||
 		(input.segment.openGap !== null &&
 			(!nextFrame ||
