@@ -5,6 +5,20 @@ Angular build is copied into `public/`; Wrangler serves those files through
 the same origin as the authenticated API. Do not deploy a separately hosted
 Angular shell or change the browser's relative `/api/...` URLs.
 
+Production assets use `run_worker_first: true` so the hostname middleware in
+`src/index.ts` runs before Cloudflare serves a matching static file. Without
+this setting, the homepage and other static files can be served on `www`
+without the intended permanent redirect. Requests on the canonical hostname
+continue through `spaFallback` to the `ASSETS` binding. This adds a Worker
+invocation for static asset requests; monitor Worker request usage after release.
+
+After deployment, check `https://www.chassisnotes.com/` and
+`https://www.chassisnotes.com/sitemap.xml?check=canonical` without following
+redirects. Each must return 308 to the corresponding `https://chassisnotes.com`
+URL with path and query intact. The canonical homepage and sitemap must return
+200 without a hostname redirect. Keep the HTTP-to-HTTPS redirects: Search
+Console's “Page with redirect” exclusion for HTTP aliases is expected.
+
 ## Production configuration
 
 Create the dedicated production D1 once, then put its returned UUID in the
