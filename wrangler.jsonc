@@ -6,7 +6,12 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"limits": { "subrequests": 1000000 },
 	"triggers": { "crons": ["0 */6 * * *"] },
-	"assets": { "directory": "./public", "binding": "ASSETS" },
+	// Run hostname canonicalization before matching static assets, including /.
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS",
+		"run_worker_first": true
+	},
 	"routes": [
 		{
 			"pattern": "chassisnotes.com",
